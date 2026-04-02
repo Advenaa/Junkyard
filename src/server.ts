@@ -11,6 +11,25 @@ import type { HealthMonitor } from './health.js';
 import { registerOAuthRoutes } from './auth/discord-oauth.js';
 import { requireAuth, requireAdmin } from './auth/middleware.js';
 import { createSessionManager } from './auth/sessions.js';
+import {
+  getSources,
+  insertSource,
+  getAppConfig,
+  setAppConfig,
+  type ReportRow,
+  type SummaryRow,
+  type SourceRow,
+  type ItemRow,
+} from './db/queries.js';
+
+interface UserRow {
+  discord_id: string;
+  username: string;
+  avatar: string | null;
+  role: string;
+  created_at: number;
+  last_login_at: number | null;
+}
 
 interface ChatHandler {
   handle(query: string, conversationId: string, userId: string): Promise<{ response: string; toolsUsed: string[] }>;
@@ -58,37 +77,110 @@ export async function createServer(
     return { status: healthy ? 'ok' : 'degraded', checks };
   });
 
-  // --- Skeleton routes ---
-  app.get('/api/v1/reports', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+  // --- Reports ---
+  app.get('/api/v1/reports', { preHandler: [authPreHandler] }, async (request) => {
+    const { limit: rawLimit, offset: rawOffset } = request.query as { limit?: string; offset?: string };
+    const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
+    const offset = Math.max(parseInt(rawOffset ?? '0', 10) || 0, 0);
+    const { rows: reports } = await pool.query<ReportRow>(
+      `SELECT * FROM reports ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+    const { rows: countRows } = await pool.query<{ count: string }>(`SELECT COUNT(*) AS count FROM reports`);
+    return { reports, total: parseInt(countRows[0].count, 10) };
   });
 
-  app.get('/api/v1/reports/:id', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+  app.get('/api/v1/reports/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { rows } = await pool.query<ReportRow>(
+      `SELECT * FROM reports WHERE id = $1`,
+      [id],
+    );
+    if (rows.length === 0) {
+      return reply.code(404).send({ error: 'Report not found' });
+    }
+    return rows[0];
   });
 
+  // --- Sources ---
   app.get('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+    const sources = await getSources(pool);
+    return { sources };
   });
 
-  app.post('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+  app.post('/api/v1/sources', { preHandler: [authPreHandler] }, async (request, reply) => {
+    const { source, sourceId, label } = request.body as { source?: string; sourceId?: string; label?: string };
+    if (!source || !sourceId) {
+      return reply.code(400).send({ error: 'source and sourceId are required' });
+    }
+    try {
+      await insertSource(pool, source, sourceId, label ?? null, 1.0, Math.floor(Date.now() / 1000));
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+        return reply.code(409).send({ error: 'Source already exists' });
+      }
+      throw err;
+    }
+    const { rows } = await pool.query<SourceRow>(
+      `SELECT * FROM sources WHERE source = $1 AND source_id = $2`,
+      [source, sourceId],
+    );
+    reply.code(201);
+    return rows[0];
   });
 
+  // --- Config ---
   app.get('/api/v1/config', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+    const [digestTime, timezone, webhookUrl] = await Promise.all([
+      getAppConfig(pool, 'digest_time'),
+      getAppConfig(pool, 'timezone'),
+      getAppConfig(pool, 'webhook_url'),
+    ]);
+    return { digest_time: digestTime, timezone, webhook_url: webhookUrl };
   });
 
-  app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async () => {
-    return { todo: true };
+  app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async (request) => {
+    const body = request.body as Record<string, string>;
+    const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
+    const updates: Array<Promise<void>> = [];
+    for (const key of allowedKeys) {
+      if (key in body) {
+        updates.push(setAppConfig(pool, key, body[key]));
+      }
+    }
+    await Promise.all(updates);
+    const [digestTime, timezone, webhookUrl] = await Promise.all([
+      getAppConfig(pool, 'digest_time'),
+      getAppConfig(pool, 'timezone'),
+      getAppConfig(pool, 'webhook_url'),
+    ]);
+    return { digest_time: digestTime, timezone, webhook_url: webhookUrl };
   });
 
-  app.get('/api/v1/search', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+  // --- Search ---
+  app.get('/api/v1/search', { preHandler: [authPreHandler] }, async (request, reply) => {
+    const { q, limit: rawLimit } = request.query as { q?: string; limit?: string };
+    if (!q) {
+      return reply.code(400).send({ error: 'q query parameter is required' });
+    }
+    const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
+    const { rows: results } = await pool.query<SummaryRow>(
+      `SELECT * FROM summaries WHERE body ILIKE $1 ORDER BY created_at DESC LIMIT $2`,
+      [`%${q}%`, limit],
+    );
+    return { results };
   });
 
-  app.get('/api/v1/feed/:sourceId', { preHandler: [authPreHandler] }, async () => {
-    return { todo: true };
+  // --- Raw feed ---
+  app.get('/api/v1/feed/:sourceId', { preHandler: [authPreHandler] }, async (request) => {
+    const { sourceId } = request.params as { sourceId: string };
+    const { limit: rawLimit } = request.query as { limit?: string };
+    const limit = Math.min(Math.max(parseInt(rawLimit ?? '50', 10) || 50, 1), 200);
+    const { rows: items } = await pool.query<ItemRow>(
+      `SELECT * FROM items WHERE source_id = $1 ORDER BY timestamp DESC LIMIT $2`,
+      [sourceId, limit],
+    );
+    return { items };
   });
 
   app.post('/api/v1/chat', {
@@ -108,7 +200,10 @@ export async function createServer(
   });
 
   app.get('/api/v1/users', { preHandler: [authPreHandler, requireAdmin] }, async () => {
-    return { todo: true };
+    const { rows: users } = await pool.query<UserRow>(
+      `SELECT * FROM users ORDER BY created_at DESC`,
+    );
+    return { users };
   });
 
   // --- Static files (dashboard SPA) ---
