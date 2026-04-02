@@ -361,6 +361,7 @@ class TokenConnection {
       case 'RESUMED':
         this.log.info({ tokenIndex: this.tokenIndex }, 'session resumed');
         this.state.status = 'connected';
+        this.state.errorCount = 0;
         this.reconnectAttempt = 0;
         break;
       case 'MESSAGE_CREATE':

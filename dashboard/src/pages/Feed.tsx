@@ -81,7 +81,11 @@ export function Feed() {
       }
       const res = await apiFetch<{ items: FeedItem[] }>(url);
       if (mode === 'append') {
-        setItems((prev) => [...prev, ...res.items]);
+        setItems((prev) => {
+          const existingIds = new Set(prev.map((i) => i.id));
+          const newItems = res.items.filter((i: FeedItem) => !existingIds.has(i.id));
+          return [...prev, ...newItems];
+        });
       } else {
         setItems(res.items);
       }

@@ -255,7 +255,7 @@ async function updateDeliveryStatus(
   reportId: string,
   status: 'delivered' | 'failed',
 ): Promise<void> {
-  const deliveredAt = status === 'delivered' ? new Date().toISOString() : null;
+  const deliveredAt = status === 'delivered' ? Date.now() : null;
   await pool.query(
     `UPDATE reports SET delivery_status = $1, delivered_at = $2 WHERE id = $3`,
     [status, deliveredAt, reportId],

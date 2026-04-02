@@ -160,6 +160,7 @@ function DeliveryTab() {
   const [config, setConfig] = useState<Config | null>(null);
   const [webhookUrl, setWebhookUrl] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
 
@@ -172,12 +173,15 @@ function DeliveryTab() {
 
   const save = async () => {
     setSaving(true);
+    setError(null);
     try {
       await apiFetch('/config', {
         method: 'PATCH',
         body: JSON.stringify({ webhookUrl }),
       });
       setConfig((prev) => (prev ? { ...prev, webhookUrl } : prev));
+    } catch {
+      setError('Failed to save webhook configuration.');
     } finally {
       setSaving(false);
     }
@@ -200,6 +204,7 @@ function DeliveryTab() {
 
   return (
     <div className="space-y-6">
+      {error && <p className="text-red-400 text-sm font-body">{error}</p>}
       <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
         <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
           Webhook URL

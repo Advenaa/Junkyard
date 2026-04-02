@@ -16,6 +16,7 @@ interface LLM {
     maxTokens: number;
     stage: string;
   }): Promise<{ content: string }>;
+  wrapWithNonce(content: string): { wrapped: string; nonce: string };
 }
 
 // ── System prompt ────────────────────────────────────────────────────
@@ -323,13 +324,16 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
       'Sending pulse to LLM',
     );
 
+    // Wrap user message with nonce to defend against prompt injection
+    const { wrapped } = llm.wrapWithNonce(userMessage);
+
     // Call LLM
     let report: MarketReport;
     try {
       const result = await llm.call({
         model: config.models.sonnet,
         system: PULSE_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }],
+        messages: [{ role: 'user', content: wrapped }],
         maxTokens,
         stage: 'pulse',
       });
@@ -340,7 +344,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
         const retryResult = await llm.call({
           model: config.models.sonnet,
           system: PULSE_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userMessage }],
+          messages: [{ role: 'user', content: wrapped }],
           maxTokens,
           stage: 'pulse',
         });
