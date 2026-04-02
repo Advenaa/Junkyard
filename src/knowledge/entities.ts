@@ -241,6 +241,41 @@ export function createEntityManager(
               `Tier 3 resolved: ${canonical}`,
             );
           }
+
+          // Handle entities not returned by partial LLM response
+          for (const entity of stillUnresolved) {
+            if (entityIdMap.has(entity)) continue;
+
+            const canonical = entity.name.toLowerCase();
+            const newId = ulid();
+
+            await client.query(
+              `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
+               VALUES ($1, $2, $3, 'active', 0, $4, $4)
+               ON CONFLICT(name, type) DO NOTHING`,
+              [newId, canonical, entity.type, now],
+            );
+
+            const fetchResult = await client.query<{ id: string }>(
+              'SELECT id FROM entities WHERE name = $1 AND type = $2',
+              [canonical, entity.type],
+            );
+
+            const entityId = fetchResult.rows[0].id;
+            entityIdMap.set(entity, entityId);
+
+            await client.query(
+              `INSERT INTO entity_aliases (alias, context_key, entity_id)
+               VALUES ($1, '', $2)
+               ON CONFLICT (alias, context_key) DO NOTHING`,
+              [canonical, entityId],
+            );
+
+            log.info(
+              { name: canonical, entityId },
+              `Tier 3 fallback (partial LLM response): ${canonical}`,
+            );
+          }
         } else {
           // Fallback: create entities without LLM disambiguation
           for (const entity of stillUnresolved) {

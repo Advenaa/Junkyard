@@ -162,7 +162,11 @@ program
       await Promise.allSettled(pollPromises);
 
       // Run pre-summarizer on eligible items
-      await preSummarizer.run();
+      try {
+        await preSummarizer.run();
+      } catch (err: unknown) {
+        log.error({ err }, 'pre-summarizer failed');
+      }
 
       // Run summarizer batch for each source that has ready items
       const sourcesWithReady = await pool.query<{
@@ -220,34 +224,37 @@ program
     }
 
     async function onPulse(): Promise<void> {
-      const report = await pulse.runPulse();
+      let report = null;
+      try {
+        report = await pulse.runPulse();
+      } catch (err: unknown) {
+        log.error({ err }, 'pulse generation failed');
+        return;
+      }
       if (report) {
-        const latestReport = await getLatestReport(pool);
-        if (latestReport && latestReport.type === 'pulse') {
-          await delivery.deliver(latestReport);
+        try {
+          const latestReport = await getLatestReport(pool);
+          if (latestReport && latestReport.type === 'pulse') {
+            await delivery.deliver(latestReport);
+          }
+        } catch (err: unknown) {
+          log.error({ err }, 'pulse delivery failed');
         }
       }
     }
 
     async function onDaily(): Promise<void> {
-      // Run daily synthesis
-      const report = await synthesizer.runDaily();
-
-      // Run embed pipeline (must run before narrative detection needs embeddings)
-      await embedPipeline.run();
-
-      // Run narrative detection
-      await narrativeDetector.detectNarratives();
-
-      // Run entity decay
-      await decayManager.runDecay();
-
-      // Deliver daily report via webhook
+      let report = null;
+      try { report = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
+      try { await embedPipeline.run(); } catch (err: unknown) { log.error({ err }, 'embed pipeline failed'); }
+      try { await narrativeDetector.detectNarratives(); } catch (err: unknown) { log.error({ err }, 'narrative detection failed'); }
+      try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
+      // delivery only if report succeeded
       if (report) {
-        const latestReport = await getLatestReport(pool);
-        if (latestReport && latestReport.type === 'daily') {
-          await delivery.deliver(latestReport);
-        }
+        try {
+          const latestReport = await getLatestReport(pool);
+          if (latestReport && latestReport.type === 'daily') await delivery.deliver(latestReport);
+        } catch (err: unknown) { log.error({ err }, 'daily delivery failed'); }
       }
     }
 
@@ -352,7 +359,7 @@ async function updateSourceState(
     `INSERT INTO source_state (source, source_id, last_fetched_at, last_id, error_count)
      VALUES ($1, $2, $3, $4, 0)
      ON CONFLICT (source, source_id)
-     DO UPDATE SET last_fetched_at = $3, last_id = COALESCE($4, source_state.last_id), error_count = 0`,
+     DO UPDATE SET last_fetched_at = $3, last_id = COALESCE($4, source_state.last_id)`,
     [source, sourceId, lastFetchedAt, lastId],
   );
 }

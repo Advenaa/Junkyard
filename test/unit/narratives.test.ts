@@ -424,23 +424,40 @@ describe('createNarrativeDetector', () => {
 
   it('signal strength "fading" when growth rate <= 0.5', async () => {
     const dim = 10;
+
+    // Three well-separated deterministic clusters on orthogonal axes.
+    // Cluster A (3 pts): near [1,0,0,...] — this matches the prior narrative direction.
+    // Cluster B (3 pts): near [0,0,1,...] — far from prior.
+    // Cluster C (3 pts): near [0,0,0,0,1,...] — far from prior.
+    // Total = 9 (minimum for detection). maxK = floor(9/3) = 3, so k=3 is tested.
+    // The clusters are on completely different axes so k-means always separates them.
+
     const baseVec = new Array(dim).fill(0);
     baseVec[0] = 1;
-    // 9 points total but only 3 in the matching cluster direction
-    // We need a second cluster to have enough for k-means
-    const clusterA = Array.from({ length: 3 }, () => {
+
+    const clusterA = Array.from({ length: 3 }, (_, i) => {
       const v = [...baseVec];
-      v[1] = (Math.random() - 0.5) * 0.01;
+      v[1] = (i - 1) * 0.005; // tiny deterministic perturbation
       return v;
     });
-    const otherBase = new Array(dim).fill(0);
-    otherBase[2] = 1;
-    const clusterB = Array.from({ length: 6 }, () => {
-      const v = [...otherBase];
-      v[3] = (Math.random() - 0.5) * 0.01;
+
+    const bBase = new Array(dim).fill(0);
+    bBase[2] = 1;
+    const clusterB = Array.from({ length: 3 }, (_, i) => {
+      const v = [...bBase];
+      v[3] = (i - 1) * 0.005;
       return v;
     });
-    const vectors = [...clusterA, ...clusterB];
+
+    const cBase = new Array(dim).fill(0);
+    cBase[4] = 1;
+    const clusterC = Array.from({ length: 3 }, (_, i) => {
+      const v = [...cBase];
+      v[5] = (i - 1) * 0.005;
+      return v;
+    });
+
+    const vectors = [...clusterA, ...clusterB, ...clusterC];
     const buffers = vectors.map(vectorToBuffer);
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
@@ -449,7 +466,9 @@ describe('createNarrativeDetector', () => {
       sentiment: 0.3,
     }));
 
-    // Prior had 8 members, current cluster A has 3 -> growth = 0.375 <= 0.5 -> fading
+    // Prior had 8 members with same direction as cluster A.
+    // Current cluster A has 3 members -> growth = 3/8 = 0.375 <= 0.5 -> fading.
+    // Cosine similarity between cluster A centroid and prior centroid is ~1.0 (same axis).
     const { pool } = mockPool({
       summaryRows: rows,
       priorNarratives: [{

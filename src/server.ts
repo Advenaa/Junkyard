@@ -68,13 +68,21 @@ export async function createServer(
     reply.header('X-Frame-Options', 'DENY');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
   });
 
   // --- Health ---
   app.get('/api/v1/health', async (_request, reply) => {
-    const { checks, healthy } = await healthMonitor.getStatus();
-    reply.code(healthy ? 200 : 503);
-    return { status: healthy ? 'ok' : 'degraded', checks };
+    try {
+      const { checks, healthy } = await healthMonitor.getStatus();
+      reply.code(healthy ? 200 : 503);
+      return { status: healthy ? 'ok' : 'degraded', checks };
+    } catch (err) {
+      log.error({ err }, 'Health check failed');
+      reply.code(503);
+      return { status: 'error', checks: {} };
+    }
   });
 
   // --- Reports ---
@@ -190,7 +198,11 @@ export async function createServer(
     if (!chatHandler) {
       return reply.code(501).send({ error: 'Chat not available' });
     }
-    const { query, conversationId } = request.body as { query: string; conversationId?: string };
+    const body = request.body;
+    if (!body || typeof body !== 'object') {
+      return reply.code(400).send({ error: 'Invalid request body' });
+    }
+    const { query, conversationId } = body as { query: string; conversationId?: string };
     if (!query || typeof query !== 'string') {
       return reply.code(400).send({ error: 'query is required' });
     }
@@ -216,6 +228,12 @@ export async function createServer(
   await app.register(fastifyStatic, {
     root: dashboardRoot,
     prefix: '/',
+  });
+
+  // --- Global error handler ---
+  app.setErrorHandler(async (error, request, reply) => {
+    log.error({ err: error, url: request.url, method: request.method }, 'Unhandled route error');
+    reply.code(500).send({ error: 'Internal server error' });
   });
 
   // SPA catch-all for client-side routing
