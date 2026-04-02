@@ -90,7 +90,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
     }
 
     const coins = (await response.json()) as CoinGeckoEntry[];
-    const now = new Date().toISOString();
+    const now = Date.now();
     let seeded = 0;
 
     for (const coin of coins) {
@@ -141,7 +141,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
   }
 
   async function seedIndonesian(): Promise<number> {
-    const now = new Date().toISOString();
+    const now = Date.now();
     let seeded = 0;
 
     for (const entity of INDONESIAN_ENTITIES) {

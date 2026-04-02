@@ -23,9 +23,7 @@ export function createDecayManager(pool: Pool, log: Logger): DecayManager {
     const decayed = decayResult.rowCount ?? 0;
 
     // Archive entities with negligible relevance not seen in 90 days
-    const cutoff = new Date(
-      Date.now() - 90 * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
 
     const archiveResult = await pool.query(
       `UPDATE entities SET status = 'archived'

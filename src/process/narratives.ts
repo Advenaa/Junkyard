@@ -172,7 +172,7 @@ export function createNarrativeDetector(
        JOIN summaries s ON s.id = e.target_id
        WHERE e.target_type = 'summary'
          AND s.created_at >= $1 AND s.created_at < $2`,
-      [startOfDay.toISOString(), endOfDay.toISOString()],
+      [startOfDay.getTime(), endOfDay.getTime()],
     );
 
     // Step b: Skip if < 9 summaries
