@@ -1,0 +1,22 @@
+{
+  "name": "podders",
+  "version": "2.0.0",
+  "description": "24/7 market intelligence engine for crypto/DeFi and tradfi",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts -- run",
+    "start": "node dist/index.js run",
+    "test": "node --test",
+    "migrate": "node dist/index.js migrate"
+  },
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  }
+}
