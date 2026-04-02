@@ -135,6 +135,22 @@ function silhouetteScore(
   return counted === 0 ? 0 : totalSilhouette / counted;
 }
 
+/** Get the epoch timestamp for midnight of a given YYYY-MM-DD date in a timezone. */
+function midnightEpoch(dateStr: string, tz: string): number {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // What hour is it in the target TZ when it's 00:00 UTC on this date?
+  const tzHour = parseInt(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: 'numeric',
+      hour12: false,
+    }).format(new Date(Date.UTC(y, m - 1, d, 0, 0, 0))),
+    10,
+  );
+  // If tz is UTC+7, tzHour = 7, so midnight local = 00:00 UTC - 7h
+  return Date.UTC(y, m - 1, d) - tzHour * 3_600_000;
+}
+
 function computeCentroid(points: number[][]): number[] {
   if (points.length === 0) return [];
   const dim = points[0].length;
@@ -163,21 +179,19 @@ export function createNarrativeDetector(
       return [];
     }
 
-    // Compute yesterday's date range
+    // Compute yesterday's date range in configured timezone (SL-013 fix)
+    const tzResult = await pool.query<{ value: string }>(
+      "SELECT value FROM app_config WHERE key = 'timezone'",
+    );
+    const timezone = tzResult.rows[0]?.value ?? 'Asia/Jakarta';
+
     const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const startOfDay = new Date(
-      yesterday.getFullYear(),
-      yesterday.getMonth(),
-      yesterday.getDate(),
-    );
-    const endOfDay = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-    );
-    const dateStr = startOfDay.toISOString().slice(0, 10);
+    const todayStr = now.toLocaleDateString('en-CA', { timeZone: timezone });
+    const yesterdayStr = new Date(now.getTime() - 86_400_000).toLocaleDateString('en-CA', { timeZone: timezone });
+    const dateStr = yesterdayStr;
+
+    const startOfDay = new Date(midnightEpoch(yesterdayStr, timezone));
+    const endOfDay = new Date(midnightEpoch(todayStr, timezone));
 
     // Step a: Load summary embeddings
     const { rows } = await pool.query<SummaryRow>(
@@ -245,9 +259,7 @@ export function createNarrativeDetector(
     }
 
     // Step h: Load prior day's narratives for signal strength comparison
-    const priorDate = new Date(startOfDay);
-    priorDate.setDate(priorDate.getDate() - 1);
-    const priorDateStr = priorDate.toISOString().slice(0, 10);
+    const priorDateStr = new Date(now.getTime() - 2 * 86_400_000).toLocaleDateString('en-CA', { timeZone: timezone });
 
     const { rows: priorNarratives } = await pool.query<NarrativeRow>(
       'SELECT * FROM narratives WHERE date = $1',

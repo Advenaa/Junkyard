@@ -54,7 +54,7 @@ export async function createServer(
   await app.register(
     async (scope) => {
       await scope.register(rateLimit, { max: 5, timeWindow: '1 minute' });
-      registerOAuthRoutes(scope, pool, log, config, authPreHandler);
+      registerOAuthRoutes(scope, pool, log, config, authPreHandler, sessionManager);
     },
     { prefix: '' },
   );

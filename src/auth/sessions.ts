@@ -17,6 +17,31 @@ export const MAX_SESSIONS_PER_USER = 5;
 export const SESSION_LIFETIME_DAYS = 30;
 export const SLIDING_REFRESH_HOURS = 24;
 
+/** Extract a stable browser fingerprint from User-Agent, ignoring version numbers.
+ *  e.g. "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/124.0" → "mac/chrome"
+ */
+function normalizeUA(ua: string): string {
+  const lower = ua.toLowerCase();
+
+  // Detect OS
+  let os = 'unknown';
+  if (lower.includes('windows')) os = 'win';
+  else if (lower.includes('macintosh') || lower.includes('mac os')) os = 'mac';
+  else if (lower.includes('linux')) os = 'linux';
+  else if (lower.includes('android')) os = 'android';
+  else if (lower.includes('iphone') || lower.includes('ipad')) os = 'ios';
+
+  // Detect browser (order matters — check specific before generic)
+  let browser = 'unknown';
+  if (lower.includes('firefox')) browser = 'firefox';
+  else if (lower.includes('edg/') || lower.includes('edge')) browser = 'edge';
+  else if (lower.includes('opr/') || lower.includes('opera')) browser = 'opera';
+  else if (lower.includes('chrome') && !lower.includes('edg')) browser = 'chrome';
+  else if (lower.includes('safari') && !lower.includes('chrome')) browser = 'safari';
+
+  return `${os}/${browser}`;
+}
+
 export function createSessionManager(pool: Pool, log: Logger): SessionManager {
   return {
     async create(
@@ -94,7 +119,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       }
 
       // User-Agent mismatch — likely session hijacking, invalidate immediately
-      if (row.user_agent && userAgent && row.user_agent !== userAgent) {
+      if (row.user_agent && userAgent && normalizeUA(row.user_agent) !== normalizeUA(userAgent)) {
         log.warn(
           {
             sessionId,

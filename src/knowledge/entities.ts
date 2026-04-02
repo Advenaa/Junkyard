@@ -69,7 +69,7 @@ export function createEntityManager(
 
       // ── Tier 1: Alias lookup ────────────────────────────────────────────
       for (const entity of entities) {
-        const canonical = entity.name.toLowerCase();
+        const canonical = normalizeAlias(entity.name);
 
         const aliasResult = await client.query<{ entity_id: string }>(
           'SELECT entity_id FROM entity_aliases WHERE alias = $1',
@@ -131,7 +131,7 @@ export function createEntityManager(
         }
 
         for (const entity of unresolvedEntities) {
-          const canonical = entity.name.toLowerCase();
+          const canonical = normalizeAlias(entity.name);
           const matched = coOccurMap.get(canonical);
 
           if (matched) {
@@ -210,7 +210,7 @@ export function createEntityManager(
 
             // Create new entity
             const newId = ulid();
-            const canonical = item.name.toLowerCase();
+            const canonical = normalizeAlias(item.name);
 
             await client.query(
               `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
@@ -246,7 +246,7 @@ export function createEntityManager(
           for (const entity of stillUnresolved) {
             if (entityIdMap.has(entity)) continue;
 
-            const canonical = entity.name.toLowerCase();
+            const canonical = normalizeAlias(entity.name);
             const newId = ulid();
 
             await client.query(
@@ -279,7 +279,7 @@ export function createEntityManager(
         } else {
           // Fallback: create entities without LLM disambiguation
           for (const entity of stillUnresolved) {
-            const canonical = entity.name.toLowerCase();
+            const canonical = normalizeAlias(entity.name);
             const newId = ulid();
 
             await client.query(

@@ -26,6 +26,22 @@ export function createHealthMonitor(
   log: Logger,
   config: Config,
 ): HealthMonitor {
+  async function checkDbConnectivity(): Promise<HealthCheckResult> {
+    try {
+      const start = Date.now();
+      await pool.query('SELECT 1');
+      const latencyMs = Date.now() - start;
+
+      if (latencyMs > 5000) {
+        return { name: 'db_connectivity', status: 'warn', message: `DB responding but slow (${latencyMs}ms)` };
+      }
+      return { name: 'db_connectivity', status: 'ok', message: `DB responsive (${latencyMs}ms)` };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { name: 'db_connectivity', status: 'critical', message: `DB unreachable: ${msg}` };
+    }
+  }
+
   async function checkSourceSilence(): Promise<HealthCheckResult> {
     const { rows } = await pool.query<{
       label: string | null;
@@ -261,6 +277,7 @@ export function createHealthMonitor(
 
   async function runChecks(): Promise<HealthCheckResult[]> {
     const results = await Promise.all([
+      checkDbConnectivity(),
       checkSourceSilence(),
       checkSourceDisabled(),
       checkLlmFailures(),

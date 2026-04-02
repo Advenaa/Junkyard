@@ -47,7 +47,9 @@ export function requireAuth(
         // Admin override from config
         const role = config.adminUserIds.includes(session.discordId)
           ? 'admin'
-          : session.role;
+          : session.role === 'admin'
+            ? 'viewer'  // Revoke admin if not in ADMIN_USER_IDS
+            : session.role;
 
         request.user = {
           discordId: session.discordId,

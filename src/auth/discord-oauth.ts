@@ -30,9 +30,9 @@ export function registerOAuthRoutes(
   pool: Pool,
   log: Logger,
   config: Config,
-  authPreHandler?: PreHandler,
+  authPreHandler: PreHandler | undefined,
+  sessionManager: ReturnType<typeof createSessionManager>,
 ): void {
-  const sessionManager = createSessionManager(pool, log);
 
   // --- GET /api/v1/auth/discord ---
   app.get('/api/v1/auth/discord', async (request, reply) => {
@@ -47,7 +47,7 @@ export function registerOAuthRoutes(
     reply.setCookie('oauth_state', state, {
       httpOnly: true,
       signed: true,
-      secure: true,
+      secure: config.publicUrl?.startsWith('https') ?? false,
       sameSite: 'lax',
       path: '/',
       maxAge: 10 * 60, // 10 minutes
@@ -208,7 +208,7 @@ export function registerOAuthRoutes(
     reply.setCookie('podders_session', sessionId, {
       httpOnly: true,
       signed: true,
-      secure: true,
+      secure: config.publicUrl?.startsWith('https') ?? false,
       sameSite: 'lax',
       path: '/',
       maxAge: 30 * 24 * 60 * 60, // 30 days
