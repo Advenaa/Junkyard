@@ -14,7 +14,7 @@ Four embedding targets, in priority order:
 |--------|-----------|------|-----|
 | **Summaries** | `summaries.body` JSON stringified (the ChunkSummary text, not metadata) | After Stage 1 | Primary search surface. 12-30 per day, low volume, high value. |
 | **Items** | `items.content` (raw post/article text, post-truncation) | During Stage 0 normalize | Semantic dedup, similar-item detection, topic clustering. High volume. |
-| **Entities** | `entities.name + type + description` (description extracted from first meaningful mention) | On entity creation/update | Entity disambiguation ("Mercury" token vs "Mercury" company). Low volume. |
+| **Entities** | `entities.name + type + description` (description extracted from first meaningful mention) | On entity creation/update | Entity disambiguation ("Mercury" token vs "Mercury" company). Low volume. `[PLANNED — not yet implemented]` |
 | **Reports** | `reports.tldr + key_events` (extracted from body JSON) | After Stage 3 | Report search ("what happened the week of the ETH ETF?"). 1-2 per day. |
 
 **What does NOT get embedded**: raw metadata fields, author names, URLs,
@@ -130,7 +130,7 @@ Item arrives
     → after Haiku returns: embed the summary text
     → write BYTEA to embeddings table
 
-Entity created/updated
+Entity created/updated                    [PLANNED — not yet implemented]
   → embed entity description
   → write/replace BYTEA
 
@@ -147,8 +147,9 @@ Do NOT embed one-at-a-time. The Gemini embeddings API accepts batch requests.
   un-embedded items (`LEFT JOIN embeddings ... WHERE embeddings.id IS NULL`),
   batch into groups of 100, call API. At 5K items/day, that is ~21 items per
   15-min window — one API call per cycle.
-- **Summaries/reports/entities**: embed immediately after creation. Volume is
-  low enough (1-30 per cycle) to embed inline without batching.
+- **Summaries/reports/entities**: batched together with items in a single
+  `run()` call. All three types are processed through the same batch pipeline,
+  not embedded inline individually.
 
 ### Failure Handling
 
@@ -270,9 +271,9 @@ or replaced. The pipeline becomes:
 Sources → Ingest → Normalize (Stage 0) → Embed (new) → Process → Knowledge → Surface
                                             |
                                             ├─ item vectors (async, batched)
-                                            ├─ summary vectors (inline, after Stage 1)
-                                            ├─ entity vectors (inline, on create/update)
-                                            └─ report vectors (inline, after Stage 3)
+                                            ├─ summary vectors (batched, after Stage 1)
+                                            ├─ entity vectors (PLANNED — not yet implemented)
+                                            └─ report vectors (batched, after Stage 3)
 ```
 
 ### What Changes

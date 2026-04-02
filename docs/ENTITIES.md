@@ -207,34 +207,44 @@ For non-seeded entities, the LLM's `aliases` array in Stage 1 output builds the 
 
 Handles ~95% of entities instantly.
 
-### Tier 2: Context-Based Disambiguation (free)
+### Tier 2: Co-occurrence Graph Lookup (free)
 
-When an alias maps to multiple candidates, check co-occurring entities from the same chunk as free context signal. Look up which entities appear alongside each candidate in recent summaries (via entity_mentions + summaries tables):
+Triggered when an entity has **no alias match at all** (not when multiple candidates exist). If other entities from the same batch already resolved at Tier 1, Tier 2 uses those resolved entities to search the co-occurrence graph for the unknown name.
+
+The algorithm queries `entity_aliases` joined with `entity_mentions` to find all aliases that have historically appeared alongside the already-resolved entities (i.e., shared a `summary_id`). This builds a map of alias-to-entity-ID pairs. Each unresolved entity's lowercased name is then looked up in that map with a single `Map.get()` call -- no scoring, no threshold.
 
 ```typescript
-if (alias.candidates.length > 1) {
-  const coEntities = context; // other entity names from same chunk
-  for (const candidate of alias.candidates) {
-    // Find entities that co-occur with this candidate in recent summaries
-    const coOccurring = await db.query(`
-      SELECT DISTINCT e.name FROM entity_mentions em1
-      JOIN entity_mentions em2 ON em1.summary_id = em2.summary_id
-      JOIN entities e ON e.id = em2.entity_id
-      WHERE em1.entity_id = $1 AND em2.entity_id != $1
-      ORDER BY em1.summary_id DESC LIMIT 50
-    `, [candidate.id]);
-    const coOccurringNames = coOccurring.rows.map(r => r.name.toLowerCase());
-    const contextOverlap = coEntities.filter(e =>
-      coOccurringNames.includes(e.toLowerCase())
-    );
-    if (contextOverlap.length >= 2) {
-      return candidate; // context strongly suggests this candidate
+if (unresolvedEntities.length > 0 && resolvedIds.length > 0) {
+  // Find all aliases that co-occur with already-resolved entities
+  const coOccurring = await client.query(`
+    SELECT DISTINCT ea.alias, ea.entity_id
+    FROM entity_aliases ea
+    JOIN entity_mentions em ON em.entity_id = ea.entity_id
+    WHERE em.summary_id IN (
+      SELECT summary_id FROM entity_mentions WHERE entity_id = ANY($1)
+    )
+  `, [resolvedIds]);
+
+  const coOccurMap = new Map<string, string>();
+  for (const row of coOccurring.rows) {
+    coOccurMap.set(row.alias, row.entity_id);
+  }
+
+  for (const entity of unresolvedEntities) {
+    const canonical = entity.name.toLowerCase();
+    const matched = coOccurMap.get(canonical);
+
+    if (matched) {
+      resolvedIds.push(matched); // grows the resolved set for subsequent lookups
+      entityIdMap.set(entity, matched);
+    } else {
+      stillUnresolved.push(entity); // falls through to Tier 3
     }
   }
 }
 ```
 
-Example: "Wormhole" + co-occurring "bridge" + "exploit" = DeFi protocol Wormhole, not the game. DeepEL (Nov 2025) showed co-occurring entities resolve ambiguity for free.
+Example: a batch mentions "Wormhole" (no alias match) alongside "Solana" and "USDC" (both resolved at Tier 1). Tier 2 finds that the alias `wormhole` exists in the co-occurrence graph of Solana/USDC mentions and resolves it directly. If "Wormhole" does not appear in the graph, it falls through to Tier 3.
 
 ### Tier 3: Batched LLM Disambiguation (~$0.01/day)
 

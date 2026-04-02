@@ -72,7 +72,8 @@ interface MessageCreateData {
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 
 const FATAL_CLOSE_CODES: ReadonlySet<number> = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
-const RESUMABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4000, 4001, 4002, 4003, 4009, 1001]);
+// 4005 = Already authenticated (resumable)
+const RESUMABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4000, 4001, 4002, 4003, 4005, 4009, 1001]);
 const NON_RESUMABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4007, 4008, 1000]);
 
 const MAX_BACKOFF_MS = 60_000;

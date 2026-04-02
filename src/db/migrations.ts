@@ -316,6 +316,12 @@ const migrations: Migration[] = [
         CHECK (role IN ('admin', 'viewer', 'blocked'))
     `);
   },
+
+  // Migration 6: Drop redundant idx_embeddings_target (L-028)
+  // The UNIQUE(target_type, target_id) constraint on embeddings already creates an auto-index
+  async (client) => {
+    await client.query(`DROP INDEX IF EXISTS idx_embeddings_target`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

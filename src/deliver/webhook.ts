@@ -47,6 +47,7 @@ const EMBED_COLORS: Record<string, number> = {
 };
 
 const MAX_RETRIES = 3;
+const MAX_RATE_LIMIT_RETRIES = 5;
 const BACKOFF_MS = [2000, 8000, 32000];
 
 export function truncate(text: string, max: number): string {
@@ -185,12 +186,14 @@ async function postWithRetry(
   payload: string,
   log: Logger,
 ): Promise<boolean> {
+  let rateLimitCount = 0;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const response = await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: payload,
+        signal: AbortSignal.timeout(15_000),
       });
 
       if (response.ok) {
@@ -198,15 +201,24 @@ async function postWithRetry(
       }
 
       if (response.status === 429) {
+        rateLimitCount++;
+        if (rateLimitCount >= MAX_RATE_LIMIT_RETRIES) {
+          log.error(
+            { rateLimitCount },
+            'webhook rate limited too many times, giving up',
+          );
+          return false;
+        }
         const retryAfterHeader = response.headers.get('Retry-After');
         const retryAfterMs = retryAfterHeader
           ? Math.ceil(parseFloat(retryAfterHeader) * 1000)
           : BACKOFF_MS[attempt] ?? 32000;
         log.warn(
-          { status: 429, retryAfterMs, attempt: attempt + 1 },
+          { status: 429, retryAfterMs, attempt: attempt + 1, rateLimitCount },
           'webhook rate limited, waiting before retry',
         );
         await sleep(retryAfterMs);
+        attempt--; // Don't consume retry budget for rate limits
         continue;
       }
 

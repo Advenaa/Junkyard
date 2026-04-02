@@ -210,17 +210,14 @@ function mapToRawItem(event: MessageCreate): RawItem | null {
     url: `https://discord.com/channels/${d.guild_id}/${d.channel_id}/${d.id}`,
     engagement: 0,  // Discord has no engagement signal at creation time
     metadata: {
-      guildId: d.guild_id,
-      authorId: d.author.id,
+      guildId: d.guild_id ?? null,
       messageId: d.id,
-      hasEmbeds: d.embeds.length > 0,
-      hasAttachments: d.attachments.length > 0,
-      isReply: d.type === 19,
-      replyToId: d.referenced_message?.id ?? null,
-      // Store Discord CDN URLs for image attachments (used by raw feed view)
-      imageUrls: d.attachments
-        .filter((a: any) => a.content_type?.startsWith('image/'))
-        .map((a: any) => a.url),
+      imageUrls,                        // filtered earlier from attachments
+      // [PLANNED] authorId: d.author.id,
+      // [PLANNED] hasEmbeds: d.embeds.length > 0,
+      // [PLANNED] hasAttachments: d.attachments.length > 0,
+      // [PLANNED] isReply: d.type === 19,
+      // [PLANNED] replyToId: d.referenced_message?.id ?? null,
     }
   }
 }
@@ -229,10 +226,10 @@ function mapToRawItem(event: MessageCreate): RawItem | null {
 ### Content Construction
 
 `buildContent(d)` concatenates with `\n`:
-1. `d.content` (main text)
-2. Reply context: `[replying to {author}: {content.slice(0, 200)}]` from `d.referenced_message`
-3. Embed signal: `embed.description` (or `embed.title` if no description). Many alpha channels use bot embeds for structured data.
-4. Attachment markers: `[attachment: {filename}]` -- filenames only, no binary fetch.
+1. Reply context: `> {referenced_message.content.slice(0, 200)}` (blockquote style, no author prefix)
+2. `d.content` (main text)
+3. Embed descriptions: `embed.description` for each embed (skips embeds without a description; does **not** fall back to `embed.title`)
+4. ~~Attachment markers~~ — not implemented. Attachment URLs are stored separately on the RawItem (`attachments` field), not inlined into `content`.
 
 Image attachment URLs (Discord CDN) are stored in `metadata.imageUrls` for display in the raw feed dashboard view. These are not included in `content` sent to the LLM -- they are visual-only data surfaced to the user.
 
@@ -343,7 +340,7 @@ on_close(code):
 
 Reset `token.errorCount = 0` after a successful READY or RESUMED event. This prevents transient network issues from accumulating toward the disable threshold.
 
-## 7. Channel Discovery
+## 7. Channel Discovery [PLANNED — not yet implemented]
 
 ### Purpose
 

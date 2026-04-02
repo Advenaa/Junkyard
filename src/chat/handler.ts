@@ -177,11 +177,11 @@ export function createChatHandler(
     let rounds = 0;
     let finalResponse = '';
 
+    const toolDefsText = JSON.stringify(TOOL_DEFINITIONS);
+    const systemWithTools = `${SYSTEM_PROMPT}\n\nTool definitions:\n${toolDefsText}\n\nTo use a tool, respond with a <tool_call> block containing JSON with "name" and "args". You may use multiple tool calls. When you have enough information, respond with your final answer as plain text (no tool_call blocks).`;
+
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
-
-      const toolDefsText = JSON.stringify(TOOL_DEFINITIONS, null, 2);
-      const systemWithTools = `${SYSTEM_PROMPT}\n\nTool definitions:\n${toolDefsText}\n\nTo use a tool, respond with a <tool_call> block containing JSON with "name" and "args". You may use multiple tool calls. When you have enough information, respond with your final answer as plain text (no tool_call blocks).`;
 
       const result = await llm.call({
         model: config.models.sonnet,

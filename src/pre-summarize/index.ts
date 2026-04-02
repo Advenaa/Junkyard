@@ -108,7 +108,7 @@ export function createPreSummarizer(
 ) {
   async function run(): Promise<number> {
     const { rows } = await pool.query<Item>(
-      `SELECT * FROM items WHERE status = 'ready' AND source IN ('rss', 'news') AND LENGTH(content) > 4000`,
+      `SELECT id, source, content FROM items WHERE status = 'ready' AND source IN ('rss', 'news') AND LENGTH(content) > 4000 LIMIT 100`,
     );
 
     const eligible = rows.filter(item => !shouldSkip(item));
