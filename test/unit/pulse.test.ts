@@ -1,0 +1,432 @@
+import { describe, it, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import { createPulse } from '../../src/process/pulse.js';
+import { MarketReportLLMSchema } from '../../src/process/schemas.js';
+
+// ── Stubs ───────────────────────────────────────────────────────────
+
+const noopLog = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+  fatal: () => {},
+  child: () => noopLog,
+} as any;
+
+const baseConfig = {
+  models: { haiku: 'haiku-test', sonnet: 'sonnet-test' },
+} as any;
+
+// ── Helpers ─────────────────────────────────────────────────────────
+
+function makeValidReport() {
+  return {
+    tldr: 'Market is quiet today, nothing major.',
+    keyEvents: ['BTC sideways', 'ETH gas low'],
+    entitySentiment: [
+      { name: 'Bitcoin', sentiment: 0.2, reason: 'Stable price action' },
+      { name: 'Ethereum', sentiment: -0.1, reason: 'Slight dip' },
+    ],
+    sections: [{ title: 'Crypto', body: 'All quiet on the western front.' }],
+    newProjects: [],
+  };
+}
+
+function makeSummaryBody(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    summary: 'Bitcoin trading sideways around 60k with low volume.',
+    urgency: 'routine',
+    entities: [
+      { name: 'Bitcoin', type: 'token', sentiment: 0.3, mentionCount: 5 },
+    ],
+    keyEvents: ['BTC consolidation'],
+    confidence: 7,
+    ...overrides,
+  });
+}
+
+function makeSummaryRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'summary-1',
+    source: 'discord',
+    source_id: 'defi-general',
+    window_start: Date.now() - 2 * 60 * 60 * 1000,
+    window_end: Date.now() - 1 * 60 * 60 * 1000,
+    body: makeSummaryBody(),
+    sentiment: 0.3,
+    urgency: 'routine',
+    item_count: 10,
+    created_at: Date.now() - 1 * 60 * 60 * 1000,
+    ...overrides,
+  };
+}
+
+/** Build a mock pool that returns configurable query results. */
+function makePool(opts: {
+  summaries?: any[];
+  priorPulse?: any[];
+  existingPulse?: any[];
+  appConfig?: any[];
+} = {}) {
+  return {
+    query: async (sql: string, _params?: any[]) => {
+      // getSummariesByTimeWindow: SELECT * FROM summaries WHERE created_at >= $1 ...
+      if (sql.includes('FROM summaries')) {
+        return { rows: opts.summaries ?? [] };
+      }
+      // getPriorPulse: SELECT body FROM reports WHERE type = 'pulse' ORDER BY created_at DESC LIMIT 1
+      if (sql.includes("type = 'pulse'") && sql.includes('ORDER BY')) {
+        return { rows: opts.priorPulse ?? [] };
+      }
+      // Duplicate guard: SELECT id FROM reports WHERE type = 'pulse' AND created_at > $1 LIMIT 1
+      if (sql.includes("type = 'pulse'") && sql.includes('created_at >')) {
+        return { rows: opts.existingPulse ?? [] };
+      }
+      // getAppConfig: SELECT value FROM app_config WHERE key = $1
+      if (sql.includes('app_config')) {
+        return { rows: opts.appConfig ?? [{ value: 'Asia/Jakarta' }] };
+      }
+      // insertReport: INSERT INTO reports ...
+      if (sql.includes('INSERT INTO reports')) {
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  } as any;
+}
+
+function makeLlm(reportOverrides: Record<string, unknown> = {}) {
+  const report = { ...makeValidReport(), ...reportOverrides };
+  return {
+    call: async () => ({ content: JSON.stringify(report) }),
+    wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+  };
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// All pulse tests — sequential to avoid Date.now() concurrency issues
+// ═════════════════════════════════════════════════════════════════════
+
+describe('pulse', { concurrency: 1 }, () => {
+
+// ═════════════════════════════════════════════════════════════════════
+// MarketReportLLMSchema validation
+// ═════════════════════════════════════════════════════════════════════
+
+describe('MarketReportLLMSchema', () => {
+  it('accepts a valid market report', () => {
+    const result = MarketReportLLMSchema.safeParse(makeValidReport());
+    assert.ok(result.success);
+  });
+
+  it('defaults optional arrays to empty', () => {
+    const result = MarketReportLLMSchema.safeParse({ tldr: 'Short update.' });
+    assert.ok(result.success);
+    assert.deepStrictEqual(result.data!.keyEvents, []);
+    assert.deepStrictEqual(result.data!.entitySentiment, []);
+    assert.deepStrictEqual(result.data!.sections, []);
+    assert.deepStrictEqual(result.data!.newProjects, []);
+  });
+
+  it('rejects sentiment outside -1 to 1', () => {
+    const report = makeValidReport();
+    report.entitySentiment = [{ name: 'BTC', sentiment: 1.5, reason: 'Too high' }];
+    const result = MarketReportLLMSchema.safeParse(report);
+    assert.ok(!result.success);
+  });
+
+  it('caps keyEvents at max 10', () => {
+    const report = makeValidReport();
+    report.keyEvents = Array.from({ length: 11 }, (_, i) => `Event ${i}`);
+    const result = MarketReportLLMSchema.safeParse(report);
+    assert.ok(!result.success);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// runPulse — no summaries (quality gate)
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — quality gates', () => {
+  it('returns null when no summaries exist in the window', async () => {
+    const pool = makePool({ summaries: [] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const result = await runPulse();
+    assert.equal(result, null);
+  });
+
+  it('returns null when all summaries fail to parse', async () => {
+    const badRow = makeSummaryRow({ body: 'not valid json at all' });
+    const pool = makePool({ summaries: [badRow] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const result = await runPulse();
+    assert.equal(result, null);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// runPulse — successful report generation
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — successful generation', () => {
+  it('returns a valid MarketReport on success', async () => {
+    const pool = makePool({ summaries: [makeSummaryRow()] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const result = await runPulse();
+    assert.ok(result !== null);
+    assert.ok(typeof result!.tldr === 'string');
+    assert.ok(Array.isArray(result!.keyEvents));
+    assert.ok(Array.isArray(result!.entitySentiment));
+    assert.ok(Array.isArray(result!.sections));
+  });
+
+  it('passes correct maxTokens to LLM based on summary count', async () => {
+    let capturedMaxTokens = 0;
+    const llm = {
+      call: async (params: any) => {
+        capturedMaxTokens = params.maxTokens;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    // 2 summaries, routine = 300 tokens
+    const rows = [makeSummaryRow({ id: 's1' }), makeSummaryRow({ id: 's2' })];
+    const pool = makePool({ summaries: rows });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+    assert.equal(capturedMaxTokens, 300);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Activity-scaled maxTokens
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — activity scaling', () => {
+  async function runWithSummaries(count: number, urgency = 'routine') {
+    let capturedMaxTokens = 0;
+    const llm = {
+      call: async (params: any) => {
+        capturedMaxTokens = params.maxTokens;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const rows = Array.from({ length: count }, (_, i) =>
+      makeSummaryRow({ id: `s${i}`, urgency }),
+    );
+    const pool = makePool({ summaries: rows });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+    return capturedMaxTokens;
+  }
+
+  it('uses 300 tokens for quiet periods (< 4 summaries, routine)', async () => {
+    const tokens = await runWithSummaries(2);
+    assert.equal(tokens, 300);
+  });
+
+  it('uses 800 tokens for moderate activity (4-10 summaries)', async () => {
+    const tokens = await runWithSummaries(5);
+    assert.equal(tokens, 800);
+  });
+
+  it('uses 1500 tokens for high activity (> 10 summaries)', async () => {
+    const tokens = await runWithSummaries(12);
+    assert.equal(tokens, 1500);
+  });
+
+  it('uses 1500 tokens when breaking urgency is present', async () => {
+    const tokens = await runWithSummaries(2, 'breaking');
+    assert.equal(tokens, 1500);
+  });
+
+  it('uses 800 tokens when elevated urgency is present (even with few summaries)', async () => {
+    const tokens = await runWithSummaries(2, 'elevated');
+    assert.equal(tokens, 800);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Prior pulse context
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — prior pulse handling', () => {
+  it('includes prior pulse tldr in the LLM prompt', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const priorBody = JSON.stringify({
+      tldr: 'Markets were bullish earlier.',
+      entitySentiment: [{ name: 'Bitcoin', sentiment: 0.8, reason: 'Rally' }],
+    });
+    const pool = makePool({
+      summaries: [makeSummaryRow()],
+      priorPulse: [{ body: priorBody }],
+    });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+    assert.ok(capturedMessage.includes('Markets were bullish earlier.'));
+  });
+
+  it('works correctly when no prior pulse exists', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const pool = makePool({ summaries: [makeSummaryRow()], priorPulse: [] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+    assert.ok(!capturedMessage.includes('prior_pulse_tldr'));
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Sentiment drift detection
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — sentiment drift', () => {
+  it('includes drift flags in prompt when entity sentiment shifts > 0.4', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    // Current summary has Bitcoin at 0.3
+    const summaryBody = makeSummaryBody({
+      entities: [{ name: 'Bitcoin', type: 'token', sentiment: -0.5, mentionCount: 3 }],
+    });
+    // Prior pulse had Bitcoin at 0.8 — delta of 1.3
+    const priorBody = JSON.stringify({
+      tldr: 'BTC pumping.',
+      entitySentiment: [{ name: 'Bitcoin', sentiment: 0.8, reason: 'Rally' }],
+    });
+
+    const pool = makePool({
+      summaries: [makeSummaryRow({ body: summaryBody })],
+      priorPulse: [{ body: priorBody }],
+    });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+    assert.ok(capturedMessage.includes('sentiment_drift'));
+    assert.ok(capturedMessage.includes('Bitcoin'));
+  });
+
+  it('does not include drift flags when sentiment change is small', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    // Current: Bitcoin at 0.3, Prior: Bitcoin at 0.2 — delta 0.1
+    const priorBody = JSON.stringify({
+      tldr: 'Stable.',
+      entitySentiment: [{ name: 'Bitcoin', sentiment: 0.2, reason: 'Stable' }],
+    });
+
+    const pool = makePool({
+      summaries: [makeSummaryRow()],
+      priorPulse: [{ body: priorBody }],
+    });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+    assert.ok(!capturedMessage.includes('sentiment_drift'));
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// LLM retry and error handling
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — LLM error handling', () => {
+  it('retries once on LLM parse failure and succeeds', async () => {
+    let callCount = 0;
+    const llm = {
+      call: async () => {
+        callCount++;
+        if (callCount === 1) return { content: 'not json' };
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const pool = makePool({ summaries: [makeSummaryRow()] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const result = await runPulse();
+    assert.ok(result !== null);
+    assert.equal(callCount, 2);
+  });
+
+  it('returns null after both LLM attempts fail', async () => {
+    const llm = {
+      call: async () => ({ content: 'garbage output' }),
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const pool = makePool({ summaries: [makeSummaryRow()] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const result = await runPulse();
+    assert.equal(result, null);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// Duplicate guard
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — duplicate guard', () => {
+  it('returns null if a pulse already exists in this 3-hour window', async () => {
+    const pool = makePool({
+      summaries: [makeSummaryRow()],
+      existingPulse: [{ id: 'existing-pulse-id' }],
+    });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const result = await runPulse();
+    assert.equal(result, null);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// LLM response parsing (code fence stripping)
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — code fence stripping', () => {
+  it('handles LLM response wrapped in code fences', async () => {
+    const report = makeValidReport();
+    const fencedContent = '```json\n' + JSON.stringify(report) + '\n```';
+    const llm = {
+      call: async () => ({ content: fencedContent }),
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const pool = makePool({ summaries: [makeSummaryRow()] });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const result = await runPulse();
+    assert.ok(result !== null);
+    assert.equal(result!.tldr, report.tldr);
+  });
+});
+
+}); // end describe('pulse')
