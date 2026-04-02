@@ -392,58 +392,68 @@ export function createSummarizer(
     // c. Chunk
     const chunks = chunkByTokens(items, CHUNK_TOKEN_BUDGET);
 
-    // d-g. Process each chunk, tracking success per chunk
+    // d-g. Process chunks with bounded concurrency (max 3 parallel)
+    const CHUNK_CONCURRENCY = 3;
     let summaryCount = 0;
     let hasBreaking = false;
     const succeededIds: string[] = [];
     const failedIds: string[] = [];
 
-    for (const chunk of chunks) {
+    async function handleChunk(chunk: ClaimedItem[]): Promise<void> {
       const chunkItemIds = chunk.map((item) => item.id);
 
-      try {
-        const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
+      const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
 
-        if (parsedResults.length === 0) {
-          failedIds.push(...chunkItemIds);
-          continue;
-        }
-
-        for (const parsed of parsedResults) {
-          if (parsed.urgency === 'breaking') {
-            hasBreaking = true;
-          }
-
-          // Calculate average sentiment from entities
-          const sentiments = parsed.entities.map((e) => e.sentiment);
-          const avgSentiment =
-            sentiments.length > 0
-              ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length
-              : null;
-
-          // g. Insert summary
-          await insertSummary(pool, {
-            id: ulid(),
-            source,
-            sourceId,
-            windowStart,
-            windowEnd,
-            body: JSON.stringify(parsed),
-            sentiment: avgSentiment,
-            urgency: parsed.urgency,
-            itemCount: chunk.length,
-            createdAt: Date.now(),
-          });
-
-          summaryCount++;
-        }
-        succeededIds.push(...chunkItemIds);
-      } catch (err: unknown) {
-        log.error(
-          { err, source, sourceId, chunkSize: chunk.length },
-          'Failed to process chunk, skipping',
-        );
+      if (parsedResults.length === 0) {
         failedIds.push(...chunkItemIds);
+        return;
+      }
+
+      for (const parsed of parsedResults) {
+        if (parsed.urgency === 'breaking') {
+          hasBreaking = true;
+        }
+
+        // Calculate average sentiment from entities
+        const sentiments = parsed.entities.map((e) => e.sentiment);
+        const avgSentiment =
+          sentiments.length > 0
+            ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length
+            : null;
+
+        // g. Insert summary
+        await insertSummary(pool, {
+          id: ulid(),
+          source,
+          sourceId,
+          windowStart,
+          windowEnd,
+          body: JSON.stringify(parsed),
+          sentiment: avgSentiment,
+          urgency: parsed.urgency,
+          itemCount: chunk.length,
+          createdAt: Date.now(),
+        });
+
+        summaryCount++;
+      }
+      succeededIds.push(...chunkItemIds);
+    }
+
+    for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
+      const group = chunks.slice(i, i + CHUNK_CONCURRENCY);
+      const results = await Promise.allSettled(group.map((chunk) => handleChunk(chunk)));
+
+      for (let j = 0; j < results.length; j++) {
+        if (results[j].status === 'rejected') {
+          const chunk = group[j];
+          const chunkItemIds = chunk.map((item) => item.id);
+          log.error(
+            { err: (results[j] as PromiseRejectedResult).reason, source, sourceId, chunkSize: chunk.length },
+            'Failed to process chunk, skipping',
+          );
+          failedIds.push(...chunkItemIds);
+        }
       }
     }
 

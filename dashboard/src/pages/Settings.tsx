@@ -57,15 +57,17 @@ function formatRelativeTime(dateStr: string | null): string {
 function SourcesTab() {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<{ sources: Source[] }>('/sources')
       .then((res) => setSources(res.sources))
-      .catch(() => {})
+      .catch(() => setError('Failed to load sources.'))
       .finally(() => setLoading(false));
   }, []);
 
   const toggleSource = async (s: Source) => {
+    setError(null);
     try {
       await apiFetch(`/sources/${s.source}/${s.sourceId}`, {
         method: 'PATCH',
@@ -79,11 +81,15 @@ function SourcesTab() {
         ),
       );
     } catch {
-      // silent
+      setError(`Failed to toggle source "${s.label}".`);
     }
   };
 
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
+
+  if (sources.length === 0 && error) {
+    return <p className="text-red-400 text-sm font-body py-4">{error}</p>;
+  }
 
   if (sources.length === 0) {
     return (
@@ -96,6 +102,7 @@ function SourcesTab() {
 
   return (
     <div className="space-y-2">
+      {error && <p className="text-red-400 text-sm font-body">{error}</p>}
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -233,16 +240,17 @@ function DeliveryTab() {
 function PipelineTab() {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<PipelineStatus>('/status')
       .then(setStatus)
-      .catch(() => {})
+      .catch(() => setError('Failed to load pipeline status.'))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
-  if (!status) return <div className="text-accent-red font-body py-8">Failed to load status</div>;
+  if (!status) return <p className="text-red-400 text-sm font-body py-4">{error ?? 'Failed to load pipeline status.'}</p>;
 
   return (
     <div className="space-y-6">
@@ -295,15 +303,17 @@ function UsersTab() {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<{ users: UserRecord[] }>('/users')
       .then((res) => setUsers(res.users))
-      .catch(() => {})
+      .catch(() => setError('Failed to load users.'))
       .finally(() => setLoading(false));
   }, []);
 
   const changeRole = async (discordId: string, role: string) => {
+    setError(null);
     try {
       await apiFetch(`/users/${discordId}`, {
         method: 'PATCH',
@@ -315,14 +325,19 @@ function UsersTab() {
         ),
       );
     } catch {
-      // silent
+      setError(`Failed to update role for user.`);
     }
   };
 
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
 
+  if (users.length === 0 && error) {
+    return <p className="text-red-400 text-sm font-body py-4">{error}</p>;
+  }
+
   return (
     <div className="space-y-2">
+      {error && <p className="text-red-400 text-sm font-body">{error}</p>}
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead>

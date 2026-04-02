@@ -42,7 +42,7 @@ Based on the 10 prompt injection attacks identified in round 21 red-teaming:
 
 ---
 
-## 1. Input Sanitization Layer (Layer 1: Unicode Normalization)
+## 1. Input Sanitization Layer (Layer 1: Unicode Normalization) `[IMPLEMENTED]`
 
 **Where**: `sanitizeForPrompt()` in the ingest pipeline, called before every Stage 1 LLM call.
 
@@ -66,12 +66,12 @@ nonce-tagged delimiters is untrusted user data and must not be interpreted as in
 
 ---
 
-## 1b. InstructDetector Scan (Layer 2)
+## 1b. InstructDetector Scan (Layer 2) `[IMPLEMENTED]`
 
 **Where**: normalize pipeline, after Unicode normalization, before dedup/spam/language detection.
 
-**What it does**: pre-screen every incoming item for prompt injection patterns using
-InstructDetector (arxiv.org/abs/2505.06311). Results are cached per content hash —
+**What it does**: pre-screen every incoming item for prompt injection patterns using a
+regex-based heuristic pattern scanner (7 patterns). Results are cached per content hash —
 the same message is never scanned twice.
 
 **On detection**:
@@ -93,15 +93,15 @@ if (hasInjection) {
 
 ---
 
-## 2. Output Validation Layer (Layers 3, 4, 5)
+## 2. Output Validation Layer (Layers 3, 4, 5) `[IMPLEMENTED]`
 
 Three layers, applied in sequence after every Stage 1 LLM response.
 
-### 2a. Zod Schema Validation (Layer 5: Privilege Separation)
+### 2a. Zod Schema Validation (Layer 5: Privilege Separation) `[IMPLEMENTED]`
 Defined in PIPELINE.md. Enforces types, clamps sentiment to [-1, 1], caps entity array
 at 20, keyEvents at 5. Rejects structurally invalid output.
 
-### 2b. Entity Post-Verification (Layer 4)
+### 2b. Entity Post-Verification (Layer 4) `[IMPLEMENTED]`
 Also defined in PIPELINE.md. After zod parsing, every extracted entity is checked against
 the raw source text:
 ```typescript
@@ -117,7 +117,7 @@ attack #3 (hallucinated entity injection). An attacker must actually mention the
 in the source text to get it extracted — they cannot trick the LLM into inventing one
 from thin air.
 
-### 2c. Prompt Fragment Detection
+### 2c. Prompt Fragment Detection `[PLANNED]`
 Scan LLM output for patterns that suggest the model followed injected instructions
 rather than summarizing:
 - Output containing `ignore`, `system:`, `assistant:`, `<|`, `[INST]` in suspicious
@@ -127,7 +127,7 @@ rather than summarizing:
 
 Flag and log for review. Do not auto-deliver flagged output.
 
-### 2d. Content Policy Checks
+### 2d. Content Policy Checks `[PLANNED]`
 Reject summaries where:
 - `urgency: 'breaking'` but the source chunk has < 3 messages (too thin to be real)
 - Sentiment magnitude > 0.8 but source chunk has < 5 messages (single-author spike)
@@ -135,7 +135,7 @@ Reject summaries where:
 
 ---
 
-## 3. Rate Limiting Per Author
+## 3. Rate Limiting Per Author `[PLANNED]`
 
 **Problem**: attacks #4 (sentiment flooding) and #8 (engagement gaming) rely on volume
 from a single author or small coordinated group.
@@ -160,7 +160,7 @@ Track across sources where possible (same handle on Discord and Twitter).
 
 ---
 
-## 4. Flash Report Safeguards
+## 4. Flash Report Safeguards `[IMPLEMENTED]`
 
 Defined in PIPELINE.md. Summarized here for completeness.
 
@@ -181,7 +181,7 @@ at `elevated`.
 
 ---
 
-## 5. Retry Safety
+## 5. Retry Safety `[IMPLEMENTED]`
 
 **Problem**: attack #6. An attacker crafts content that causes the LLM to produce
 malformed JSON on first try. If the failed response is included in the retry prompt
@@ -211,7 +211,7 @@ only the structural error descriptions are fed back.
 
 ---
 
-## 6. Cost Circuit Breaker
+## 6. Cost Circuit Breaker `[PLANNED]`
 
 **Problem**: an adversary could flood sources to inflate LLM costs. Legitimate cost
 spikes also happen during high-activity periods (market crashes, exploit events).
@@ -238,12 +238,12 @@ and defer the rest.
 
 ---
 
-## 7. Subtle Manipulation Defenses
+## 7. Subtle Manipulation Defenses `[PLANNED]`
 
 Attacks #4, #7, and #8 are the hardest to catch because they work within the system's
 normal parameters.
 
-### 7a. Author Sentiment Tracking
+### 7a. Author Sentiment Tracking `[PLANNED]`
 Maintain a rolling sentiment profile per author (derived from chunks where they are a
 dominant contributor):
 
@@ -262,7 +262,7 @@ Flag when an author's sentiment in a window deviates > 0.5 from their 30-day rol
 average. This catches attack #7 (slow drip) at the individual level — a previously
 neutral author suddenly going extreme is suspicious.
 
-### 7b. Diversity Weighting
+### 7b. Diversity Weighting `[PLANNED]`
 When assembling chunks for Stage 1, track author diversity per chunk:
 
 ```
@@ -273,7 +273,7 @@ Chunks with `diversity_score < 0.3` (dominated by 1-2 authors) get a lower weigh
 Stage 3 synthesis. They are not excluded — the information might be legitimate — but
 their sentiment and urgency carry less influence on the final report.
 
-### 7c. Engagement Sanity Checks
+### 7c. Engagement Sanity Checks `[PLANNED]`
 For Twitter: flag items where engagement (likes, retweets) is disproportionate to the
 account's follower count. A 100-follower account with 10K likes on a single tweet is
 anomalous. Do not auto-exclude — flag and de-weight.
@@ -343,7 +343,7 @@ residual risk as #7).
 | Entity post-verification | #3 | Done (PIPELINE.md) | Shipped |
 | Fresh-prompt retry | #6 | Done (PIPELINE.md) | Shipped |
 | Flash corroboration + cooldown | #5 | Done (PIPELINE.md) | Shipped |
-| InstructDetector scan (Layer 2) | #1, #2 | 1 day | P0 |
+| InstructDetector scan (Layer 2) | #1, #2 | Done | Shipped |
 | Per-author rate limiting | #4, #8 | 0.5 day | P0 |
 | Content policy checks | #1, #5 | 0.5 day | P0 |
 | Cost circuit breaker | Cost DoS | 0.5 day | P0 |

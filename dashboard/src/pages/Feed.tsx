@@ -40,6 +40,12 @@ export function Feed() {
   const [hasMore, setHasMore] = useState(true);
   const [live, setLive] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const itemsRef = useRef<FeedItem[]>([]);
+
+  // Keep itemsRef in sync for polling reads
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   // Load sources
   useEffect(() => {
@@ -53,12 +59,28 @@ export function Feed() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchItems = useCallback(
-    async (offset: number, append: boolean) => {
+    async (offset: number, mode: 'replace' | 'append' | 'prepend') => {
       if (!selectedSource) return;
-      const res = await apiFetch<{ items: FeedItem[] }>(
-        `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=${offset}`,
-      );
-      if (append) {
+      let url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=${offset}`;
+      if (mode === 'prepend') {
+        // For polling, only request items newer than the most recent item
+        const current = itemsRef.current;
+        const newestTs = current.length > 0 ? current[0].timestamp : null;
+        if (newestTs) {
+          url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=0&after=${encodeURIComponent(newestTs)}`;
+        }
+        const res = await apiFetch<{ items: FeedItem[] }>(url);
+        if (res.items.length > 0) {
+          setItems((prev) => {
+            const existingIds = new Set(prev.map((item) => item.id));
+            const newItems = res.items.filter((item) => !existingIds.has(item.id));
+            return newItems.length > 0 ? [...newItems, ...prev] : prev;
+          });
+        }
+        return;
+      }
+      const res = await apiFetch<{ items: FeedItem[] }>(url);
+      if (mode === 'append') {
         setItems((prev) => [...prev, ...res.items]);
       } else {
         setItems(res.items);
@@ -72,7 +94,7 @@ export function Feed() {
   useEffect(() => {
     if (!selectedSource) return;
     setLoading(true);
-    fetchItems(0, false).finally(() => setLoading(false));
+    fetchItems(0, 'replace').finally(() => setLoading(false));
   }, [selectedSource, fetchItems]);
 
   // Polling
@@ -84,7 +106,7 @@ export function Feed() {
 
     if (live && selectedSource) {
       intervalRef.current = setInterval(() => {
-        fetchItems(0, false);
+        fetchItems(0, 'prepend');
       }, 10_000);
     }
 
@@ -95,7 +117,7 @@ export function Feed() {
 
   const loadMore = async () => {
     setLoadingMore(true);
-    await fetchItems(items.length, true);
+    await fetchItems(items.length, 'append');
     setLoadingMore(false);
   };
 

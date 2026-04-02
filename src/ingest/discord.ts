@@ -164,12 +164,40 @@ function backoffMs(attempt: number): number {
 // Token connection manager
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Backpressure: bounded concurrency for onMessage pipeline entry
+// ---------------------------------------------------------------------------
+
+const MAX_CONCURRENT_MESSAGES = 5;
+
+async function withConcurrencyLimit<T>(
+  state: { active: number; queue: (() => void)[] },
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (state.active >= MAX_CONCURRENT_MESSAGES) {
+    await new Promise<void>((resolve) => state.queue.push(resolve));
+  }
+  state.active++;
+  try {
+    return await fn();
+  } finally {
+    state.active--;
+    const next = state.queue.shift();
+    if (next) next();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Token connection manager
+// ---------------------------------------------------------------------------
+
 class TokenConnection {
   private ws: WebSocket | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatAcked = true;
   private reconnectAttempt = 0;
   private destroyed = false;
+  private readonly concurrency = { active: 0, queue: [] as (() => void)[] };
 
   readonly state: TokenState;
 
@@ -418,7 +446,7 @@ class TokenConnection {
     };
 
     try {
-      await this.onMessage(rawItem);
+      await withConcurrencyLimit(this.concurrency, () => this.onMessage(rawItem));
     } catch (err: unknown) {
       this.log.error(
         { tokenIndex: this.tokenIndex, messageId: d.id, err },

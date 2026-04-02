@@ -267,50 +267,105 @@ export function createEntityManager(
         }
       }
 
-      // ── Insert aliases, update relevance, record mentions ───────────────
+      // ── Batched: aliases, relevance+last_seen, mentions ────────────────
       const sourceWeight = SOURCE_WEIGHTS[source] ?? 1.0;
+
+      // Collect all alias tuples for batch insert
+      const aliasTuples: { alias: string; entityId: string }[] = [];
+      // Collect entity IDs and relevance deltas for batch update
+      const updateIds: string[] = [];
+      const updateWeights: number[] = [];
+      // Collect mention rows for batch insert
+      const mentionRows: {
+        id: string;
+        entityId: string;
+        sentiment: number;
+        mentionCount: number;
+      }[] = [];
 
       for (const entity of entities) {
         const entityId = entityIdMap.get(entity);
         if (!entityId) continue;
 
-        // Insert additional aliases
         for (const alias of entity.aliases) {
           const normalizedAlias = alias.toLowerCase().replace(/^\$/, '');
-          await client.query(
-            `INSERT INTO entity_aliases (alias, context_key, entity_id)
-             VALUES ($1, '', $2)
-             ON CONFLICT DO NOTHING`,
-            [normalizedAlias, entityId],
-          );
+          aliasTuples.push({ alias: normalizedAlias, entityId });
         }
 
-        // Update last_seen
-        await client.query('UPDATE entities SET last_seen = $1 WHERE id = $2', [
-          now,
-          entityId,
-        ]);
-
-        // Update relevance with source weight
-        const relevanceDelta = Math.log(1 + entity.mentionCount) * sourceWeight;
-        await client.query(
-          'UPDATE entities SET relevance = relevance + $1 WHERE id = $2',
-          [relevanceDelta, entityId],
+        updateIds.push(entityId);
+        updateWeights.push(
+          Math.log(1 + entity.mentionCount) * sourceWeight,
         );
 
-        // Insert mention
+        mentionRows.push({
+          id: ulid(),
+          entityId,
+          sentiment: entity.sentiment,
+          mentionCount: entity.mentionCount,
+        });
+      }
+
+      // Batch alias INSERT (one multi-row query)
+      if (aliasTuples.length > 0) {
+        const aliasValues: string[] = [];
+        const aliasParams: unknown[] = [];
+        for (let i = 0; i < aliasTuples.length; i++) {
+          const offset = i * 3;
+          aliasValues.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3})`,
+          );
+          aliasParams.push(
+            aliasTuples[i].alias,
+            '',
+            aliasTuples[i].entityId,
+          );
+        }
         await client.query(
-          `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [
-            ulid(),
-            entityId,
+          `INSERT INTO entity_aliases (alias, context_key, entity_id)
+           VALUES ${aliasValues.join(', ')}
+           ON CONFLICT DO NOTHING`,
+          aliasParams,
+        );
+      }
+
+      // Batch relevance + last_seen UPDATE (one query using unnest)
+      if (updateIds.length > 0) {
+        await client.query(
+          `UPDATE entities
+           SET relevance = entities.relevance + data.weight,
+               last_seen = $1
+           FROM (
+             SELECT unnest($2::text[]) AS id,
+                    unnest($3::real[]) AS weight
+           ) data
+           WHERE entities.id = data.id`,
+          [now, updateIds, updateWeights],
+        );
+      }
+
+      // Batch mention INSERT (one multi-row query)
+      if (mentionRows.length > 0) {
+        const mentionValues: string[] = [];
+        const mentionParams: unknown[] = [];
+        for (let i = 0; i < mentionRows.length; i++) {
+          const offset = i * 7;
+          mentionValues.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`,
+          );
+          mentionParams.push(
+            mentionRows[i].id,
+            mentionRows[i].entityId,
             source,
             summaryId,
-            entity.sentiment,
-            entity.mentionCount,
+            mentionRows[i].sentiment,
+            mentionRows[i].mentionCount,
             now,
-          ],
+          );
+        }
+        await client.query(
+          `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at)
+           VALUES ${mentionValues.join(', ')}`,
+          mentionParams,
         );
       }
 
