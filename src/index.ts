@@ -3,6 +3,7 @@ import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { createPool } from './db/connection.js';
 import { runMigrations } from './db/migrations.js';
+import { createServer, startServer } from './server.js';
 
 const program = new Command();
 
@@ -18,8 +19,10 @@ program
 
     await runMigrations(pool);
 
+    const app = await createServer(config, pool, log);
+    await startServer(app, config.port, log);
+
     log.info('podders v2 started');
-    log.info({ port: config.port }, 'server will start here (Step 6)');
 
     let shuttingDown = false;
 
@@ -31,7 +34,7 @@ program
 
       setTimeout(() => process.exit(1), 30_000).unref();
 
-      // TODO: close Fastify server here when added in Step 6
+      await app.close();
       await pool.end();
       process.exit(0);
     };
