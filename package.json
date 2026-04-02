@@ -25,6 +25,7 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/rate-limit": "^10.3.0",
     "@fastify/static": "^9.0.0",
+    "@google/generative-ai": "^0.24.1",
     "@mariozechner/pi-ai": "^0.64.0",
     "commander": "^14.0.3",
     "dotenv": "^17.4.0",
