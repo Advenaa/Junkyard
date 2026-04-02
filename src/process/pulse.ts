@@ -323,16 +323,32 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
     );
 
     // Call LLM
-    const result = await llm.call({
-      model: config.models.sonnet,
-      system: PULSE_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
-      maxTokens,
-      stage: 'pulse',
-    });
-
-    // Parse response
-    const report = parseReportResponse(result.content);
+    let report: MarketReport;
+    try {
+      const result = await llm.call({
+        model: config.models.sonnet,
+        system: PULSE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+        maxTokens,
+        stage: 'pulse',
+      });
+      report = parseReportResponse(result.content);
+    } catch (firstErr: unknown) {
+      log.warn({ err: firstErr }, 'Pulse parse failed, retrying once');
+      try {
+        const retryResult = await llm.call({
+          model: config.models.sonnet,
+          system: PULSE_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userMessage }],
+          maxTokens,
+          stage: 'pulse',
+        });
+        report = parseReportResponse(retryResult.content);
+      } catch (secondErr: unknown) {
+        log.error({ err: secondErr }, 'Pulse parse failed on retry, skipping report');
+        return null;
+      }
+    }
 
     // Insert report
     const reportId = ulid();

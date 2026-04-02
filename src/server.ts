@@ -5,6 +5,8 @@ import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 import { createHealthMonitor } from './health.js';
+import { requireAuth, requireAdmin } from './auth/middleware.js';
+import { createSessionManager } from './auth/sessions.js';
 
 export async function createServer(
   config: Config,
@@ -12,6 +14,8 @@ export async function createServer(
   log: Logger,
 ): Promise<FastifyInstance> {
   const healthMonitor = createHealthMonitor(pool, log, config);
+  const sessionManager = createSessionManager(pool, log);
+  const authPreHandler = requireAuth(pool, config, sessionManager);
   const app = Fastify({ logger: false });
 
   // --- Plugins ---
@@ -37,43 +41,43 @@ export async function createServer(
   });
 
   // --- Skeleton routes ---
-  app.get('/api/v1/reports', async () => {
+  app.get('/api/v1/reports', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.get('/api/v1/reports/:id', async () => {
+  app.get('/api/v1/reports/:id', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.get('/api/v1/sources', async () => {
+  app.get('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.post('/api/v1/sources', async () => {
+  app.post('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.get('/api/v1/config', async () => {
+  app.get('/api/v1/config', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.patch('/api/v1/config', async () => {
+  app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async () => {
     return { todo: true };
   });
 
-  app.get('/api/v1/search', async () => {
+  app.get('/api/v1/search', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.get('/api/v1/feed/:sourceId', async () => {
+  app.get('/api/v1/feed/:sourceId', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.post('/api/v1/chat', async () => {
+  app.post('/api/v1/chat', { preHandler: [authPreHandler] }, async () => {
     return { todo: true };
   });
 
-  app.get('/api/v1/users', async () => {
+  app.get('/api/v1/users', { preHandler: [authPreHandler, requireAdmin] }, async () => {
     return { todo: true };
   });
 

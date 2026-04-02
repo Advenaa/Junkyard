@@ -353,16 +353,32 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     );
 
     // Call LLM
-    const result = await llm.call({
-      model: config.models.sonnet,
-      system: DAILY_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 4000,
-      stage: 'synthesize',
-    });
-
-    // Parse response
-    const report = parseReportResponse(result.content);
+    let report: MarketReport;
+    try {
+      const result = await llm.call({
+        model: config.models.sonnet,
+        system: DAILY_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+        maxTokens: 4000,
+        stage: 'synthesize',
+      });
+      report = parseReportResponse(result.content);
+    } catch (firstErr: unknown) {
+      log.warn({ err: firstErr }, 'Daily synthesis parse failed, retrying once');
+      try {
+        const retryResult = await llm.call({
+          model: config.models.sonnet,
+          system: DAILY_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userMessage }],
+          maxTokens: 4000,
+          stage: 'synthesize',
+        });
+        report = parseReportResponse(retryResult.content);
+      } catch (secondErr: unknown) {
+        log.error({ err: secondErr }, 'Daily synthesis parse failed on retry, skipping report');
+        return null;
+      }
+    }
 
     // Insert into DB
     const reportId = ulid();
@@ -428,16 +444,32 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     );
 
     // Call LLM
-    const result = await llm.call({
-      model: config.models.sonnet,
-      system: FLASH_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
-      maxTokens: 2000,
-      stage: 'synthesize',
-    });
-
-    // Parse response
-    const report = parseReportResponse(result.content);
+    let report: MarketReport;
+    try {
+      const result = await llm.call({
+        model: config.models.sonnet,
+        system: FLASH_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+        maxTokens: 2000,
+        stage: 'synthesize',
+      });
+      report = parseReportResponse(result.content);
+    } catch (firstErr: unknown) {
+      log.warn({ err: firstErr }, 'Flash synthesis parse failed, retrying once');
+      try {
+        const retryResult = await llm.call({
+          model: config.models.sonnet,
+          system: FLASH_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: userMessage }],
+          maxTokens: 2000,
+          stage: 'synthesize',
+        });
+        report = parseReportResponse(retryResult.content);
+      } catch (secondErr: unknown) {
+        log.error({ err: secondErr }, 'Flash synthesis parse failed on retry, skipping report');
+        return null;
+      }
+    }
 
     // Insert into DB
     const reportId = ulid();

@@ -35,6 +35,10 @@ const MAX_CHARS = 2048; // ~512 tokens at 4 chars/token
 const RETRY_BACKOFFS = [2_000, 8_000, 32_000]; // 3 retries for 5xx
 const DEFAULT_429_WAIT = 60_000;
 
+// Gemini free tier: 1500 req/day. Leave 100 buffer for manual/debug use.
+const DAILY_QUOTA_LIMIT = 1400;
+const MS_PER_DAY = 86_400_000;
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -116,12 +120,37 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
   const genAI = available ? new GoogleGenerativeAI(config.geminiApiKey) : null;
   const model = genAI ? genAI.getGenerativeModel({ model: MODEL_NAME }) : null;
 
+  // ── Daily quota tracking (in-memory, resets each calendar day) ──────
+  let dailyCount = 0;
+  let dayStart = Date.now();
+
+  function resetIfNewDay(): void {
+    const now = Date.now();
+    if (now - dayStart >= MS_PER_DAY) {
+      dailyCount = 0;
+      dayStart = now;
+    }
+  }
+
+  function checkQuota(requestCount: number): boolean {
+    resetIfNewDay();
+    if (dailyCount + requestCount > DAILY_QUOTA_LIMIT) {
+      log.warn(
+        { dailyCount, requestCount, limit: DAILY_QUOTA_LIMIT },
+        'embed: daily quota exhausted, skipping embed call',
+      );
+      return false;
+    }
+    return true;
+  }
+
   function isAvailable(): boolean {
     return available;
   }
 
   async function embed(text: string): Promise<EmbedResult | null> {
     if (!available || !model) return null;
+    if (!checkQuota(1)) return null;
 
     const result = await withRetry(
       () =>
@@ -131,6 +160,8 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         }),
       log,
     );
+
+    dailyCount += 1;
 
     const vector = new Float32Array(result.embedding.values);
     const inputTokens = estimateTokens(text);
@@ -151,6 +182,10 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
   async function embedBatch(texts: string[]): Promise<(EmbedResult | null)[]> {
     if (!available || !model) return texts.map(() => null);
 
+    // Each batch chunk is one API request; total requests = ceil(texts.length / BATCH_CHUNK_SIZE)
+    const totalRequests = Math.ceil(texts.length / BATCH_CHUNK_SIZE);
+    if (!checkQuota(totalRequests)) return texts.map(() => null);
+
     const results: (EmbedResult | null)[] = [];
     let totalInputTokens = 0;
 
@@ -167,6 +202,8 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
           }),
         log,
       );
+
+      dailyCount += 1;
 
       for (let j = 0; j < batchResult.embeddings.length; j++) {
         const vector = new Float32Array(batchResult.embeddings[j].values);

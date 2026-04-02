@@ -12,6 +12,7 @@ export interface VectorCache {
   load(): Promise<void>;
   search(query: Float32Array, type: 'summary' | 'report' | 'entity', limit?: number): SearchResult[];
   update(targetType: string, targetId: string, vector: Float32Array): void;
+  prune(deletedIds: string[]): number;
   getSize(): { summaries: number; reports: number; entities: number };
 }
 
@@ -37,6 +38,26 @@ function bytesToVector(buf: Buffer): Float32Array {
 const SEARCHABLE_TYPES = ['summary', 'report', 'entity'] as const;
 type SearchableType = typeof SEARCHABLE_TYPES[number];
 
+/** Maximum vectors per type map. At 768 dims x 4 bytes = ~3KB/vector, 20K = ~60MB per map. */
+const MAX_VECTORS = 20_000;
+
+/**
+ * Evict the oldest entries from a Map to stay within the size cap.
+ * Maps in JS maintain insertion order, so the first entries are the oldest.
+ */
+function evict(map: Map<string, Float32Array>, max: number): number {
+  let removed = 0;
+  if (map.size <= max) return removed;
+  const excess = map.size - max;
+  const iter = map.keys();
+  for (let i = 0; i < excess; i++) {
+    const { value } = iter.next();
+    map.delete(value as string);
+    removed++;
+  }
+  return removed;
+}
+
 export function createVectorCache(pool: Pool, log: Logger): VectorCache {
   const maps: Record<SearchableType, Map<string, Float32Array>> = {
     summary: new Map(),
@@ -53,8 +74,8 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
   async function loadType(type: SearchableType): Promise<number> {
     const result = await pool.query<{ target_id: string; vector: Buffer }>(
-      'SELECT target_id, vector FROM embeddings WHERE target_type = $1',
-      [type],
+      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at DESC LIMIT $2',
+      [type, MAX_VECTORS],
     );
 
     const map = maps[type];
@@ -100,8 +121,27 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
   function update(targetType: string, targetId: string, vector: Float32Array): void {
     const map = getMap(targetType);
     if (map) {
+      // Delete first so re-insertion moves to end (most recent position)
+      map.delete(targetId);
       map.set(targetId, vector);
+
+      const removed = evict(map, MAX_VECTORS);
+      if (removed > 0) {
+        log.debug({ type: targetType, removed }, 'vector-cache: evicted oldest entries');
+      }
     }
+  }
+
+  function prune(deletedIds: string[]): number {
+    let removed = 0;
+    for (const id of deletedIds) {
+      for (const type of SEARCHABLE_TYPES) {
+        if (maps[type].delete(id)) {
+          removed++;
+        }
+      }
+    }
+    return removed;
   }
 
   function getSize(): { summaries: number; reports: number; entities: number } {
@@ -112,5 +152,5 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
     };
   }
 
-  return { load, search, update, getSize };
+  return { load, search, update, prune, getSize };
 }

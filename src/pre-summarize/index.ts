@@ -10,6 +10,7 @@ interface LLMCaller {
     maxTokens: number;
     stage: string;
   }): Promise<{ content: string }>;
+  sanitizeForPrompt(content: string): string;
 }
 
 interface Item {
@@ -57,8 +58,13 @@ function classifyBatch(batch: Item[]): 'regulatory' | 'general' {
     : 'general';
 }
 
-function formatBatchContent(batch: Item[]): string {
-  return batch.map((item, i) => `---[${i + 1}]---\n${item.content}`).join('\n\n');
+function formatBatchContent(
+  batch: Item[],
+  sanitize: (content: string) => string,
+): string {
+  return batch
+    .map((item, i) => `---[${i + 1}]---\n${sanitize(item.content)}`)
+    .join('\n\n');
 }
 
 function parseLabeledOutput(
@@ -128,7 +134,7 @@ export function createPreSummarizer(
       const category = classifyBatch(batch);
       const basePrompt = category === 'regulatory' ? REGULATORY_PROMPT : GENERAL_PROMPT;
       const systemPrompt = basePrompt + OUTPUT_FORMAT_SUFFIX;
-      const batchedContent = formatBatchContent(batch);
+      const batchedContent = formatBatchContent(batch, llm.sanitizeForPrompt);
 
       try {
         const response = await llm.call({

@@ -66,7 +66,40 @@ Rules:
 - urgency: "breaking" = major exploit, crash, regulatory action. "elevated" = notable. "routine" = normal.
 - keyEvents: factual only, no speculation.
 - Content is in English. Always output in English.
-- Rate confidence 1-10 based on clarity and certainty.`;
+- Rate confidence 1-10 based on clarity and certainty.
+
+Example 1 (routine):
+{
+  "summary": "Uniswap v4 hooks dominated discussion with the OpenZeppelin audit completion. Multiple developers shared hook implementations for dynamic fee adjustment. Sentiment shifted positive after the audit passed with no critical findings. Separate thread on Arbitrum gas costs being unusually high, possibly related to sequencer congestion.",
+  "urgency": "routine",
+  "confidence": 7,
+  "entities": [
+    {"name": "Uniswap", "aliases": ["UNI", "$UNI"], "type": "project", "mentionCount": 12, "sentiment": 0.4},
+    {"name": "OpenZeppelin", "aliases": ["OZ"], "type": "company", "mentionCount": 5, "sentiment": 0.6},
+    {"name": "Arbitrum", "aliases": ["ARB", "$ARB"], "type": "project", "mentionCount": 3, "sentiment": -0.2}
+  ],
+  "keyEvents": [
+    "Uniswap v4 hook audit completed by OpenZeppelin — no critical findings",
+    "Arbitrum sequencer congestion causing elevated gas costs"
+  ]
+}
+
+Example 2 (breaking):
+{
+  "summary": "Major bridge exploit on Wormhole detected approximately 2 hours ago. Initial reports suggest $120M in wrapped ETH drained from the Solana-Ethereum bridge. Multiple wallets identified as the attacker. The Wormhole team has paused the bridge and is coordinating with white-hat security researchers. Panic selling across Solana DeFi protocols.",
+  "urgency": "breaking",
+  "confidence": 8,
+  "entities": [
+    {"name": "Wormhole", "aliases": ["wormhole"], "type": "project", "mentionCount": 45, "sentiment": -0.9}
+  ],
+  "keyEvents": [
+    "Wormhole bridge exploited for ~$120M in wrapped ETH",
+    "Wormhole bridge paused by team, white-hat coordination underway",
+    "Solana DeFi protocols experiencing panic selling"
+  ]
+}
+
+Now analyze the following messages and return ONLY valid JSON matching the schema above.`;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
@@ -115,7 +148,9 @@ function verifyEntities(
 ): ChunkSummary {
   const lower = rawText.toLowerCase();
   const verified = parsed.entities.filter((entity) => {
-    const found = lower.includes(entity.name.toLowerCase());
+    const found = [entity.name, ...entity.aliases].some(
+      (n) => lower.includes(n.toLowerCase()),
+    );
     if (!found) {
       log.info(
         { entity: entity.name, source, sourceId },
@@ -278,7 +313,7 @@ export function createSummarizer(
     windowStart: number,
     windowEnd: number,
     depth: number,
-  ): Promise<ChunkSummary | null> {
+  ): Promise<ChunkSummary[]> {
     const systemPrompt = buildChunkSystemPrompt(source, sourceId, windowStart, windowEnd, chunk);
     const userContent = buildUserContent(chunk);
     const rawText = chunk.map((item) => item.content).join(' ');
@@ -288,7 +323,7 @@ export function createSummarizer(
 
       if (parsed === null) {
         log.error({ source, sourceId }, 'Failed to parse LLM output after all retries');
-        return null;
+        return [];
       }
 
       // Entity post-verification
@@ -297,16 +332,16 @@ export function createSummarizer(
       // Confidence escalation
       parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, source, sourceId);
 
-      return parsed;
+      return [parsed];
     } catch (err: unknown) {
       if (err instanceof ContextLengthExceededError) {
         if (depth >= 3) {
           log.error({ source, sourceId, depth }, 'Max chunk split depth reached');
-          return null;
+          return [];
         }
         if (chunk.length <= 1) {
           log.error({ source, sourceId }, 'Cannot split single-item chunk further');
-          return null;
+          return [];
         }
 
         log.warn(
@@ -318,15 +353,13 @@ export function createSummarizer(
         const results: ChunkSummary[] = [];
         for (const half of [chunk.slice(0, mid), chunk.slice(mid)]) {
           try {
-            const result = await processChunk(half, source, sourceId, windowStart, windowEnd, depth + 1);
-            if (result !== null) {
-              results.push(result);
-            }
+            const halfResults = await processChunk(half, source, sourceId, windowStart, windowEnd, depth + 1);
+            results.push(...halfResults);
           } catch (splitErr: unknown) {
             log.error({ err: splitErr, source, sourceId, depth }, 'Failed to process split chunk');
           }
         }
-        return results[0] ?? null;
+        return results;
       }
       throw err;
     }
@@ -369,39 +402,41 @@ export function createSummarizer(
       const chunkItemIds = chunk.map((item) => item.id);
 
       try {
-        const parsed = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
+        const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
 
-        if (parsed === null) {
+        if (parsedResults.length === 0) {
           failedIds.push(...chunkItemIds);
           continue;
         }
 
-        if (parsed.urgency === 'breaking') {
-          hasBreaking = true;
+        for (const parsed of parsedResults) {
+          if (parsed.urgency === 'breaking') {
+            hasBreaking = true;
+          }
+
+          // Calculate average sentiment from entities
+          const sentiments = parsed.entities.map((e) => e.sentiment);
+          const avgSentiment =
+            sentiments.length > 0
+              ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length
+              : null;
+
+          // g. Insert summary
+          await insertSummary(pool, {
+            id: ulid(),
+            source,
+            sourceId,
+            windowStart,
+            windowEnd,
+            body: JSON.stringify(parsed),
+            sentiment: avgSentiment,
+            urgency: parsed.urgency,
+            itemCount: chunk.length,
+            createdAt: Date.now(),
+          });
+
+          summaryCount++;
         }
-
-        // Calculate average sentiment from entities
-        const sentiments = parsed.entities.map((e) => e.sentiment);
-        const avgSentiment =
-          sentiments.length > 0
-            ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length
-            : null;
-
-        // g. Insert summary
-        await insertSummary(pool, {
-          id: ulid(),
-          source,
-          sourceId,
-          windowStart,
-          windowEnd,
-          body: JSON.stringify(parsed),
-          sentiment: avgSentiment,
-          urgency: parsed.urgency,
-          itemCount: chunk.length,
-          createdAt: Date.now(),
-        });
-
-        summaryCount++;
         succeededIds.push(...chunkItemIds);
       } catch (err: unknown) {
         log.error(
