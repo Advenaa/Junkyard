@@ -289,6 +289,33 @@ const migrations: Migration[] = [
         ON entity_mentions(summary_id)
     `);
   },
+
+  // Migration 5: Add CHECK constraints on enum TEXT columns (M-074)
+  async (client) => {
+    await client.query(`
+      ALTER TABLE items
+        ADD CONSTRAINT chk_items_status
+        CHECK (status IN ('ready', 'filtered', 'processing', 'processed'))
+    `);
+
+    await client.query(`
+      ALTER TABLE reports
+        ADD CONSTRAINT chk_reports_type
+        CHECK (type IN ('daily', 'flash', 'pulse'))
+    `);
+
+    await client.query(`
+      ALTER TABLE entities
+        ADD CONSTRAINT chk_entities_status
+        CHECK (status IN ('active', 'archived'))
+    `);
+
+    await client.query(`
+      ALTER TABLE users
+        ADD CONSTRAINT chk_users_role
+        CHECK (role IN ('admin', 'viewer', 'blocked'))
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

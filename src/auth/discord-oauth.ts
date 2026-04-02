@@ -110,6 +110,7 @@ export function registerOAuthRoutes(
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: tokenBody.toString(),
+        signal: AbortSignal.timeout(10_000),
       },
     );
 
@@ -127,6 +128,7 @@ export function registerOAuthRoutes(
     // 3. Fetch user profile
     const userResponse = await fetch('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!userResponse.ok) {

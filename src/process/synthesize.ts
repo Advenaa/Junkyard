@@ -340,13 +340,16 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       'Sending daily synthesis to LLM',
     );
 
+    // Wrap user message with nonce to defend against prompt injection
+    const { wrapped: wrappedDaily } = llm.wrapWithNonce(userMessage);
+
     // Call LLM
     let report: MarketReport;
     try {
       const result = await llm.call({
         model: config.models.sonnet,
         system: DAILY_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }],
+        messages: [{ role: 'user', content: wrappedDaily }],
         maxTokens: 4000,
         stage: 'synthesize',
       });
@@ -357,7 +360,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
         const retryResult = await llm.call({
           model: config.models.sonnet,
           system: DAILY_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userMessage }],
+          messages: [{ role: 'user', content: wrappedDaily }],
           maxTokens: 4000,
           stage: 'synthesize',
         });
@@ -431,13 +434,16 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       'Sending flash synthesis to LLM',
     );
 
+    // Wrap user message with nonce to defend against prompt injection
+    const { wrapped: wrappedFlash } = llm.wrapWithNonce(userMessage);
+
     // Call LLM
     let report: MarketReport;
     try {
       const result = await llm.call({
         model: config.models.sonnet,
         system: FLASH_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }],
+        messages: [{ role: 'user', content: wrappedFlash }],
         maxTokens: 2000,
         stage: 'synthesize',
       });
@@ -448,7 +454,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
         const retryResult = await llm.call({
           model: config.models.sonnet,
           system: FLASH_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: userMessage }],
+          messages: [{ role: 'user', content: wrappedFlash }],
           maxTokens: 2000,
           stage: 'synthesize',
         });
@@ -459,10 +465,21 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       }
     }
 
-    // Insert into DB
-    const reportId = ulid();
+    // Duplicate guard: skip if a flash report already exists for today
     const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
     const { dateString } = getTodayWindow(timezone);
+
+    const { rows: existingFlash } = await pool.query<{ id: string }>(
+      `SELECT id FROM reports WHERE type = 'flash' AND date = $1 LIMIT 1`,
+      [dateString],
+    );
+    if (existingFlash.length > 0) {
+      log.info({ existingId: existingFlash[0].id, date: dateString }, 'Flash report already exists for today, skipping');
+      return null;
+    }
+
+    // Insert into DB
+    const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
 
     await insertReport(pool, {

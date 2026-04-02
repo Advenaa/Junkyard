@@ -351,6 +351,16 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
       }
     }
 
+    // Duplicate guard: skip if a pulse report was already created in this 3-hour window
+    const { rows: existingPulse } = await pool.query<{ id: string }>(
+      `SELECT id FROM reports WHERE type = 'pulse' AND created_at > $1 LIMIT 1`,
+      [windowStart],
+    );
+    if (existingPulse.length > 0) {
+      log.info({ existingId: existingPulse[0].id }, 'Pulse report already exists for this window, skipping');
+      return null;
+    }
+
     // Insert report
     const reportId = ulid();
     const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';

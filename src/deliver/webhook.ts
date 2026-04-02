@@ -121,6 +121,42 @@ function buildFields(parsed: MarketReportParsed): DiscordField[] {
   return fields.slice(0, 4);
 }
 
+const DISCORD_EMBED_TOTAL_LIMIT = 5900; // Discord enforces 6000; leave buffer
+
+function embedCharCount(embed: DiscordEmbed): number {
+  let total = embed.title.length + embed.description.length + embed.footer.text.length;
+  for (const field of embed.fields) {
+    total += field.name.length + field.value.length;
+  }
+  return total;
+}
+
+function enforceEmbedLimit(embed: DiscordEmbed): void {
+  // First pass: progressively trim field values
+  while (embedCharCount(embed) > DISCORD_EMBED_TOTAL_LIMIT && embed.fields.length > 0) {
+    const longestField = embed.fields.reduce(
+      (longest, f, i) => (f.value.length > longest.len ? { idx: i, len: f.value.length } : longest),
+      { idx: 0, len: embed.fields[0]!.value.length },
+    );
+
+    const over = embedCharCount(embed) - DISCORD_EMBED_TOTAL_LIMIT;
+    const currentValue = embed.fields[longestField.idx]!.value;
+
+    if (currentValue.length > over + 3) {
+      embed.fields[longestField.idx]!.value = truncate(currentValue, currentValue.length - over);
+    } else {
+      // Field too small to trim meaningfully — remove it
+      embed.fields.splice(longestField.idx, 1);
+    }
+  }
+
+  // Second pass: trim description if still over
+  if (embedCharCount(embed) > DISCORD_EMBED_TOTAL_LIMIT) {
+    const over = embedCharCount(embed) - DISCORD_EMBED_TOTAL_LIMIT;
+    embed.description = truncate(embed.description, embed.description.length - over);
+  }
+}
+
 function buildEmbed(
   report: Report,
   parsed: MarketReportParsed,
@@ -138,6 +174,8 @@ function buildEmbed(
   if (config.publicUrl) {
     embed.url = `${config.publicUrl}/reports/${report.id}`;
   }
+
+  enforceEmbedLimit(embed);
 
   return embed;
 }

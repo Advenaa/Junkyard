@@ -78,6 +78,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
   async function seedCoinGecko(): Promise<number> {
     const response = await fetch(
       'https://api.coingecko.com/api/v3/coins/list',
+      { signal: AbortSignal.timeout(15_000) },
     );
 
     if (!response.ok) {

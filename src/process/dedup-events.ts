@@ -2,7 +2,7 @@ import { distance } from "fastest-levenshtein";
 
 export function deduplicateEvents(
   events: string[],
-  threshold = 0.7,
+  threshold = 0.85,
 ): string[] {
   const accepted: string[] = [];
 

@@ -44,39 +44,64 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
     const prepared = targets.map(t => embedder.prepareText(t.text, t.type));
     const results = await embedder.embedBatch(prepared);
 
-    let count = 0;
+    // Collect all successful embeddings for a single batch INSERT
+    const now = Date.now();
+    const rows: {
+      id: string;
+      targetType: string;
+      targetId: string;
+      model: string;
+      dimensions: number;
+      vector: Buffer;
+    }[] = [];
+    const cacheUpdates: { type: string; id: string; vector: Float32Array }[] = [];
 
     for (let i = 0; i < targets.length; i++) {
       const result = results[i];
       if (result === null) continue;
 
       const target = targets[i];
-      const now = Date.now();
+      rows.push({
+        id: ulid(),
+        targetType: target.type,
+        targetId: target.id,
+        model: result.model,
+        dimensions: result.dimensions,
+        vector: embedder.vectorToBytes(result.vector),
+      });
+
+      if (target.type === 'summary' || target.type === 'report') {
+        cacheUpdates.push({ type: target.type, id: target.id, vector: result.vector });
+      }
+    }
+
+    if (rows.length > 0) {
+      // Build a single multi-row INSERT with parameterized placeholders
+      const valueClauses: string[] = [];
+      const params: unknown[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const offset = i * 7;
+        valueClauses.push(
+          `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`,
+        );
+        const row = rows[i];
+        params.push(row.id, row.targetType, row.targetId, row.model, row.dimensions, row.vector, now);
+      }
 
       await pool.query(
         `INSERT INTO embeddings (id, target_type, target_id, model, dimensions, vector, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         VALUES ${valueClauses.join(', ')}
          ON CONFLICT(target_type, target_id) DO NOTHING`,
-        [
-          ulid(),
-          target.type,
-          target.id,
-          result.model,
-          result.dimensions,
-          embedder.vectorToBytes(result.vector),
-          now,
-        ],
+        params,
       );
 
-      // Update vector cache for searchable types
-      if (target.type === 'summary' || target.type === 'report') {
-        cache.update(target.type, target.id, result.vector);
+      // Update vector cache after successful insert
+      for (const update of cacheUpdates) {
+        cache.update(update.type, update.id, update.vector);
       }
-
-      count++;
     }
 
-    return count;
+    return rows.length;
   }
 
   async function run(): Promise<number> {

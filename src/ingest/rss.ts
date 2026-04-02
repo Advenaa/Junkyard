@@ -97,33 +97,49 @@ export async function pollFeed(
       return timeA - timeB;
     });
 
+    const BATCH_SIZE = 5;
     const items: RawItem[] = [];
 
-    for (const item of filtered) {
-      const author = item.creator ?? (item as Record<string, unknown>)['dc:creator'] as string ?? feed.title ?? 'Unknown';
-      let content = item.contentSnippet ?? item.title ?? '';
-      const timestamp = new Date(item.isoDate ?? Date.now()).getTime();
-      const link = item.link;
+    // Process articles in batches to extract content in parallel
+    for (let i = 0; i < filtered.length; i += BATCH_SIZE) {
+      const batch = filtered.slice(i, i + BATCH_SIZE);
 
-      if (content.length < 500 && link) {
-        content = await extractArticle(link, content, log);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (item) => {
+          const author = item.creator ?? (item as Record<string, unknown>)['dc:creator'] as string ?? feed.title ?? 'Unknown';
+          let content = item.contentSnippet ?? item.title ?? '';
+          const timestamp = new Date(item.isoDate ?? Date.now()).getTime();
+          const link = item.link;
+
+          if (content.length < 500 && link) {
+            content = await extractArticle(link, content, log);
+          }
+
+          return {
+            id: ulid(),
+            source: 'rss' as const,
+            sourceId: feedUrl,
+            author,
+            content,
+            timestamp,
+            url: link,
+            engagement: 0,
+            metadata: {
+              feedTitle: feed.title,
+              categories: item.categories ?? [],
+              guid: item._guid,
+            },
+          } satisfies RawItem;
+        }),
+      );
+
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          items.push(result.value);
+        } else {
+          log.warn({ error: result.reason }, 'RSS article processing failed in batch');
+        }
       }
-
-      items.push({
-        id: ulid(),
-        source: 'rss',
-        sourceId: feedUrl,
-        author,
-        content,
-        timestamp,
-        url: link,
-        engagement: 0,
-        metadata: {
-          feedTitle: feed.title,
-          categories: item.categories ?? [],
-          guid: item._guid,
-        },
-      });
     }
 
     const newestGuid = filtered.length > 0
