@@ -74,7 +74,12 @@ function buildUrl(sourceId: string, cursor?: string): string {
   return `${BASE_URL}/twitter/tweet/advanced_search?${params.toString()}`;
 }
 
+const DEFAULT_RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
+
 export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
+  let halted = false;
+  let rateLimitedUntil = 0;
+
   async function fetchPage(
     sourceId: string,
     cursor?: string,
@@ -94,12 +99,26 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
     }
 
     if (response.status === 401) {
-      log.fatal({ sourceId, status: 401 }, 'Twitter API key invalid — disable all Twitter sources');
+      if (!halted) {
+        log.fatal({ sourceId, status: 401 }, 'Twitter API key invalid — halting all Twitter polling');
+        halted = true;
+      }
       return null;
     }
 
     if (response.status === 429) {
-      log.warn({ sourceId, status: 429 }, 'Twitter API rate limited');
+      const retryAfter = response.headers.get('retry-after');
+      const delayMs = retryAfter
+        ? Number(retryAfter) * 1000
+        : DEFAULT_RATE_LIMIT_MS;
+      const backoffMs = Number.isFinite(delayMs) && delayMs > 0
+        ? delayMs
+        : DEFAULT_RATE_LIMIT_MS;
+      rateLimitedUntil = Date.now() + backoffMs;
+      log.warn(
+        { sourceId, status: 429, backoffMs },
+        'Twitter API rate limited — backing off',
+      );
       return null;
     }
 
@@ -139,6 +158,15 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
     const empty = { items: [], lastId: null };
 
     if (!config.twitterApiKey) {
+      return empty;
+    }
+
+    if (halted) {
+      return empty;
+    }
+
+    if (Date.now() < rateLimitedUntil) {
+      log.debug({ sourceId, rateLimitedUntil }, 'Twitter poll skipped — rate limit backoff active');
       return empty;
     }
 

@@ -26,21 +26,40 @@ program
 
     let shuttingDown = false;
 
-    const shutdown = async () => {
+    const shutdown = async (reason?: string) => {
       if (shuttingDown) return;
       shuttingDown = true;
 
-      log.info('shutting down...');
+      log.info({ reason }, 'shutting down...');
 
       setTimeout(() => process.exit(1), 30_000).unref();
 
-      await app.close();
-      await pool.end();
+      // TODO(H-028): When scheduler and Discord gateway are wired into
+      // index.ts, stop them here BEFORE closing the server:
+      //   await scheduler.stop();
+      //   await discordAdapter.disconnect();
+
+      try {
+        await app.close();
+      } catch (err: unknown) {
+        log.error({ err }, 'error closing server');
+      }
+
+      try {
+        await pool.end();
+      } catch (err: unknown) {
+        log.error({ err }, 'error closing database pool');
+      }
+
       process.exit(0);
     };
 
-    process.on('SIGTERM', shutdown);
-    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('unhandledRejection', (err: unknown) => {
+      log.fatal({ err }, 'unhandled rejection — triggering graceful shutdown');
+      shutdown('unhandledRejection');
+    });
   });
 
 program

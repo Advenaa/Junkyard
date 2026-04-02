@@ -74,15 +74,13 @@ export function loadConfig(): Config {
   let apiKey = process.env['API_KEY'] || null;
   if (!apiKey) {
     apiKey = `pk_${ulid()}`;
-    console.warn(`WARNING: API_KEY not set — generated: ${apiKey}`);
+    console.warn('WARNING: API_KEY not set — auto-generated (set API_KEY in .env for persistence)');
   }
 
   let sessionSecret = process.env['SESSION_SECRET'] || null;
   if (!sessionSecret) {
     sessionSecret = crypto.randomBytes(32).toString('hex');
-    console.warn(
-      `WARNING: SESSION_SECRET not set — generated: ${sessionSecret}`
-    );
+    console.warn('WARNING: SESSION_SECRET not set — auto-generated (set SESSION_SECRET in .env for persistence)');
   }
 
   const rawPort = process.env['PORT'];

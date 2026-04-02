@@ -22,19 +22,19 @@ export function createRetention(pool: Pool, log: Logger) {
     const itemsDeleted = itemsResult.rowCount ?? 0;
     log.info({ itemsDeleted }, 'retention: deleted processed items older than 30 days');
 
-    const summariesResult = await pool.query(
-      `DELETE FROM summaries WHERE created_at < $1`,
-      [ninetyDaysAgo],
-    );
-    const summariesDeleted = summariesResult.rowCount ?? 0;
-    log.info({ summariesDeleted }, 'retention: deleted summaries older than 90 days');
-
     const mentionsResult = await pool.query(
       `DELETE FROM entity_mentions WHERE created_at < $1`,
       [ninetyDaysAgo],
     );
     const mentionsDeleted = mentionsResult.rowCount ?? 0;
     log.info({ mentionsDeleted }, 'retention: deleted entity mentions older than 90 days');
+
+    const summariesResult = await pool.query(
+      `DELETE FROM summaries WHERE created_at < $1`,
+      [ninetyDaysAgo],
+    );
+    const summariesDeleted = summariesResult.rowCount ?? 0;
+    log.info({ summariesDeleted }, 'retention: deleted summaries older than 90 days');
 
     const embItemsResult = await pool.query(
       `DELETE FROM embeddings WHERE target_type = 'item' AND target_id NOT IN (SELECT id FROM items)`,

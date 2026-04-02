@@ -44,7 +44,7 @@ export function createNormalizer(
 
     const injection = detectInjection(item.content);
     if (injection.detected) {
-      const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 200));
+      const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 2000));
       await insertItem(pool, {
         id: ulid(),
         source: item.source,
@@ -67,14 +67,7 @@ export function createNormalizer(
     }
 
     // ── Gate 2 — Content hash dedup ─────────────────────────────────
-    const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 200));
-    const hashCheck = await pool.query<{ id: string }>(
-      'SELECT id FROM items WHERE content_hash = $1',
-      [contentHash],
-    );
-    if (hashCheck.rows.length > 0) {
-      return 'dropped';
-    }
+    const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 2000));
 
     // ── Gate 3 — URL dedup ──────────────────────────────────────────
     let resolvedUrl = item.url;
@@ -163,8 +156,8 @@ export function createNormalizer(
       }
     }
 
-    // ── Final — Insert as ready ─────────────────────────────────────
-    await insertItem(pool, {
+    // ── Final — Insert as ready (atomic dedup via UNIQUE constraint) ─
+    const { inserted } = await insertItem(pool, {
       id: ulid(),
       source: item.source,
       sourceId: item.sourceId,
@@ -183,7 +176,7 @@ export function createNormalizer(
       createdAt: Date.now(),
     });
 
-    return 'ready';
+    return inserted ? 'ready' : 'dropped';
   }
 
   return { normalize };

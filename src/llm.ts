@@ -267,12 +267,20 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
 
         // L4: 429 — rate limited
         if (status === 429) {
+          if (attempt >= MAX_RETRIES) {
+            log.error(
+              { stage: params.stage },
+              'LLM rate limited (429), exhausted retries',
+            );
+            throw err;
+          }
           const retryAfter = extractRetryAfter(err) ?? 60;
+          const delayMs = retryAfter * 1000 * (0.5 + Math.random());
           log.warn(
-            { stage: params.stage, retryAfter, attempt },
+            { stage: params.stage, retryAfter, delayMs: Math.round(delayMs), attempt },
             'LLM rate limited (429), waiting',
           );
-          await sleep(retryAfter * 1000);
+          await sleep(delayMs);
           continue;
         }
 
@@ -285,11 +293,12 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
             );
             throw err;
           }
+          const overloadDelayMs = 30_000 * (0.5 + Math.random());
           log.warn(
-            { stage: params.stage, attempt },
-            'LLM overloaded (529), backing off 30s',
+            { stage: params.stage, delayMs: Math.round(overloadDelayMs), attempt },
+            'LLM overloaded (529), backing off',
           );
-          await sleep(30_000);
+          await sleep(overloadDelayMs);
           continue;
         }
 
@@ -302,9 +311,10 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
             );
             throw err;
           }
-          const backoffMs = 2000 * Math.pow(4, attempt); // 2s, 8s, 32s
+          const baseBackoffMs = 2000 * Math.pow(4, attempt); // 2s, 8s, 32s
+          const backoffMs = baseBackoffMs * (0.5 + Math.random());
           log.warn(
-            { stage: params.stage, status, backoffMs, attempt },
+            { stage: params.stage, status, backoffMs: Math.round(backoffMs), attempt },
             'LLM server error, backing off',
           );
           await sleep(backoffMs);

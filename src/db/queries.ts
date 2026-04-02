@@ -118,8 +118,8 @@ export async function insertItem(
     contentAnchor?: string;
     createdAt: number;
   },
-): Promise<void> {
-  await pool.query(
+): Promise<{ inserted: boolean }> {
+  const result = await pool.query(
     `INSERT INTO items (
       id, source, source_id, author, content, timestamp, url, engagement,
       content_hash, status, original_language, translated, attachments,
@@ -128,7 +128,7 @@ export async function insertItem(
       $1, $2, $3, $4, $5, $6, $7, $8,
       $9, $10, $11, $12, $13,
       $14, $15, $16
-    )`,
+    ) ON CONFLICT (content_hash) DO NOTHING`,
     [
       item.id,
       item.source,
@@ -148,6 +148,7 @@ export async function insertItem(
       item.createdAt,
     ],
   );
+  return { inserted: (result.rowCount ?? 0) > 0 };
 }
 
 export async function claimBatch(

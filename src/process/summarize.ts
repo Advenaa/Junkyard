@@ -4,7 +4,7 @@ import type { ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk } from './chunk.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
-import { insertSummary, claimBatch, markProcessed } from '../db/queries.js';
+import { insertSummary, claimBatch } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -359,15 +359,20 @@ export function createSummarizer(
     // c. Chunk
     const chunks = chunkByTokens(items, CHUNK_TOKEN_BUDGET);
 
-    // d-g. Process each chunk
+    // d-g. Process each chunk, tracking success per chunk
     let summaryCount = 0;
     let hasBreaking = false;
+    const succeededIds: string[] = [];
+    const failedIds: string[] = [];
 
     for (const chunk of chunks) {
+      const chunkItemIds = chunk.map((item) => item.id);
+
       try {
         const parsed = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
 
         if (parsed === null) {
+          failedIds.push(...chunkItemIds);
           continue;
         }
 
@@ -397,16 +402,34 @@ export function createSummarizer(
         });
 
         summaryCount++;
+        succeededIds.push(...chunkItemIds);
       } catch (err: unknown) {
         log.error(
           { err, source, sourceId, chunkSize: chunk.length },
           'Failed to process chunk, skipping',
         );
+        failedIds.push(...chunkItemIds);
       }
     }
 
-    // h. Mark processed
-    await markProcessed(pool, batchId);
+    // h. Mark successfully-processed items; reset failed items back to ready
+    if (succeededIds.length > 0) {
+      await pool.query(
+        `UPDATE items SET status = 'processed' WHERE id = ANY($1::text[])`,
+        [succeededIds],
+      );
+    }
+
+    if (failedIds.length > 0) {
+      log.warn(
+        { failedCount: failedIds.length, source, sourceId, batchId },
+        'Resetting failed chunk items back to ready',
+      );
+      await pool.query(
+        `UPDATE items SET status = 'ready', batch_id = NULL WHERE id = ANY($1::text[])`,
+        [failedIds],
+      );
+    }
 
     // i. Return results
     return { summaryCount, hasBreaking };

@@ -237,6 +237,27 @@ const migrations: Migration[] = [
       ['digest_time', '09:00', 'timezone', 'Asia/Jakarta'],
     );
   },
+
+  // Migration 2: Add UNIQUE index on items.content_hash for atomic dedup (H-004)
+  async (client) => {
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_items_content_hash
+        ON items(content_hash) WHERE content_hash IS NOT NULL
+    `);
+  },
+
+  // Migration 3: Add ON DELETE CASCADE to entity_mentions.summary_id FK (H-007)
+  async (client) => {
+    await client.query(`
+      ALTER TABLE entity_mentions
+        DROP CONSTRAINT IF EXISTS entity_mentions_summary_id_fkey
+    `);
+    await client.query(`
+      ALTER TABLE entity_mentions
+        ADD CONSTRAINT entity_mentions_summary_id_fkey
+        FOREIGN KEY (summary_id) REFERENCES summaries(id) ON DELETE CASCADE
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

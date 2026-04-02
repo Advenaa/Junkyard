@@ -2,6 +2,7 @@ import { ulid } from 'ulid';
 import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
 import { deduplicateEvents } from './dedup-events.js';
+import { createCorrelator } from './correlate.js';
 import type { CorrelatedEntity } from './correlate.js';
 import {
   insertReport,
@@ -337,8 +338,14 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     // Get yesterday's TL;DR for comparison
     const yesterdayTldr = await getYesterdayTldr();
 
+    // Run cross-source correlation for the same window
+    const correlator = createCorrelator(pool, log);
+    const { correlated } = await correlator.run();
+
+    log.info({ correlatedEntities: correlated.length }, 'Correlated entities for daily synthesis');
+
     // Build prompt
-    const userMessage = buildDailyUserMessage(summaries, dedupedEvents, [], yesterdayTldr);
+    const userMessage = buildDailyUserMessage(summaries, dedupedEvents, correlated, yesterdayTldr);
 
     log.info(
       { events: dedupedEvents.length, summaries: summaries.length, hasYesterday: !!yesterdayTldr },
