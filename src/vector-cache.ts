@@ -46,16 +46,19 @@ export const MAX_VECTORS = 20_000;
  * Maps in JS maintain insertion order, so the first entries are the oldest.
  */
 export function evict(map: Map<string, Float32Array>, max: number): number {
-  let removed = 0;
-  if (map.size <= max) return removed;
+  if (map.size <= max) return 0;
   const excess = map.size - max;
+  const keysToDelete: string[] = [];
   const iter = map.keys();
   for (let i = 0; i < excess; i++) {
-    const { value } = iter.next();
-    map.delete(value as string);
-    removed++;
+    const { value, done } = iter.next();
+    if (done) break;
+    keysToDelete.push(value as string);
   }
-  return removed;
+  for (const key of keysToDelete) {
+    map.delete(key);
+  }
+  return keysToDelete.length;
 }
 
 export function createVectorCache(pool: Pool, log: Logger): VectorCache {

@@ -133,36 +133,37 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     }
   }
 
-  function checkQuota(requestCount: number): boolean {
-    resetIfNewDay();
-    if (dailyCount + requestCount > DAILY_QUOTA_LIMIT) {
-      log.warn(
-        { dailyCount, requestCount, limit: DAILY_QUOTA_LIMIT },
-        'embed: daily quota exhausted, skipping embed call',
-      );
-      return false;
-    }
-    return true;
-  }
-
   function isAvailable(): boolean {
     return available;
   }
 
   async function embed(text: string): Promise<EmbedResult | null> {
     if (!available || !model) return null;
-    if (!checkQuota(1)) return null;
 
-    const result = await withRetry(
-      () =>
-        model.embedContent({
-          content: { parts: [{ text }], role: 'user' },
-          taskType: TaskType.RETRIEVAL_DOCUMENT,
-        }),
-      log,
-    );
+    resetIfNewDay();
+    if (dailyCount + 1 > DAILY_QUOTA_LIMIT) {
+      log.warn(
+        { dailyCount, requestCount: 1, limit: DAILY_QUOTA_LIMIT },
+        'embed: daily quota exhausted, skipping embed call',
+      );
+      return null;
+    }
+    dailyCount += 1; // Reserve upfront
 
-    dailyCount += 1;
+    let result;
+    try {
+      result = await withRetry(
+        () =>
+          model.embedContent({
+            content: { parts: [{ text }], role: 'user' },
+            taskType: TaskType.RETRIEVAL_DOCUMENT,
+          }),
+        log,
+      );
+    } catch (err) {
+      dailyCount -= 1; // Refund on failure
+      throw err;
+    }
 
     const vector = new Float32Array(result.embedding.values);
     const inputTokens = estimateTokens(text);
@@ -185,32 +186,47 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
 
     // Each batch chunk is one API request; total requests = ceil(texts.length / BATCH_CHUNK_SIZE)
     const totalRequests = Math.ceil(texts.length / BATCH_CHUNK_SIZE);
-    if (!checkQuota(totalRequests)) return texts.map(() => null);
+
+    resetIfNewDay();
+    if (dailyCount + totalRequests > DAILY_QUOTA_LIMIT) {
+      log.warn(
+        { dailyCount, requestCount: totalRequests, limit: DAILY_QUOTA_LIMIT },
+        'embed: daily quota exhausted, skipping embed call',
+      );
+      return texts.map(() => null);
+    }
+    dailyCount += totalRequests; // Reserve upfront
 
     const results: (EmbedResult | null)[] = [];
     let totalInputTokens = 0;
+    let chunksCompleted = 0;
 
-    for (let i = 0; i < texts.length; i += BATCH_CHUNK_SIZE) {
-      const chunk = texts.slice(i, i + BATCH_CHUNK_SIZE);
+    try {
+      for (let i = 0; i < texts.length; i += BATCH_CHUNK_SIZE) {
+        const chunk = texts.slice(i, i + BATCH_CHUNK_SIZE);
 
-      const batchResult = await withRetry(
-        () =>
-          model.batchEmbedContents({
-            requests: chunk.map(text => ({
-              content: { parts: [{ text }], role: 'user' },
-              taskType: TaskType.RETRIEVAL_DOCUMENT,
-            })),
-          }),
-        log,
-      );
+        const batchResult = await withRetry(
+          () =>
+            model.batchEmbedContents({
+              requests: chunk.map(text => ({
+                content: { parts: [{ text }], role: 'user' },
+                taskType: TaskType.RETRIEVAL_DOCUMENT,
+              })),
+            }),
+          log,
+        );
 
-      dailyCount += 1;
+        chunksCompleted += 1;
 
-      for (let j = 0; j < batchResult.embeddings.length; j++) {
-        const vector = new Float32Array(batchResult.embeddings[j].values);
-        results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
-        totalInputTokens += estimateTokens(chunk[j]);
+        for (let j = 0; j < batchResult.embeddings.length; j++) {
+          const vector = new Float32Array(batchResult.embeddings[j].values);
+          results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
+          totalInputTokens += estimateTokens(chunk[j]);
+        }
       }
+    } catch (err) {
+      dailyCount -= totalRequests - chunksCompleted; // Refund unused
+      throw err;
     }
 
     await insertLlmUsage(pool, {

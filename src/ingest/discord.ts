@@ -170,12 +170,16 @@ function backoffMs(attempt: number): number {
 // ---------------------------------------------------------------------------
 
 const MAX_CONCURRENT_MESSAGES = 5;
+export const MAX_QUEUE_SIZE = 100;
 
 async function withConcurrencyLimit<T>(
   state: { active: number; queue: (() => void)[] },
   fn: () => Promise<T>,
 ): Promise<T> {
   if (state.active >= MAX_CONCURRENT_MESSAGES) {
+    if (state.queue.length >= MAX_QUEUE_SIZE) {
+      throw new Error('message queue full, dropping message');
+    }
     await new Promise<void>((resolve) => state.queue.push(resolve));
   }
   state.active++;

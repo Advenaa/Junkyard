@@ -68,14 +68,28 @@ function silhouetteScore(
   points: number[][],
   assignments: number[],
   k: number,
+  sampleRate = 0.1,
 ): number {
   const n = points.length;
   if (n <= 1) return 0;
 
+  // Approximate silhouette: sample a subset of points to avoid O(n²k)
+  const sampleSize = Math.min(n, Math.max(30, Math.ceil(n * sampleRate)));
+  const allIndices = Array.from({ length: n }, (_, i) => i);
+
+  // Fisher-Yates partial shuffle for sampling
+  const indices: number[] = [];
+  const pool = [...allIndices];
+  for (let s = 0; s < sampleSize; s++) {
+    const pick = s + Math.floor(Math.random() * (pool.length - s));
+    [pool[s], pool[pick]] = [pool[pick], pool[s]];
+    indices.push(pool[s]);
+  }
+
   let totalSilhouette = 0;
   let counted = 0;
 
-  for (let i = 0; i < n; i++) {
+  for (const i of indices) {
     const clusterI = assignments[i];
 
     // Compute average distance to own cluster (a)
@@ -277,19 +291,32 @@ export function createNarrativeDetector(
       // Summary IDs
       const summaryIds = indices.map((i) => rows[i].summary_id);
 
-      // Name via Haiku
+      // Name via Haiku (with fallback on failure)
       const snippets = indices
         .map((i) => rows[i].body.slice(0, 200))
         .join('\n---\n');
-      const nameResult = await llm.call({
-        model: config.models.haiku,
-        system:
-          'Name this discussion cluster in 3-5 words. Return ONLY the name, nothing else.',
-        messages: [{ role: 'user', content: snippets }],
-        maxTokens: 20,
-        stage: 'narrative-cluster',
-      });
-      const name = nameResult.content.trim();
+      let name: string;
+      try {
+        const nameResult = await llm.call({
+          model: config.models.haiku,
+          system:
+            'Name this discussion cluster in 3-5 words. Return ONLY the name, nothing else.',
+          messages: [{ role: 'user', content: snippets }],
+          maxTokens: 20,
+          stage: 'narrative-cluster',
+        });
+        name = nameResult.content.trim();
+      } catch (err) {
+        log.warn({ err }, 'LLM naming failed, using fallback');
+        name = '';
+      }
+      if (!name) {
+        // Fallback: first 5 words from the longest summary body
+        const longestBody = indices
+          .map((i) => rows[i].body)
+          .sort((a, b) => b.length - a.length)[0] ?? '';
+        name = longestBody.split(/\s+/).slice(0, 5).join(' ') || `Cluster ${dateStr}`;
+      }
 
       // Signal strength
       let signalStrength: Narrative['signalStrength'] = 'new';
