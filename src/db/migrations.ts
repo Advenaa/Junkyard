@@ -322,6 +322,12 @@ const migrations: Migration[] = [
   async (client) => {
     await client.query(`DROP INDEX IF EXISTS idx_embeddings_target`);
   },
+
+  // Migration 7: Add unique partial indexes on reports to prevent duplicate flash/pulse/daily per date (CL-005)
+  async (client) => {
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_flash_per_day ON reports(date) WHERE type = 'flash'`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_daily_per_day ON reports(date) WHERE type = 'daily'`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

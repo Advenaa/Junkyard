@@ -482,15 +482,25 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
 
-    const reportRow = await insertReport(pool, {
-      id: reportId,
-      date: dateString,
-      type: 'flash',
-      body: JSON.stringify(report),
-      tldr: report.tldr,
-      sentiment: avgSentiment,
-      createdAt: Date.now(),
-    });
+    let reportRow: ReportRow;
+    try {
+      reportRow = await insertReport(pool, {
+        id: reportId,
+        date: dateString,
+        type: 'flash',
+        body: JSON.stringify(report),
+        tldr: report.tldr,
+        sentiment: avgSentiment,
+        createdAt: Date.now(),
+      });
+    } catch (err: unknown) {
+      // Unique constraint violation (23505) means a concurrent flash was created first
+      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+        log.info({ date: dateString }, 'Flash report race: another process created it first');
+        return null;
+      }
+      throw err;
+    }
 
     log.info(
       { reportId, entities: correlatedEntities.map((c) => c.entityName) },

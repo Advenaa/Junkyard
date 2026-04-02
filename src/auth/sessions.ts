@@ -42,6 +42,11 @@ export function normalizeUA(ua: string): string {
   return `${os}/${browser}`;
 }
 
+/** Truncate a session ID for safe logging (first 8 chars + ...) */
+function logSessionId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) + '...' : id;
+}
+
 export function createSessionManager(pool: Pool, log: Logger): SessionManager {
   return {
     async create(
@@ -80,7 +85,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         [sessionId, discordId, ip, userAgent, expiresAt, now],
       );
 
-      log.info({ discordId, sessionId }, 'Session created');
+      log.info({ discordId, sessionId: logSessionId(sessionId) }, 'Session created');
       return sessionId;
     },
 
@@ -123,7 +128,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         if (!userAgent) {
           // Missing UA when one was stored — suspicious
           log.warn(
-            { sessionId, discordId: row.discord_id },
+            { sessionId: logSessionId(sessionId), discordId: row.discord_id },
             'Session invalidated: no User-Agent when one was expected',
           );
           await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
@@ -132,7 +137,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         if (normalizeUA(row.user_agent) !== normalizeUA(userAgent)) {
           log.warn(
             {
-              sessionId,
+              sessionId: logSessionId(sessionId),
               discordId: row.discord_id,
               storedUA: row.user_agent,
               requestUA: userAgent,
@@ -148,7 +153,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       if (row.ip_address && ip && row.ip_address !== ip) {
         log.warn(
           {
-            sessionId,
+            sessionId: logSessionId(sessionId),
             discordId: row.discord_id,
             storedIP: row.ip_address,
             requestIP: ip,
@@ -173,7 +178,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
 
     async delete(sessionId: string): Promise<void> {
       await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
-      log.info({ sessionId }, 'Session deleted');
+      log.info({ sessionId: logSessionId(sessionId) }, 'Session deleted');
     },
 
     async cleanupExpired(): Promise<number> {

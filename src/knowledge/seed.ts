@@ -94,45 +94,84 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
     const now = Date.now();
     let seeded = 0;
 
-    for (const coin of coins) {
-      const newId = ulid();
-      const name = normalizeAlias(coin.name);
+    const BATCH_SIZE = 500;
+    const batches: CoinGeckoEntry[][] = [];
+    for (let i = 0; i < coins.length; i += BATCH_SIZE) {
+      batches.push(coins.slice(i, i + BATCH_SIZE));
+    }
 
-      const insertResult = await pool.query(
-        `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
-         VALUES ($1, $2, 'token', 'active', 0, $3, $3)
-         ON CONFLICT(name, type) DO NOTHING`,
-        [newId, name, now],
-      );
-
-      // Fetch the entity id (could be new or existing)
-      const fetchResult = await pool.query<{ id: string }>(
-        "SELECT id FROM entities WHERE name = $1 AND type = 'token'",
-        [name],
-      );
-
-      if (fetchResult.rows.length === 0) continue; // Should not happen, but safety check
-
-      const entityId = fetchResult.rows[0].id;
-      const isNew = (insertResult.rowCount ?? 0) > 0;
-
-      // Insert 3 aliases: name, symbol, id
-      const aliases = new Set([
-        name,
-        normalizeAlias(coin.symbol),
-        normalizeAlias(coin.id),
-      ]);
-
-      for (const alias of aliases) {
-        await pool.query(
-          `INSERT INTO entity_aliases (alias, context_key, entity_id)
-           VALUES ($1, '', $2)
-           ON CONFLICT (alias, context_key) DO NOTHING`,
-          [alias, entityId],
+    for (const batch of batches) {
+      // 1. Batch insert entities
+      const entityValues: unknown[] = [];
+      const entityPlaceholders: string[] = [];
+      for (let i = 0; i < batch.length; i++) {
+        const coin = batch[i];
+        const name = normalizeAlias(coin.name);
+        const id = ulid();
+        const offset = i * 3;
+        entityPlaceholders.push(
+          `($${offset + 1}, $${offset + 2}, 'token', 'active', 0, $${offset + 3}, $${offset + 3})`,
         );
+        entityValues.push(id, name, now);
       }
 
-      if (isNew) seeded++;
+      const insertResult = await pool.query<{ name: string }>(
+        `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
+         VALUES ${entityPlaceholders.join(', ')}
+         ON CONFLICT(name, type) DO NOTHING
+         RETURNING name`,
+        entityValues,
+      );
+      seeded += insertResult.rowCount ?? 0;
+
+      // 2. Batch fetch entity IDs for alias mapping
+      const names = batch.map((c) => normalizeAlias(c.name));
+      const namePlaceholders = names.map((_, i) => `$${i + 1}`).join(', ');
+      const fetchResult = await pool.query<{ id: string; name: string }>(
+        `SELECT id, name FROM entities WHERE type = 'token' AND name IN (${namePlaceholders})`,
+        names,
+      );
+
+      const nameToId = new Map<string, string>();
+      for (const row of fetchResult.rows) {
+        nameToId.set(row.name, row.id);
+      }
+
+      // 3. Batch insert aliases
+      const aliasValues: unknown[] = [];
+      const aliasPlaceholders: string[] = [];
+      let aliasIdx = 0;
+
+      for (const coin of batch) {
+        const name = normalizeAlias(coin.name);
+        const entityId = nameToId.get(name);
+        if (!entityId) continue;
+
+        const aliases = new Set([
+          name,
+          normalizeAlias(coin.symbol),
+          normalizeAlias(coin.id),
+        ]);
+
+        for (const alias of aliases) {
+          if (!alias) continue;
+          const offset = aliasIdx * 2;
+          aliasPlaceholders.push(
+            `($${offset + 1}, '', $${offset + 2})`,
+          );
+          aliasValues.push(alias, entityId);
+          aliasIdx++;
+        }
+      }
+
+      if (aliasPlaceholders.length > 0) {
+        await pool.query(
+          `INSERT INTO entity_aliases (alias, context_key, entity_id)
+           VALUES ${aliasPlaceholders.join(', ')}
+           ON CONFLICT (alias, context_key) DO NOTHING`,
+          aliasValues,
+        );
+      }
     }
 
     log.info({ seeded }, `Seeded ${seeded} entities from CoinGecko`);
