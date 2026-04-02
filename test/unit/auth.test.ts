@@ -65,12 +65,16 @@ function fakeRequest(opts: {
   cookies?: Record<string, string>;
   authorization?: string;
   unsignResult?: { valid: boolean; value: string | null };
+  ip?: string;
+  userAgent?: string;
 } = {}) {
   const req: Record<string, unknown> = {
     cookies: opts.cookies ?? {},
     headers: {
       authorization: opts.authorization ?? undefined,
+      'user-agent': opts.userAgent ?? 'TestAgent/1.0',
     },
+    ip: opts.ip ?? '127.0.0.1',
     unsignCookie: (_raw: string) =>
       opts.unsignResult ?? { valid: false, value: null },
   };
@@ -83,6 +87,10 @@ function fakeReply() {
   let body: unknown;
   const reply = {
     status(code: number) {
+      statusCode = code;
+      return reply;
+    },
+    code(code: number) {
       statusCode = code;
       return reply;
     },
@@ -180,7 +188,7 @@ describe('createSessionManager', () => {
     it('returns null for unknown session', async () => {
       const pool = mockPool([{ rows: [] }]);
       const mgr = createSessionManager(pool as never, silentLog);
-      const result = await mgr.validate('nonexistent');
+      const result = await mgr.validate('nonexistent', '127.0.0.1', 'TestAgent');
       assert.strictEqual(result, null);
     });
 
@@ -193,13 +201,15 @@ describe('createSessionManager', () => {
               role: 'viewer',
               expires_at: Date.now() - 1000, // expired
               last_refreshed_at: Date.now() - 1000,
+              ip_address: '127.0.0.1',
+              user_agent: 'TestAgent',
             },
           ],
         },
         {}, // DELETE
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
-      const result = await mgr.validate('expired-session');
+      const result = await mgr.validate('expired-session', '127.0.0.1', 'TestAgent');
 
       assert.strictEqual(result, null);
       assert.strictEqual(pool.calls.length, 2);
@@ -215,12 +225,14 @@ describe('createSessionManager', () => {
               role: 'viewer',
               expires_at: Date.now() + 86400000, // future
               last_refreshed_at: Date.now(),       // recent
+              ip_address: '127.0.0.1',
+              user_agent: 'TestAgent',
             },
           ],
         },
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
-      const result = await mgr.validate('good-session');
+      const result = await mgr.validate('good-session', '127.0.0.1', 'TestAgent');
 
       assert.deepStrictEqual(result, { discordId: 'user-1', role: 'viewer' });
     });
@@ -235,13 +247,15 @@ describe('createSessionManager', () => {
               role: 'admin',
               expires_at: Date.now() + 86400000,
               last_refreshed_at: staleTime,
+              ip_address: '127.0.0.1',
+              user_agent: 'TestAgent',
             },
           ],
         },
         {}, // UPDATE sliding refresh
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
-      await mgr.validate('stale-session');
+      await mgr.validate('stale-session', '127.0.0.1', 'TestAgent');
 
       assert.strictEqual(pool.calls.length, 2);
       assert.ok(pool.calls[1]!.text.includes('UPDATE sessions SET last_refreshed_at'));
@@ -257,15 +271,62 @@ describe('createSessionManager', () => {
               role: 'viewer',
               expires_at: Date.now() + 86400000,
               last_refreshed_at: freshTime,
+              ip_address: '127.0.0.1',
+              user_agent: 'TestAgent',
             },
           ],
         },
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
-      await mgr.validate('fresh-session');
+      await mgr.validate('fresh-session', '127.0.0.1', 'TestAgent');
 
       // Only the SELECT query, no UPDATE
       assert.strictEqual(pool.calls.length, 1);
+    });
+
+    it('invalidates session on User-Agent mismatch', async () => {
+      const pool = mockPool([
+        {
+          rows: [
+            {
+              discord_id: 'user-1',
+              role: 'viewer',
+              expires_at: Date.now() + 86400000,
+              last_refreshed_at: Date.now(),
+              ip_address: '127.0.0.1',
+              user_agent: 'Mozilla/5.0 Chrome',
+            },
+          ],
+        },
+        {}, // DELETE
+      ]);
+      const mgr = createSessionManager(pool as never, silentLog);
+      const result = await mgr.validate('hijacked-session', '127.0.0.1', 'curl/7.88');
+
+      assert.strictEqual(result, null);
+      assert.strictEqual(pool.calls.length, 2);
+      assert.ok(pool.calls[1]!.text.includes('DELETE'));
+    });
+
+    it('allows session with different IP (warns only)', async () => {
+      const pool = mockPool([
+        {
+          rows: [
+            {
+              discord_id: 'user-1',
+              role: 'viewer',
+              expires_at: Date.now() + 86400000,
+              last_refreshed_at: Date.now(),
+              ip_address: '192.168.1.1',
+              user_agent: 'TestAgent',
+            },
+          ],
+        },
+      ]);
+      const mgr = createSessionManager(pool as never, silentLog);
+      const result = await mgr.validate('mobile-session', '10.0.0.1', 'TestAgent');
+
+      assert.deepStrictEqual(result, { discordId: 'user-1', role: 'viewer' });
     });
   });
 

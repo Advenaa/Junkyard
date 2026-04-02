@@ -113,9 +113,16 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
+export interface UrlValidationResult {
+  valid: boolean;
+  reason?: string;
+  /** First public IP the hostname resolved to. Callers should pin requests to this IP. */
+  resolvedIp?: string;
+}
+
 export async function validateUrl(
   url: string,
-): Promise<{ valid: boolean; reason?: string }> {
+): Promise<UrlValidationResult> {
   // 1. Parse URL
   let parsed: URL;
   try {
@@ -167,6 +174,46 @@ export async function validateUrl(
     }
   }
 
-  // 6. All checks passed
-  return { valid: true };
+  // 6. All checks passed — return first resolved IP so callers can pin to it
+  return { valid: true, resolvedIp: allIps[0] };
+}
+
+/**
+ * Validate a URL and fetch it atomically, pinning the connection to the
+ * resolved IP to prevent DNS rebinding (TOCTOU) attacks.
+ *
+ * Connects directly to the validated IP address while preserving the original
+ * Host header for TLS SNI and virtual hosting.
+ *
+ * Returns null response if validation fails, otherwise the fetch Response.
+ */
+export async function fetchValidated(
+  url: string,
+  init?: { signal?: AbortSignal; headers?: Record<string, string> },
+): Promise<{ response: Response; validation: UrlValidationResult } | { response: null; validation: UrlValidationResult }> {
+  const validation = await validateUrl(url);
+  if (!validation.valid || !validation.resolvedIp) {
+    return { response: null, validation };
+  }
+
+  const parsed = new URL(url);
+  const pinnedIp = validation.resolvedIp;
+
+  // Replace hostname with the validated IP so DNS cannot rebind between
+  // validation and the actual connection.
+  const pinnedUrl = new URL(url);
+  pinnedUrl.hostname = net.isIPv6(pinnedIp) ? `[${pinnedIp}]` : pinnedIp;
+
+  const headers: Record<string, string> = {
+    ...init?.headers,
+    // Preserve original Host header for TLS SNI and virtual hosting
+    Host: parsed.host,
+  };
+
+  const response = await fetch(pinnedUrl.toString(), {
+    signal: init?.signal,
+    headers,
+  });
+
+  return { response, validation };
 }

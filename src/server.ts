@@ -24,10 +24,16 @@ export async function createServer(
 
   // --- Plugins ---
   await app.register(cookie, { secret: config.sessionSecret });
-  await app.register(rateLimit, { max: 100, timeWindow: '1 second' });
+  await app.register(rateLimit, { max: 50, timeWindow: '1 second' });
 
-  // --- OAuth routes ---
-  registerOAuthRoutes(app, pool, log, config);
+  // --- OAuth routes (with stricter rate limit for brute-force protection) ---
+  await app.register(
+    async (scope) => {
+      await scope.register(rateLimit, { max: 5, timeWindow: '1 minute' });
+      registerOAuthRoutes(scope, pool, log, config, authPreHandler);
+    },
+    { prefix: '' },
+  );
 
   // --- Security headers ---
   app.addHook('onSend', async (_request, reply) => {
@@ -80,7 +86,10 @@ export async function createServer(
     return { todo: true };
   });
 
-  app.post('/api/v1/chat', { preHandler: [authPreHandler] }, async () => {
+  app.post('/api/v1/chat', {
+    preHandler: [authPreHandler],
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async () => {
     return { todo: true };
   });
 

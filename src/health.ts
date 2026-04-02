@@ -178,11 +178,12 @@ export function createHealthMonitor(
       SELECT
         (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage
          WHERE created_at >= $1) AS today_cost,
-        (SELECT COALESCE(SUM(cost_usd), 0) / NULLIF(
-          COUNT(DISTINCT (created_at / 86400000)), 0
-        ) FROM llm_usage
-         WHERE created_at >= $2
-           AND created_at < $1) AS avg_cost
+        (SELECT COALESCE(AVG(daily_total), 0) FROM (
+           SELECT SUM(cost_usd) AS daily_total
+           FROM llm_usage
+           WHERE created_at >= $2 AND created_at < $1
+           GROUP BY (created_at / 86400000)
+        ) daily_costs) AS avg_cost
     `, [todayStart, sevenDaysAgo]);
 
     const todayCost = parseFloat(rows[0].today_cost ?? '0');

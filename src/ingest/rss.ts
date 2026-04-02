@@ -3,7 +3,7 @@ import RssParser from 'rss-parser';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import { ulid } from 'ulid';
-import { validateUrl } from '../url-validator.js';
+import { fetchValidated } from '../url-validator.js';
 import type { Logger } from '../logger.js';
 
 export interface RawItem {
@@ -28,14 +28,13 @@ function syntheticGuid(pubDate: string | undefined, title: string | undefined): 
 
 async function extractArticle(link: string, originalContent: string, log: Logger): Promise<string> {
   try {
-    const validation = await validateUrl(link);
-    if (!validation.valid) {
-      return originalContent;
-    }
-
-    const response = await fetch(link, {
+    const { response } = await fetchValidated(link, {
       signal: AbortSignal.timeout(10_000),
     });
+
+    if (!response) {
+      return originalContent;
+    }
 
     const html = await response.text();
     const { document } = parseHTML(html);

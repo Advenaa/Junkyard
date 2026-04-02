@@ -27,7 +27,14 @@ export function requireAuth(
     );
 
     if (sessionId.valid && sessionId.value) {
-      const session = await sessionManager.validate(sessionId.value);
+      const requestIp = request.ip ?? '';
+      const requestUA =
+        (request.headers['user-agent'] as string | undefined) ?? '';
+      const session = await sessionManager.validate(
+        sessionId.value,
+        requestIp,
+        requestUA,
+      );
       if (session) {
         // Look up username from DB
         const userResult = await pool.query<{ username: string }>(
@@ -79,10 +86,10 @@ export function requireAuth(
   };
 }
 
-export function requireAdmin(
+export async function requireAdmin(
   request: FastifyRequest,
   reply: FastifyReply,
-): Promise<void> | void {
+): Promise<void> {
   if (!request.user || request.user.role !== 'admin') {
     reply.status(403).send({ error: 'Forbidden: admin access required' });
     return;

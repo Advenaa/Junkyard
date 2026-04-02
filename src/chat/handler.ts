@@ -216,7 +216,8 @@ export function createChatHandler(
 
         try {
           const toolResult = await tool.execute(call.args);
-          toolResults.push(buildToolResultMessage(call.name, toolResult));
+          const sanitizedResult = llm.sanitizeForPrompt(toolResult);
+          toolResults.push(buildToolResultMessage(call.name, sanitizedResult));
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : 'Unknown error';
           log.error({ tool: call.name, err }, 'chat: tool execution failed');

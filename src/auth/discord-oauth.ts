@@ -20,11 +20,17 @@ interface DiscordUser {
   discriminator: string;
 }
 
+type PreHandler = (
+  request: import('fastify').FastifyRequest,
+  reply: import('fastify').FastifyReply,
+) => Promise<void>;
+
 export function registerOAuthRoutes(
   app: FastifyInstance,
   pool: Pool,
   log: Logger,
   config: Config,
+  authPreHandler?: PreHandler,
 ): void {
   const sessionManager = createSessionManager(pool, log);
 
@@ -233,7 +239,9 @@ export function registerOAuthRoutes(
   });
 
   // --- POST /api/v1/auth/logout ---
-  app.post('/api/v1/auth/logout', async (request, reply) => {
+  app.post('/api/v1/auth/logout', {
+    ...(authPreHandler ? { preHandler: [authPreHandler] } : {}),
+  }, async (request, reply) => {
     const sessionCookie = request.unsignCookie(
       (request.cookies?.['podders_session'] as string) ?? '',
     );

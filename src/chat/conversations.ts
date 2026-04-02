@@ -19,7 +19,7 @@ export interface ConversationManager {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const MAX_MESSAGES = 5;
+const MAX_MESSAGES = 50;
 const IDLE_TIMEOUT_MS = 3_600_000; // 1 hour
 
 // ── Factory ───────────────────────────────────────────────────────────
