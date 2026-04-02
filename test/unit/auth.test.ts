@@ -5,6 +5,7 @@ import {
   SESSION_LIFETIME_DAYS,
   SLIDING_REFRESH_HOURS,
   createSessionManager,
+  normalizeUA,
 } from '../../src/auth/sessions.js';
 import { requireAuth, requireAdmin } from '../../src/auth/middleware.js';
 import type { Config } from '../../src/config.js';
@@ -394,6 +395,26 @@ describe('requireAuth', () => {
     assert.strictEqual(user.discordId, 'admin-id-1');
   });
 
+  it('revokes admin role when discordId is NOT in ADMIN_USER_IDS', async () => {
+    const sessionManager = {
+      validate: async () => ({ discordId: 'former-admin', role: 'admin' }),
+    };
+    const pool = mockPool([{ rows: [{ username: 'charlie' }] }]);
+    const config = fakeConfig({ adminUserIds: ['other-admin'] }); // former-admin NOT in list
+    const handler = requireAuth(pool as never, config, sessionManager as never);
+
+    const req = fakeRequest({
+      cookies: { podders_session: 'signed' },
+      unsignResult: { valid: true, value: 'sess-abc' },
+    });
+    const reply = fakeReply();
+    await handler(req, reply as never);
+
+    const user = (req as Record<string, unknown>).user as Record<string, unknown>;
+    assert.strictEqual(user.role, 'viewer', 'DB admin not in ADMIN_USER_IDS should be demoted to viewer');
+    assert.strictEqual(user.discordId, 'former-admin');
+  });
+
   it('falls back to "unknown" username when DB has no user row', async () => {
     const sessionManager = {
       validate: async () => ({ discordId: 'user-99', role: 'viewer' }),
@@ -548,5 +569,86 @@ describe('requireAdmin', () => {
     requireAdmin(req as never, reply as never);
 
     assert.strictEqual(reply.statusCode, 403);
+  });
+});
+
+// ===========================================================================
+// normalizeUA — stable OS/browser fingerprint
+// ===========================================================================
+
+describe('normalizeUA', () => {
+  it('detects Chrome on Mac', () => {
+    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    assert.strictEqual(normalizeUA(ua), 'mac/chrome');
+  });
+
+  it('detects Chrome on Mac with different version (same fingerprint)', () => {
+    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+    assert.strictEqual(normalizeUA(ua), 'mac/chrome');
+  });
+
+  it('detects Firefox on Linux', () => {
+    const ua = 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0';
+    assert.strictEqual(normalizeUA(ua), 'linux/firefox');
+  });
+
+  it('detects Edge on Windows (includes chrome in UA string)', () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
+    assert.strictEqual(normalizeUA(ua), 'win/edge');
+  });
+
+  it('detects Safari on iOS', () => {
+    const ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+    assert.strictEqual(normalizeUA(ua), 'ios/safari');
+  });
+
+  it('detects Chrome on Android', () => {
+    const ua = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+    assert.strictEqual(normalizeUA(ua), 'android/chrome');
+  });
+
+  it('returns unknown/unknown for unrecognized UA', () => {
+    assert.strictEqual(normalizeUA('curl/7.88.1'), 'unknown/unknown');
+  });
+
+  it('returns unknown/unknown for empty string', () => {
+    assert.strictEqual(normalizeUA(''), 'unknown/unknown');
+  });
+
+  it('detects Opera on Windows', () => {
+    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0';
+    assert.strictEqual(normalizeUA(ua), 'win/opera');
+  });
+
+  it('version change does not affect fingerprint', () => {
+    const v124 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36';
+    const v125 = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36';
+    assert.strictEqual(normalizeUA(v124), normalizeUA(v125));
+  });
+});
+
+// ===========================================================================
+// Session invalidation on empty UA (CL-009)
+// ===========================================================================
+
+describe('session invalidation on empty UA', () => {
+  it('invalidates session when stored UA exists but request UA is empty', async () => {
+    // Create session manager with mock pool that returns a session with a UA
+    const pool = mockPool([
+      // validate SELECT
+      { rows: [{
+        discord_id: 'user-1',
+        role: 'viewer',
+        expires_at: Date.now() + 86400000,
+        user_agent: 'Mozilla/5.0 Chrome/124',
+        ip_address: '1.2.3.4',
+        last_refreshed_at: Date.now(),
+      }] },
+      // DELETE for invalidation
+      { rows: [], rowCount: 1 },
+    ]);
+    const sm = createSessionManager(pool as never, silentLog);
+    const result = await sm.validate('sess-123', '1.2.3.4', '');
+    assert.strictEqual(result, null, 'should invalidate when request UA is empty');
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { createNarrativeDetector } from '../../src/process/narratives.js';
+import { createNarrativeDetector, midnightEpoch, decrementDate } from '../../src/process/narratives.js';
 import type { Narrative } from '../../src/process/narratives.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -629,5 +629,62 @@ describe('createNarrativeDetector', () => {
     for (const id of ids) {
       assert.equal(id.length, 26, `ULID should be 26 chars: ${id}`);
     }
+  });
+});
+
+// ── Timezone helper unit tests ────────────────────────────────────────
+
+describe('midnightEpoch', () => {
+  it('UTC: midnight Jan 15 = 2024-01-15T00:00:00Z', () => {
+    const result = midnightEpoch('2024-01-15', 'UTC');
+    assert.strictEqual(result, Date.UTC(2024, 0, 15));
+  });
+
+  it('Asia/Jakarta (UTC+7): midnight Jan 15 = 2024-01-14T17:00:00Z', () => {
+    const result = midnightEpoch('2024-01-15', 'Asia/Jakarta');
+    assert.strictEqual(result, Date.UTC(2024, 0, 14, 17, 0, 0));
+  });
+
+  it('America/New_York (UTC-5 standard): midnight Jan 15 = 2024-01-15T05:00:00Z', () => {
+    const result = midnightEpoch('2024-01-15', 'America/New_York');
+    assert.strictEqual(result, Date.UTC(2024, 0, 15, 5, 0, 0));
+  });
+
+  it('Asia/Kolkata (UTC+5:30): midnight Jan 15 = 2024-01-14T18:30:00Z', () => {
+    const result = midnightEpoch('2024-01-15', 'Asia/Kolkata');
+    assert.strictEqual(result, Date.UTC(2024, 0, 14, 18, 30, 0));
+  });
+
+  it('Asia/Kathmandu (UTC+5:45): midnight Jan 15 = 2024-01-14T18:15:00Z', () => {
+    const result = midnightEpoch('2024-01-15', 'Asia/Kathmandu');
+    assert.strictEqual(result, Date.UTC(2024, 0, 14, 18, 15, 0));
+  });
+
+  it('handles year boundary: midnight Jan 1 2024 in UTC+7', () => {
+    const result = midnightEpoch('2024-01-01', 'Asia/Jakarta');
+    assert.strictEqual(result, Date.UTC(2023, 11, 31, 17, 0, 0));
+  });
+
+  it('handles month boundary: midnight Mar 1 2024 in UTC', () => {
+    const result = midnightEpoch('2024-03-01', 'UTC');
+    assert.strictEqual(result, Date.UTC(2024, 2, 1));
+  });
+});
+
+describe('decrementDate', () => {
+  it('decrements a normal date', () => {
+    assert.strictEqual(decrementDate('2024-01-15'), '2024-01-14');
+  });
+
+  it('wraps month boundary', () => {
+    assert.strictEqual(decrementDate('2024-03-01'), '2024-02-29'); // 2024 is leap year
+  });
+
+  it('wraps year boundary', () => {
+    assert.strictEqual(decrementDate('2024-01-01'), '2023-12-31');
+  });
+
+  it('handles non-leap year Feb', () => {
+    assert.strictEqual(decrementDate('2023-03-01'), '2023-02-28');
   });
 });

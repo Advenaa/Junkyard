@@ -20,16 +20,16 @@ export const SLIDING_REFRESH_HOURS = 24;
 /** Extract a stable browser fingerprint from User-Agent, ignoring version numbers.
  *  e.g. "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/124.0" → "mac/chrome"
  */
-function normalizeUA(ua: string): string {
+export function normalizeUA(ua: string): string {
   const lower = ua.toLowerCase();
 
-  // Detect OS
+  // Detect OS (order matters — check specific before generic, e.g. android before linux)
   let os = 'unknown';
-  if (lower.includes('windows')) os = 'win';
+  if (lower.includes('iphone') || lower.includes('ipad')) os = 'ios';
+  else if (lower.includes('android')) os = 'android';
+  else if (lower.includes('windows')) os = 'win';
   else if (lower.includes('macintosh') || lower.includes('mac os')) os = 'mac';
   else if (lower.includes('linux')) os = 'linux';
-  else if (lower.includes('android')) os = 'android';
-  else if (lower.includes('iphone') || lower.includes('ipad')) os = 'ios';
 
   // Detect browser (order matters — check specific before generic)
   let browser = 'unknown';

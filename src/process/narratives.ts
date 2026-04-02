@@ -136,7 +136,7 @@ function silhouetteScore(
 }
 
 /** Get the epoch timestamp for midnight of a given YYYY-MM-DD date in a timezone. */
-function midnightEpoch(dateStr: string, tz: string): number {
+export function midnightEpoch(dateStr: string, tz: string): number {
   const [y, m, d] = dateStr.split('-').map(Number);
   // Create midnight UTC for this date
   const utcMidnight = new Date(Date.UTC(y, m - 1, d));
@@ -153,7 +153,7 @@ function midnightEpoch(dateStr: string, tz: string): number {
 }
 
 /** Decrement a YYYY-MM-DD date string by one day, DST-safe. */
-function decrementDate(dateStr: string): string {
+export function decrementDate(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const prev = new Date(Date.UTC(y, m - 1, d - 1));
   return prev.toISOString().slice(0, 10);
