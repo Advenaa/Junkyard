@@ -84,7 +84,7 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
 
     const [summaryRows, itemRows, reportRows] = await Promise.all([
       fetchUnembedded('summary', 'summaries', 'body'),
-      fetchUnembedded('item', 'items', 'body'),
+      fetchUnembedded('item', 'items', 'content'),
       fetchUnembedded('report', 'reports', 'body'),
     ]);
 

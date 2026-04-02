@@ -48,7 +48,7 @@ export function createEntityManager(
     source: string,
     summaryId: string,
   ): Promise<void> {
-    const now = new Date().toISOString();
+    const now = Date.now();
     const resolvedIds: string[] = [];
     const unresolvedEntities: ExtractedEntity[] = [];
     const entityIdMap = new Map<ExtractedEntity, string>();

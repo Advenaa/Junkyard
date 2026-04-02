@@ -69,7 +69,7 @@ export function loadConfig(): Config {
 
   const adminUserIds = commaSplit(process.env['ADMIN_USER_IDS']);
   const discordTokens = commaSplit(process.env['DISCORD_TOKENS']);
-  const twitterApiKey = process.env['TWITTER_API_KEY'] || null;
+  const twitterApiKey = process.env['TWITTERAPI_KEY'] || null;
 
   let apiKey = process.env['API_KEY'] || null;
   if (!apiKey) {

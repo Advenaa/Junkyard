@@ -28,7 +28,8 @@ function syntheticGuid(pubDate: string | undefined, title: string | undefined): 
 
 async function extractArticle(link: string, originalContent: string, log: Logger): Promise<string> {
   try {
-    if (!validateUrl(link)) {
+    const validation = await validateUrl(link);
+    if (!validation.valid) {
       return originalContent;
     }
 
