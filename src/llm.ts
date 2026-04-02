@@ -59,7 +59,7 @@ export class LLMHaltedError extends Error {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-function parseModel(model: string): { provider: string; modelId: string } {
+export function parseModel(model: string): { provider: string; modelId: string } {
   const colonIdx = model.indexOf(':');
   if (colonIdx > 0) {
     return {
@@ -70,7 +70,7 @@ function parseModel(model: string): { provider: string; modelId: string } {
   return { provider: 'anthropic', modelId: model };
 }
 
-function extractHttpStatus(err: unknown): number | null {
+export function extractHttpStatus(err: unknown): number | null {
   if (err instanceof Error) {
     const msg = err.message;
     const match = /\b(4\d{2}|5\d{2})\b/.exec(msg);
@@ -84,7 +84,7 @@ function extractHttpStatus(err: unknown): number | null {
   return null;
 }
 
-function isContextLengthError(err: unknown): boolean {
+export function isContextLengthError(err: unknown): boolean {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase();
     return (
@@ -97,7 +97,7 @@ function isContextLengthError(err: unknown): boolean {
   return false;
 }
 
-function extractRetryAfter(err: unknown): number | null {
+export function extractRetryAfter(err: unknown): number | null {
   if (err instanceof Error) {
     const record = err as unknown as Record<string, unknown>;
     if (typeof record['retryAfter'] === 'number')
@@ -145,8 +145,18 @@ function toPiMessages(
 
 // ── Factory ────────────────────────────────────────────────────────────
 
-export function createLLM(pool: Pool, log: Logger, _config: Config) {
+/** Optional overrides for testing — never use in production. */
+export interface LLMTestOverrides {
+  /** Replace the complete() call with a mock function. */
+  completeFn?: (model: unknown, context: unknown, opts: unknown) => Promise<unknown>;
+  /** Replace the sleep() call with a mock (avoids real delays in tests). */
+  sleepFn?: (ms: number) => Promise<void>;
+}
+
+export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrides?: LLMTestOverrides) {
   let halted = false;
+  const _sleep = _testOverrides?.sleepFn ?? sleep;
+  const _complete = _testOverrides?.completeFn ?? complete;
 
   async function call(params: LLMCallParams): Promise<LLMCallResult> {
     if (halted) {
@@ -170,7 +180,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await complete(model, context, {
+        const response = await (_complete as typeof complete)(model, context, {
           maxTokens: params.maxTokens,
         });
 
@@ -280,7 +290,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
             { stage: params.stage, retryAfter, delayMs: Math.round(delayMs), attempt },
             'LLM rate limited (429), waiting',
           );
-          await sleep(delayMs);
+          await _sleep(delayMs);
           continue;
         }
 
@@ -298,7 +308,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
             { stage: params.stage, delayMs: Math.round(overloadDelayMs), attempt },
             'LLM overloaded (529), backing off',
           );
-          await sleep(overloadDelayMs);
+          await _sleep(overloadDelayMs);
           continue;
         }
 
@@ -317,7 +327,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config) {
             { stage: params.stage, status, backoffMs: Math.round(backoffMs), attempt },
             'LLM server error, backing off',
           );
-          await sleep(backoffMs);
+          await _sleep(backoffMs);
           continue;
         }
 

@@ -34,7 +34,7 @@ interface ClaimedItem {
 
 // ── System prompt ─────────────────────────────────────────────────────
 
-function buildSystemPrompt(
+export function buildSystemPrompt(
   source: string,
   sourceId: string,
   windowStart: number,
@@ -104,7 +104,7 @@ Now analyze the following messages and return ONLY valid JSON matching the schem
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function stripCodeFences(text: string): string {
+export function stripCodeFences(text: string): string {
   let s = text.trim();
   if (s.startsWith('```')) {
     s = s.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
@@ -139,7 +139,7 @@ function buildChunkSystemPrompt(
   return systemPrompt;
 }
 
-function verifyEntities(
+export function verifyEntities(
   parsed: ChunkSummary,
   rawText: string,
   log: Logger,

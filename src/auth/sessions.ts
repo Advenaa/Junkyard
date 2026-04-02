@@ -11,9 +11,9 @@ export interface SessionManager {
   cleanupExpired(): Promise<number>;
 }
 
-const MAX_SESSIONS_PER_USER = 5;
-const SESSION_LIFETIME_DAYS = 30;
-const SLIDING_REFRESH_HOURS = 24;
+export const MAX_SESSIONS_PER_USER = 5;
+export const SESSION_LIFETIME_DAYS = 30;
+export const SLIDING_REFRESH_HOURS = 24;
 
 export function createSessionManager(pool: Pool, log: Logger): SessionManager {
   return {

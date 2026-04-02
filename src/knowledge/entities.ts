@@ -13,7 +13,7 @@ export interface ExtractedEntity {
   sentiment: number;
 }
 
-const DisambiguatedEntitySchema = z.array(
+export const DisambiguatedEntitySchema = z.array(
   z.object({
     name: z.string(),
     type: z.enum(['token', 'person', 'project', 'company', 'event']),
@@ -27,12 +27,17 @@ interface LLM {
   call(params: LLMCallParams): Promise<LLMCallResult>;
 }
 
-const SOURCE_WEIGHTS: Record<string, number> = {
+export const SOURCE_WEIGHTS: Record<string, number> = {
   discord: 1.0,
   twitter: 1.5,
   news: 2.0,
   rss: 2.0,
 };
+
+/** Normalize an alias: lowercase + strip leading $ */
+export function normalizeAlias(alias: string): string {
+  return alias.toLowerCase().replace(/^\$/, '');
+}
 
 interface EntityManager {
   resolveEntities(
@@ -288,7 +293,7 @@ export function createEntityManager(
         if (!entityId) continue;
 
         for (const alias of entity.aliases) {
-          const normalizedAlias = alias.toLowerCase().replace(/^\$/, '');
+          const normalizedAlias = normalizeAlias(alias);
           aliasTuples.push({ alias: normalizedAlias, entityId });
         }
 
