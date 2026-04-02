@@ -118,19 +118,30 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         return null;
       }
 
-      // User-Agent mismatch — likely session hijacking, invalidate immediately
-      if (row.user_agent && userAgent && normalizeUA(row.user_agent) !== normalizeUA(userAgent)) {
-        log.warn(
-          {
-            sessionId,
-            discordId: row.discord_id,
-            storedUA: row.user_agent,
-            requestUA: userAgent,
-          },
-          'Session invalidated: User-Agent mismatch (possible session hijacking)',
-        );
-        await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
-        return null;
+      // User-Agent validation — detect session hijacking
+      if (row.user_agent) {
+        if (!userAgent) {
+          // Missing UA when one was stored — suspicious
+          log.warn(
+            { sessionId, discordId: row.discord_id },
+            'Session invalidated: no User-Agent when one was expected',
+          );
+          await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+          return null;
+        }
+        if (normalizeUA(row.user_agent) !== normalizeUA(userAgent)) {
+          log.warn(
+            {
+              sessionId,
+              discordId: row.discord_id,
+              storedUA: row.user_agent,
+              requestUA: userAgent,
+            },
+            'Session invalidated: User-Agent mismatch (possible session hijacking)',
+          );
+          await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
+          return null;
+        }
       }
 
       // IP mismatch — log warning but allow (mobile networks, VPNs)

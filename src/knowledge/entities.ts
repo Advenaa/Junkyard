@@ -36,7 +36,7 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
 
 /** Normalize an alias: lowercase + strip leading $ */
 export function normalizeAlias(alias: string): string {
-  return alias.toLowerCase().replace(/^\$/, '');
+  return alias.trim().toLowerCase().replace(/^\$/, '');
 }
 
 interface EntityManager {
@@ -204,7 +204,7 @@ export function createEntityManager(
         if (disambiguated) {
           for (const item of disambiguated) {
             const matchedEntity = stillUnresolved.find(
-              (e) => e.name.toLowerCase() === item.name.toLowerCase(),
+              (e) => normalizeAlias(e.name) === normalizeAlias(item.name),
             );
             if (!matchedEntity) continue;
 
@@ -224,6 +224,10 @@ export function createEntityManager(
               [canonical, item.type],
             );
 
+            if (fetchResult.rows.length === 0) {
+              log.warn({ name: canonical, type: item.type }, 'Entity not found after upsert, skipping');
+              continue;
+            }
             const entityId = fetchResult.rows[0].id;
             resolvedIds.push(entityId);
             entityIdMap.set(matchedEntity, entityId);
@@ -261,6 +265,10 @@ export function createEntityManager(
               [canonical, entity.type],
             );
 
+            if (fetchResult.rows.length === 0) {
+              log.warn({ name: canonical, type: entity.type }, 'Entity not found after upsert, skipping');
+              continue;
+            }
             const entityId = fetchResult.rows[0].id;
             entityIdMap.set(entity, entityId);
 
@@ -294,6 +302,10 @@ export function createEntityManager(
               [canonical, entity.type],
             );
 
+            if (fetchResult.rows.length === 0) {
+              log.warn({ name: canonical, type: entity.type }, 'Entity not found after upsert, skipping');
+              continue;
+            }
             const entityId = fetchResult.rows[0].id;
             entityIdMap.set(entity, entityId);
 

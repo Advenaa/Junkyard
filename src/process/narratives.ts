@@ -138,17 +138,25 @@ function silhouetteScore(
 /** Get the epoch timestamp for midnight of a given YYYY-MM-DD date in a timezone. */
 function midnightEpoch(dateStr: string, tz: string): number {
   const [y, m, d] = dateStr.split('-').map(Number);
-  // What hour is it in the target TZ when it's 00:00 UTC on this date?
-  const tzHour = parseInt(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      hour: 'numeric',
-      hour12: false,
-    }).format(new Date(Date.UTC(y, m - 1, d, 0, 0, 0))),
-    10,
-  );
-  // If tz is UTC+7, tzHour = 7, so midnight local = 00:00 UTC - 7h
-  return Date.UTC(y, m - 1, d) - tzHour * 3_600_000;
+  // Create midnight UTC for this date
+  const utcMidnight = new Date(Date.UTC(y, m - 1, d));
+  // Format this UTC instant in both UTC and target TZ
+  const utcStr = utcMidnight.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr = utcMidnight.toLocaleString('en-US', { timeZone: tz });
+  // The difference between parsing these back tells us the offset
+  const utcParsed = new Date(utcStr).getTime();
+  const tzParsed = new Date(tzStr).getTime();
+  const offsetMs = utcParsed - tzParsed;
+  // midnight local = midnight UTC + offset
+  // (if TZ is UTC+7, tzParsed > utcParsed, so offset is negative, meaning midnight local is BEFORE midnight UTC)
+  return Date.UTC(y, m - 1, d) + offsetMs;
+}
+
+/** Decrement a YYYY-MM-DD date string by one day, DST-safe. */
+function decrementDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const prev = new Date(Date.UTC(y, m - 1, d - 1));
+  return prev.toISOString().slice(0, 10);
 }
 
 function computeCentroid(points: number[][]): number[] {
@@ -180,14 +188,19 @@ export function createNarrativeDetector(
     }
 
     // Compute yesterday's date range in configured timezone (SL-013 fix)
-    const tzResult = await pool.query<{ value: string }>(
-      "SELECT value FROM app_config WHERE key = 'timezone'",
-    );
-    const timezone = tzResult.rows[0]?.value ?? 'Asia/Jakarta';
+    let timezone = 'Asia/Jakarta';
+    try {
+      const tzResult = await pool.query<{ value: string }>(
+        "SELECT value FROM app_config WHERE key = 'timezone'",
+      );
+      timezone = tzResult.rows[0]?.value ?? timezone;
+    } catch {
+      log.warn('Could not read timezone from app_config, defaulting to Asia/Jakarta');
+    }
 
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: timezone });
-    const yesterdayStr = new Date(now.getTime() - 86_400_000).toLocaleDateString('en-CA', { timeZone: timezone });
+    const yesterdayStr = decrementDate(todayStr);
     const dateStr = yesterdayStr;
 
     const startOfDay = new Date(midnightEpoch(yesterdayStr, timezone));
@@ -259,7 +272,7 @@ export function createNarrativeDetector(
     }
 
     // Step h: Load prior day's narratives for signal strength comparison
-    const priorDateStr = new Date(now.getTime() - 2 * 86_400_000).toLocaleDateString('en-CA', { timeZone: timezone });
+    const priorDateStr = decrementDate(yesterdayStr);
 
     const { rows: priorNarratives } = await pool.query<NarrativeRow>(
       'SELECT * FROM narratives WHERE date = $1',

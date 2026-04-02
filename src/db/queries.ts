@@ -265,13 +265,6 @@ export async function dailyReportExists(pool: Pool, date: string): Promise<boole
   return rows[0].exists;
 }
 
-export async function getLatestReport(pool: Pool): Promise<ReportRow | null> {
-  const { rows } = await pool.query<ReportRow>(
-    `SELECT * FROM reports ORDER BY created_at DESC LIMIT 1`,
-  );
-  return rows[0] ?? null;
-}
-
 // ── Sources ─────────────────────────────────────────────────────────────
 
 export async function getSources(pool: Pool): Promise<SourceRow[]> {

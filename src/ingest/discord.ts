@@ -681,7 +681,11 @@ export function createDiscordAdapter(
 
   async function handleTokenDeath(index: number): Promise<void> {
     log.error({ tokenIndex: index }, 'token permanently disabled — reassigning channels');
-    await reassignChannels();
+    try {
+      await reassignChannels();
+    } catch (err: unknown) {
+      log.error({ err, tokenIndex: index }, 'failed to reassign channels after token death');
+    }
   }
 
   // Create connection objects for each token

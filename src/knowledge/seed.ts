@@ -1,6 +1,7 @@
 import { ulid } from 'ulid';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
+import { normalizeAlias } from './entities.js';
 
 interface CoinGeckoEntry {
   id: string;
@@ -95,7 +96,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
 
     for (const coin of coins) {
       const newId = ulid();
-      const name = coin.name.toLowerCase();
+      const name = normalizeAlias(coin.name);
 
       const insertResult = await pool.query(
         `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
@@ -118,8 +119,8 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
       // Insert 3 aliases: name, symbol, id
       const aliases = new Set([
         name,
-        coin.symbol.toLowerCase(),
-        coin.id.toLowerCase(),
+        normalizeAlias(coin.symbol),
+        normalizeAlias(coin.id),
       ]);
 
       for (const alias of aliases) {
@@ -145,7 +146,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
 
     for (const entity of INDONESIAN_ENTITIES) {
       const newId = ulid();
-      const name = entity.name.toLowerCase();
+      const name = normalizeAlias(entity.name);
 
       const insertResult = await pool.query(
         `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
@@ -169,7 +170,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
           `INSERT INTO entity_aliases (alias, context_key, entity_id)
            VALUES ($1, '', $2)
            ON CONFLICT (alias, context_key) DO NOTHING`,
-          [alias, entityId],
+          [normalizeAlias(alias), entityId],
         );
       }
 
