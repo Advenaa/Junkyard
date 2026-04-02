@@ -1,6 +1,7 @@
 import WebSocket from 'ws';
 import { ulid } from 'ulid';
 import type { Config } from '../config.js';
+import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { RawItem } from './rss.js';
 
@@ -100,9 +101,11 @@ const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Placeholder — will be wired to DB later. */
-function getDiscordChannels(): string[] {
-  return [];
+async function getDiscordChannels(pool: Pool): Promise<string[]> {
+  const { rows } = await pool.query<{ source_id: string }>(
+    "SELECT source_id FROM sources WHERE source = 'discord' AND enabled = true",
+  );
+  return rows.map(r => r.source_id);
 }
 
 function isImageAttachment(attachment: MessageAttachment): boolean {
@@ -657,6 +660,7 @@ function partitionChannels(channels: string[], activeTokens: TokenConnection[]):
 
 export function createDiscordAdapter(
   config: Config,
+  pool: Pool,
   log: Logger,
   onMessage: (item: RawItem) => Promise<void>,
 ): {
@@ -670,14 +674,14 @@ export function createDiscordAdapter(
     return connections.filter((c) => c.state.status !== 'disabled');
   }
 
-  function reassignChannels(): void {
-    const channels = getDiscordChannels();
+  async function reassignChannels(): Promise<void> {
+    const channels = await getDiscordChannels(pool);
     partitionChannels(channels, getActiveConnections());
   }
 
-  function handleTokenDeath(index: number): void {
+  async function handleTokenDeath(index: number): Promise<void> {
     log.error({ tokenIndex: index }, 'token permanently disabled — reassigning channels');
-    reassignChannels();
+    await reassignChannels();
   }
 
   // Create connection objects for each token
@@ -693,7 +697,7 @@ export function createDiscordAdapter(
     }
 
     // Assign channels before connecting
-    reassignChannels();
+    await reassignChannels();
 
     // Connect sequentially with 5s gaps
     for (let i = 0; i < connections.length; i++) {

@@ -8,6 +8,11 @@ import { createDiscordAdapter, type TokenState } from '../../src/ingest/discord.
 // Mock helpers
 // ---------------------------------------------------------------------------
 
+/** Minimal mock pool — getDiscordChannels queries sources table. */
+const mockPool = {
+  query: async () => ({ rows: [] }),
+} as any;
+
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     anthropicApiKey: 'test-key',
@@ -57,14 +62,14 @@ const noopOnMessage = async () => {};
 
 describe('createDiscordAdapter factory', () => {
   it('returns an object with connect, disconnect, and getTokenStates', () => {
-    const adapter = createDiscordAdapter(makeConfig(), makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(makeConfig(), mockPool, makeLogger(), noopOnMessage);
     assert.strictEqual(typeof adapter.connect, 'function');
     assert.strictEqual(typeof adapter.disconnect, 'function');
     assert.strictEqual(typeof adapter.getTokenStates, 'function');
   });
 
   it('returns exactly three keys', () => {
-    const adapter = createDiscordAdapter(makeConfig(), makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(makeConfig(), mockPool, makeLogger(), noopOnMessage);
     const keys = Object.keys(adapter).sort();
     assert.deepStrictEqual(keys, ['connect', 'disconnect', 'getTokenStates']);
   });
@@ -76,13 +81,13 @@ describe('createDiscordAdapter factory', () => {
 
 describe('zero tokens configured', () => {
   it('getTokenStates returns empty array when no tokens configured', () => {
-    const adapter = createDiscordAdapter(makeConfig(), makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(makeConfig(), mockPool, makeLogger(), noopOnMessage);
     assert.deepStrictEqual(adapter.getTokenStates(), []);
   });
 
   it('connect logs warning and returns without error when no tokens', async () => {
     const log = makeLogger();
-    const adapter = createDiscordAdapter(makeConfig(), log, noopOnMessage);
+    const adapter = createDiscordAdapter(makeConfig(), mockPool, log, noopOnMessage);
     await adapter.connect();
     // Should have logged a warning about no tokens
     assert.ok(log.calls['warn'], 'expected a warn log call');
@@ -95,7 +100,7 @@ describe('zero tokens configured', () => {
   });
 
   it('disconnect resolves without error when no tokens', async () => {
-    const adapter = createDiscordAdapter(makeConfig(), makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(makeConfig(), mockPool, makeLogger(), noopOnMessage);
     await adapter.disconnect(); // should not throw
   });
 });
@@ -109,7 +114,7 @@ describe('TokenState initial shape', () => {
 
   beforeEach(() => {
     const config = makeConfig({ discordTokens: ['token-a', 'token-b'] });
-    const adapter = createDiscordAdapter(config, makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     states = adapter.getTokenStates();
   });
 
@@ -167,7 +172,7 @@ describe('TokenState initial shape', () => {
 describe('getTokenStates isolation', () => {
   it('returns shallow copies so mutations do not leak back', () => {
     const config = makeConfig({ discordTokens: ['tok1'] });
-    const adapter = createDiscordAdapter(config, makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     const a = adapter.getTokenStates();
     const b = adapter.getTokenStates();
     assert.notStrictEqual(a[0], b[0], 'each call should return new objects');
@@ -175,7 +180,7 @@ describe('getTokenStates isolation', () => {
 
   it('mutating returned state does not affect next call', () => {
     const config = makeConfig({ discordTokens: ['tok1'] });
-    const adapter = createDiscordAdapter(config, makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     const first = adapter.getTokenStates();
     first[0]!.errorCount = 999;
     const second = adapter.getTokenStates();
@@ -191,7 +196,7 @@ describe('multiple tokens', () => {
   it('handles many tokens', () => {
     const tokens = Array.from({ length: 10 }, (_, i) => `token-${i}`);
     const config = makeConfig({ discordTokens: tokens });
-    const adapter = createDiscordAdapter(config, makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     const states = adapter.getTokenStates();
     assert.strictEqual(states.length, 10);
     for (let i = 0; i < 10; i++) {
@@ -207,7 +212,7 @@ describe('multiple tokens', () => {
 describe('TokenState status values', () => {
   it('idle is a valid TokenState status', () => {
     const config = makeConfig({ discordTokens: ['tok'] });
-    const adapter = createDiscordAdapter(config, makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     const [state] = adapter.getTokenStates();
     const validStatuses: TokenState['status'][] = [
       'idle',
@@ -227,7 +232,7 @@ describe('TokenState status values', () => {
 describe('disconnect idempotency', () => {
   it('calling disconnect multiple times does not throw', async () => {
     const config = makeConfig({ discordTokens: ['tok'] });
-    const adapter = createDiscordAdapter(config, makeLogger(), noopOnMessage);
+    const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     await adapter.disconnect();
     await adapter.disconnect();
     await adapter.disconnect();

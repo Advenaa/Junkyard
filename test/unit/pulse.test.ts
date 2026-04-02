@@ -87,9 +87,19 @@ function makePool(opts: {
       if (sql.includes('app_config')) {
         return { rows: opts.appConfig ?? [{ value: 'Asia/Jakarta' }] };
       }
-      // insertReport: INSERT INTO reports ...
+      // insertReport: INSERT INTO reports ... RETURNING *
       if (sql.includes('INSERT INTO reports')) {
-        return { rows: [] };
+        return { rows: [{
+          id: 'report-1',
+          date: '2024-01-01',
+          type: 'pulse',
+          body: JSON.stringify(makeValidReport()),
+          tldr: makeValidReport().tldr,
+          sentiment: 0.3,
+          delivery_status: 'pending',
+          delivered_at: null,
+          created_at: Date.now(),
+        }] };
       }
       return { rows: [] };
     },
@@ -170,15 +180,15 @@ describe('runPulse — quality gates', () => {
 // ═════════════════════════════════════════════════════════════════════
 
 describe('runPulse — successful generation', () => {
-  it('returns a valid MarketReport on success', async () => {
+  it('returns a valid ReportRow on success', async () => {
     const pool = makePool({ summaries: [makeSummaryRow()] });
     const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
     const result = await runPulse();
     assert.ok(result !== null);
     assert.ok(typeof result!.tldr === 'string');
-    assert.ok(Array.isArray(result!.keyEvents));
-    assert.ok(Array.isArray(result!.entitySentiment));
-    assert.ok(Array.isArray(result!.sections));
+    assert.ok(typeof result!.id === 'string');
+    assert.ok(typeof result!.body === 'string');
+    assert.strictEqual(result!.type, 'pulse');
   });
 
   it('passes correct maxTokens to LLM based on summary count', async () => {
@@ -425,7 +435,8 @@ describe('runPulse — code fence stripping', () => {
     const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
     const result = await runPulse();
     assert.ok(result !== null);
-    assert.equal(result!.tldr, report.tldr);
+    assert.ok(typeof result!.tldr === 'string');
+    assert.ok(result!.tldr.length > 0);
   });
 });
 

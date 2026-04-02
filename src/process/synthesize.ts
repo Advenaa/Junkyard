@@ -10,7 +10,7 @@ import {
   getSummariesByTimeWindow,
   getAppConfig,
 } from '../db/queries.js';
-import type { SummaryRow } from '../db/queries.js';
+import type { SummaryRow, ReportRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -287,7 +287,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     return rows[0]?.tldr ?? null;
   }
 
-  async function runDaily(): Promise<MarketReport | null> {
+  async function runDaily(): Promise<ReportRow | null> {
     const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
     const { start, end, dateString } = getTodayWindow(timezone);
 
@@ -375,7 +375,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
 
-    await insertReport(pool, {
+    const reportRow = await insertReport(pool, {
       id: reportId,
       date: dateString,
       type: 'daily',
@@ -390,10 +390,10 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       'Daily report created',
     );
 
-    return report;
+    return reportRow;
   }
 
-  async function runFlash(correlatedEntities: CorrelatedEntity[]): Promise<MarketReport | null> {
+  async function runFlash(correlatedEntities: CorrelatedEntity[]): Promise<ReportRow | null> {
     if (correlatedEntities.length === 0) {
       log.info('No correlated entities for flash report, skipping');
       return null;
@@ -423,6 +423,19 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
 
     if (relevant.length === 0) {
       log.info('No summaries mention correlated entities, skipping flash');
+      return null;
+    }
+
+    // Duplicate guard: skip if a flash report already exists for today
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const { dateString } = getTodayWindow(timezone);
+
+    const { rows: existingFlash } = await pool.query<{ id: string }>(
+      `SELECT id FROM reports WHERE type = 'flash' AND date = $1 LIMIT 1`,
+      [dateString],
+    );
+    if (existingFlash.length > 0) {
+      log.info({ existingId: existingFlash[0].id, date: dateString }, 'Flash report already exists for today, skipping');
       return null;
     }
 
@@ -465,24 +478,11 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       }
     }
 
-    // Duplicate guard: skip if a flash report already exists for today
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    const { dateString } = getTodayWindow(timezone);
-
-    const { rows: existingFlash } = await pool.query<{ id: string }>(
-      `SELECT id FROM reports WHERE type = 'flash' AND date = $1 LIMIT 1`,
-      [dateString],
-    );
-    if (existingFlash.length > 0) {
-      log.info({ existingId: existingFlash[0].id, date: dateString }, 'Flash report already exists for today, skipping');
-      return null;
-    }
-
     // Insert into DB
     const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
 
-    await insertReport(pool, {
+    const reportRow = await insertReport(pool, {
       id: reportId,
       date: dateString,
       type: 'flash',
@@ -497,7 +497,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       'Flash report created',
     );
 
-    return report;
+    return reportRow;
   }
 
   return { runDaily, runFlash };

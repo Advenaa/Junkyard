@@ -194,9 +194,7 @@ export function registerOAuthRoutes(
     );
 
     // 8. Create session
-    const ip =
-      (request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
-      request.ip;
+    const ip = request.ip;
     const userAgent =
       (request.headers['user-agent'] as string) ?? 'unknown';
 

@@ -25,7 +25,7 @@ import { pollFeed } from './ingest/rss.js';
 import { createScheduler } from './scheduler.js';
 import { createHealthMonitor } from './health.js';
 import { createSeeder } from './knowledge/seed.js';
-import { getSources, resetCrashed, getLatestReport } from './db/queries.js';
+import { getSources, resetCrashed } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
@@ -73,7 +73,7 @@ program
     const healthMonitor = createHealthMonitor(pool, log, config);
 
     // ── 3. Ingest adapters ────────────────────────────────────────────
-    const discordAdapter = createDiscordAdapter(config, log, async (item: RawItem) => {
+    const discordAdapter = createDiscordAdapter(config, pool, log, async (item: RawItem) => {
       await normalizer.normalize(item);
     });
 
@@ -148,8 +148,10 @@ program
           );
           // Increment error count in source_state
           await pool.query(
-            `UPDATE source_state SET error_count = error_count + 1, last_error = $1
-             WHERE source = $2 AND source_id = $3`,
+            `INSERT INTO source_state (source, source_id, error_count, last_error, status)
+             VALUES ($2, $3, 1, $1, 'active')
+             ON CONFLICT (source, source_id)
+             DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
             [
               err instanceof Error ? err.message : String(err),
               src.source,
@@ -207,10 +209,7 @@ program
             if (shouldFlash) {
               const flashReport = await synthesizer.runFlash(correlated);
               if (flashReport) {
-                const latestReport = await getLatestReport(pool);
-                if (latestReport && latestReport.type === 'flash') {
-                  await delivery.deliver(latestReport);
-                }
+                await delivery.deliver(flashReport);
               }
             }
           }
@@ -224,19 +223,16 @@ program
     }
 
     async function onPulse(): Promise<void> {
-      let report = null;
+      let reportRow = null;
       try {
-        report = await pulse.runPulse();
+        reportRow = await pulse.runPulse();
       } catch (err: unknown) {
         log.error({ err }, 'pulse generation failed');
         return;
       }
-      if (report) {
+      if (reportRow) {
         try {
-          const latestReport = await getLatestReport(pool);
-          if (latestReport && latestReport.type === 'pulse') {
-            await delivery.deliver(latestReport);
-          }
+          await delivery.deliver(reportRow);
         } catch (err: unknown) {
           log.error({ err }, 'pulse delivery failed');
         }
@@ -244,16 +240,15 @@ program
     }
 
     async function onDaily(): Promise<void> {
-      let report = null;
-      try { report = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
+      let reportRow = null;
+      try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
       try { await embedPipeline.run(); } catch (err: unknown) { log.error({ err }, 'embed pipeline failed'); }
       try { await narrativeDetector.detectNarratives(); } catch (err: unknown) { log.error({ err }, 'narrative detection failed'); }
       try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
       // delivery only if report succeeded
-      if (report) {
+      if (reportRow) {
         try {
-          const latestReport = await getLatestReport(pool);
-          if (latestReport && latestReport.type === 'daily') await delivery.deliver(latestReport);
+          await delivery.deliver(reportRow);
         } catch (err: unknown) { log.error({ err }, 'daily delivery failed'); }
       }
     }
@@ -280,9 +275,9 @@ program
     await startServer(app, config.port, log);
 
     // ── 7. Start background services ──────────────────────────────────
+    await vectorCache.load();
     await scheduler.start();
     await discordAdapter.connect();
-    await vectorCache.load();
 
     log.info('podders v2 started');
 
@@ -359,7 +354,7 @@ async function updateSourceState(
     `INSERT INTO source_state (source, source_id, last_fetched_at, last_id, error_count)
      VALUES ($1, $2, $3, $4, 0)
      ON CONFLICT (source, source_id)
-     DO UPDATE SET last_fetched_at = $3, last_id = COALESCE($4, source_state.last_id)`,
+     DO UPDATE SET last_fetched_at = $3, last_id = COALESCE($4, source_state.last_id), error_count = 0`,
     [source, sourceId, lastFetchedAt, lastId],
   );
 }

@@ -44,7 +44,7 @@ export async function createServer(
 ): Promise<FastifyInstance> {
   const sessionManager = createSessionManager(pool, log);
   const authPreHandler = requireAuth(pool, config, sessionManager);
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, trustProxy: true });
 
   // --- Plugins ---
   await app.register(cookie, { secret: config.sessionSecret });

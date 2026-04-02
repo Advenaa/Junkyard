@@ -104,17 +104,16 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         [newId, name, now],
       );
 
-      if ((insertResult.rowCount ?? 0) === 0) {
-        continue;
-      }
-
       // Fetch the entity id (could be new or existing)
       const fetchResult = await pool.query<{ id: string }>(
         "SELECT id FROM entities WHERE name = $1 AND type = 'token'",
         [name],
       );
 
+      if (fetchResult.rows.length === 0) continue; // Should not happen, but safety check
+
       const entityId = fetchResult.rows[0].id;
+      const isNew = (insertResult.rowCount ?? 0) > 0;
 
       // Insert 3 aliases: name, symbol, id
       const aliases = new Set([
@@ -127,12 +126,12 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         await pool.query(
           `INSERT INTO entity_aliases (alias, context_key, entity_id)
            VALUES ($1, '', $2)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (alias, context_key) DO NOTHING`,
           [alias, entityId],
         );
       }
 
-      seeded++;
+      if (isNew) seeded++;
     }
 
     log.info({ seeded }, `Seeded ${seeded} entities from CoinGecko`);
@@ -155,27 +154,26 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         [newId, name, entity.type, now],
       );
 
-      if ((insertResult.rowCount ?? 0) === 0) {
-        continue;
-      }
-
       const fetchResult = await pool.query<{ id: string }>(
         'SELECT id FROM entities WHERE name = $1 AND type = $2',
         [name, entity.type],
       );
 
+      if (fetchResult.rows.length === 0) continue;
+
       const entityId = fetchResult.rows[0].id;
+      const isNew = (insertResult.rowCount ?? 0) > 0;
 
       for (const alias of entity.aliases) {
         await pool.query(
           `INSERT INTO entity_aliases (alias, context_key, entity_id)
            VALUES ($1, '', $2)
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (alias, context_key) DO NOTHING`,
           [alias, entityId],
         );
       }
 
-      seeded++;
+      if (isNew) seeded++;
     }
 
     log.info({ seeded }, `Seeded ${seeded} Indonesian entities`);

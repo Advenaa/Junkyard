@@ -2,6 +2,7 @@ import { ulid } from 'ulid';
 import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
 import { getSummariesByTimeWindow, insertReport, getAppConfig } from '../db/queries.js';
+import type { ReportRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -223,7 +224,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
     return parts.join('\n\n');
   }
 
-  async function runPulse(): Promise<MarketReport | null> {
+  async function runPulse(): Promise<ReportRow | null> {
     const now = Date.now();
     const threeHoursMs = 3 * 60 * 60 * 1000;
     const windowStart = now - threeHoursMs;
@@ -278,6 +279,16 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
 
     if (parsedSummaries.length === 0) {
       log.warn('All summaries failed to parse, skipping pulse');
+      return null;
+    }
+
+    // Duplicate guard: skip if a pulse report was already created in this 3-hour window
+    const { rows: existingPulse } = await pool.query<{ id: string }>(
+      `SELECT id FROM reports WHERE type = 'pulse' AND created_at > $1 LIMIT 1`,
+      [windowStart],
+    );
+    if (existingPulse.length > 0) {
+      log.info({ existingId: existingPulse[0].id }, 'Pulse report already exists for this window, skipping');
       return null;
     }
 
@@ -355,23 +366,13 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
       }
     }
 
-    // Duplicate guard: skip if a pulse report was already created in this 3-hour window
-    const { rows: existingPulse } = await pool.query<{ id: string }>(
-      `SELECT id FROM reports WHERE type = 'pulse' AND created_at > $1 LIMIT 1`,
-      [windowStart],
-    );
-    if (existingPulse.length > 0) {
-      log.info({ existingId: existingPulse[0].id }, 'Pulse report already exists for this window, skipping');
-      return null;
-    }
-
     // Insert report
     const reportId = ulid();
     const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
     const dateString = getDateString(timezone);
     const avgSentiment = computeAvgSentiment(report);
 
-    await insertReport(pool, {
+    const reportRow = await insertReport(pool, {
       id: reportId,
       date: dateString,
       type: 'pulse',
@@ -392,7 +393,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
       'Pulse report created',
     );
 
-    return report;
+    return reportRow;
   }
 
   return { runPulse };

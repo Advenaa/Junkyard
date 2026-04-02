@@ -116,7 +116,11 @@ function dailyPoolResponses(
     { rows: summaryRows },                                    // getSummariesByTimeWindow
     { rows: opts.yesterdayTldr ? [{ tldr: opts.yesterdayTldr }] : [] }, // getYesterdayTldr
     { rows: [] },                                             // correlator.run() → no correlations
-    {},                                                        // insertReport
+    { rows: [{                                                  // insertReport RETURNING *
+      id: 'report-1', date: '2024-01-01', type: 'daily',
+      body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
+      sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+    }] },
   ];
 }
 
@@ -174,7 +178,9 @@ describe('synthesize: runDaily', () => {
     const result = await synth.runDaily();
 
     assert.notStrictEqual(result, null);
+    assert.ok(typeof result!.tldr === 'string');
     assert.ok(result!.tldr.length > 0);
+    assert.strictEqual(result!.type, 'daily');
     assert.ok(llm.calls.length >= 1, 'LLM should have been called at least once');
   });
 
@@ -294,14 +300,19 @@ describe('synthesize: runFlash', () => {
       { rows: [row] },                              // getSummariesByTimeWindow
       { rows: [{ value: 'UTC' }] },                 // getAppConfig(timezone) for duplicate check
       { rows: [] },                                  // flash duplicate check query
-      {},                                             // insertReport
+      { rows: [{                                      // insertReport RETURNING *
+        id: 'report-2', date: '2024-01-01', type: 'flash',
+        body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
+        sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+      }] },
     ]);
     const llm = mockLlm();
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
     const result = await synth.runFlash([entity]);
 
     assert.notStrictEqual(result, null);
-    assert.ok(result!.tldr.length > 0);
+    assert.ok(typeof result!.tldr === 'string');
+    assert.strictEqual(result!.type, 'flash');
   });
 
   it('matches entity names case-insensitively', async () => {
@@ -317,7 +328,11 @@ describe('synthesize: runFlash', () => {
       { rows: [row] },
       { rows: [{ value: 'UTC' }] },
       { rows: [] },
-      {},
+      { rows: [{
+        id: 'report-3', date: '2024-01-01', type: 'flash',
+        body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
+        sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+      }] },
     ]);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
     const result = await synth.runFlash([entity]);
@@ -363,7 +378,11 @@ describe('synthesize: runFlash', () => {
       { rows: [row] },
       { rows: [{ value: 'UTC' }] },
       { rows: [] },
-      {},
+      { rows: [{
+        id: 'report-4', date: '2024-01-01', type: 'flash',
+        body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
+        sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+      }] },
     ]);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
     const result = await synth.runFlash([entity]);
@@ -498,7 +517,7 @@ describe('synthesize: LLM response parsing', () => {
     const result = await synth.runDaily();
 
     assert.notStrictEqual(result, null);
-    assert.ok(result!.tldr.includes('Bitcoin'));
+    assert.ok(result!.tldr!.includes('Bitcoin'));
   });
 
   it('handles bare JSON from LLM (no fences)', async () => {
@@ -510,7 +529,7 @@ describe('synthesize: LLM response parsing', () => {
     assert.notStrictEqual(result, null);
   });
 
-  it('report includes correct entitySentiment from LLM', async () => {
+  it('report body includes correct entitySentiment from LLM', async () => {
     const reportWithSentiments = makeReportJson({
       entitySentiment: [
         { name: 'Bitcoin', sentiment: 0.8, reason: 'bullish' },
@@ -521,12 +540,18 @@ describe('synthesize: LLM response parsing', () => {
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm(reportWithSentiments);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
-    const result = await synth.runDaily();
+    await synth.runDaily();
 
-    assert.strictEqual(result!.entitySentiment.length, 2);
-    assert.strictEqual(result!.entitySentiment[0].name, 'Bitcoin');
-    assert.strictEqual(result!.entitySentiment[0].sentiment, 0.8);
-    assert.strictEqual(result!.entitySentiment[1].sentiment, -0.3);
+    // Verify the body stored in the INSERT query contains the right entitySentiment
+    const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'Should have an INSERT INTO reports query');
+    const bodyParam = insertCall!.values.find((v) => typeof v === 'string' && v.includes('entitySentiment'));
+    assert.ok(bodyParam, 'Body param should contain entitySentiment');
+    const body = JSON.parse(bodyParam as string);
+    assert.strictEqual(body.entitySentiment.length, 2);
+    assert.strictEqual(body.entitySentiment[0].name, 'Bitcoin');
+    assert.strictEqual(body.entitySentiment[0].sentiment, 0.8);
+    assert.strictEqual(body.entitySentiment[1].sentiment, -0.3);
   });
 });
 
