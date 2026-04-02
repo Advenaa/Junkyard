@@ -70,16 +70,29 @@ const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u2060]/g;
 const BIDI_RE = /[\u202A-\u202E\u2066-\u2069]/g;
 
 /**
+ * Strip combining diacritical marks so accented characters become their
+ * ASCII base letter. E.g. "ignoré" → "ignore", "IgnÖre" → "IgnOre".
+ *
+ * Works by decomposing to NFD (which separates base + combining mark)
+ * then removing all characters in the Combining Diacritical Marks block.
+ */
+function stripDiacritics(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
  * Sanitise raw content before injection scanning.
  *
  * 1. NFKC Unicode normalization (collapses compatibility codepoints)
  * 2. Strip zero-width characters
  * 3. Strip RTL/LTR overrides and isolates
+ * 4. Strip diacritical marks (so accented chars match ASCII patterns)
  */
 export function sanitizeContent(content: string): string {
   let s = content.normalize("NFKC");
   s = s.replace(ZERO_WIDTH_RE, "");
   s = s.replace(BIDI_RE, "");
+  s = stripDiacritics(s);
   return s;
 }
 

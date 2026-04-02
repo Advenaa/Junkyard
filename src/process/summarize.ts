@@ -394,24 +394,33 @@ export function createSummarizer(
 
     // d-g. Process chunks with bounded concurrency (max 3 parallel)
     const CHUNK_CONCURRENCY = 3;
-    let summaryCount = 0;
-    let hasBreaking = false;
     const succeededIds: string[] = [];
     const failedIds: string[] = [];
+    let summaryCount = 0;
+    let hasBreaking = false;
 
-    async function handleChunk(chunk: ClaimedItem[]): Promise<void> {
+    interface ChunkResult {
+      succeeded: string[];
+      failed: string[];
+      summaryCount: number;
+      hasBreaking: boolean;
+    }
+
+    async function handleChunk(chunk: ClaimedItem[]): Promise<ChunkResult> {
       const chunkItemIds = chunk.map((item) => item.id);
 
       const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
 
       if (parsedResults.length === 0) {
-        failedIds.push(...chunkItemIds);
-        return;
+        return { succeeded: [], failed: chunkItemIds, summaryCount: 0, hasBreaking: false };
       }
+
+      let chunkSummaryCount = 0;
+      let chunkHasBreaking = false;
 
       for (const parsed of parsedResults) {
         if (parsed.urgency === 'breaking') {
-          hasBreaking = true;
+          chunkHasBreaking = true;
         }
 
         // Calculate average sentiment from entities
@@ -435,9 +444,10 @@ export function createSummarizer(
           createdAt: Date.now(),
         });
 
-        summaryCount++;
+        chunkSummaryCount++;
       }
-      succeededIds.push(...chunkItemIds);
+
+      return { succeeded: chunkItemIds, failed: [], summaryCount: chunkSummaryCount, hasBreaking: chunkHasBreaking };
     }
 
     for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {
@@ -445,11 +455,17 @@ export function createSummarizer(
       const results = await Promise.allSettled(group.map((chunk) => handleChunk(chunk)));
 
       for (let j = 0; j < results.length; j++) {
-        if (results[j].status === 'rejected') {
+        const result = results[j];
+        if (result.status === 'fulfilled') {
+          succeededIds.push(...result.value.succeeded);
+          failedIds.push(...result.value.failed);
+          summaryCount += result.value.summaryCount;
+          if (result.value.hasBreaking) hasBreaking = true;
+        } else {
           const chunk = group[j];
           const chunkItemIds = chunk.map((item) => item.id);
           log.error(
-            { err: (results[j] as PromiseRejectedResult).reason, source, sourceId, chunkSize: chunk.length },
+            { err: result.reason, source, sourceId, chunkSize: chunk.length },
             'Failed to process chunk, skipping',
           );
           failedIds.push(...chunkItemIds);

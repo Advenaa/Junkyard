@@ -37,7 +37,6 @@ const DEFAULT_429_WAIT = 60_000;
 
 // Gemini free tier: 1500 req/day. Leave 100 buffer for manual/debug use.
 const DAILY_QUOTA_LIMIT = 1400;
-const MS_PER_DAY = 86_400_000;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -126,7 +125,9 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
 
   function resetIfNewDay(): void {
     const now = Date.now();
-    if (now - dayStart >= MS_PER_DAY) {
+    const currentDay = new Date(now).toISOString().slice(0, 10);
+    const storedDay = new Date(dayStart).toISOString().slice(0, 10);
+    if (currentDay !== storedDay) {
       dailyCount = 0;
       dayStart = now;
     }

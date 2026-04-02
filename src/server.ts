@@ -1,10 +1,14 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
+import fastifyStatic from '@fastify/static';
 import rateLimit from '@fastify/rate-limit';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 import { createHealthMonitor } from './health.js';
+import { registerOAuthRoutes } from './auth/discord-oauth.js';
 import { requireAuth, requireAdmin } from './auth/middleware.js';
 import { createSessionManager } from './auth/sessions.js';
 
@@ -21,6 +25,9 @@ export async function createServer(
   // --- Plugins ---
   await app.register(cookie, { secret: config.sessionSecret });
   await app.register(rateLimit, { max: 100, timeWindow: '1 second' });
+
+  // --- OAuth routes ---
+  registerOAuthRoutes(app, pool, log, config);
 
   // --- Security headers ---
   app.addHook('onSend', async (_request, reply) => {
@@ -79,6 +86,27 @@ export async function createServer(
 
   app.get('/api/v1/users', { preHandler: [authPreHandler, requireAdmin] }, async () => {
     return { todo: true };
+  });
+
+  // --- Static files (dashboard SPA) ---
+  const dashboardRoot = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'dashboard',
+    'dist',
+  );
+  await app.register(fastifyStatic, {
+    root: dashboardRoot,
+    prefix: '/',
+  });
+
+  // SPA catch-all for client-side routing
+  app.setNotFoundHandler(async (request, reply) => {
+    if (request.url.startsWith('/api/')) {
+      reply.code(404);
+      return { error: 'Not found' };
+    }
+    return reply.sendFile('index.html');
   });
 
   return app;

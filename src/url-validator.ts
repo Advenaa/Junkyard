@@ -1,6 +1,63 @@
 import dns from 'node:dns';
 import net from 'node:net';
 
+/**
+ * Compress an IPv6 address string to its canonical shortest form.
+ * E.g. "0000:0000:0000:0000:0000:0000:0000:0001" → "::1"
+ */
+function canonicalizeIPv6(ip: string): string {
+  // Expand :: into full zero groups
+  let groups: string[];
+  if (ip.includes('::')) {
+    const [left, right] = ip.split('::');
+    const leftGroups = left ? left.split(':') : [];
+    const rightGroups = right ? right.split(':') : [];
+    const missing = 8 - leftGroups.length - rightGroups.length;
+    const zeroFill = Array.from<string>({ length: missing }).fill('0');
+    groups = [...leftGroups, ...zeroFill, ...rightGroups];
+  } else {
+    groups = ip.split(':');
+  }
+
+  // Normalize each group: strip leading zeros
+  const normalized = groups.map((g) => {
+    const stripped = g.replace(/^0+/, '') || '0';
+    return stripped;
+  });
+
+  // Find longest run of consecutive '0' groups for :: compression
+  let bestStart = -1;
+  let bestLen = 0;
+  let curStart = -1;
+  let curLen = 0;
+
+  for (let i = 0; i < normalized.length; i++) {
+    if (normalized[i] === '0') {
+      if (curStart === -1) curStart = i;
+      curLen++;
+      if (curLen > bestLen) {
+        bestStart = curStart;
+        bestLen = curLen;
+      }
+    } else {
+      curStart = -1;
+      curLen = 0;
+    }
+  }
+
+  if (bestLen >= 2) {
+    const before = normalized.slice(0, bestStart);
+    const after = normalized.slice(bestStart + bestLen);
+    return (
+      (before.length > 0 ? before.join(':') : '') +
+      '::' +
+      (after.length > 0 ? after.join(':') : '')
+    );
+  }
+
+  return normalized.join(':');
+}
+
 function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
     const parts = ip.split('.').map(Number);
@@ -25,14 +82,30 @@ function isPrivateIp(ip: string): boolean {
   if (net.isIPv6(ip)) {
     const normalized = ip.toLowerCase();
 
-    // ::1 loopback
-    if (normalized === '::1') return true;
+    // Check for IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+    // These encode an IPv4 address inside IPv6 — extract and check the IPv4 part.
+    const v4MappedMatch = normalized.match(
+      /^(?:0{0,4}:){0,4}(?:0{0,4}:)?ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
+    );
+    if (v4MappedMatch) {
+      return isPrivateIp(v4MappedMatch[1]);
+    }
+
+    // Normalize expanded IPv6 to compressed form for reliable comparison.
+    // Expand all groups to full 8-group representation, then compress.
+    const canonical = canonicalizeIPv6(normalized);
+
+    // ::1 loopback (covers 0:0:0:0:0:0:0:1, 0000:0000:...:0001, etc.)
+    if (canonical === '::1') return true;
+
+    // :: (all-zeros, unspecified address)
+    if (canonical === '::') return true;
 
     // fc00::/7 — starts with fc or fd
-    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
+    if (canonical.startsWith('fc') || canonical.startsWith('fd')) return true;
 
     // fe80::/10 — link-local
-    if (normalized.startsWith('fe80')) return true;
+    if (canonical.startsWith('fe80')) return true;
 
     return false;
   }

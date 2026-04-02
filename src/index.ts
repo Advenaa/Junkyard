@@ -4,6 +4,29 @@ import { createLogger } from './logger.js';
 import { createPool } from './db/connection.js';
 import { runMigrations } from './db/migrations.js';
 import { createServer, startServer } from './server.js';
+import { createLLM } from './llm.js';
+import { createEmbedder } from './embed.js';
+import { createVectorCache } from './vector-cache.js';
+import { createNormalizer } from './normalize/index.js';
+import { createPreSummarizer } from './pre-summarize/index.js';
+import { createSummarizer } from './process/summarize.js';
+import { createCorrelator } from './process/correlate.js';
+import { createSynthesizer } from './process/synthesize.js';
+import { createPulse } from './process/pulse.js';
+import { createNarrativeDetector } from './process/narratives.js';
+import { createEmbedPipeline } from './embed-pipeline.js';
+import { createEntityManager } from './knowledge/entities.js';
+import { createDecayManager } from './knowledge/decay.js';
+import { createDelivery } from './deliver/webhook.js';
+import { createDiscordAdapter } from './ingest/discord.js';
+import { createTwitterAdapter } from './ingest/twitter.js';
+import { pollFeed } from './ingest/rss.js';
+import { createScheduler } from './scheduler.js';
+import { createHealthMonitor } from './health.js';
+import { getSources, resetCrashed, getLatestReport } from './db/queries.js';
+import type { RawItem } from './ingest/rss.js';
+import type { Pool } from './db/connection.js';
+import type { Logger } from './logger.js';
 
 const program = new Command();
 
@@ -19,11 +42,232 @@ program
 
     await runMigrations(pool);
 
+    // ── 1. Shared services ────────────────────────────────────────────
+    const llm = createLLM(pool, log, config);
+    const embedder = createEmbedder(config, pool, log);
+    const vectorCache = createVectorCache(pool, log);
+
+    // ── 2. Pipeline stages ────────────────────────────────────────────
+    const normalizer = createNormalizer(pool, log, config, llm);
+    const preSummarizer = createPreSummarizer(pool, log, config, llm);
+    const summarizer = createSummarizer(pool, log, config, llm);
+    const correlator = createCorrelator(pool, log);
+    const synthesizer = createSynthesizer(pool, log, config, llm);
+    const pulse = createPulse(pool, log, config, llm);
+    const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
+    const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
+    const entityManager = createEntityManager(pool, log, config, llm);
+    const decayManager = createDecayManager(pool, log);
+    const delivery = createDelivery(pool, log, config);
+    const healthMonitor = createHealthMonitor(pool, log, config);
+
+    // ── 3. Ingest adapters ────────────────────────────────────────────
+    const discordAdapter = createDiscordAdapter(config, log, async (item: RawItem) => {
+      await normalizer.normalize(item);
+    });
+
+    const twitterAdapter = createTwitterAdapter(config, pool, log);
+
+    // ── 4. Scheduler callbacks ────────────────────────────────────────
+
+    async function onSourcePollTick(): Promise<void> {
+      const sources = await getSources(pool);
+      const now = Date.now();
+
+      // Load source_state for each source to decide if it's time to poll
+      const pollPromises = sources.map(async (src) => {
+        const { rows: stateRows } = await pool.query<{
+          last_fetched_at: number | null;
+          last_id: string | null;
+          status: string;
+        }>(
+          'SELECT last_fetched_at, last_id, status FROM source_state WHERE source = $1 AND source_id = $2',
+          [src.source, src.source_id],
+        );
+
+        const state = stateRows[0];
+
+        // Skip disabled sources
+        if (state?.status === 'disabled') return;
+
+        // Check if enough time has elapsed since last poll
+        const lastFetched = state?.last_fetched_at ?? 0;
+        const intervalMs = src.poll_interval * 1000;
+        if (now - lastFetched < intervalMs) return;
+
+        const lastId = state?.last_id ?? null;
+
+        try {
+          let items: RawItem[] = [];
+          let newLastId: string | null = lastId;
+
+          if (src.source === 'twitter') {
+            const result = await twitterAdapter.poll(src.source_id, lastId);
+            items = result.items;
+            newLastId = result.lastId ?? lastId;
+          } else if (src.source === 'rss') {
+            const result = await pollFeed(src.source_id, lastId, log);
+            items = result.items;
+            newLastId = result.lastId ?? lastId;
+          } else if (src.source === 'discord') {
+            // Discord is push-based via gateway — no polling needed
+            // Just update last_fetched_at to keep health monitor happy
+            await updateSourceState(pool, src.source, src.source_id, now, lastId);
+            return;
+          }
+
+          // Normalize each item
+          for (const item of items) {
+            await normalizer.normalize(item);
+          }
+
+          // Update source state
+          await updateSourceState(pool, src.source, src.source_id, now, newLastId);
+
+          if (items.length > 0) {
+            log.info(
+              { source: src.source, sourceId: src.source_id, count: items.length },
+              'ingested and normalized items',
+            );
+          }
+        } catch (err: unknown) {
+          log.error(
+            { err, source: src.source, sourceId: src.source_id },
+            'source poll failed',
+          );
+          // Increment error count in source_state
+          await pool.query(
+            `UPDATE source_state SET error_count = error_count + 1, last_error = $1
+             WHERE source = $2 AND source_id = $3`,
+            [
+              err instanceof Error ? err.message : String(err),
+              src.source,
+              src.source_id,
+            ],
+          );
+        }
+      });
+
+      await Promise.allSettled(pollPromises);
+
+      // Run pre-summarizer on eligible items
+      await preSummarizer.run();
+
+      // Run summarizer batch for each source that has ready items
+      const sourcesWithReady = await pool.query<{
+        source: string;
+        source_id: string;
+        min_ts: number;
+        max_ts: number;
+      }>(
+        `SELECT source, source_id, MIN(timestamp) AS min_ts, MAX(timestamp) AS max_ts
+         FROM items WHERE status = 'ready'
+         GROUP BY source, source_id`,
+      );
+
+      for (const row of sourcesWithReady.rows) {
+        try {
+          const result = await summarizer.runBatch(
+            row.source,
+            row.source_id,
+            row.min_ts,
+            row.max_ts,
+          );
+
+          if (result.summaryCount > 0) {
+            log.info(
+              {
+                source: row.source,
+                sourceId: row.source_id,
+                summaries: result.summaryCount,
+                hasBreaking: result.hasBreaking,
+              },
+              'summarizer batch complete',
+            );
+          }
+
+          // If breaking urgency detected, trigger flash report
+          if (result.hasBreaking) {
+            const { correlated, shouldFlash } = await correlator.run();
+            if (shouldFlash) {
+              const flashReport = await synthesizer.runFlash(correlated);
+              if (flashReport) {
+                const latestReport = await getLatestReport(pool);
+                if (latestReport && latestReport.type === 'flash') {
+                  await delivery.deliver(latestReport);
+                }
+              }
+            }
+          }
+        } catch (err: unknown) {
+          log.error(
+            { err, source: row.source, sourceId: row.source_id },
+            'summarizer batch failed',
+          );
+        }
+      }
+    }
+
+    async function onPulse(): Promise<void> {
+      const report = await pulse.runPulse();
+      if (report) {
+        const latestReport = await getLatestReport(pool);
+        if (latestReport && latestReport.type === 'pulse') {
+          await delivery.deliver(latestReport);
+        }
+      }
+    }
+
+    async function onDaily(): Promise<void> {
+      // Run daily synthesis
+      const report = await synthesizer.runDaily();
+
+      // Run narrative detection
+      await narrativeDetector.detectNarratives();
+
+      // Run embed pipeline
+      await embedPipeline.run();
+
+      // Run entity decay
+      await decayManager.runDecay();
+
+      // Deliver daily report via webhook
+      if (report) {
+        const latestReport = await getLatestReport(pool);
+        if (latestReport && latestReport.type === 'daily') {
+          await delivery.deliver(latestReport);
+        }
+      }
+    }
+
+    async function onHealthCheck(): Promise<void> {
+      await healthMonitor.check();
+    }
+
+    // ── 5. Create and start scheduler ─────────────────────────────────
+    const scheduler = createScheduler({
+      pool,
+      log,
+      config,
+      onSourcePollTick,
+      onPulse,
+      onDaily,
+      onHealthCheck,
+      onCrashRecovery: async () => resetCrashed(pool),
+    });
+
+    // ── 6. Start server ───────────────────────────────────────────────
     const app = await createServer(config, pool, log);
     await startServer(app, config.port, log);
 
+    // ── 7. Start background services ──────────────────────────────────
+    await scheduler.start();
+    await discordAdapter.connect();
+    await vectorCache.load();
+
     log.info('podders v2 started');
 
+    // ── 8. Graceful shutdown ──────────────────────────────────────────
     let shuttingDown = false;
 
     const shutdown = async (reason?: string) => {
@@ -34,10 +278,17 @@ program
 
       setTimeout(() => process.exit(1), 30_000).unref();
 
-      // TODO(H-028): When scheduler and Discord gateway are wired into
-      // index.ts, stop them here BEFORE closing the server:
-      //   await scheduler.stop();
-      //   await discordAdapter.disconnect();
+      try {
+        await scheduler.stop();
+      } catch (err: unknown) {
+        log.error({ err }, 'error stopping scheduler');
+      }
+
+      try {
+        await discordAdapter.disconnect();
+      } catch (err: unknown) {
+        log.error({ err }, 'error disconnecting discord');
+      }
 
       try {
         await app.close();
@@ -75,3 +326,21 @@ program
   });
 
 program.parse();
+
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+async function updateSourceState(
+  pool: Pool,
+  source: string,
+  sourceId: string,
+  lastFetchedAt: number,
+  lastId: string | null,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO source_state (source, source_id, last_fetched_at, last_id, error_count)
+     VALUES ($1, $2, $3, $4, 0)
+     ON CONFLICT (source, source_id)
+     DO UPDATE SET last_fetched_at = $3, last_id = COALESCE($4, source_state.last_id), error_count = 0`,
+    [source, sourceId, lastFetchedAt, lastId],
+  );
+}

@@ -232,7 +232,7 @@ export function createEntityManager(
             await client.query(
               `INSERT INTO entity_aliases (alias, context_key, entity_id)
                VALUES ($1, $2, $3)
-               ON CONFLICT DO NOTHING`,
+               ON CONFLICT (alias, context_key) DO NOTHING`,
               [canonical, item.context_key, entityId],
             );
 
@@ -265,7 +265,7 @@ export function createEntityManager(
             await client.query(
               `INSERT INTO entity_aliases (alias, context_key, entity_id)
                VALUES ($1, '', $2)
-               ON CONFLICT DO NOTHING`,
+               ON CONFLICT (alias, context_key) DO NOTHING`,
               [canonical, entityId],
             );
           }
@@ -328,7 +328,7 @@ export function createEntityManager(
         await client.query(
           `INSERT INTO entity_aliases (alias, context_key, entity_id)
            VALUES ${aliasValues.join(', ')}
-           ON CONFLICT DO NOTHING`,
+           ON CONFLICT (alias, context_key) DO NOTHING`,
           aliasParams,
         );
       }
