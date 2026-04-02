@@ -18,7 +18,7 @@ export interface VectorCache {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-function cosineSimilarity(a: Float32Array, b: Float32Array): number {
+export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   let dot = 0, normA = 0, normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
@@ -39,13 +39,13 @@ const SEARCHABLE_TYPES = ['summary', 'report', 'entity'] as const;
 type SearchableType = typeof SEARCHABLE_TYPES[number];
 
 /** Maximum vectors per type map. At 768 dims x 4 bytes = ~3KB/vector, 20K = ~60MB per map. */
-const MAX_VECTORS = 20_000;
+export const MAX_VECTORS = 20_000;
 
 /**
  * Evict the oldest entries from a Map to stay within the size cap.
  * Maps in JS maintain insertion order, so the first entries are the oldest.
  */
-function evict(map: Map<string, Float32Array>, max: number): number {
+export function evict(map: Map<string, Float32Array>, max: number): number {
   let removed = 0;
   if (map.size <= max) return removed;
   const excess = map.size - max;

@@ -49,16 +49,16 @@ const EMBED_COLORS: Record<string, number> = {
 const MAX_RETRIES = 3;
 const BACKOFF_MS = [2000, 8000, 32000];
 
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   return text.slice(0, max - 3) + '...';
 }
 
-function colorForType(type: string): number {
+export function colorForType(type: string): number {
   return EMBED_COLORS[type] ?? 0x4A4A5A;
 }
 
-function buildTitle(type: string, date: string): string {
+export function buildTitle(type: string, date: string): string {
   if (type === 'daily') {
     return `Daily Market Report \u2014 ${date}`;
   }
@@ -88,7 +88,7 @@ function formatSentimentValue(sentiment: number): string {
   return `${sign}${sentiment.toFixed(1)}`;
 }
 
-function buildFields(parsed: MarketReportParsed): DiscordField[] {
+export function buildFields(parsed: MarketReportParsed): DiscordField[] {
   const fields: DiscordField[] = [];
 
   if (parsed.keyEvents.length > 0) {
@@ -123,7 +123,7 @@ function buildFields(parsed: MarketReportParsed): DiscordField[] {
 
 const DISCORD_EMBED_TOTAL_LIMIT = 5900; // Discord enforces 6000; leave buffer
 
-function embedCharCount(embed: DiscordEmbed): number {
+export function embedCharCount(embed: DiscordEmbed): number {
   let total = embed.title.length + embed.description.length + embed.footer.text.length;
   for (const field of embed.fields) {
     total += field.name.length + field.value.length;
@@ -131,7 +131,7 @@ function embedCharCount(embed: DiscordEmbed): number {
   return total;
 }
 
-function enforceEmbedLimit(embed: DiscordEmbed): void {
+export function enforceEmbedLimit(embed: DiscordEmbed): void {
   // First pass: progressively trim field values
   while (embedCharCount(embed) > DISCORD_EMBED_TOTAL_LIMIT && embed.fields.length > 0) {
     const longestField = embed.fields.reduce(
@@ -157,7 +157,7 @@ function enforceEmbedLimit(embed: DiscordEmbed): void {
   }
 }
 
-function buildEmbed(
+export function buildEmbed(
   report: Report,
   parsed: MarketReportParsed,
   config: Config,

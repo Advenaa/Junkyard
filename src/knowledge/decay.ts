@@ -1,6 +1,15 @@
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 
+/** Multiplicative decay applied each cycle (5% reduction). */
+export const DECAY_FACTOR = 0.95;
+
+/** Entities below this relevance (and stale >90 days) get archived. */
+export const ARCHIVE_THRESHOLD = 0.01;
+
+/** Days of inactivity required before archival. */
+export const ARCHIVE_STALE_DAYS = 90;
+
 interface DecayManager {
   runDecay(): Promise<{ decayed: number; archived: number }>;
 }
