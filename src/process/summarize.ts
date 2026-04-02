@@ -8,6 +8,15 @@ import { insertSummary, claimBatch } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import type { ExtractedEntity } from '../knowledge/entities.js';
+
+interface EntityManager {
+  resolveEntities(
+    entities: ExtractedEntity[],
+    source: string,
+    summaryId: string,
+  ): Promise<void>;
+}
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
@@ -169,6 +178,7 @@ export function createSummarizer(
   log: Logger,
   config: Config,
   llm: LLM,
+  entityManager: EntityManager,
 ) {
   /**
    * Parse LLM response as JSON, validate with zod.
@@ -431,8 +441,9 @@ export function createSummarizer(
             : null;
 
         // g. Insert summary
+        const summaryId = ulid();
         await insertSummary(pool, {
-          id: ulid(),
+          id: summaryId,
           source,
           sourceId,
           windowStart,
@@ -443,6 +454,18 @@ export function createSummarizer(
           itemCount: chunk.length,
           createdAt: Date.now(),
         });
+
+        // h. Resolve entities to knowledge layer
+        if (parsed.entities.length > 0) {
+          try {
+            await entityManager.resolveEntities(parsed.entities, source, summaryId);
+          } catch (err: unknown) {
+            log.error(
+              { err, source, sourceId, summaryId, entityCount: parsed.entities.length },
+              'Entity resolution failed, summary was saved without entity persistence',
+            );
+          }
+        }
 
         chunkSummaryCount++;
       }

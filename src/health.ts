@@ -16,7 +16,7 @@ interface HealthEvent {
   metadata: Record<string, unknown>;
 }
 
-interface HealthMonitor {
+export interface HealthMonitor {
   check(): Promise<void>;
   getStatus(): Promise<{ checks: HealthCheckResult[]; healthy: boolean }>;
 }

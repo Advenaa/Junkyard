@@ -4,6 +4,7 @@ import { createLogger } from './logger.js';
 import { createPool } from './db/connection.js';
 import { runMigrations } from './db/migrations.js';
 import { createServer, startServer } from './server.js';
+import { createChatHandler } from './chat/handler.js';
 import { createLLM } from './llm.js';
 import { createEmbedder } from './embed.js';
 import { createVectorCache } from './vector-cache.js';
@@ -23,6 +24,7 @@ import { createTwitterAdapter } from './ingest/twitter.js';
 import { pollFeed } from './ingest/rss.js';
 import { createScheduler } from './scheduler.js';
 import { createHealthMonitor } from './health.js';
+import { createSeeder } from './knowledge/seed.js';
 import { getSources, resetCrashed, getLatestReport } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
@@ -42,6 +44,15 @@ program
 
     await runMigrations(pool);
 
+    // ── 0. Seed entity aliases ───────────────────────────────────────
+    const seeder = createSeeder(pool, log);
+    try {
+      await seeder.seedCoinGecko();
+      await seeder.seedIndonesian();
+    } catch (err) {
+      log.warn({ err }, 'Entity seeding failed, continuing without seeds');
+    }
+
     // ── 1. Shared services ────────────────────────────────────────────
     const llm = createLLM(pool, log, config);
     const embedder = createEmbedder(config, pool, log);
@@ -50,13 +61,13 @@ program
     // ── 2. Pipeline stages ────────────────────────────────────────────
     const normalizer = createNormalizer(pool, log, config, llm);
     const preSummarizer = createPreSummarizer(pool, log, config, llm);
-    const summarizer = createSummarizer(pool, log, config, llm);
+    const entityManager = createEntityManager(pool, log, config, llm);
+    const summarizer = createSummarizer(pool, log, config, llm, entityManager);
     const correlator = createCorrelator(pool, log);
     const synthesizer = createSynthesizer(pool, log, config, llm);
     const pulse = createPulse(pool, log, config, llm);
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
-    const entityManager = createEntityManager(pool, log, config, llm);
     const decayManager = createDecayManager(pool, log);
     const delivery = createDelivery(pool, log, config);
     const healthMonitor = createHealthMonitor(pool, log, config);
@@ -222,11 +233,11 @@ program
       // Run daily synthesis
       const report = await synthesizer.runDaily();
 
+      // Run embed pipeline (must run before narrative detection needs embeddings)
+      await embedPipeline.run();
+
       // Run narrative detection
       await narrativeDetector.detectNarratives();
-
-      // Run embed pipeline
-      await embedPipeline.run();
 
       // Run entity decay
       await decayManager.runDecay();
@@ -257,7 +268,8 @@ program
     });
 
     // ── 6. Start server ───────────────────────────────────────────────
-    const app = await createServer(config, pool, log);
+    const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);
+    const app = await createServer(config, pool, log, healthMonitor, chatHandler);
     await startServer(app, config.port, log);
 
     // ── 7. Start background services ──────────────────────────────────

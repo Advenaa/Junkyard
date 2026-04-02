@@ -226,7 +226,7 @@ export function registerOAuthRoutes(
   });
 
   // --- GET /api/v1/auth/me ---
-  app.get('/api/v1/auth/me', async (request, reply) => {
+  app.get('/api/v1/auth/me', { preHandler: authPreHandler ? [authPreHandler] : [] }, async (request, reply) => {
     if (!request.user) {
       return reply.status(401).send({ error: 'Unauthorized' });
     }

@@ -7,17 +7,22 @@ import rateLimit from '@fastify/rate-limit';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
-import { createHealthMonitor } from './health.js';
+import type { HealthMonitor } from './health.js';
 import { registerOAuthRoutes } from './auth/discord-oauth.js';
 import { requireAuth, requireAdmin } from './auth/middleware.js';
 import { createSessionManager } from './auth/sessions.js';
+
+interface ChatHandler {
+  handle(query: string, conversationId: string, userId: string): Promise<{ response: string; toolsUsed: string[] }>;
+}
 
 export async function createServer(
   config: Config,
   pool: Pool,
   log: Logger,
+  healthMonitor: HealthMonitor,
+  chatHandler?: ChatHandler,
 ): Promise<FastifyInstance> {
-  const healthMonitor = createHealthMonitor(pool, log, config);
   const sessionManager = createSessionManager(pool, log);
   const authPreHandler = requireAuth(pool, config, sessionManager);
   const app = Fastify({ logger: false });
@@ -89,8 +94,17 @@ export async function createServer(
   app.post('/api/v1/chat', {
     preHandler: [authPreHandler],
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-  }, async () => {
-    return { todo: true };
+  }, async (request, reply) => {
+    if (!chatHandler) {
+      return reply.code(501).send({ error: 'Chat not available' });
+    }
+    const { query, conversationId } = request.body as { query: string; conversationId?: string };
+    if (!query || typeof query !== 'string') {
+      return reply.code(400).send({ error: 'query is required' });
+    }
+    const userId = request.user!.discordId;
+    const result = await chatHandler.handle(query, conversationId ?? userId, userId);
+    return result;
   });
 
   app.get('/api/v1/users', { preHandler: [authPreHandler, requireAdmin] }, async () => {
