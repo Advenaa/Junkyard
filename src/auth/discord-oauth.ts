@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { ulid } from 'ulid';
+
 import type { FastifyInstance } from 'fastify';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
@@ -168,19 +168,20 @@ export function registerOAuthRoutes(
     }
 
     // 7. Upsert user
+    const now = Date.now();
     await pool.query(
-      `INSERT INTO users (id, discord_id, username, avatar, role, last_login_at, created_at)
-       VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+      `INSERT INTO users (discord_id, username, avatar, role, last_login_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, $5)
        ON CONFLICT (discord_id) DO UPDATE SET
          username = EXCLUDED.username,
          avatar = EXCLUDED.avatar,
-         last_login_at = NOW()`,
+         last_login_at = EXCLUDED.last_login_at`,
       [
-        ulid(),
         discordUser.id,
         discordUser.username,
         discordUser.avatar,
         role,
+        now,
       ],
     );
 

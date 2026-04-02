@@ -4,12 +4,14 @@ import rateLimit from '@fastify/rate-limit';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
+import { createHealthMonitor } from './health.js';
 
 export async function createServer(
   config: Config,
   pool: Pool,
   log: Logger,
 ): Promise<FastifyInstance> {
+  const healthMonitor = createHealthMonitor(pool, log, config);
   const app = Fastify({ logger: false });
 
   // --- Plugins ---
@@ -28,8 +30,10 @@ export async function createServer(
   });
 
   // --- Health ---
-  app.get('/api/v1/health', async () => {
-    return { status: 'ok' };
+  app.get('/api/v1/health', async (_request, reply) => {
+    const { checks, healthy } = await healthMonitor.getStatus();
+    reply.code(healthy ? 200 : 503);
+    return { status: healthy ? 'ok' : 'degraded', checks };
   });
 
   // --- Skeleton routes ---
