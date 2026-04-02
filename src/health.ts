@@ -28,14 +28,14 @@ export function createHealthMonitor(
 ): HealthMonitor {
   async function checkSourceSilence(): Promise<HealthCheckResult> {
     const { rows } = await pool.query<{
-      name: string;
+      label: string | null;
       poll_interval: number;
-      last_fetched_at: Date | null;
+      last_fetched_at: number | null;
     }>(`
-      SELECT s.name, s.poll_interval, s.last_fetched_at
+      SELECT s.label, s.poll_interval, ss.last_fetched_at
       FROM sources s
-      JOIN source_state ss ON ss.source_id = s.id
-      WHERE ss.status = 'enabled'
+      JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
+      WHERE ss.status = 'active'
     `);
 
     const now = Date.now();
@@ -45,9 +45,9 @@ export function createHealthMonitor(
       if (!row.last_fetched_at) {
         continue;
       }
-      const elapsed = (now - row.last_fetched_at.getTime()) / 1000;
-      if (elapsed > 3 * row.poll_interval) {
-        silent.push(row.name);
+      const elapsedMs = now - row.last_fetched_at;
+      if (elapsedMs > 3 * row.poll_interval * 1000) {
+        silent.push(row.label ?? 'unknown');
       }
     }
 
@@ -62,15 +62,15 @@ export function createHealthMonitor(
   }
 
   async function checkSourceDisabled(): Promise<HealthCheckResult> {
-    const { rows } = await pool.query<{ name: string }>(`
-      SELECT s.name
+    const { rows } = await pool.query<{ label: string | null }>(`
+      SELECT s.label
       FROM sources s
-      JOIN source_state ss ON ss.source_id = s.id
+      JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
       WHERE ss.status = 'disabled'
     `);
 
     if (rows.length > 0) {
-      const names = rows.map((r) => r.name);
+      const names = rows.map((r) => r.label ?? 'unknown');
       return {
         name: 'source_disabled',
         status: 'critical',
@@ -81,11 +81,13 @@ export function createHealthMonitor(
   }
 
   async function checkLlmFailures(): Promise<HealthCheckResult> {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+
     const { rows: usageRows } = await pool.query<{ count: string }>(`
       SELECT COUNT(*) AS count
       FROM llm_usage
-      WHERE created_at > NOW() - INTERVAL '1 hour'
-    `);
+      WHERE created_at > $1
+    `, [oneHourAgo]);
 
     const recentUsage = parseInt(usageRows[0].count, 10);
 
@@ -94,8 +96,8 @@ export function createHealthMonitor(
         SELECT COUNT(*) AS count
         FROM items
         WHERE status = 'ready'
-          AND created_at < NOW() - INTERVAL '1 hour'
-      `);
+          AND created_at < $1
+      `, [oneHourAgo]);
 
       const staleReady = parseInt(readyRows[0].count, 10);
       if (staleReady > 0) {
@@ -111,12 +113,14 @@ export function createHealthMonitor(
   }
 
   async function checkMissedPulse(): Promise<HealthCheckResult> {
+    const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+
     const { rows } = await pool.query<{ count: string }>(`
       SELECT COUNT(*) AS count
       FROM reports
       WHERE type = 'pulse'
-        AND created_at > NOW() - INTERVAL '4 hours'
-    `);
+        AND created_at > $1
+    `, [fourHoursAgo]);
 
     if (parseInt(rows[0].count, 10) === 0) {
       return {
@@ -129,12 +133,14 @@ export function createHealthMonitor(
   }
 
   async function checkMissedDaily(): Promise<HealthCheckResult> {
+    const twentySixHoursAgo = Date.now() - 26 * 60 * 60 * 1000;
+
     const { rows } = await pool.query<{ count: string }>(`
       SELECT COUNT(*) AS count
       FROM reports
       WHERE type = 'daily'
-        AND created_at > NOW() - INTERVAL '26 hours'
-    `);
+        AND created_at > $1
+    `, [twentySixHoursAgo]);
 
     if (parseInt(rows[0].count, 10) === 0) {
       return {
@@ -161,19 +167,23 @@ export function createHealthMonitor(
   }
 
   async function checkCostSpike(): Promise<HealthCheckResult> {
+    const now = Date.now();
+    const todayStart = now - (now % (24 * 60 * 60 * 1000));
+    const sevenDaysAgo = todayStart - 7 * 24 * 60 * 60 * 1000;
+
     const { rows } = await pool.query<{
       today_cost: string | null;
       avg_cost: string | null;
     }>(`
       SELECT
         (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage
-         WHERE created_at >= CURRENT_DATE) AS today_cost,
+         WHERE created_at >= $1) AS today_cost,
         (SELECT COALESCE(SUM(cost_usd), 0) / NULLIF(
-          COUNT(DISTINCT created_at::date), 0
+          COUNT(DISTINCT (created_at / 86400000)), 0
         ) FROM llm_usage
-         WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
-           AND created_at < CURRENT_DATE) AS avg_cost
-    `);
+         WHERE created_at >= $2
+           AND created_at < $1) AS avg_cost
+    `, [todayStart, sevenDaysAgo]);
 
     const todayCost = parseFloat(rows[0].today_cost ?? '0');
     const avgCost = parseFloat(rows[0].avg_cost ?? '0');
@@ -194,9 +204,9 @@ export function createHealthMonitor(
       FROM health_events
       WHERE category = $1
         AND message = $2
-        AND acknowledged_at IS NULL
-        AND created_at > NOW() - INTERVAL '30 minutes'
-    `, [category, message]);
+        AND acknowledged = false
+        AND created_at > $3
+    `, [category, message, Date.now() - 30 * 60 * 1000]);
 
     return parseInt(rows[0].count, 10) > 0;
   }
@@ -208,7 +218,7 @@ export function createHealthMonitor(
     }
 
     const id = ulid();
-    const now = new Date();
+    const now = Date.now();
 
     await pool.query(
       `INSERT INTO health_events (id, category, severity, message, metadata, created_at)
@@ -240,6 +250,7 @@ export function createHealthMonitor(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
       });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
