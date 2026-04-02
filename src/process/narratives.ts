@@ -1,0 +1,353 @@
+import { kmeans } from 'ml-kmeans';
+import { ulid } from 'ulid';
+import type { Pool } from '../db/connection.js';
+import type { Logger } from '../logger.js';
+import type { Config } from '../config.js';
+
+function bytesToVector(bytes: Buffer): Float32Array {
+  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return new Float32Array(ab);
+}
+
+export interface Narrative {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
+  summaryIds: string[];
+}
+
+interface LLM {
+  call(params: {
+    model: string;
+    system: string;
+    messages: { role: 'user' | 'assistant'; content: string }[];
+    maxTokens: number;
+    stage: string;
+  }): Promise<{ content: string }>;
+}
+
+interface Embedder {
+  isAvailable(): boolean;
+}
+
+interface SummaryRow {
+  summary_id: string;
+  vector: Buffer;
+  body: string;
+  sentiment: number | null;
+}
+
+interface NarrativeRow {
+  id: string;
+  name: string;
+  date: string;
+  member_count: number;
+  avg_sentiment: number | null;
+  signal_strength: 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
+  summary_ids: string[];
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function cosineDistance(a: number[], b: number[]): number {
+  return 1 - cosineSimilarity(a, b);
+}
+
+function silhouetteScore(
+  points: number[][],
+  assignments: number[],
+  k: number,
+): number {
+  const n = points.length;
+  if (n <= 1) return 0;
+
+  let totalSilhouette = 0;
+  let counted = 0;
+
+  for (let i = 0; i < n; i++) {
+    const clusterI = assignments[i];
+
+    // Compute average distance to own cluster (a)
+    let sumA = 0;
+    let countA = 0;
+    for (let j = 0; j < n; j++) {
+      if (j === i) continue;
+      if (assignments[j] === clusterI) {
+        sumA += cosineDistance(points[i], points[j]);
+        countA++;
+      }
+    }
+    // Skip singleton clusters
+    if (countA === 0) continue;
+    const a = sumA / countA;
+
+    // Compute average distance to nearest other cluster (b)
+    let minB = Infinity;
+    for (let c = 0; c < k; c++) {
+      if (c === clusterI) continue;
+      let sumB = 0;
+      let countB = 0;
+      for (let j = 0; j < n; j++) {
+        if (assignments[j] === c) {
+          sumB += cosineDistance(points[i], points[j]);
+          countB++;
+        }
+      }
+      if (countB > 0) {
+        const avgB = sumB / countB;
+        if (avgB < minB) minB = avgB;
+      }
+    }
+
+    if (minB === Infinity) continue;
+    const b = minB;
+    const maxAB = Math.max(a, b);
+    const s = maxAB === 0 ? 0 : (b - a) / maxAB;
+    totalSilhouette += s;
+    counted++;
+  }
+
+  return counted === 0 ? 0 : totalSilhouette / counted;
+}
+
+function computeCentroid(points: number[][]): number[] {
+  if (points.length === 0) return [];
+  const dim = points[0].length;
+  const centroid = new Array<number>(dim).fill(0);
+  for (const p of points) {
+    for (let i = 0; i < dim; i++) {
+      centroid[i] += p[i];
+    }
+  }
+  for (let i = 0; i < dim; i++) {
+    centroid[i] /= points.length;
+  }
+  return centroid;
+}
+
+export function createNarrativeDetector(
+  pool: Pool,
+  log: Logger,
+  config: Config,
+  llm: LLM,
+  embedder: Embedder,
+) {
+  async function detectNarratives(): Promise<Narrative[]> {
+    if (!embedder.isAvailable()) {
+      log.info('Embedder not available, skipping narrative detection');
+      return [];
+    }
+
+    // Compute yesterday's date range
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const startOfDay = new Date(
+      yesterday.getFullYear(),
+      yesterday.getMonth(),
+      yesterday.getDate(),
+    );
+    const endOfDay = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    const dateStr = startOfDay.toISOString().slice(0, 10);
+
+    // Step a: Load summary embeddings
+    const { rows } = await pool.query<SummaryRow>(
+      `SELECT e.target_id AS summary_id, e.vector, s.body, s.sentiment
+       FROM embeddings e
+       JOIN summaries s ON s.id = e.target_id
+       WHERE e.target_type = 'summary'
+         AND s.created_at >= $1 AND s.created_at < $2`,
+      [startOfDay.toISOString(), endOfDay.toISOString()],
+    );
+
+    // Step b: Skip if < 9 summaries
+    if (rows.length < 9) {
+      log.info({ count: rows.length }, 'Too few summaries for narrative detection (need 9+)');
+      return [];
+    }
+
+    // Step c: Convert vectors
+    const vectors: number[][] = rows.map((r) => {
+      const f32 = bytesToVector(r.vector);
+      return Array.from(f32);
+    });
+
+    // Step d: K-means with silhouette auto-tuning
+    const maxK = Math.min(10, Math.floor(rows.length / 3));
+    let bestK = 3;
+    let bestScore = -1;
+    let bestAssignments: number[] = [];
+
+    for (let k = 3; k <= maxK; k++) {
+      const result = kmeans(vectors, k, { initialization: 'kmeans++' });
+      const score = silhouetteScore(vectors, result.clusters, k);
+      log.debug({ k, silhouette: score }, 'K-means silhouette');
+      if (score > bestScore) {
+        bestScore = score;
+        bestK = k;
+        bestAssignments = result.clusters;
+      }
+    }
+
+    log.info({ bestK, silhouette: bestScore, points: rows.length }, 'Selected k for narrative clustering');
+
+    // Step f: Group by cluster and filter 3+ members
+    const clusterMap = new Map<number, number[]>();
+    for (let i = 0; i < bestAssignments.length; i++) {
+      const c = bestAssignments[i];
+      const existing = clusterMap.get(c);
+      if (existing) {
+        existing.push(i);
+      } else {
+        clusterMap.set(c, [i]);
+      }
+    }
+
+    const validClusters: { indices: number[] }[] = [];
+    for (const [, indices] of clusterMap) {
+      if (indices.length >= 3) {
+        validClusters.push({ indices });
+      }
+    }
+
+    if (validClusters.length === 0) {
+      log.info('No clusters with 3+ members found');
+      return [];
+    }
+
+    // Step h: Load prior day's narratives for signal strength comparison
+    const priorDate = new Date(startOfDay);
+    priorDate.setDate(priorDate.getDate() - 1);
+    const priorDateStr = priorDate.toISOString().slice(0, 10);
+
+    const { rows: priorNarratives } = await pool.query<NarrativeRow>(
+      'SELECT * FROM narratives WHERE date = $1',
+      [priorDateStr],
+    );
+
+    // Compute centroids for prior narratives using their summary embeddings
+    const priorCentroids: { narrative: NarrativeRow; centroid: number[] }[] = [];
+    for (const pn of priorNarratives) {
+      if (pn.summary_ids.length === 0) continue;
+      const { rows: priorEmbRows } = await pool.query<{ vector: Buffer }>(
+        `SELECT e.vector FROM embeddings e
+         WHERE e.target_type = 'summary' AND e.target_id = ANY($1)`,
+        [pn.summary_ids],
+      );
+      if (priorEmbRows.length > 0) {
+        const priorVecs = priorEmbRows.map((r) => Array.from(bytesToVector(r.vector)));
+        priorCentroids.push({ narrative: pn, centroid: computeCentroid(priorVecs) });
+      }
+    }
+
+    // Step g + h + i: Name clusters, determine signal strength, insert
+    const narratives: Narrative[] = [];
+
+    for (const cluster of validClusters) {
+      const { indices } = cluster;
+
+      // Compute cluster centroid
+      const clusterVectors = indices.map((i) => vectors[i]);
+      const centroid = computeCentroid(clusterVectors);
+
+      // Compute avg sentiment
+      const sentiments = indices
+        .map((i) => rows[i].sentiment)
+        .filter((s): s is number => s !== null);
+      const avgSentiment =
+        sentiments.length > 0
+          ? sentiments.reduce((sum, s) => sum + s, 0) / sentiments.length
+          : null;
+
+      // Summary IDs
+      const summaryIds = indices.map((i) => rows[i].summary_id);
+
+      // Name via Haiku
+      const snippets = indices
+        .map((i) => rows[i].body.slice(0, 200))
+        .join('\n---\n');
+      const nameResult = await llm.call({
+        model: config.models.haiku,
+        system:
+          'Name this discussion cluster in 3-5 words. Return ONLY the name, nothing else.',
+        messages: [{ role: 'user', content: snippets }],
+        maxTokens: 20,
+        stage: 'narrative-cluster',
+      });
+      const name = nameResult.content.trim();
+
+      // Signal strength
+      let signalStrength: Narrative['signalStrength'] = 'new';
+
+      for (const prior of priorCentroids) {
+        const sim = cosineSimilarity(centroid, prior.centroid);
+        if (sim > 0.7) {
+          const growthRate = indices.length / prior.narrative.member_count;
+          if (growthRate >= 3.0) {
+            signalStrength = 'strong';
+          } else if (growthRate >= 1.5) {
+            signalStrength = 'emerging';
+          } else if (growthRate <= 0.5) {
+            signalStrength = 'fading';
+          } else {
+            signalStrength = 'stable';
+          }
+          break;
+        }
+      }
+
+      const id = ulid();
+      const narrative: Narrative = {
+        id,
+        name,
+        date: dateStr,
+        memberCount: indices.length,
+        avgSentiment,
+        signalStrength,
+        summaryIds,
+      };
+
+      // Insert
+      await pool.query(
+        `INSERT INTO narratives (id, name, date, member_count, avg_sentiment, signal_strength, summary_ids, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          id,
+          name,
+          dateStr,
+          indices.length,
+          avgSentiment,
+          signalStrength,
+          JSON.stringify(summaryIds),
+          new Date().toISOString(),
+        ],
+      );
+
+      narratives.push(narrative);
+    }
+
+    log.info(
+      { count: narratives.length, date: dateStr },
+      'Narrative detection complete',
+    );
+
+    return narratives;
+  }
+
+  return { detectNarratives };
+}
