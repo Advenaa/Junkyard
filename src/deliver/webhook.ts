@@ -1,0 +1,264 @@
+import type { Pool } from '../db/connection.js';
+import type { Logger } from '../logger.js';
+import type { Config } from '../config.js';
+import { getAppConfig } from '../db/queries.js';
+
+interface EntitySentiment {
+  name: string;
+  sentiment: number;
+  reason: string;
+}
+
+interface MarketReportParsed {
+  tldr: string;
+  keyEvents: string[];
+  entitySentiment: EntitySentiment[];
+  sections: { title: string; body: string }[];
+  newProjects: { name: string; description: string }[];
+}
+
+interface Report {
+  id: string;
+  type: string;
+  body: string;
+  date: string;
+}
+
+interface DiscordField {
+  name: string;
+  value: string;
+  inline: boolean;
+}
+
+interface DiscordEmbed {
+  title: string;
+  description: string;
+  color: number;
+  fields: DiscordField[];
+  timestamp: string;
+  footer: { text: string };
+  url?: string;
+}
+
+const EMBED_COLORS: Record<string, number> = {
+  daily: 0x5B8DEF,
+  flash: 0xFF6B35,
+  pulse: 0x4A4A5A,
+};
+
+const MAX_RETRIES = 3;
+const BACKOFF_MS = [2000, 8000, 32000];
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return text.slice(0, max - 3) + '...';
+}
+
+function colorForType(type: string): number {
+  return EMBED_COLORS[type] ?? 0x4A4A5A;
+}
+
+function buildTitle(type: string, date: string): string {
+  if (type === 'daily') {
+    return `Daily Market Report \u2014 ${date}`;
+  }
+  if (type === 'flash') {
+    return `[FLASH] Market Report \u2014 ${date}`;
+  }
+  if (type === 'pulse') {
+    const now = new Date();
+    const wibTime = now.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Jakarta',
+    });
+    return `Market Pulse \u2014 ${wibTime} WIB`;
+  }
+  return `Market Report \u2014 ${date}`;
+}
+
+function buildSentimentLabel(sentiment: number): string {
+  if (sentiment > 0.2) return 'bullish';
+  if (sentiment < -0.2) return 'bearish';
+  return 'neutral';
+}
+
+function formatSentimentValue(sentiment: number): string {
+  const sign = sentiment > 0 ? '+' : '';
+  return `${sign}${sentiment.toFixed(1)}`;
+}
+
+function buildFields(parsed: MarketReportParsed): DiscordField[] {
+  const fields: DiscordField[] = [];
+
+  if (parsed.keyEvents.length > 0) {
+    const bulleted = parsed.keyEvents
+      .map((e) => `> ${e}`)
+      .join('\n');
+    fields.push({
+      name: 'Key Events',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  if (parsed.entitySentiment.length > 0) {
+    const sentimentLines = parsed.entitySentiment
+      .slice(0, 6)
+      .map((e) => {
+        const label = buildSentimentLabel(e.sentiment);
+        const value = formatSentimentValue(e.sentiment);
+        return `**${e.name}** ${value} ${label}`;
+      })
+      .join('\n');
+    fields.push({
+      name: 'Sentiment',
+      value: truncate(sentimentLines, 1024),
+      inline: false,
+    });
+  }
+
+  return fields.slice(0, 4);
+}
+
+function buildEmbed(
+  report: Report,
+  parsed: MarketReportParsed,
+  config: Config,
+): DiscordEmbed {
+  const embed: DiscordEmbed = {
+    title: buildTitle(report.type, report.date),
+    description: truncate(parsed.tldr, 4096),
+    color: colorForType(report.type),
+    fields: buildFields(parsed),
+    timestamp: new Date().toISOString(),
+    footer: { text: 'podders' },
+  };
+
+  if (config.publicUrl) {
+    embed.url = `${config.publicUrl}/reports/${report.id}`;
+  }
+
+  return embed;
+}
+
+async function postWithRetry(
+  webhookUrl: string,
+  payload: string,
+  log: Logger,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+      });
+
+      if (response.ok) {
+        return true;
+      }
+
+      if (response.status === 429) {
+        const retryAfterHeader = response.headers.get('Retry-After');
+        const retryAfterMs = retryAfterHeader
+          ? Math.ceil(parseFloat(retryAfterHeader) * 1000)
+          : BACKOFF_MS[attempt] ?? 32000;
+        log.warn(
+          { status: 429, retryAfterMs, attempt: attempt + 1 },
+          'webhook rate limited, waiting before retry',
+        );
+        await sleep(retryAfterMs);
+        continue;
+      }
+
+      if (response.status >= 400 && response.status < 500) {
+        log.error(
+          { status: response.status, attempt: attempt + 1 },
+          'webhook POST failed with client error, not retrying',
+        );
+        return false;
+      }
+
+      if (response.status >= 500) {
+        log.warn(
+          { status: response.status, attempt: attempt + 1 },
+          'webhook POST failed with server error, retrying',
+        );
+        await sleep(BACKOFF_MS[attempt] ?? 32000);
+        continue;
+      }
+
+      log.error(
+        { status: response.status },
+        'webhook POST returned unexpected status',
+      );
+      return false;
+    } catch (err: unknown) {
+      log.error(
+        { err, attempt: attempt + 1 },
+        'webhook POST threw an error',
+      );
+      if (attempt < MAX_RETRIES - 1) {
+        await sleep(BACKOFF_MS[attempt] ?? 32000);
+      }
+    }
+  }
+
+  return false;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function updateDeliveryStatus(
+  pool: Pool,
+  reportId: string,
+  status: 'delivered' | 'failed',
+): Promise<void> {
+  const deliveredAt = status === 'delivered' ? new Date().toISOString() : null;
+  await pool.query(
+    `UPDATE reports SET delivery_status = $1, delivered_at = $2 WHERE id = $3`,
+    [status, deliveredAt, reportId],
+  );
+}
+
+export function createDelivery(pool: Pool, log: Logger, config: Config) {
+  async function deliver(report: Report): Promise<boolean> {
+    let parsed: MarketReportParsed;
+    try {
+      parsed = JSON.parse(report.body) as MarketReportParsed;
+    } catch (err: unknown) {
+      log.error({ err, reportId: report.id }, 'failed to parse report body as JSON');
+      await updateDeliveryStatus(pool, report.id, 'failed');
+      return false;
+    }
+
+    const webhookUrl = await getAppConfig(pool, 'webhook_url');
+    if (!webhookUrl) {
+      log.warn('no webhook_url configured, skipping delivery');
+      return false;
+    }
+
+    const embed = buildEmbed(report, parsed, config);
+    const payload = JSON.stringify({
+      embeds: [embed],
+      allowed_mentions: { parse: [] },
+    });
+
+    const success = await postWithRetry(webhookUrl, payload, log);
+
+    if (success) {
+      log.info({ reportId: report.id, type: report.type }, 'webhook delivered');
+      await updateDeliveryStatus(pool, report.id, 'delivered');
+      return true;
+    }
+
+    log.error({ reportId: report.id, type: report.type }, 'webhook delivery failed after retries');
+    await updateDeliveryStatus(pool, report.id, 'failed');
+    return false;
+  }
+
+  return { deliver };
+}
