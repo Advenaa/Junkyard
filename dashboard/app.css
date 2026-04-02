@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0a0a0f;
+  --color-surface: #111118;
+  --color-surface-raised: #1a1a24;
+  --color-text-primary: #e2e2e8;
+  --color-text-secondary: #8888a0;
+  --color-accent: #5B8DEF;
+  --color-accent-orange: #FF6B35;
+  --color-accent-red: #cc4455;
+  --color-accent-green: #44bb66;
+  --color-border: #2a2a3a;
+
+  --font-heading: Georgia, 'Times New Roman', serif;
+  --font-body: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+}
