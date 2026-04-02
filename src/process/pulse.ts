@@ -96,18 +96,19 @@ function computeAvgSentiment(report: MarketReport): number | null {
   return Math.round((sum / report.entitySentiment.length) * 100) / 100;
 }
 
+/**
+ * Compute the current UTC offset in hours for a given IANA timezone.
+ * Handles DST transitions dynamically — no static offset map needed.
+ */
+function getTimezoneOffsetHours(timezone: string): number {
+  const now = new Date();
+  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const localStr = now.toLocaleString('en-US', { timeZone: timezone });
+  return (new Date(localStr).getTime() - new Date(utcStr).getTime()) / (60 * 60 * 1000);
+}
+
 function getDateString(timezone: string): string {
-  const TZ_OFFSETS: Record<string, number> = {
-    'Asia/Jakarta': 7,
-    'Asia/Singapore': 8,
-    'Asia/Tokyo': 9,
-    'Asia/Shanghai': 8,
-    'America/New_York': -5,
-    'America/Los_Angeles': -8,
-    'Europe/London': 0,
-    UTC: 0,
-  };
-  const offsetMs = (TZ_OFFSETS[timezone] ?? 7) * 60 * 60 * 1000;
+  const offsetMs = getTimezoneOffsetHours(timezone) * 60 * 60 * 1000;
   const localNow = Date.now() + offsetMs;
   const d = new Date(localNow);
   const year = d.getUTCFullYear();

@@ -23,10 +23,9 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       userAgent: string,
     ): Promise<string> {
       const sessionId = ulid();
-      const now = new Date();
-      const expiresAt = new Date(
-        now.getTime() + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000,
-      );
+      const now = Date.now();
+      const expiresAt =
+        now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
 
       // Enforce max sessions per user — delete oldest if exceeded
       const existing = await pool.query<{ id: string }>(
@@ -64,8 +63,8 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       const result = await pool.query<{
         discord_id: string;
         role: string;
-        expires_at: Date;
-        last_refreshed_at: Date;
+        expires_at: number;
+        last_refreshed_at: number;
       }>(
         `SELECT s.discord_id, u.role, s.expires_at, s.last_refreshed_at
          FROM sessions s
@@ -79,7 +78,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       }
 
       const row = result.rows[0]!;
-      const now = new Date();
+      const now = Date.now();
 
       if (row.expires_at < now) {
         // Session expired — clean it up
@@ -89,7 +88,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
 
       // Sliding refresh: update last_refreshed_at if stale
       const hoursSinceRefresh =
-        (now.getTime() - row.last_refreshed_at.getTime()) / (1000 * 60 * 60);
+        (now - row.last_refreshed_at) / (1000 * 60 * 60);
 
       if (hoursSinceRefresh > SLIDING_REFRESH_HOURS) {
         await pool.query(
@@ -108,7 +107,8 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
 
     async cleanupExpired(): Promise<number> {
       const result = await pool.query(
-        `DELETE FROM sessions WHERE expires_at < NOW()`,
+        `DELETE FROM sessions WHERE expires_at < $1`,
+        [Date.now()],
       );
       const count = result.rowCount ?? 0;
       if (count > 0) {

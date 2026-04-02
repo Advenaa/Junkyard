@@ -142,6 +142,7 @@ export function createChatHandler(
   async function handle(
     query: string,
     conversationId: string,
+    userId: string,
   ): Promise<ChatResult> {
     const toolsUsed: string[] = [];
     let processedQuery = query;
@@ -160,16 +161,19 @@ export function createChatHandler(
       processedQuery = translateResult.content;
     }
 
-    // Step 2: Build conversation context
-    const history = conversations.get(conversationId);
+    // Step 2: Sanitize user input before LLM
+    processedQuery = llm.sanitizeForPrompt(processedQuery);
 
-    // Step 3: Build messages for LLM
+    // Step 3: Build conversation context
+    const history = conversations.get(conversationId, userId);
+
+    // Step 4: Build messages for LLM
     const messages: { role: 'user' | 'assistant'; content: string }[] = [
       ...history,
       { role: 'user', content: processedQuery },
     ];
 
-    // Step 4: Tool execution loop
+    // Step 5: Tool execution loop
     let rounds = 0;
     let finalResponse = '';
 
@@ -233,9 +237,9 @@ export function createChatHandler(
         'I was unable to complete the analysis within the allowed number of steps. Please try a more specific question.';
     }
 
-    // Step 5: Save conversation history
-    conversations.add(conversationId, 'user', query);
-    conversations.add(conversationId, 'assistant', finalResponse);
+    // Step 6: Save conversation history
+    conversations.add(conversationId, userId, 'user', query);
+    conversations.add(conversationId, userId, 'assistant', finalResponse);
 
     return { response: finalResponse, toolsUsed };
   }

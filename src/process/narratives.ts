@@ -334,7 +334,7 @@ export function createNarrativeDetector(
           avgSentiment,
           signalStrength,
           JSON.stringify(summaryIds),
-          new Date().toISOString(),
+          Date.now(),
         ],
       );
 

@@ -6,13 +6,14 @@ export interface Message {
 }
 
 interface ConversationEntry {
+  userId: string;
   messages: Message[];
   lastAccess: number;
 }
 
 export interface ConversationManager {
-  get(conversationId: string): Message[];
-  add(conversationId: string, role: 'user' | 'assistant', content: string): void;
+  get(conversationId: string, userId: string): Message[];
+  add(conversationId: string, userId: string, role: 'user' | 'assistant', content: string): void;
   cleanup(): void;
 }
 
@@ -26,9 +27,10 @@ const IDLE_TIMEOUT_MS = 3_600_000; // 1 hour
 export function createConversationManager(): ConversationManager {
   const store = new Map<string, ConversationEntry>();
 
-  function get(conversationId: string): Message[] {
+  function get(conversationId: string, userId: string): Message[] {
     const entry = store.get(conversationId);
     if (!entry) return [];
+    if (entry.userId !== userId) return [];
 
     entry.lastAccess = Date.now();
     return entry.messages.slice(-MAX_MESSAGES);
@@ -36,14 +38,16 @@ export function createConversationManager(): ConversationManager {
 
   function add(
     conversationId: string,
+    userId: string,
     role: 'user' | 'assistant',
     content: string,
   ): void {
     let entry = store.get(conversationId);
     if (!entry) {
-      entry = { messages: [], lastAccess: Date.now() };
+      entry = { userId, messages: [], lastAccess: Date.now() };
       store.set(conversationId, entry);
     }
+    if (entry.userId !== userId) return;
 
     entry.messages.push({ role, content });
 

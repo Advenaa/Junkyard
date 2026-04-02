@@ -258,6 +258,37 @@ const migrations: Migration[] = [
         FOREIGN KEY (summary_id) REFERENCES summaries(id) ON DELETE CASCADE
     `);
   },
+
+  // Migration 4: Add missing indexes (H-045, M-070, M-071, M-072)
+  async (client) => {
+    // H-045: summaries(window_start, window_end) — used by daily synthesis, pulse, correlator
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_summaries_window
+        ON summaries(window_start, window_end)
+    `);
+
+    // M-070: items(url) partial — used by normalize URL dedup
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_items_url
+        ON items(url) WHERE url IS NOT NULL
+    `);
+
+    // M-071: items(batch_id) partial — used by summarizer
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_items_batch_id
+        ON items(batch_id) WHERE batch_id IS NOT NULL
+    `);
+
+    // M-072: entity_mentions(entity_id) and entity_mentions(summary_id) — used by Tier 2 disambiguation
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_entity_mentions_entity_id
+        ON entity_mentions(entity_id)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_entity_mentions_summary_id
+        ON entity_mentions(summary_id)
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

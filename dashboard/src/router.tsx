@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Outlet } from 'react-router';
 import { AuthProvider } from './components/AuthProvider';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Header } from './components/Header';
 import { Login } from './pages/Login';
@@ -13,19 +14,21 @@ export function AppRouter() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route element={<ProtectedRoute />}>
-            <Route element={<><Header /><main className="max-w-5xl mx-auto"><Outlet /></main></>}>
-              <Route path="/" element={<ReportView />} />
-              <Route path="/reports" element={<ReportList />} />
-              <Route path="/reports/:id" element={<ReportView />} />
-              <Route path="/feed" element={<Feed />} />
-              <Route path="/chat" element={<Chat />} />
-              <Route path="/settings" element={<Settings />} />
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route element={<ProtectedRoute />}>
+              <Route element={<><Header /><main className="max-w-5xl mx-auto"><Outlet /></main></>}>
+                <Route path="/" element={<ReportView />} />
+                <Route path="/reports" element={<ReportList />} />
+                <Route path="/reports/:id" element={<ReportView />} />
+                <Route path="/feed" element={<Feed />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/settings" element={<Settings />} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
+          </Routes>
+        </ErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   );

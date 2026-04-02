@@ -67,47 +67,35 @@ Rules:
 
 // ── Timezone helpers ──────────────────────────────────────────────────
 
-const TZ_OFFSETS: Record<string, number> = {
-  'Asia/Jakarta': 7,
-  'Asia/Singapore': 8,
-  'Asia/Tokyo': 9,
-  'Asia/Shanghai': 8,
-  'Asia/Kolkata': 5.5,
-  'Asia/Dubai': 4,
-  'Europe/London': 0,
-  'Europe/Berlin': 1,
-  'Europe/Moscow': 3,
-  'America/New_York': -5,
-  'America/Chicago': -6,
-  'America/Denver': -7,
-  'America/Los_Angeles': -8,
-  'Pacific/Auckland': 12,
-  UTC: 0,
-};
-
-function getOffsetHours(timezone: string): number {
-  return TZ_OFFSETS[timezone] ?? 7; // default to WIB
+/**
+ * Compute the current UTC offset in hours for a given IANA timezone.
+ * Handles DST transitions dynamically — no static offset map needed.
+ */
+function getTimezoneOffsetHours(timezone: string): number {
+  const now = new Date();
+  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const localStr = now.toLocaleString('en-US', { timeZone: timezone });
+  return (new Date(localStr).getTime() - new Date(utcStr).getTime()) / (60 * 60 * 1000);
 }
 
 /**
  * Compute midnight-to-midnight window (epoch ms) for today in the given timezone.
  */
 function getTodayWindow(timezone: string): { start: number; end: number; dateString: string } {
-  const offsetMs = getOffsetHours(timezone) * 60 * 60 * 1000;
+  const offsetMs = getTimezoneOffsetHours(timezone) * 60 * 60 * 1000;
   const nowUtc = Date.now();
-  const localNow = nowUtc + offsetMs;
 
-  // Floor to midnight in local time
-  const localMidnight = localNow - (localNow % (24 * 60 * 60 * 1000));
+  // Construct local midnight using UTC date methods to handle fractional offsets correctly
+  const localDate = new Date(nowUtc + offsetMs);
+  const localMidnightUtc = Date.UTC(localDate.getUTCFullYear(), localDate.getUTCMonth(), localDate.getUTCDate());
   // Convert back to UTC epoch
-  const start = localMidnight - offsetMs;
+  const start = localMidnightUtc - offsetMs;
   const end = start + 24 * 60 * 60 * 1000;
 
   // Format date string as YYYY-MM-DD in local time
-  const d = new Date(start + offsetMs);
-  const year = d.getUTCFullYear();
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
+  const year = localDate.getUTCFullYear();
+  const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(localDate.getUTCDate()).padStart(2, '0');
   const dateString = `${year}-${month}-${day}`;
 
   return { start, end, dateString };
