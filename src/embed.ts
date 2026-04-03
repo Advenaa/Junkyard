@@ -15,7 +15,6 @@ export interface EmbedResult {
 
 interface GoogleGenerativeAIFetchError extends Error {
   status: number;
-  statusText: string;
 }
 
 function isFetchError(err: unknown): err is GoogleGenerativeAIFetchError {
@@ -85,12 +84,9 @@ async function withRetry<T>(
       if (!isFetchError(err)) throw err;
 
       if (err.status === 429) {
-        // Rate limited — respect retry-after or default 60s
-        const retryAfterHeader = 'statusText' in err ? err.statusText : '';
-        const retryAfterMatch = retryAfterHeader.match(/retry.after[:\s]+(\d+)/i);
-        const waitMs = retryAfterMatch
-          ? parseInt(retryAfterMatch[1], 10) * 1000
-          : DEFAULT_429_WAIT;
+        // Google GenAI SDK does not expose Retry-After headers in error objects.
+        // Use a sensible default that respects Gemini's free tier (1500 req/day ≈ 1 req/min).
+        const waitMs = DEFAULT_429_WAIT;
         log.warn({ status: 429, waitMs, attempt }, 'embed: rate limited, waiting');
         await sleep(waitMs);
         continue;

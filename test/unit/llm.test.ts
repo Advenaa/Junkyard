@@ -244,7 +244,7 @@ describe('wrapWithNonce', () => {
 
   it('wraps content with nonce-based XML tags', () => {
     const { wrapped, nonce } = llm.wrapWithNonce('test content');
-    assert.match(nonce, /^[0-9a-f]{8}$/);
+    assert.match(nonce, /^[0-9a-f]{16}$/);
     assert.equal(wrapped, `<scraped_content_${nonce}>test content</scraped_content_${nonce}>`);
   });
 
@@ -613,11 +613,10 @@ describe('call — sleep is called on retries', () => {
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 2);
-    // Second backoff base is 4x the first (2000*4^0 vs 2000*4^1)
-    // With jitter (0.5-1.5x), second should generally be larger
-    // We just verify both are positive and in expected ranges
+    // Backoff base is 2000*2^attempt: attempt 0 → 2000, attempt 1 → 4000
+    // With jitter (0.5-1.5x), ranges: [1000,3000] and [2000,6000]
     assert.ok(sleepCalls[0]! >= 1000 && sleepCalls[0]! <= 3000, `first backoff ${sleepCalls[0]} should be ~2000`);
-    assert.ok(sleepCalls[1]! >= 4000 && sleepCalls[1]! <= 12000, `second backoff ${sleepCalls[1]} should be ~8000`);
+    assert.ok(sleepCalls[1]! >= 2000 && sleepCalls[1]! <= 6000, `second backoff ${sleepCalls[1]} should be ~4000`);
   });
 });
 

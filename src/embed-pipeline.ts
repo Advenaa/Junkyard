@@ -93,7 +93,11 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
       await pool.query(
         `INSERT INTO embeddings (id, target_type, target_id, model, dimensions, vector, created_at)
          VALUES ${valueClauses.join(', ')}
-         ON CONFLICT(target_type, target_id) DO NOTHING`,
+         ON CONFLICT(target_type, target_id) DO UPDATE SET
+           vector = EXCLUDED.vector,
+           model = EXCLUDED.model,
+           dimensions = EXCLUDED.dimensions,
+           created_at = EXCLUDED.created_at`,
         params,
       );
 

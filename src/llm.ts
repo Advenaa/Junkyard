@@ -240,7 +240,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
           input_tokens: response.usage.input,
           output_tokens: response.usage.output,
         };
-        const cost = response.usage.cost.total;
+        const cost = response.usage?.cost?.total ?? 0;
 
         await insertLlmUsage(pool, {
           id: ulid(),
@@ -338,7 +338,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
             );
             throw err;
           }
-          const baseBackoffMs = 2000 * Math.pow(4, attempt); // 2s, 8s, 32s
+          const baseBackoffMs = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s
           const backoffMs = baseBackoffMs * (0.5 + Math.random());
           log.warn(
             { stage: params.stage, status, backoffMs: Math.round(backoffMs), attempt },
@@ -354,6 +354,21 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
             { stage: params.stage },
             'LLM refused to respond (error)',
           );
+          throw err;
+        }
+
+        // Retry on timeout errors (LM-008)
+        if (err instanceof Error && (
+          ('code' in err && (err as { code: string }).code === 'ETIMEDOUT') ||
+          err.name === 'AbortError' ||
+          err.message.toLowerCase().includes('timeout') ||
+          err.message.toLowerCase().includes('aborted')
+        )) {
+          if (attempt < MAX_RETRIES) {
+            log.warn({ err, attempt, stage: params.stage }, 'LLM call timed out, retrying');
+            await _sleep(2000 * Math.pow(2, attempt));
+            continue;
+          }
           throw err;
         }
 
@@ -388,7 +403,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
   }
 
   function wrapWithNonce(content: string): { wrapped: string; nonce: string } {
-    const nonce = crypto.randomBytes(4).toString('hex');
+    const nonce = crypto.randomBytes(8).toString('hex');
     const sanitized = sanitizeForPrompt(content);
     const wrapped = `<scraped_content_${nonce}>${sanitized}</scraped_content_${nonce}>`;
     return { wrapped, nonce };

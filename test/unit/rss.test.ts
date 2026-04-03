@@ -82,14 +82,24 @@ describe('syntheticGuid (via pollFeed metadata)', () => {
 // ── pollFeed ────────────────────────────────────────────────────────
 
 describe('pollFeed', () => {
-  let originalParseURL: typeof RssParser.prototype.parseURL;
+  let originalParseString: typeof RssParser.prototype.parseString;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
-    originalParseURL = RssParser.prototype.parseURL;
+    originalParseString = RssParser.prototype.parseString;
+    originalFetch = globalThis.fetch;
+    // Mock fetch for fetchValidated — return valid RSS XML response
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '<rss></rss>',
+      headers: new Headers(),
+    })) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
-    RssParser.prototype.parseURL = originalParseURL;
+    RssParser.prototype.parseString = originalParseString;
+    globalThis.fetch = originalFetch;
   });
 
   // Lazy import so the mock is in place when the module runs
@@ -119,9 +129,9 @@ describe('pollFeed', () => {
       categories: ['defi'],
     });
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed([item1, item2]);
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', null, noopLog);
@@ -142,9 +152,9 @@ describe('pollFeed', () => {
   });
 
   it('returns empty items for an empty feed', async () => {
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed([]);
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', null, noopLog);
@@ -179,9 +189,9 @@ describe('pollFeed', () => {
       }),
     ];
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed(items);
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', 'g-seen', noopLog);
@@ -209,9 +219,9 @@ describe('pollFeed', () => {
       }),
     ];
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed(items);
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', 'nonexistent-id', noopLog);
@@ -220,9 +230,9 @@ describe('pollFeed', () => {
   });
 
   it('handles fetch/parse error gracefully', async () => {
-    RssParser.prototype.parseURL = async function () {
+    globalThis.fetch = (async () => {
       throw new Error('Network error: ECONNREFUSED');
-    } as typeof RssParser.prototype.parseURL;
+    }) as unknown as typeof globalThis.fetch;
 
     const errors: unknown[] = [];
     const errorLog: Logger = {
@@ -251,9 +261,9 @@ describe('pollFeed', () => {
       }),
     ];
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed(items);
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', null, noopLog);
@@ -279,9 +289,9 @@ describe('pollFeed', () => {
       }),
     ];
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed(items, 'My Feed Title');
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', null, noopLog);
@@ -329,9 +339,9 @@ describe('pollFeed', () => {
       }),
     ];
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed(items);
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', 'nonexistent', noopLog);
@@ -352,9 +362,9 @@ describe('pollFeed', () => {
       }),
     ];
 
-    RssParser.prototype.parseURL = async function () {
+    RssParser.prototype.parseString = async function () {
       return makeFeed(items, 'Fallback Feed Name');
-    } as typeof RssParser.prototype.parseURL;
+    } as typeof RssParser.prototype.parseString;
 
     const pollFeed = await loadPollFeed();
     const result = await pollFeed('https://example.com/feed.xml', null, noopLog);

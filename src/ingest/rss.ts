@@ -59,7 +59,19 @@ export async function pollFeed(
 ): Promise<{ items: RawItem[]; lastId: string | null }> {
   try {
     const parser = new RssParser();
-    const feed = await parser.parseURL(feedUrl);
+
+    // RS-002: Fetch feed through SSRF validation instead of parser.parseURL
+    const { response: feedResponse } = await fetchValidated(feedUrl, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!feedResponse) {
+      throw new Error(`RSS feed URL failed SSRF validation: ${feedUrl}`);
+    }
+    if (!feedResponse.ok) {
+      throw new Error(`RSS fetch failed: ${feedResponse.status}`);
+    }
+    const feedXml = await feedResponse.text();
+    const feed = await parser.parseString(feedXml);
 
     const feedItems = (feed.items ?? []).map((item) => {
       const guid = item.guid ?? syntheticGuid(item.isoDate, item.title);
@@ -108,7 +120,16 @@ export async function pollFeed(
           const author = item.creator ?? (item as Record<string, unknown>)['dc:creator'] as string ?? feed.title ?? 'Unknown';
           let content = item.contentSnippet ?? item.title ?? '';
           const timestamp = new Date(item.isoDate ?? Date.now()).getTime();
-          const link = item.link;
+
+          // RS-011: Resolve relative URLs against the feed URL
+          let link = item.link ?? null;
+          if (link && !link.startsWith('http')) {
+            try {
+              link = new URL(link, feedUrl).toString();
+            } catch {
+              link = null;
+            }
+          }
 
           if (content.length < 500 && link) {
             content = await extractArticle(link, content, log);
@@ -121,7 +142,7 @@ export async function pollFeed(
             author,
             content,
             timestamp,
-            url: link,
+            url: link ?? undefined,
             engagement: 0,
             metadata: {
               feedTitle: feed.title,
