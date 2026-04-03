@@ -20,6 +20,12 @@ export interface RawItem {
 }
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+function safeParseDate(isoDate: string | undefined | null): number {
+  if (isoDate === undefined || isoDate === null) return 0;
+  const t = new Date(isoDate).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
 const MAX_FEED_BYTES = 5 * 1024 * 1024; // 5 MB
 const MAX_ITEMS_PER_POLL = 50;
 
@@ -103,23 +109,23 @@ export async function pollFeed(
       } else {
         // Take only items after the lastId position
         filtered = feedItems.filter((item) => {
-          const itemTime = new Date(item.isoDate ?? 0).getTime();
-          const lastTime = new Date(feedItems[lastIndex]?.isoDate ?? 0).getTime();
+          const itemTime = safeParseDate(item.isoDate);
+          const lastTime = safeParseDate(feedItems[lastIndex]?.isoDate);
           return itemTime > lastTime || (itemTime === lastTime && item._guid !== lastId);
         });
       }
     } else {
       const cutoff = Date.now() - TWO_HOURS_MS;
       filtered = feedItems.filter((item) => {
-        const itemTime = new Date(item.isoDate ?? 0).getTime();
+        const itemTime = safeParseDate(item.isoDate);
         return itemTime >= cutoff;
       });
     }
 
     // Sort by pubDate ascending
     filtered.sort((a, b) => {
-      const timeA = new Date(a.isoDate ?? 0).getTime();
-      const timeB = new Date(b.isoDate ?? 0).getTime();
+      const timeA = safeParseDate(a.isoDate);
+      const timeB = safeParseDate(b.isoDate);
       return timeA - timeB;
     });
 
@@ -151,8 +157,11 @@ export async function pollFeed(
             }
           }
           const hasDate = item.isoDate !== undefined && item.isoDate !== null;
-          const timestamp = hasDate ? new Date(item.isoDate!).getTime() : Date.now();
-          if (!hasDate) {
+          let timestamp = hasDate ? new Date(item.isoDate!).getTime() : Date.now();
+          if (Number.isNaN(timestamp)) {
+            log.warn({ guid: item._guid, isoDate: item.isoDate }, 'RSS item has unparseable date, using current time');
+            timestamp = Date.now();
+          } else if (!hasDate) {
             log.warn({ guid: item._guid, title: item.title }, 'RSS item missing pubDate, using current time');
           }
 

@@ -85,7 +85,7 @@ export function loadConfig(): Config {
     console.error('╔══════════════════════════════════════════════════════════════╗');
     console.error('║ WARNING: API_KEY not set — auto-generated ephemeral key     ║');
     console.error('║ Sessions will be lost on restart. Set API_KEY in .env       ║');
-    console.error(`║ Generated: ${apiKey.padEnd(48)}║`);
+    console.error(`║ Generated: ${apiKey.slice(0, 11)}... (set API_KEY in .env)${' '.repeat(14)}║`);
     console.error('╚══════════════════════════════════════════════════════════════╝');
   }
 
@@ -104,7 +104,16 @@ export function loadConfig(): Config {
     throw new Error(`PORT must be a valid integer (1-65535), got: ${rawPort}`);
   }
   const dataDir = process.env['DATA_DIR'] || './data';
-  const publicUrl = process.env['PUBLIC_URL'] || null;
+  let publicUrl: string | null = null;
+  const rawPublicUrl = process.env['PUBLIC_URL'] || null;
+  if (rawPublicUrl) {
+    try {
+      const parsed = new URL(rawPublicUrl);
+      publicUrl = parsed.origin + parsed.pathname.replace(/\/+$/, '');
+    } catch {
+      throw new Error(`PUBLIC_URL must be a valid URL, got: ${rawPublicUrl}`);
+    }
+  }
   const alertWebhookUrl = process.env['ALERT_WEBHOOK_URL'] || null;
 
   const models = {

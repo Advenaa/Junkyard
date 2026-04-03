@@ -67,12 +67,13 @@ export function createScheduler(deps: SchedulerDeps) {
 
   async function refreshDailyCron(): Promise<void> {
     if (shuttingDown) return;
+    const { expression, timezone } = await buildDailyCron();
+    // Only stop old task after new config is successfully built
     if (dailyTask) {
       dailyTask.stop();
       const idx = tasks.indexOf(dailyTask);
       if (idx !== -1) tasks.splice(idx, 1);
     }
-    const { expression, timezone } = await buildDailyCron();
     dailyTask = cron.schedule(expression, () => {
       void withMutex('daily-synthesis', deps.onDaily);
     }, { timezone });

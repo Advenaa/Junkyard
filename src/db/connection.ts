@@ -3,6 +3,10 @@ import pg from 'pg';
 export type Pool = pg.Pool;
 
 export function createPool(databaseUrl: string): pg.Pool {
+  // OID 20 = INT8/BIGINT. node-postgres returns BIGINT as string by default.
+  // Parse to number — safe because epoch-ms (~1.7T) is well within Number.MAX_SAFE_INTEGER (~9Q).
+  pg.types.setTypeParser(20, (val: string) => parseInt(val, 10));
+
   const pool = new pg.Pool({
     connectionString: databaseUrl,
     // 20 connections: ~5 parallel source polls + embed pipeline + scheduler + API + narrative detection + headroom

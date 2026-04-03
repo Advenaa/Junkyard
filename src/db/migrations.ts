@@ -452,7 +452,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     `);
 
     const { rows } = await client.query<{ version: number }>(
-      `SELECT version FROM schema_version`,
+      `SELECT version FROM schema_version ORDER BY version DESC LIMIT 1`,
     );
 
     let currentVersion: number;

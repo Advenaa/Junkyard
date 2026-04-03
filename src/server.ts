@@ -195,7 +195,7 @@ export async function createServer(
       }
     }
     try {
-      await insertSource(pool, source, sourceId, label ?? null, 1.0, Math.floor(Date.now() / 1000));
+      await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
     } catch (err: unknown) {
       if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
         return reply.code(409).send({ error: 'Source already exists' });

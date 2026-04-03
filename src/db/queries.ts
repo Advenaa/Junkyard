@@ -309,7 +309,8 @@ export async function insertSummary(
     `INSERT INTO summaries (
       id, source, source_id, window_start, window_end,
       body, sentiment, urgency, item_count, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT (id) DO NOTHING`,
     [
       s.id,
       s.source,
@@ -605,7 +606,7 @@ export async function computeDailySentiment(
        AVG(sentiment) AS avg_sentiment,
        COUNT(*)::integer AS mention_count
      FROM entity_mentions
-     WHERE created_at >= $1 AND created_at < $2
+     WHERE created_at >= $1 AND created_at < $2 AND sentiment IS NOT NULL
      GROUP BY entity_id`,
     [dayStart, dayEnd],
   );

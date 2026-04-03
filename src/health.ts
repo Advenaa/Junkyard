@@ -243,21 +243,20 @@ export function createHealthMonitor(
     return { name: 'cost_spike', status: 'ok' };
   }
 
-  async function isDuplicate(category: string, message: string): Promise<boolean> {
+  async function isDuplicate(category: string): Promise<boolean> {
     const { rows } = await pool.query<{ count: string }>(`
       SELECT COUNT(*) AS count
       FROM health_events
       WHERE category = $1
-        AND message = $2
         AND acknowledged = false
-        AND created_at > $3
-    `, [category, message, Date.now() - 30 * 60 * 1000]);
+        AND created_at > $2
+    `, [category, Date.now() - 30 * 60 * 1000]);
 
     return parseInt(rows[0].count, 10) > 0;
   }
 
   async function insertEvent(event: HealthEvent): Promise<void> {
-    if (await isDuplicate(event.category, event.message)) {
+    if (await isDuplicate(event.category)) {
       log.debug({ category: event.category }, 'Skipping duplicate health event');
       return;
     }
@@ -314,8 +313,15 @@ export function createHealthMonitor(
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(10_000),
         });
-        if (response.ok) return;
-        if (response.status < 500) return; // Client error, don't retry
+        if (response.ok) {
+          await response.body?.cancel();
+          return;
+        }
+        if (response.status < 500) {
+          await response.body?.cancel();
+          return; // Client error, don't retry
+        }
+        await response.body?.cancel();
         lastErr = new Error(`Alert webhook returned ${response.status}`);
       } catch (err: unknown) {
         lastErr = err;
