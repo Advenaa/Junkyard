@@ -51,8 +51,10 @@ export function requireAuth(
             ? 'viewer'  // Revoke admin if not in ADMIN_USER_IDS
             : session.role;
 
-        // Blocked users are rejected at the API layer
+        // Blocked users are rejected at the API layer — destroy session (AU-031)
         if (role === 'blocked') {
+          await sessionManager.delete(sessionId.value);
+          reply.clearCookie('podders_session', { path: '/' });
           reply.status(403).send({ error: 'Access blocked' });
           return;
         }

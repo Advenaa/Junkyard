@@ -51,6 +51,7 @@ const EMBED_COLORS: Record<string, number> = {
 const MAX_RETRIES = 3;
 const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_RETRY_AFTER_MS = 60_000;
+const MAX_TOTAL_RETRY_MS = 120_000;
 const BACKOFF_MS = [2000, 8000, 32000];
 
 export function truncate(text: string, max: number): string {
@@ -133,7 +134,7 @@ export function buildFields(parsed: MarketReportParsed): DiscordField[] {
 const DISCORD_EMBED_TOTAL_LIMIT = 5900; // Discord enforces 6000; leave buffer
 
 export function embedCharCount(embed: DiscordEmbed): number {
-  let total = embed.title.length + embed.description.length + embed.footer.text.length;
+  let total = embed.title.length + embed.description.length + embed.footer.text.length + (embed.url?.length ?? 0);
   for (const field of embed.fields) {
     total += field.name.length + field.value.length;
   }
@@ -196,7 +197,12 @@ async function postWithRetry(
   hostHeader?: string,
 ): Promise<boolean> {
   let rateLimitCount = 0;
+  const startTime = Date.now();
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    if (Date.now() - startTime > MAX_TOTAL_RETRY_MS) {
+      log.error({ elapsedMs: Date.now() - startTime }, 'webhook total retry time exceeded, giving up');
+      return false;
+    }
     try {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (hostHeader) headers['Host'] = hostHeader;
@@ -341,7 +347,14 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
 
     if (success) {
       log.info({ reportId: report.id, type: report.type }, 'webhook delivered');
-      await updateDeliveryStatus(pool, report.id, 'delivered');
+      try {
+        await updateDeliveryStatus(pool, report.id, 'delivered');
+      } catch (err: unknown) {
+        log.error(
+          { err, reportId: report.id },
+          'failed to update delivery status after successful POST — will remain pending but not re-sending',
+        );
+      }
       return true;
     }
 

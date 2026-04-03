@@ -166,6 +166,7 @@ function DeliveryTab() {
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<{ digestTime?: string; timezone?: string; webhookUrl?: string }>('/config').then((res) => {
@@ -177,6 +178,8 @@ function DeliveryTab() {
       };
       setConfig(mapped);
       setWebhookUrl(res.webhookUrl ?? '');
+    }).catch(() => {
+      setFetchError('Failed to load delivery configuration. Please try refreshing the page.');
     });
   }, []);
 
@@ -227,6 +230,7 @@ function DeliveryTab() {
     }
   };
 
+  if (fetchError) return <div className="text-red-400 font-body py-8">{fetchError}</div>;
   if (!config) return <div className="text-text-secondary font-body py-8">Loading...</div>;
 
   return (

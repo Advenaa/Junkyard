@@ -161,7 +161,7 @@ export function createNormalizer(
     }
 
     // ── Gate 6 — Indonesian translation ─────────────────────────────
-    if (lang === 'ind') {
+    if (lang === 'ind' || lang === 'msa' || lang === 'zlm') {
       originalLanguage = 'ind';
       try {
         const { wrapped, nonce } = llm.wrapWithNonce(item.content);
@@ -184,9 +184,17 @@ export function createNormalizer(
             'Translation returned nonce-only content, keeping original',
           );
         } else {
-          item.content = cleaned;
-          contentHash = sha256(item.source + item.sourceId + item.content);
-          translated = true;
+          const postTranslationInjection = detectInjection(cleaned);
+          if (postTranslationInjection.detected) {
+            log.warn(
+              { id: item.id, pattern: postTranslationInjection.pattern },
+              'Injection detected in translation output, keeping original',
+            );
+          } else {
+            item.content = cleaned;
+            contentHash = sha256(item.source + item.sourceId + item.content);
+            translated = true;
+          }
         }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

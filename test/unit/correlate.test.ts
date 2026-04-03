@@ -111,26 +111,44 @@ function buildBatchPool(opts: {
   urgencies: Record<string, string>;
   sourceIds?: Record<string, string>;
 }) {
-  // All distinct sources across all entities
-  const allSources = [...new Set(opts.correlationRows.flatMap(r => r.mentions.map(m => m.source)))];
-  const trustRows = allSources
-    .filter(s => s in opts.trustWeights)
-    .map(s => ({ source: s, trust_weight: opts.trustWeights[s] }));
-
   // All distinct summary IDs across all entities
   const allSummaryIds = [...new Set(opts.correlationRows.flatMap(r => r.mentions.map(m => m.summary_id)))];
+
+  // Build summary meta rows — now includes `source` field for CO-001
+  // Map each summary_id to its source type from the correlation rows
+  const summarySourceMap = new Map<string, string>();
+  for (const row of opts.correlationRows) {
+    for (const m of row.mentions) {
+      summarySourceMap.set(m.summary_id, m.source);
+    }
+  }
+
   const summaryMetaRows = allSummaryIds
-    .filter(id => id in opts.urgencies || (opts.sourceIds && id in opts.sourceIds))
+    .filter(id => id in opts.urgencies || (opts.sourceIds && id in opts.sourceIds) || summarySourceMap.has(id))
     .map(id => ({
       id,
       urgency: opts.urgencies[id] ?? 'routine',
       source_id: opts.sourceIds?.[id] ?? id,
+      source: summarySourceMap.get(id) ?? 'unknown',
     }));
+
+  // CO-001: Build trust rows per (source, source_id) pair
+  const trustPairSet = new Set<string>();
+  for (const meta of summaryMetaRows) {
+    trustPairSet.add(`${meta.source}:${meta.source_id}`);
+  }
+  const trustRows = [...trustPairSet]
+    .map(key => {
+      const [source, ...rest] = key.split(':');
+      const sourceId = rest.join(':');
+      return { source, source_id: sourceId, trust_weight: opts.trustWeights[source] };
+    })
+    .filter(r => r.trust_weight !== undefined);
 
   return mockPool([
     { rows: opts.correlationRows },  // CORRELATION_SQL
-    { rows: trustRows },              // batch trust weights
-    { rows: summaryMetaRows },        // batch summaries (urgency + source_id)
+    { rows: summaryMetaRows },        // batch summaries (urgency + source_id + source)
+    { rows: trustRows },              // batch trust weights per (source, source_id)
   ]);
 }
 
@@ -525,12 +543,12 @@ describe('createCorrelator.run() — batch queries', () => {
     assert.strictEqual(pool.calls.length, 3);
     // First call: CORRELATION_SQL
     assert.ok(pool.calls[0].text.includes('entity_mentions'), 'first query should be CORRELATION_SQL');
-    // Second call: batch trust weight lookup
-    assert.ok(pool.calls[1].text.includes('FROM sources WHERE source = ANY($1)'),
-      'second query should batch-fetch trust weights');
-    // Third call: batch urgency lookup
-    assert.ok(pool.calls[2].text.includes('FROM summaries WHERE id = ANY($1)'),
-      'third query should batch-fetch urgencies');
+    // Second call: batch summaries (urgency + source_id + source)
+    assert.ok(pool.calls[1].text.includes('FROM summaries WHERE id = ANY($1)'),
+      'second query should batch-fetch summaries');
+    // Third call: batch trust weight lookup per (source, source_id) pairs
+    assert.ok(pool.calls[2].text.includes('FROM sources'),
+      'third query should batch-fetch trust weights');
   });
 });
 

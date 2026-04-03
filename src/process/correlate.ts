@@ -22,6 +22,7 @@ interface MentionRow {
 
 interface TrustRow {
   source: string;
+  source_id: string;
   trust_weight: number;
 }
 
@@ -68,7 +69,26 @@ export function createCorrelator(pool: Pool, log: Logger) {
   async function run(cutoff?: number): Promise<{ correlated: CorrelatedEntity[]; shouldFlash: boolean }> {
     const effectiveCutoff = cutoff ?? (Date.now() - 24 * 60 * 60 * 1000);
 
-    const { rows } = await pool.query<MentionRow>(CORRELATION_SQL, [effectiveCutoff]);
+    const { rows: rawRows } = await pool.query<MentionRow>(CORRELATION_SQL, [effectiveCutoff]);
+
+    // CO-003: Runtime validation for json_agg — may be string if pg driver config changes
+    const rows: MentionRow[] = [];
+    for (const row of rawRows) {
+      let mentions = row.mentions;
+      if (typeof mentions === 'string') {
+        try {
+          mentions = JSON.parse(mentions) as MentionRow['mentions'];
+        } catch {
+          log.warn({ entityId: row.entity_id }, 'Skipping row: json_agg mentions is unparseable string');
+          continue;
+        }
+      }
+      if (!Array.isArray(mentions)) {
+        log.warn({ entityId: row.entity_id }, 'Skipping row: json_agg mentions is not an array');
+        continue;
+      }
+      rows.push({ ...row, mentions });
+    }
 
     if (rows.length === 0) {
       log.info('No cross-source correlations found in last 24h');
@@ -77,26 +97,34 @@ export function createCorrelator(pool: Pool, log: Logger) {
 
     log.info({ entityCount: rows.length }, 'Found cross-source correlated entities');
 
-    // Batch-fetch trust weights (CR-003 + CR-010: clamp to [0, 1])
-    const allSources = [...new Set(rows.flatMap(r => r.mentions.map(m => m.source)))];
-    const trustRows = allSources.length > 0
-      ? (await pool.query<TrustRow>(
-          'SELECT source, trust_weight FROM sources WHERE source = ANY($1)',
-          [allSources],
-        )).rows
-      : [];
-    const trustMap = new Map(trustRows.map(r => [r.source, Math.max(0, Math.min(1, r.trust_weight))]));
-
     // Batch-fetch urgencies and source_ids from summaries (CR-003)
     const allSummaryIds = [...new Set(rows.flatMap(r => r.mentions.map(m => m.summary_id)))];
     const summaryMetaRows = allSummaryIds.length > 0
-      ? (await pool.query<{ id: string; urgency: string; source_id: string }>(
-          'SELECT id, urgency, source_id FROM summaries WHERE id = ANY($1)',
+      ? (await pool.query<{ id: string; urgency: string; source_id: string; source: string }>(
+          'SELECT id, urgency, source_id, source FROM summaries WHERE id = ANY($1)',
           [allSummaryIds],
         )).rows
       : [];
     const urgencyMap = new Map(summaryMetaRows.map(r => [r.id, r.urgency]));
     const sourceIdMap = new Map(summaryMetaRows.map(r => [r.id, r.source_id]));
+
+    // CO-001: Batch-fetch trust weights per (source, source_id) pair (CR-003 + CR-010: clamp to [0, 1])
+    const sourcePairSet = new Set<string>();
+    for (const meta of summaryMetaRows) {
+      sourcePairSet.add(`${meta.source}:${meta.source_id}`);
+    }
+    const sourcePairs = [...sourcePairSet].map(key => {
+      const [source, ...rest] = key.split(':');
+      return { source, source_id: rest.join(':') };
+    });
+    const trustRows = sourcePairs.length > 0
+      ? (await pool.query<TrustRow>(
+          `SELECT source, source_id, trust_weight FROM sources
+           WHERE (source, source_id) IN (${sourcePairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')})`,
+          sourcePairs.flatMap(p => [p.source, p.source_id]),
+        )).rows
+      : [];
+    const trustMap = new Map(trustRows.map(r => [`${r.source}:${r.source_id}`, Math.max(0, Math.min(1, r.trust_weight))]));
 
     const correlated: CorrelatedEntity[] = [];
     let shouldFlash = false;
@@ -113,20 +141,18 @@ export function createCorrelator(pool: Pool, log: Logger) {
         }
       }
 
-      // Look up trust weights for each distinct source
+      // CO-001: Look up trust weights per (source, source_id) pair
       const sources: { source: string; sourceId: string; trustWeight: number }[] = [];
       let weightedSum = 0;
 
       for (const [source, { summaryIds }] of seenSources) {
-        const trustWeight = trustMap.get(source) ?? 0.5;
-        if (!trustMap.has(source)) {
-          log.warn({ source }, 'No trust_weight found for source, defaulting to 0.5');
+        const sourceId = sourceIdMap.get(summaryIds[0]) ?? source;
+        const trustKey = `${source}:${sourceId}`;
+        const trustWeight = trustMap.get(trustKey) ?? 0.5;
+        if (!trustMap.has(trustKey)) {
+          log.warn({ source, sourceId }, 'No trust_weight found for source:source_id, defaulting to 0.5');
         }
-        sources.push({
-          source,
-          sourceId: sourceIdMap.get(summaryIds[0]) ?? source,
-          trustWeight,
-        });
+        sources.push({ source, sourceId, trustWeight });
         weightedSum += trustWeight;
       }
 

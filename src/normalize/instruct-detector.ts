@@ -39,7 +39,7 @@ const PATTERNS: readonly InjectionPattern[] = [
   },
   {
     name: "claude-role-marker",
-    regex: /^(?:Human|Assistant):/im,
+    regex: /^(?:Human|Assistant):\s*(?:ignore|forget|override|disregard|you\s+are|system|<\/?\w)/im,
   },
 ] as const;
 

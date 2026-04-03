@@ -225,7 +225,7 @@ program
 
           // If breaking urgency detected, trigger flash report
           if (result.hasBreaking) {
-            const { correlated, shouldFlash } = await correlator.run();
+            const { correlated, shouldFlash } = await correlator.run(row.min_ts);
             if (shouldFlash) {
               const flashReport = await synthesizer.runFlash(correlated);
               if (flashReport) {
