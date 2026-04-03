@@ -174,6 +174,11 @@ function DeliveryTab() {
   const save = async () => {
     setSaving(true);
     setError(null);
+    if (webhookUrl && !webhookUrl.startsWith('https://')) {
+      setError('Webhook URL must use HTTPS.');
+      setSaving(false);
+      return;
+    }
     try {
       await apiFetch('/config', {
         method: 'PATCH',
@@ -190,11 +195,24 @@ function DeliveryTab() {
   const testWebhook = async () => {
     setTesting(true);
     setTestResult(null);
+    if (!webhookUrl) {
+      setTestResult('Enter a webhook URL first.');
+      setTesting(false);
+      return;
+    }
+    if (!webhookUrl.startsWith('https://')) {
+      setTestResult('Webhook URL must use HTTPS.');
+      setTesting(false);
+      return;
+    }
     try {
-      await apiFetch('/config', { method: 'PATCH', body: JSON.stringify({ webhookUrl }) });
-      setTestResult('Webhook saved. Test delivery triggered.');
+      await apiFetch('/config/test-webhook', {
+        method: 'POST',
+        body: JSON.stringify({ webhookUrl }),
+      });
+      setTestResult('Test payload sent successfully.');
     } catch {
-      setTestResult('Failed to test webhook.');
+      setTestResult('Failed to send test payload. Check the URL and try again.');
     } finally {
       setTesting(false);
     }

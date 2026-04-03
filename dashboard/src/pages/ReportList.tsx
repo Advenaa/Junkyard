@@ -62,12 +62,14 @@ export function ReportList() {
       <h1 className="font-heading text-2xl text-text-primary">Reports</h1>
 
       {/* Filter Pills */}
-      <div className="flex gap-2">
+      <div className="flex gap-2" role="radiogroup" aria-label="Report type filter">
         {FILTERS.map((f) => (
           <button
             key={f}
+            role="radio"
+            aria-checked={filter === f}
             onClick={() => setFilter(f)}
-            className={`px-4 py-1.5 rounded-full font-mono text-xs uppercase tracking-wider transition-colors ${
+            className={`px-4 py-2.5 min-h-[44px] rounded-full font-mono text-xs uppercase tracking-wider transition-colors ${
               filter === f
                 ? 'bg-accent text-white'
                 : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-[#3a3a4f]'

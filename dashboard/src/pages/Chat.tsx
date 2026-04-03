@@ -4,6 +4,7 @@ import { ChatPanel } from '../components/ChatPanel';
 import { ChatMessage } from '../components/ChatMessage';
 
 interface Message {
+  id: string;
   role: 'user' | 'assistant';
   content: string;
   toolsUsed?: string[];
@@ -35,7 +36,7 @@ export function Chat() {
     if (!query || loading) return;
 
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: query }]);
+    setMessages((prev) => [...prev, { id: generateId(), role: 'user', content: query }]);
     setLoading(true);
 
     try {
@@ -45,12 +46,12 @@ export function Chat() {
       });
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: data.response, toolsUsed: data.toolsUsed },
+        { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed },
       ]);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: 'Something went wrong. Please try again.' },
+        { id: generateId(), role: 'assistant', content: 'Something went wrong. Please try again.' },
       ]);
     } finally {
       setLoading(false);
@@ -72,13 +73,14 @@ export function Chat() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-49px)] bg-background">
+    <div className="flex flex-col h-[calc(100dvh-49px)] bg-background">
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface">
         <span className="text-sm text-text-secondary">Chat</span>
         <button
           onClick={newChat}
-          className="text-xs px-3 py-1 rounded bg-surface-raised text-text-secondary hover:text-text-primary transition-colors"
+          aria-label="Start new chat conversation"
+          className="text-xs px-3 py-2.5 min-h-[44px] rounded bg-surface-raised text-text-secondary hover:text-text-primary transition-colors"
         >
           New Chat
         </button>
@@ -91,8 +93,8 @@ export function Chat() {
             Ask anything about your market intelligence data.
           </div>
         )}
-        {messages.map((msg, i) => (
-          <ChatMessage key={i} role={msg.role} content={msg.content} toolsUsed={msg.toolsUsed} />
+        {messages.map((msg) => (
+          <ChatMessage key={msg.id} role={msg.role} content={msg.content} toolsUsed={msg.toolsUsed} />
         ))}
         {loading && <ChatMessage role="assistant" content="" loading />}
         <div ref={bottomRef} />
@@ -106,6 +108,7 @@ export function Chat() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
+            aria-label="Chat message input"
             placeholder="Ask about markets, entities, signals..."
             rows={1}
             className="flex-1 resize-none bg-surface-raised text-text-primary placeholder:text-text-secondary text-sm rounded-lg px-4 py-2.5 border border-border focus:border-accent focus:outline-none"
@@ -113,7 +116,8 @@ export function Chat() {
           <button
             onClick={send}
             disabled={loading || !input.trim()}
-            className="px-4 py-2.5 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40 transition-opacity"
+            aria-label="Send message"
+            className="px-4 py-2.5 min-h-[44px] rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40 transition-opacity"
           >
             Send
           </button>
