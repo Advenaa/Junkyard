@@ -29,7 +29,7 @@ describe('checkSpam', () => {
 
   // Rule: gm-gn
   describe('gm-gn', () => {
-    // Single-word gm/gn hits short-post first (< 5 words), so test the rule directly
+    // Single-word gm/gn hits short-post first (< 3 words, discord), so test the rule directly
     for (const text of ['gm', 'GM!', 'gn', 'GN...', 'gm/gn', 'GM/GN!']) {
       it(`rule matches "${text}"`, () => {
         const rule = SPAM_RULES.find(r => r.name === 'gm-gn')!;
@@ -37,7 +37,7 @@ describe('checkSpam', () => {
       });
     }
 
-    // Through checkSpam, short-post fires first for these
+    // Through checkSpam, short-post fires first for these (< 3 words on discord)
     it('checkSpam catches gm/gn as spam (via short-post first)', () => {
       const result = checkSpam(makeItem({ content: 'gm' }));
       assert.equal(result.isSpam, true);
@@ -49,12 +49,22 @@ describe('checkSpam', () => {
     });
   });
 
-  // Rule: short-post
+  // Rule: short-post (discord only, < 3 words)
   describe('short-post', () => {
-    it('flags posts with fewer than 5 words', () => {
-      const result = checkSpam(makeItem({ content: 'only four words here' }));
+    it('flags discord posts with fewer than 3 words', () => {
+      const result = checkSpam(makeItem({ content: 'two words' }));
       assert.equal(result.isSpam, true);
       assert.equal(result.rule, 'short-post');
+    });
+
+    it('passes discord posts with 3 or more words (e.g. market signals)', () => {
+      const result = checkSpam(makeItem({ content: 'BTC ATH $100K' }));
+      assert.equal(result.isSpam, false);
+    });
+
+    it('does not apply to RSS source', () => {
+      const result = checkSpam(makeItem({ source: 'rss', content: 'ok' }));
+      assert.equal(result.isSpam, false);
     });
 
     it('passes posts with 5 or more words', () => {
@@ -98,7 +108,7 @@ describe('checkSpam', () => {
       it(`flags "${text}"`, () => {
         const result = checkSpam(makeItem({ content: text }));
         assert.equal(result.isSpam, true);
-        // short-post fires first since "wm" is < 5 words
+        // short-post fires first since "wm" is < 3 words (discord source)
         // but we specifically check that id-wm also matches
         const wmRule = SPAM_RULES.find(r => r.name === 'id-wm')!;
         assert.equal(wmRule.test(makeItem({ content: text })), true);

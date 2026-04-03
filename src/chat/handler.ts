@@ -243,7 +243,7 @@ export function createChatHandler(
     }
 
     // Step 6: Save conversation history
-    conversations.add(conversationId, userId, 'user', query);
+    conversations.add(conversationId, userId, 'user', processedQuery);
     conversations.add(conversationId, userId, 'assistant', finalResponse);
 
     return { response: finalResponse, toolsUsed };

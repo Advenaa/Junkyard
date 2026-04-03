@@ -44,7 +44,14 @@ program
     const log = createLogger(config.secrets);
     const pool = createPool(config.databaseUrl);
 
-    await runMigrations(pool);
+    try {
+      await runMigrations(pool);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.fatal({ err }, `Cannot connect to database or run migrations: ${msg}`);
+      log.fatal('Ensure DATABASE_URL is correct and PostgreSQL is running');
+      process.exit(1);
+    }
 
     // ── 0. Seed entity aliases ───────────────────────────────────────
     const seeder = createSeeder(pool, log);
@@ -336,6 +343,10 @@ program
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('uncaughtException', (err: unknown) => {
+      log.fatal({ err }, 'uncaught exception — triggering graceful shutdown');
+      shutdown('uncaughtException');
+    });
     process.on('unhandledRejection', (err: unknown) => {
       log.fatal({ err }, 'unhandled rejection — triggering graceful shutdown');
       shutdown('unhandledRejection');

@@ -30,7 +30,8 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 }
 
 function bytesToVector(buf: Buffer): Float32Array {
-  return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  return new Float32Array(ab);
 }
 
 // ── Cache ──────────────────────────────────────────────────────────────

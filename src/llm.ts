@@ -26,12 +26,27 @@ export type Stage =
   | 'narrative-cluster'
   | 'entity-disambiguate';
 
+/** Stage-based default temperatures. Lower = more deterministic. */
+const STAGE_TEMPERATURES: Record<string, number> = {
+  summarize: 0.2,
+  'pre-summarize': 0.2,
+  synthesize: 0.5,
+  pulse: 0.5,
+  chat: 0.7,
+  translate: 0.1,
+  escalate: 0.3,
+  'urgency-classify': 0.2,
+  'narrative-cluster': 0.3,
+  'entity-disambiguate': 0.2,
+};
+
 export interface LLMCallParams {
   model: string;
   system: string;
   messages: { role: 'user' | 'assistant'; content: string }[];
   maxTokens: number;
   stage: Stage;
+  temperature?: number;
 }
 
 export interface LLMCallResult {
@@ -180,8 +195,10 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
+        const effectiveTemperature = params.temperature ?? STAGE_TEMPERATURES[params.stage] ?? 0.5;
         const response = await (_complete as typeof complete)(model, context, {
           maxTokens: params.maxTokens,
+          temperature: effectiveTemperature,
         });
 
         // L8: error stopReason with refusal-like message

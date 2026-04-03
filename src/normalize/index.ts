@@ -14,7 +14,7 @@ import { checkSpam } from './spam.js';
 type NormalizeResult = 'ready' | 'filtered' | 'dropped' | 'error';
 
 const MAX_CONTENT_LENGTH = 20_000;
-const ACCEPTED_LANGS = new Set(['eng', 'ind', 'und']);
+const ACCEPTED_LANGS = new Set(['eng', 'ind', 'und', 'msa', 'zlm']);
 
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -31,13 +31,17 @@ export function createNormalizer(
     let originalLanguage: string | undefined;
     let translated = false;
 
-    // ── Gate 1 — Truncate ───────────────────────────────────────────
+    // ── Gate 1 — Truncate (surrogate-pair safe) ──────────────────────
     if (item.content.length > MAX_CONTENT_LENGTH) {
       log.warn(
         { id: item.id, originalLength: item.content.length },
         'Content exceeds 20K chars, truncating',
       );
-      item.content = item.content.slice(0, MAX_CONTENT_LENGTH);
+      let end = MAX_CONTENT_LENGTH;
+      // If we're in the middle of a surrogate pair, step back one
+      const code = item.content.charCodeAt(end - 1);
+      if (code >= 0xD800 && code <= 0xDBFF) end--;
+      item.content = item.content.slice(0, end);
     }
 
     // ── Gate 1.5 — Sanitize + Injection scan ────────────────────────
@@ -67,8 +71,17 @@ export function createNormalizer(
       return 'filtered';
     }
 
-    // ── Gate 2 — Content hash dedup ─────────────────────────────────
+    // ── Gate 2 — Content hash dedup (early check to avoid wasting translation tokens)
     const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 2000));
+
+    // Early check — skip expensive gates if this content was already processed
+    const { rows: existingHash } = await pool.query<{ id: string }>(
+      'SELECT id FROM items WHERE content_hash = $1 LIMIT 1',
+      [contentHash],
+    );
+    if (existingHash.length > 0) {
+      return 'dropped';
+    }
 
     // ── Gate 3 — URL dedup ──────────────────────────────────────────
     let resolvedUrl = item.url;
@@ -111,8 +124,9 @@ export function createNormalizer(
     }
 
     // ── Gate 5 — Language detect ────────────────────────────────────
-    const lang = franc(item.content);
-    if (!ACCEPTED_LANGS.has(lang)) {
+    const lang = franc(item.content, { minLength: 3 });
+    // Skip language filtering for short messages (franc unreliable under 100 chars)
+    if (item.content.length >= 100 && !ACCEPTED_LANGS.has(lang)) {
       await insertItem(pool, {
         id: ulid(),
         source: item.source,

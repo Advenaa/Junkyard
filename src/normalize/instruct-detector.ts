@@ -27,7 +27,7 @@ const PATTERNS: readonly InjectionPattern[] = [
   },
   {
     name: "xml-closing-tag",
-    regex: /<\/[a-z_]+>/i,
+    regex: /<\/(?:system|user|assistant|human|instruction|prompt|scraped_content|tool_call|tool_result)[^>]*>/i,
   },
   {
     name: "llama-inst-marker",
@@ -96,6 +96,27 @@ export function sanitizeContent(content: string): string {
   return s;
 }
 
+// ── Homoglyph transliteration ────────────────────────────────────────
+
+/** Map common Cyrillic/Greek lookalikes to their ASCII Latin equivalents. */
+const HOMOGLYPH_MAP: Record<string, string> = {
+  '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p',
+  '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0456': 'i',
+  '\u0410': 'a', '\u0415': 'e', '\u041E': 'o', '\u0420': 'p',
+  '\u0421': 'c', '\u0423': 'y', '\u0425': 'x', '\u0406': 'i',
+  '\u03B1': 'a', '\u03B5': 'e', '\u03BF': 'o', '\u03C1': 'p',
+  '\u03BA': 'k', '\u03BD': 'v', '\u03C5': 'u',
+};
+
+/** Replace homoglyph characters with ASCII equivalents for scanning. */
+function deconfuse(text: string): string {
+  let result = '';
+  for (const char of text) {
+    result += HOMOGLYPH_MAP[char] ?? char;
+  }
+  return result;
+}
+
 // ── Detection ────────────────────────────────────────────────────────
 
 /**
@@ -109,9 +130,10 @@ export function sanitizeContent(content: string): string {
  */
 export function detectInjection(content: string): DetectionResult {
   const sanitized = sanitizeContent(content);
+  const scanText = deconfuse(sanitized);
 
   for (const { name, regex } of PATTERNS) {
-    if (regex.test(sanitized)) {
+    if (regex.test(scanText)) {
       return { detected: true, pattern: name };
     }
   }
