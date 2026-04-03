@@ -1,3 +1,4 @@
+import { ulid } from 'ulid';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -118,8 +119,9 @@ export function createPreSummarizer(
     // PS-020: Atomically claim items as 'processing' to prevent race with main summarize pipeline
     // PS-022: ORDER BY created_at ASC for deterministic processing order
     // PS-021: AND retry_count < 3 to stop retrying items that repeatedly fail parsing
+    const batchId = ulid();
     const { rows } = await pool.query<Item>(
-      `UPDATE items SET status = 'processing'
+      `UPDATE items SET status = 'processing', batch_id = $1
        WHERE id IN (
          SELECT id FROM items
          WHERE status = 'ready' AND source IN ('rss', 'news')
@@ -130,6 +132,7 @@ export function createPreSummarizer(
          FOR UPDATE SKIP LOCKED
        )
        RETURNING id, source, content`,
+      [batchId],
     );
 
     const eligible = rows.filter(item => !shouldSkip(item));
@@ -210,9 +213,10 @@ export function createPreSummarizer(
         const message = err instanceof Error ? err.message : String(err);
         log.error(`pre-summarize: LLM call failed for batch, keeping originals: ${message}`);
         // PS-020: On LLM error, release all batch items back to 'ready'
+        // IP-004: Increment retry_count to prevent indefinite retries (livelock)
         const batchIds = batch.map(item => item.id);
         await pool.query(
-          `UPDATE items SET status = 'ready' WHERE id = ANY($1::text[])`,
+          `UPDATE items SET retry_count = retry_count + 1, status = 'ready' WHERE id = ANY($1::text[])`,
           [batchIds],
         );
       }

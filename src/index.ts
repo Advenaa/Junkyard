@@ -346,20 +346,22 @@ program
     // ── 6. Crash recovery (before server accepts requests) ─────────────
     await resetCrashed(pool);
 
-    // ── 7. Start server ───────────────────────────────────────────────
+    // ── 7. Load vector cache (must complete before server accepts requests) ──
+    await vectorCache.load();
+    try { await healthMonitor.check(); } catch (err) { log.warn({ err }, 'Initial health check failed'); }
+
+    // ── 8. Start server ───────────────────────────────────────────────
     const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);
     const app = await createServer(config, pool, log, healthMonitor, chatHandler);
     await startServer(app, config.port, log);
 
-    // ── 8. Start background services ──────────────────────────────────
-    await vectorCache.load();
-    try { await healthMonitor.check(); } catch (err) { log.warn({ err }, 'Initial health check failed'); }
+    // ── 9. Start background services ──────────────────────────────────
     await scheduler.start();
     await discordAdapter.connect();
 
     log.info('podders v2 started');
 
-    // ── 9. Graceful shutdown ──────────────────────────────────────────
+    // ── 10. Graceful shutdown ─────────────────────────────────────────
     let shuttingDown = false;
 
     const shutdown = async (reason?: string) => {

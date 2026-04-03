@@ -46,13 +46,17 @@ function createSemanticSearch(
 
       const type = (args['type'] as 'summary' | 'report' | undefined) ?? 'summary';
 
+      const ALLOWED_TABLES: Record<string, string> = { summary: 'summaries', report: 'reports' };
+      const table = ALLOWED_TABLES[type];
+      if (!table) return 'Error: invalid search type';
+
       log.info({ query, type }, 'chat: semantic_search');
 
       const prepared = embedder.prepareText(query, type);
       const embedding = await embedder.embed(prepared, TaskType.RETRIEVAL_QUERY);
       if (!embedding) return 'Error: embedding service unavailable';
 
-      const results = vectorCache.search(embedding.vector, type, 10);
+      const results = await vectorCache.search(embedding.vector, type, 10);
 
       if (results.length === 0) {
         return 'No results found.';
@@ -60,8 +64,6 @@ function createSemanticSearch(
 
       // Fetch content for each result
       const ids = results.map((r) => r.targetId);
-      const tableName = type === 'summary' ? 'summaries' : 'reports';
-      const contentColumn = 'body';
 
       const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
       const dbResult = await pool.query<{
@@ -69,7 +71,7 @@ function createSemanticSearch(
         body: string;
         created_at: string;
       }>(
-        `SELECT id, body, created_at FROM ${tableName} WHERE id IN (${placeholders})`,
+        `SELECT id, body, created_at FROM ${table} WHERE id IN (${placeholders})`,
         ids,
       );
 

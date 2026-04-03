@@ -27,6 +27,8 @@ interface ToolCall {
 // ── Constants ─────────────────────────────────────────────────────────
 
 const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_RESULT_CHARS = 2000;
+const MAX_TOTAL_TOOL_RESULT_CHARS = 30_000;
 
 const SYSTEM_PROMPT = `You are Podders, a market intelligence assistant for crypto and Indonesian macro markets. Answer questions using ONLY the data retrieved by your tools. If you don't have data on a topic, say so — never speculate.
 
@@ -102,6 +104,11 @@ function parseToolCalls(content: string): ToolCall[] {
   }
 
   return calls;
+}
+
+function truncateToolResult(result: string, limit: number): string {
+  if (result.length <= limit) return result;
+  return result.slice(0, limit) + '\n...[truncated]';
 }
 
 function buildToolResultMessage(
@@ -243,6 +250,7 @@ export function createChatHandler(
     trackTokens(userId, inputTokens);
 
     const toolFailures = new Map<string, number>();
+    let totalToolResultChars = 0;
 
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
@@ -284,7 +292,18 @@ export function createChatHandler(
 
       // Execute tool calls
       const toolResults: string[] = [];
+      let budgetExhausted = false;
       for (const call of toolCalls) {
+        // Check total tool result budget before executing more tools
+        if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
+          budgetExhausted = true;
+          log.warn({ conversationId, totalToolResultChars }, 'chat: tool result budget exhausted, skipping remaining calls');
+          toolResults.push(
+            buildToolResultMessage(call.name, 'Skipped: tool result budget exhausted. Work with the data you already have.'),
+          );
+          continue;
+        }
+
         const tool = toolMap.get(call.name);
         if (!tool) {
           toolResults.push(
@@ -300,7 +319,9 @@ export function createChatHandler(
         try {
           const toolResult = await tool.execute(call.args);
           const sanitizedResult = llm.sanitizeForPrompt(toolResult);
-          toolResults.push(buildToolResultMessage(call.name, sanitizedResult));
+          const truncatedResult = truncateToolResult(sanitizedResult, MAX_TOOL_RESULT_CHARS);
+          totalToolResultChars += truncatedResult.length;
+          toolResults.push(buildToolResultMessage(call.name, truncatedResult));
           // Reset failure counter on success
           toolFailures.delete(call.name);
         } catch (err: unknown) {
@@ -322,7 +343,12 @@ export function createChatHandler(
 
       // Add assistant message with tool calls and tool results
       messages.push({ role: 'assistant', content: result.content });
-      messages.push({ role: 'user', content: toolResults.join('\n\n') });
+      const toolResultsText = toolResults.join('\n\n');
+      if (budgetExhausted) {
+        messages.push({ role: 'user', content: `${toolResultsText}\n\n[System: Tool result budget reached. Do NOT call more tools. Produce your final answer now using the data you already have.]` });
+      } else {
+        messages.push({ role: 'user', content: toolResultsText });
+      }
     }
 
     // If we exhausted rounds without a final response, use the last result

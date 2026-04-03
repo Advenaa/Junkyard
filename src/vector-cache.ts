@@ -10,7 +10,7 @@ export interface SearchResult {
 
 export interface VectorCache {
   load(): Promise<void>;
-  search(query: Float32Array, type: 'summary' | 'report', limit?: number): SearchResult[];
+  search(query: Float32Array, type: 'summary' | 'report', limit?: number): Promise<SearchResult[]>;
   update(targetType: string, targetId: string, vector: Float32Array): void;
   prune(deletedIds: string[]): number;
   getSize(): { summaries: number; reports: number };
@@ -80,7 +80,7 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
   async function loadType(type: SearchableType): Promise<number> {
     const result = await pool.query<{ target_id: string; vector: Buffer }>(
-      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at DESC LIMIT $2',
+      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at ASC LIMIT $2',
       [type, MAX_VECTORS],
     );
 
@@ -119,11 +119,14 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
   const MIN_SIMILARITY = 0.3;
 
-  function search(
+  /** Max vectors to scan from DB when falling back past the in-memory cache. */
+  const DB_FALLBACK_BATCH = 500;
+
+  async function search(
     query: Float32Array,
     type: 'summary' | 'report',
     limit = 10,
-  ): SearchResult[] {
+  ): Promise<SearchResult[]> {
     const map = maps[type];
     const results: SearchResult[] = [];
 
@@ -135,6 +138,38 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
     }
 
     results.sort((a, b) => b.score - a.score);
+
+    // If in-memory results already satisfy the limit, no DB fallback needed
+    if (results.length >= limit) {
+      return results.slice(0, limit);
+    }
+
+    // DB fallback: fetch recent vectors not already in the cache
+    try {
+      const cachedIds = [...map.keys()];
+      const result = await pool.query<{ target_id: string; vector: Buffer }>(
+        `SELECT target_id, vector FROM embeddings
+         WHERE target_type = $1
+           AND target_id != ALL($2::text[])
+         ORDER BY created_at DESC
+         LIMIT $3`,
+        [type, cachedIds, DB_FALLBACK_BATCH],
+      );
+
+      for (const row of result.rows) {
+        const vec = bytesToVector(row.vector);
+        if (!vec) continue;
+        const score = cosineSimilarity(query, vec);
+        if (score >= MIN_SIMILARITY) {
+          results.push({ targetId: row.target_id, score });
+        }
+      }
+
+      results.sort((a, b) => b.score - a.score);
+    } catch (err: unknown) {
+      log.warn({ err, type }, 'vector-cache: DB fallback search failed, returning in-memory results only');
+    }
+
     return results.slice(0, limit);
   }
 

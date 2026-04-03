@@ -66,6 +66,7 @@ export function createScheduler(deps: SchedulerDeps) {
   }
 
   async function refreshDailyCron(): Promise<void> {
+    if (shuttingDown) return;
     if (dailyTask) {
       dailyTask.stop();
       const idx = tasks.indexOf(dailyTask);

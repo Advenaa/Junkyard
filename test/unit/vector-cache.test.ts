@@ -150,14 +150,14 @@ describe('VectorCache (unit, no pool)', () => {
     assert.equal(cache.getSize().summaries, 1);
   });
 
-  it('search returns results sorted by descending score', () => {
+  it('search returns results sorted by descending score', async () => {
     const cache = makeCache();
     // Insert vectors at known angles from query
     cache.update('summary', 'exact', vec(1, 0, 0));
     cache.update('summary', 'ortho', vec(0, 1, 0));
     cache.update('summary', 'close', vec(0.9, 0.1, 0));
 
-    const results = cache.search(vec(1, 0, 0), 'summary');
+    const results = await cache.search(vec(1, 0, 0), 'summary');
     // orthogonal vector (score ~0) is below MIN_SIMILARITY threshold, filtered out
     assert.equal(results.length, 2);
     // exact match first
@@ -167,7 +167,7 @@ describe('VectorCache (unit, no pool)', () => {
     assert.equal(results[1].targetId, 'close');
   });
 
-  it('search respects limit', () => {
+  it('search respects limit', async () => {
     const cache = makeCache();
     for (let i = 0; i < 20; i++) {
       const v = new Float32Array(3);
@@ -176,13 +176,13 @@ describe('VectorCache (unit, no pool)', () => {
       cache.update('summary', `s-${i}`, v);
     }
 
-    const results = cache.search(vec(1, 0, 0), 'summary', 5);
+    const results = await cache.search(vec(1, 0, 0), 'summary', 5);
     assert.equal(results.length, 5);
   });
 
-  it('search on empty type returns empty array', () => {
+  it('search on empty type returns empty array', async () => {
     const cache = makeCache();
-    const results = cache.search(vec(1, 0), 'report');
+    const results = await cache.search(vec(1, 0), 'report');
     assert.equal(results.length, 0);
   });
 
