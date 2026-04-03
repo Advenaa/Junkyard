@@ -311,6 +311,16 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     const pinnedWebhookUrl = pinnedUrl.toString();
     const originalHost = new URL(webhookUrl).host;
 
+    // Idempotency guard: skip if already delivered (DL-001)
+    const { rows: statusRows } = await pool.query<{ delivery_status: string }>(
+      'SELECT delivery_status FROM reports WHERE id = $1',
+      [report.id],
+    );
+    if (statusRows[0]?.delivery_status === 'delivered') {
+      log.info({ reportId: report.id }, 'Report already delivered, skipping');
+      return true;
+    }
+
     const embed = buildEmbed(report, parsed, config);
     const payload = JSON.stringify({
       embeds: [embed],

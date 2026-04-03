@@ -43,6 +43,11 @@ export async function createServer(
   healthMonitor: HealthMonitor,
   chatHandler?: ChatHandler,
 ): Promise<FastifyInstance> {
+  // Warn if Discord OAuth is configured without PUBLIC_URL (DB-008)
+  if (config.discordClientId && config.discordClientSecret && !config.publicUrl) {
+    log.warn('Discord OAuth is configured but PUBLIC_URL is not set — OAuth redirects will fail');
+  }
+
   const sessionManager = createSessionManager(pool, log);
   const authPreHandler = requireAuth(pool, config, sessionManager);
   const app = Fastify({ logger: false, trustProxy: config.publicUrl ? 1 : false });
@@ -61,7 +66,7 @@ export async function createServer(
   );
 
   // --- Security headers ---
-  app.addHook('onSend', async (_request, reply) => {
+  app.addHook('onSend', async (request, reply) => {
     reply.header(
       'Content-Security-Policy',
       "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.discordapp.com",
@@ -71,6 +76,13 @@ export async function createServer(
     reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
     reply.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     reply.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+
+    // Cache-Control for dashboard assets (DB-005)
+    if (request.url.startsWith('/assets/')) {
+      reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (request.url === '/' || request.url.endsWith('.html')) {
+      reply.header('Cache-Control', 'no-cache');
+    }
   });
 
   // --- Health ---
@@ -269,6 +281,10 @@ export async function createServer(
     if (request.url.startsWith('/api/')) {
       reply.code(404);
       return { error: 'Not found' };
+    }
+    // Return 404 for missing static assets instead of index.html (DB-003)
+    if (/\.(js|css|png|jpg|jpeg|svg|ico|woff2?|ttf|eot|map|json)$/i.test(request.url)) {
+      return reply.code(404).send({ error: 'Not found' });
     }
     return reply.sendFile('index.html');
   });

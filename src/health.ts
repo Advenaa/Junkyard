@@ -278,17 +278,27 @@ export function createHealthMonitor(
       allowed_mentions: { parse: [] as string[] },
     };
 
-    try {
-      await fetch(pinnedUrl.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Host': parsed.host },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      log.error({ err: errMsg }, 'Failed to send health alert webhook');
+    // Retry once on failure (DL-007)
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(pinnedUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Host': parsed.host },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (response.ok) return;
+        if (response.status < 500) return; // Client error, don't retry
+        lastErr = new Error(`Alert webhook returned ${response.status}`);
+      } catch (err: unknown) {
+        lastErr = err;
+      }
+      if (attempt === 0) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
+    log.error({ err: lastErr }, 'Alert webhook failed after 2 attempts');
   }
 
   async function runChecks(): Promise<HealthCheckResult[]> {

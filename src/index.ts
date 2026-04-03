@@ -50,6 +50,7 @@ program
       const msg = err instanceof Error ? err.message : String(err);
       log.fatal({ err }, `Cannot connect to database or run migrations: ${msg}`);
       log.fatal('Ensure DATABASE_URL is correct and PostgreSQL is running');
+      await pool.end().catch(() => {}); // Best-effort cleanup
       process.exit(1);
     }
 
