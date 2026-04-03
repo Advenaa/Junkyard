@@ -88,11 +88,13 @@ function stripDiacritics(text: string): string {
  * 3. Strip RTL/LTR overrides and isolates
  * 4. Strip diacritical marks (so accented chars match ASCII patterns)
  */
+/** Sanitize content for storage: NFKC normalize + strip zero-width/bidi chars.
+ *  Does NOT strip diacritics — accented characters are preserved in stored content.
+ *  Diacritic stripping is only done inside detectInjection() for scanning purposes. */
 export function sanitizeContent(content: string): string {
   let s = content.normalize("NFKC");
   s = s.replace(ZERO_WIDTH_RE, "");
   s = s.replace(BIDI_RE, "");
-  s = stripDiacritics(s);
   return s;
 }
 
@@ -130,7 +132,7 @@ function deconfuse(text: string): string {
  */
 export function detectInjection(content: string): DetectionResult {
   const sanitized = sanitizeContent(content);
-  const scanText = deconfuse(sanitized);
+  const scanText = deconfuse(stripDiacritics(sanitized));
 
   for (const { name, regex } of PATTERNS) {
     if (regex.test(scanText)) {

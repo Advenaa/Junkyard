@@ -190,6 +190,8 @@ export function createChatHandler(
         maxTokens: 1024,
         stage: 'translate',
       });
+      // Track translation token usage
+      trackTokens(userId, Math.ceil(query.length / 4 + (translateResult.content?.length ?? 0) / 4));
       // Validate translation result — fall back to original on failure (D-022)
       const translated = translateResult.content?.trim();
       if (translated && translated.length > 0 && translated.length < query.length * 3) {
@@ -230,8 +232,10 @@ export function createChatHandler(
         stage: 'chat',
       });
 
-      // Track estimated token usage (D-020)
-      trackTokens(userId, processedQuery.length / 4 + (result.content?.length ?? 0) / 4);
+      // Track estimated token usage — include full message context, not just query+response
+      const msgTokens = messages.reduce((sum, m) => sum + m.content.length / 4, 0);
+      const responseTokens = (result.content?.length ?? 0) / 4;
+      trackTokens(userId, Math.ceil(msgTokens + responseTokens));
 
       const toolCalls = parseToolCalls(result.content);
 
