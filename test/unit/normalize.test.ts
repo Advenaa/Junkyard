@@ -503,6 +503,76 @@ function makeMockLlm(overrides?: {
   } as any;
 }
 
+// ── P-001: Minimum content gate ────────────────────────────────────
+
+describe('minimum content gate (P-001)', () => {
+  it('drops items with empty string content', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({ content: '' });
+    const result = await normalize(item);
+
+    assert.equal(result, 'dropped');
+  });
+
+  it('drops items with whitespace-only content', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({ content: '   ' });
+    const result = await normalize(item);
+
+    assert.equal(result, 'dropped');
+  });
+
+  it('drops items with short content (2 chars after trim)', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({ content: 'hi' });
+    const result = await normalize(item);
+
+    assert.equal(result, 'dropped');
+  });
+
+  it('passes items with exactly 5-char content', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({ content: 'hello' });
+    const result = await normalize(item);
+
+    assert.notEqual(result, 'dropped');
+  });
+
+  it('drops items with multi-emoji content (< 5 chars after trim)', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    // U+1F680 is 2 UTF-16 code units, so "🚀🚀" is 4 chars — under the 5-char gate
+    const item = makeItem({ content: '🚀🚀' });
+    const result = await normalize(item);
+
+    assert.equal(result, 'dropped');
+  });
+});
+
 // ── D-016: Surrogate-safe truncation ────────────────────────────────
 
 describe('surrogate-safe truncation (D-016)', () => {

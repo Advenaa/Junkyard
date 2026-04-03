@@ -134,6 +134,14 @@ describe('normalizeAlias', () => {
   it('handles $-only input', () => {
     assert.equal(normalizeAlias('$'), '');
   });
+
+  it('returns empty string for whitespace-only input (P-010)', () => {
+    assert.equal(normalizeAlias('  '), '');
+  });
+
+  it('returns empty string for whitespace-padded $ (P-010)', () => {
+    assert.equal(normalizeAlias('  $  '), '');
+  });
 });
 
 // ── Canonical name normalization (entity.name.toLowerCase()) ───────────────

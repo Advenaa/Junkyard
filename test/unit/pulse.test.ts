@@ -367,6 +367,92 @@ describe('runPulse — sentiment drift', () => {
 });
 
 // ═════════════════════════════════════════════════════════════════════
+// Summary cap (P-004)
+// ═════════════════════════════════════════════════════════════════════
+
+describe('runPulse — summary cap at 50', () => {
+  it('caps summaries to 50 when more are returned from DB', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    // Create 60 summaries, each with a unique marker in the body
+    const rows = Array.from({ length: 60 }, (_, i) =>
+      makeSummaryRow({
+        id: `s${i}`,
+        body: makeSummaryBody({ summary: `Summary number ${i}` }),
+        created_at: Date.now() - (60 - i) * 60 * 1000, // ascending order
+      }),
+    );
+    const pool = makePool({ summaries: rows });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+
+    // The oldest 10 (indices 0-9) should be trimmed; newest 50 (indices 10-59) kept
+    assert.ok(!capturedMessage.includes('Summary number 0'), 'oldest summary should be excluded');
+    assert.ok(!capturedMessage.includes('Summary number 9'), 'summary at index 9 should be excluded');
+    assert.ok(capturedMessage.includes('Summary number 10'), 'summary at index 10 should be included');
+    assert.ok(capturedMessage.includes('Summary number 59'), 'newest summary should be included');
+  });
+
+  it('includes all summaries when count is under the cap', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      makeSummaryRow({
+        id: `s${i}`,
+        body: makeSummaryBody({ summary: `Summary number ${i}` }),
+      }),
+    );
+    const pool = makePool({ summaries: rows });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+
+    // All 10 should be present
+    for (let i = 0; i < 10; i++) {
+      assert.ok(capturedMessage.includes(`Summary number ${i}`), `summary ${i} should be included`);
+    }
+  });
+
+  it('includes exactly 50 summaries when given exactly 50', async () => {
+    let capturedMessage = '';
+    const llm = {
+      call: async (params: any) => {
+        capturedMessage = params.messages[0].content;
+        return { content: JSON.stringify(makeValidReport()) };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+    };
+
+    const rows = Array.from({ length: 50 }, (_, i) =>
+      makeSummaryRow({
+        id: `s${i}`,
+        body: makeSummaryBody({ summary: `Summary number ${i}` }),
+      }),
+    );
+    const pool = makePool({ summaries: rows });
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    await runPulse();
+
+    // All 50 should be present (no trimming at boundary)
+    assert.ok(capturedMessage.includes('Summary number 0'), 'first summary should be included');
+    assert.ok(capturedMessage.includes('Summary number 49'), 'last summary should be included');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
 // LLM retry and error handling
 // ═════════════════════════════════════════════════════════════════════
 

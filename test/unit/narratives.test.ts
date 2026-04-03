@@ -632,6 +632,126 @@ describe('createNarrativeDetector', () => {
   });
 });
 
+// ── validateTimezone (P-005) — tested indirectly via detectNarratives ─
+
+describe('validateTimezone (via detectNarratives)', () => {
+  /**
+   * Extended mock pool that supports returning a timezone from app_config.
+   * Falls through to the standard mockPool behaviour for other queries.
+   */
+  function mockPoolWithTimezone(tz: string | null, summaryRows: Parameters<typeof mockPool>[0]['summaryRows']) {
+    const base = mockPool({ summaryRows });
+    const origQuery = base.pool.query.bind(base.pool);
+
+    base.pool.query = async (sql: string, params?: any[]) => {
+      const trimmed = sql.replace(/\s+/g, ' ').trim();
+      if (trimmed.includes('FROM app_config')) {
+        if (tz === null) return { rows: [] };
+        return { rows: [{ value: tz }] };
+      }
+      return origQuery(sql, params);
+    };
+
+    return base;
+  }
+
+  // We only need 5 summaries (below the 9 threshold) so detectNarratives
+  // returns early. The important thing is that it doesn't throw when
+  // validateTimezone is called with various inputs.
+  const dim = 10;
+  function fewRows() {
+    return Array.from({ length: 5 }, (_, i) => {
+      const v = new Array(dim).fill(0);
+      v[0] = 1;
+      return {
+        summary_id: `s${i}`,
+        vector: vectorToBuffer(v),
+        body: `Summary ${i}`,
+        sentiment: 0.5,
+      };
+    });
+  }
+
+  it('valid timezone "Asia/Jakarta" does not warn', async () => {
+    const warnings: string[] = [];
+    const capturingLog = {
+      ...noopLog,
+      warn(...args: any[]) { warnings.push(String(args)); },
+    };
+    const { pool } = mockPoolWithTimezone('Asia/Jakarta', fewRows());
+    const llm = mockLlm();
+    const detector = createNarrativeDetector(pool, capturingLog as any, defaultConfig, llm, enabledEmbedder);
+    await detector.detectNarratives();
+
+    const tzWarnings = warnings.filter((w) => w.includes('Invalid timezone'));
+    assert.equal(tzWarnings.length, 0, 'Valid timezone should not trigger a warning');
+  });
+
+  it('valid timezone "America/New_York" does not warn', async () => {
+    const warnings: string[] = [];
+    const capturingLog = {
+      ...noopLog,
+      warn(...args: any[]) { warnings.push(String(args)); },
+    };
+    const { pool } = mockPoolWithTimezone('America/New_York', fewRows());
+    const llm = mockLlm();
+    const detector = createNarrativeDetector(pool, capturingLog as any, defaultConfig, llm, enabledEmbedder);
+    await detector.detectNarratives();
+
+    const tzWarnings = warnings.filter((w) => w.includes('Invalid timezone'));
+    assert.equal(tzWarnings.length, 0, 'Valid timezone should not trigger a warning');
+  });
+
+  it('invalid timezone "Invalid/Timezone" falls back and warns', async () => {
+    const warnings: string[] = [];
+    const capturingLog = {
+      ...noopLog,
+      warn(...args: any[]) { warnings.push(String(args)); },
+    };
+    const { pool } = mockPoolWithTimezone('Invalid/Timezone', fewRows());
+    const llm = mockLlm();
+    const detector = createNarrativeDetector(pool, capturingLog as any, defaultConfig, llm, enabledEmbedder);
+    // Should not throw — falls back to Asia/Jakarta
+    await detector.detectNarratives();
+
+    const tzWarnings = warnings.filter((w) => w.includes('Invalid timezone'));
+    assert.equal(tzWarnings.length, 1, 'Invalid timezone should trigger exactly one warning');
+    assert.ok(tzWarnings[0].includes('Invalid/Timezone'), 'Warning should mention the bad timezone');
+    assert.ok(tzWarnings[0].includes('Asia/Jakarta'), 'Warning should mention the fallback');
+  });
+
+  it('empty string timezone falls back and warns', async () => {
+    const warnings: string[] = [];
+    const capturingLog = {
+      ...noopLog,
+      warn(...args: any[]) { warnings.push(String(args)); },
+    };
+    const { pool } = mockPoolWithTimezone('', fewRows());
+    const llm = mockLlm();
+    const detector = createNarrativeDetector(pool, capturingLog as any, defaultConfig, llm, enabledEmbedder);
+    await detector.detectNarratives();
+
+    const tzWarnings = warnings.filter((w) => w.includes('Invalid timezone'));
+    assert.equal(tzWarnings.length, 1, 'Empty timezone should trigger a warning');
+    assert.ok(tzWarnings[0].includes('Asia/Jakarta'), 'Warning should mention the fallback');
+  });
+
+  it('null from app_config (no row) uses default Asia/Jakarta without warning', async () => {
+    const warnings: string[] = [];
+    const capturingLog = {
+      ...noopLog,
+      warn(...args: any[]) { warnings.push(String(args)); },
+    };
+    const { pool } = mockPoolWithTimezone(null, fewRows());
+    const llm = mockLlm();
+    const detector = createNarrativeDetector(pool, capturingLog as any, defaultConfig, llm, enabledEmbedder);
+    await detector.detectNarratives();
+
+    const tzWarnings = warnings.filter((w) => w.includes('Invalid timezone'));
+    assert.equal(tzWarnings.length, 0, 'Default Asia/Jakarta should not trigger invalid tz warning');
+  });
+});
+
 // ── Timezone helper unit tests ────────────────────────────────────────
 
 describe('midnightEpoch', () => {
