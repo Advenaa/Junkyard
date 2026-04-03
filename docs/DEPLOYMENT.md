@@ -149,7 +149,7 @@ External health check on `/api/v1/status` every 60s. Options:
 # Pull latest code
 cd /opt/podders && git pull
 
-# Install deps + build
+# Install deps + build (backend tsc + dashboard vite in one command)
 npm install && npm run build
 
 # Restart (pm2)
@@ -229,14 +229,14 @@ Dashboard login uses Discord OAuth2. This is separate from the bot — `DISCORD_
 | `DISCORD_CLIENT_ID` | Yes (for dashboard auth) | Discord OAuth2 application client ID |
 | `DISCORD_CLIENT_SECRET` | Yes (for dashboard auth) | Discord OAuth2 application client secret |
 | `ADMIN_USER_IDS` | Yes | Comma-separated Discord user IDs with admin access |
-| `SESSION_SECRET` | No | 32-byte hex for signing session cookies. Auto-generated on first run, stored in `app_config` |
+| `SESSION_SECRET` | No | 32-byte hex for signing session cookies. Auto-generated on first run, stored in `app_config`. Prominent `console.error` warning at startup if not set in `.env` |
 
 ### Discord Developer Portal Setup
 
 1. Create a new application at https://discord.com/developers/applications (or reuse existing).
 2. Under **OAuth2**, add a redirect URI: `{PUBLIC_URL}/api/v1/auth/discord/callback`.
 3. Copy the Client ID and Client Secret into `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`.
-4. `PUBLIC_URL` must be set when using Discord auth — the server needs it to build the callback URL.
+4. `PUBLIC_URL` must be set when using Discord auth — the server needs it to build the callback URL. A `console.error` warning fires at startup if Discord OAuth is configured without `PUBLIC_URL`.
 
 ## Secret Rotation
 
@@ -255,7 +255,22 @@ Dashboard login uses Discord OAuth2. This is separate from the bot — `DISCORD_
 - **`SESSION_SECRET` rotation**: update the env var (or the value in `app_config`), restart the server. All existing sessions are invalidated — cookies signed with the old secret can't be verified. Users must re-login via Discord OAuth.
 - **`DISCORD_CLIENT_SECRET` rotation**: rotate the secret in the Discord Developer Portal first, then update the env var and restart. In-flight OAuth flows will fail; users retry and it works.
 
+## Startup Warnings
+
+`SESSION_SECRET` and `API_KEY` both generate prominent `console.error` warnings at startup if not explicitly set in `.env`. The server still runs (auto-generating values), but the warnings ensure operators notice before production deployment.
+
+## Static Asset Serving
+
+Fastify serves the Vite-built dashboard as static files. Cache-Control headers are set per path:
+
+- `/assets/*` (hashed filenames): `immutable, max-age=31536000` -- browser caches indefinitely, hash busting on redeploy
+- HTML files: `no-cache` -- always revalidated so users get the latest SPA shell
+
 ## Postgres Operational Details
+
+### Migrations
+
+Migration 8 adds `'failed'` to the `items.status` CHECK constraint, allowing items that permanently fail processing to be marked without blocking the pipeline.
 
 ### Advisory Lock on Migrations
 

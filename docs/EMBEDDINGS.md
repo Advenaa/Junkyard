@@ -141,12 +141,16 @@ Do NOT embed one-at-a-time. The Gemini embeddings API accepts batch requests.
 - **Summaries + reports**: batched together in a single `run()` call. The
   pipeline claims un-embedded rows (`LEFT JOIN embeddings ... WHERE
   embeddings.id IS NULL`), batches into groups of 100, calls the API.
+  Stale embeddings (e.g., re-processed summaries) are replaced via
+  `ON CONFLICT (target_type, target_id) DO UPDATE` so the vector always
+  reflects the latest content.
 - **Items**: intentionally excluded — embedding raw items would waste Gemini
   quota without adding search value over summary embeddings.
 
 ### Failure Handling
 
-- On API error (429, 5xx): retry with same backoff as `llm.ts` (2s/8s/32s).
+- On API error (429, 5xx): retry with exponential backoff (2s/4s/8s/16s). Rate-limited
+  responses (429) use a flat 60s retry delay regardless of headers.
 - On persistent failure: retry on next cycle. Do not block the LLM pipeline —
   embedding is async and non-blocking.
 - On model change: re-embed everything. Add a `model` column to track which

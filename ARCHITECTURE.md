@@ -138,6 +138,7 @@ Runs after normalize saves items as `ready`, before the claim & chunk step. Deci
 - RSS/news with low entity density — a 10K-char article otherwise dominates a chunk's token budget while carrying the same signal as a 500-char Discord message.
 - Flat 300 token `maxTokens` cap.
 - Two prompt variants: one for regulatory feeds, one for general news.
+- Scraped content wrapped with nonce-based XML tags (same prompt injection defense layer 3 as summarize/synthesize).
 - Batched 3-5 articles per Haiku call for cost efficiency.
 - Stores `content_anchor` (first 200 tokens of original) in the `items` table for embedding quality. The `content` column gets the compressed version.
 
@@ -227,7 +228,7 @@ See [PIPELINE.md](./PIPELINE.md) for prompt details, chunking code, and validati
 4. Crash recovery on startup: UPDATE items SET status='ready' WHERE status='processing'
 ```
 
-Three states: `ready` → `processing` → `processed`.
+Four terminal states: `ready` → `processing` → `processed` (or `failed`). Items that fail LLM processing are marked `failed` instead of staying stuck in `processing`.
 
 **Entity resolution** uses a three-tier disambiguation pipeline:
 1. **Rule-based alias lookup** — lowercase-normalized lookup against `entity_aliases` table. Handles ~95% of entities (ETH, Bitcoin, OJK) instantly. CoinGecko token list seeds the alias table.
@@ -307,7 +308,7 @@ CREATE TABLE items (
   original_language TEXT,          -- ISO 639-3 code if non-English (e.g., 'ind'); NULL for English
   translated BOOLEAN DEFAULT false, -- true if content was translated from another language
   filter_reason TEXT,              -- reason for filtering (e.g., 'spam', 'injection_detected'); NULL if not filtered
-  status TEXT DEFAULT 'ready',    -- ready | filtered | processing | processed
+  status TEXT DEFAULT 'ready',    -- ready | filtered | processing | processed | failed
   batch_id TEXT,
   created_at INTEGER NOT NULL
 );
@@ -554,6 +555,7 @@ Postgres backup via `pg_dump`. Daily after entity decay. Timestamped files in `b
 Discord webhook delivery. The habit trigger — proves the pipeline end-to-end before any frontend exists.
 
 **Webhook delivery spec:**
+- Idempotency guard: checks `delivery_status` before POST — skips if already `delivered`
 - 3 retries, exponential backoff: 2s → 8s → 32s
 - Retry on: HTTP 429, 5xx, network timeout (10s)
 - No retry on: 4xx (except 429) — permanent failure
@@ -598,7 +600,7 @@ Discord webhook delivery. The habit trigger — proves the pipeline end-to-end b
 Primary authentication via Discord OAuth2 code grant flow:
 
 - **Scope**: `identify` only — no guild access, no message reading.
-- **Flow**: `GET /api/v1/auth/discord` redirects to Discord → user authorizes → Discord redirects to `/api/v1/auth/discord/callback` with code → server exchanges code for access token → fetches user profile → creates/updates `users` row → creates session → sets signed httpOnly cookie.
+- **Flow**: `GET /api/v1/auth/discord` redirects to Discord → user authorizes → Discord redirects to `/api/v1/auth/discord/callback` with code → server exchanges code for access token → fetches user profile → creates/updates `users` row → creates session → sets signed httpOnly cookie. OAuth state replay prevention: consumed states tracked server-side, rejected on reuse (10min TTL).
 - **Invite-only**: no public registration. User must exist in `users` table (invited by admin) before OAuth succeeds. Unknown Discord IDs are rejected with 403.
 - **Roles**: three roles — `admin` (full access), `viewer` (read-only dashboard), `blocked` (rejected at login).
 - **Bootstrap admins**: `ADMIN_USER_IDS` env var (comma-separated Discord snowflake IDs). These users are always treated as admin regardless of DB role. Auto-created in `users` table on first login.
@@ -608,7 +610,7 @@ Primary authentication via Discord OAuth2 code grant flow:
 - DB-backed sessions in `sessions` table. Session ID is a ULID per project convention.
 - **Cookie**: signed httpOnly cookie (`podders_session`). Config: `httpOnly: true`, `secure: true`, `sameSite: 'lax'`, `path: '/'`, `maxAge: 30 days`. Signed via `@fastify/cookie` with `SESSION_SECRET`.
 - **Expiry**: 30-day expiry with sliding refresh — if `last_refreshed_at` is >24h old on a valid request, update `last_refreshed_at` and reset cookie `maxAge`.
-- **Max sessions**: 5 per user. On new login, if at limit, delete the oldest session.
+- **Max sessions**: 5 per user. On new login, if at limit, delete the oldest session. Enforced via `FOR UPDATE` transaction to prevent race conditions on concurrent logins.
 - **Cleanup**: expired sessions purged during the daily retention cron (alongside item/entity cleanup).
 
 #### API Key Coexistence
@@ -700,7 +702,7 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/api/v1/sources` | `{ sources: [{ source, sourceId, label, enabled, pollInterval, lastFetchedAt, errorCount, lastError, status }] }` — JOINs `sources` + `source_state` |
-| `POST` | `/api/v1/sources` | Body: `{ source, sourceId, label, pollInterval? }`. Per-type validation. |
+| `POST` | `/api/v1/sources` | Body: `{ source, sourceId, label }`. Fastify JSON Schema validation: `source` enum `['discord','twitter','rss','news']`, `sourceId` maxLength 255, `label` maxLength 255, `additionalProperties: false`. |
 | `PATCH` | `/api/v1/sources/:source/:sourceId` | `[PLANNED]` Body: `{ enabled?, label?, pollInterval? }` |
 | `DELETE` | `/api/v1/sources/:source/:sourceId` | `[PLANNED]` Removes source config (keeps historical items) |
 | `POST` | `/api/v1/sources/:source/:sourceId/test` | `[PLANNED]` Test connection. Returns `{ ok: true }` or `{ ok: false, error: "..." }` |

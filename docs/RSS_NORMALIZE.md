@@ -27,8 +27,9 @@ Reference doc for the RSS feed ingestion adapter and the shared normalize pipeli
 ```
 cron fires (15min)
   for each enabled RSS source:
-    fetch feed XML
-    parse with rss-parser
+    fetch feed XML via fetchValidated() (SSRF-safe fetch, RS-002)
+    parse response body with rss-parser parseString() (not parseURL())
+    resolve relative item URLs against feed URL (RS-011)
     filter items newer than last checkpoint
     sort by pubDate ascending
     for each new item:
@@ -209,7 +210,8 @@ RSS and news items exceeding 4000 characters (~1000 tokens) get a lightweight Ha
 ```
 After normalize saves item as 'ready':
 
-if (source is 'rss' or 'news') AND content.length > 4000:
+if (source is 'rss' or 'news') AND content.length > 4000 AND NOT content_anchor:
+  // Items with content_anchor are deduped — skip pre-summarize (PS-002)
   call Haiku with:
     system: "Summarize this article for a market analyst. Keep all facts,
              entities, numbers, and quotes. Drop boilerplate and filler.

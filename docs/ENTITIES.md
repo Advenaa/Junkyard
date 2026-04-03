@@ -21,12 +21,12 @@ for each extracted entity (name, aliases, type):
             UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = entity_id
         else:
             entity_id = new ULID
-            INSERT ... ON CONFLICT DO NOTHING INTO entities (id, name, type, relevance, status, first_seen, last_seen)
+            INSERT INTO entities (id, name, type, relevance, status, first_seen, last_seen)
                 VALUES (entity_id, name, type, 0, 'active', now, now)
-            -- If IGNORE fired (concurrent batch wrote same name+type), fetch the winner:
-            entity_id = SELECT id FROM entities WHERE name = name AND type = type
-            -- Guard: if no rows returned (shouldn't happen), skip this entity
-            if entity_id is NULL: continue
+                ON CONFLICT (name, type) DO UPDATE SET last_seen = now
+                RETURNING id
+            -- Atomic: returns the inserted id OR the existing row's id (SD-003 fix).
+            -- No separate SELECT needed, no race window between INSERT and SELECT.
         INSERT ... ON CONFLICT DO NOTHING INTO entity_aliases (alias, entity_id) VALUES (canonical, entity_id)
 
     for each alias in aliases:
@@ -39,7 +39,7 @@ for each extracted entity (name, aliases, type):
 
 All aliases are **trimmed and lowercased** before storage (`normalizeAlias` applies `.trim().toLowerCase().replace(/^\$/, '')`). The `$` prefix (common in crypto tickers like `$ETH`) is stripped so that `$ETH`, `ETH`, and `eth` all resolve to the same alias key.
 
-`INSERT ... ON CONFLICT DO NOTHING` is the concurrency pattern. Two Stage 1 batches processing simultaneously may both try to insert the same entity or alias. The first writer wins; the second silently skips. No locks, no retries, no conflicts.
+`INSERT ... ON CONFLICT DO UPDATE ... RETURNING id` is the concurrency pattern for entities. The upsert atomically returns the row ID whether inserted or already existing -- no race window between a separate INSERT and SELECT (SD-003 fix). For aliases, `INSERT ... ON CONFLICT DO NOTHING` is still used: two Stage 1 batches processing simultaneously may both try to insert the same alias; the first writer wins, the second silently skips.
 
 ## CoinGecko Seeding
 
@@ -142,11 +142,14 @@ News is weighted highest because news mentions are rarest and highest signal. Di
 Runs at **00:10 UTC** (referenced in DEPLOYMENT.md), after the daily report cron completes.
 
 ```sql
+BEGIN;
 UPDATE entities SET relevance = relevance * 0.95
-WHERE status = 'active' AND relevance > 0.01;
+WHERE status = 'active' AND relevance > 0.01
+FOR UPDATE;
+COMMIT;
 ```
 
-The `WHERE status = 'active'` filter ensures only active entities are decayed. The `relevance > 0.01` guard skips entities already below the archive threshold, avoiding unnecessary writes and keeping near-zero values from decaying to infinitesimally small numbers. Applied daily. Mention-driven boosts happen in real time during Stage 1 processing.
+The decay runs inside an explicit `BEGIN`/`FOR UPDATE`/`COMMIT` transaction to prevent races with concurrent relevance updates from Stage 1 processing (SD-002 fix). The `WHERE status = 'active'` filter ensures only active entities are decayed. The `relevance > 0.01` guard skips entities already below the archive threshold, avoiding unnecessary writes and keeping near-zero values from decaying to infinitesimally small numbers. Applied daily. Mention-driven boosts happen in real time during Stage 1 processing.
 
 ## Archival and Reactivation
 

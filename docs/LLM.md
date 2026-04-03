@@ -109,7 +109,12 @@ llm.call() receives response
   |     -> if all 3 fail: log error, surface on /settings
   |
   +-- HTTP 500/502/503 (L6: server error)
-  |     -> exponential backoff: 2s, 8s, 32s
+  |     -> exponential backoff: 2s, 4s, 8s, 16s (pow(2) base)
+  |     -> retry up to 3x
+  |     -> if all 3 fail: log error, surface on /settings
+  |
+  +-- Network timeout (ETIMEDOUT, AbortError) (L6b)
+  |     -> same exponential backoff as L6: 2s, 4s, 8s, 16s
   |     -> retry up to 3x
   |     -> if all 3 fail: log error, surface on /settings
   |
@@ -167,7 +172,7 @@ Chunk budget: 6,000 estimated tokens (~24K chars) per Stage 1 chunk.
 const response = await complete(model, { /* ... */ });
 const inputTokens = response.usage.input;     // actual from Pi
 const outputTokens = response.usage.output;    // actual from Pi
-const costUsd = response.usage.cost.total;     // Pi computes cost per call
+const costUsd = response.usage?.cost?.total ?? 0;  // Pi computes cost per call; fallback to 0 if missing
 ```
 
 The wrapper always logs actual token counts and cost from the Pi response, never estimates.
@@ -245,7 +250,7 @@ attackers cannot predict or close.
 
 ```typescript
 // 1. Generate a unique nonce per call
-const nonce = crypto.randomBytes(4).toString('hex');  // e.g. "a3f7c012"
+const nonce = crypto.randomBytes(8).toString('hex');  // 64-bit, e.g. "a3f7c012b9e45d67"
 
 // 2. Build unpredictable delimiters
 const openTag = `<scraped_content_${nonce}>`;   // <scraped_content_a3f7c012>
@@ -356,6 +361,7 @@ If Pi AI does not pass through caching headers, options are:
 | L3 | Invalid API key (401) | None | Halt all LLM jobs |
 | L4 | Rate limited (429) | Follows `retry-after` | Auto-recovers |
 | L5 | Overloaded (529) | 3x at 30s | Auto or degrade |
-| L6 | Server error (5xx) | 3x at 2s/8s/32s | Auto or degrade |
+| L6 | Server error (5xx) | 3x at 2s/4s/8s/16s | Auto or degrade |
+| L6b | Network timeout (ETIMEDOUT, AbortError) | 3x at 2s/4s/8s/16s | Auto or degrade |
 | L7 | Invalid JSON output | 1x fresh prompt | Auto or skip |
 | L8 | Refusal / empty | None | Skip batch, alert |

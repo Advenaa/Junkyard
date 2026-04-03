@@ -12,6 +12,7 @@ On `node dist/index.js run`:
 1. config.load()                         # Validate env vars
 2. db.connect()                          # Open Postgres connection pool
 3. migrations.run()                      # Check migration version, run pending
+                                         # On failure: pool.end() before process.exit (CF-009)
 4. crashRecovery()                       # See below
 5. discord.connect()                     # Sequential per token, 5s IDENTIFY gap
 6. registerCronJobs()                    # Order matters — see Job Table
@@ -181,6 +182,8 @@ cron('0 */3 * * *', { timezone: 'UTC' })
 
 ```
 cron('{mm} {hh} * * *', { timezone })
+  // Daily catch-up waits 5 minutes past digest time to avoid racing
+  // with onDaily if the process restarts near the scheduled hour (S3-001)
   └─ withMutex('daily-synthesis', async () => {
        const report = await synthesize.runDaily()
        //   ├─ reads summaries where window overlaps previous calendar day
@@ -194,10 +197,11 @@ cron('{mm} {hh} * * *', { timezone })
 
        await embedPipeline.run()            // embed any new summaries/reports
        await narratives.detect()            // cluster summary embeddings
-       await decay.runDecay()               // entity relevance decay
+       await decay.runDecay()               // entity relevance decay (wrapped in transaction with FOR UPDATE — SD-002)
 
        if (report) {
          await webhook.deliver(report)
+         //   ├─ checks delivery_status before POST — idempotency guard (DL-001)
          //   ├─ POST to configured Discord webhook URL
          //   ├─ includes "View full report" link if PUBLIC_URL is set
          //   ├─ 3 retries: 2s → 8s → 32s
@@ -223,7 +227,8 @@ cron('*/5 * * * *', { timezone: 'UTC' })
        //   ├─ DB pool: idle connections = 0 for 3 consecutive checks → warn
        //   ├─ cost spike: hourly cost >3x the 7-day average → warn
        //   ├─ dedup: skip if same category+message unacknowledged within 30min
-       //   └─ critical events → POST to ALERT_WEBHOOK_URL (red Discord embed)
+       //   ├─ critical events → POST to ALERT_WEBHOOK_URL (red Discord embed)
+       //   └─ alert webhook retries once on 5xx/network failure with 2s delay (DL-007)
      })
 ```
 
