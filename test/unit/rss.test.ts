@@ -142,7 +142,7 @@ describe('pollFeed', () => {
     assert.equal(result.items[0]!.source, 'rss');
     assert.equal(result.items[0]!.sourceId, 'https://example.com/feed.xml');
     assert.equal(result.items[0]!.url, 'https://example.com/1');
-    assert.equal(result.items[0]!.engagement, 0);
+    assert.equal(result.items[0]!.engagement, -1);
 
     assert.equal(result.items[1]!.content, item2.contentSnippet);
     assert.equal(result.items[1]!.author, 'Bob');

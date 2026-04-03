@@ -140,6 +140,16 @@ export async function pollFeed(
         batch.map(async (item) => {
           const author = item.creator ?? (item as Record<string, unknown>)['dc:creator'] as string ?? feed.title ?? 'Unknown';
           let content = item.contentSnippet ?? item.title ?? '';
+
+          // RS-001: When contentSnippet is missing, extract text from item.content (full HTML)
+          // rather than falling back to just the title headline.
+          if (item.contentSnippet === undefined && item.content) {
+            const { document: contentDoc } = parseHTML(`<!DOCTYPE html><html><body>${item.content}</body></html>`);
+            const extracted = contentDoc.body.textContent?.trim() ?? '';
+            if (extracted.length > content.length) {
+              content = extracted;
+            }
+          }
           const timestamp = new Date(item.isoDate ?? Date.now()).getTime();
 
           // RS-011: Resolve relative URLs against the feed URL
@@ -164,7 +174,7 @@ export async function pollFeed(
             content,
             timestamp,
             url: link ?? undefined,
-            engagement: 0,
+            engagement: -1, // RS-004: sentinel for "unknown" — RSS has no engagement metrics
             metadata: {
               feedTitle: feed.title,
               categories: item.categories ?? [],

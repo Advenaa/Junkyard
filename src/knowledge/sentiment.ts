@@ -83,10 +83,9 @@ function classifyTrend(
 
 export function createSentimentTracker(pool: Pool, log: Logger) {
   /**
-   * Run daily after Stage 1 completes.
-   * Aggregates today's entity mentions into entity_sentiment_daily with momentum.
+   * Core rollup logic — extracted so runDaily can retry on transient failure.
    */
-  async function runDaily(dateString: string, timezone: string): Promise<void> {
+  async function runDailyCore(dateString: string, timezone: string): Promise<void> {
     const client = await pool.connect();
     try {
       // SM-006: Idempotency guard — skip if we already ran for this date
@@ -228,10 +227,24 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
       );
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
-      log.error({ err, date: dateString }, 'Sentiment rollup failed');
       throw err;
     } finally {
       client.release();
+    }
+  }
+
+  /**
+   * Run daily after Stage 1 completes.
+   * Aggregates today's entity mentions into entity_sentiment_daily with momentum.
+   * EN-001: Retries once after 2s on transient failure so synthesis gets fresh data.
+   */
+  async function runDaily(dateString: string, timezone: string): Promise<void> {
+    try {
+      await runDailyCore(dateString, timezone);
+    } catch (firstErr) {
+      log.warn({ err: firstErr, date: dateString }, 'Sentiment rollup failed, retrying once after 2s');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await runDailyCore(dateString, timezone); // Let it throw on second failure
     }
   }
 

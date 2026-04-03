@@ -79,10 +79,9 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
   }
 
   async function loadType(type: SearchableType): Promise<number> {
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const result = await pool.query<{ target_id: string; vector: Buffer }>(
-      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3',
-      [type, thirtyDaysAgo, MAX_VECTORS],
+      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at DESC LIMIT $2',
+      [type, MAX_VECTORS],
     );
 
     const map = maps[type];
@@ -118,7 +117,7 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
     }
   }
 
-  const MIN_SIMILARITY = 0.5;
+  const MIN_SIMILARITY = 0.3;
 
   function search(
     query: Float32Array,

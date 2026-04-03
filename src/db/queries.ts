@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { decodeTime } from 'ulid';
 
 type Pool = pg.Pool;
 
@@ -206,6 +207,79 @@ export async function resetCrashed(pool: Pool, maxRetries = 3): Promise<number> 
     );
     await client.query('COMMIT');
     return result.rowCount ?? 0;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Recover items stuck in 'processing' longer than `staleMinutes`.
+ * Uses the ULID-encoded timestamp in `batch_id` to determine how long
+ * each item has been processing — no schema migration needed.
+ * Safe to call periodically (e.g., from health check) without a restart.
+ */
+export async function recoverStaleProcessing(
+  pool: Pool,
+  staleMinutes = 30,
+  maxRetries = 3,
+): Promise<number> {
+  const staleThreshold = Date.now() - staleMinutes * 60 * 1000;
+
+  // Fetch all processing items that have a batch_id (i.e., were claimed)
+  const { rows } = await pool.query<{ id: string; batch_id: string; retry_count: number }>(
+    `SELECT id, batch_id, retry_count FROM items WHERE status = 'processing' AND batch_id IS NOT NULL`,
+  );
+
+  // Determine which items are stale by decoding the ULID timestamp
+  const staleIds: string[] = [];
+  const exhaustedIds: string[] = [];
+
+  for (const row of rows) {
+    let claimedAt: number;
+    try {
+      claimedAt = decodeTime(row.batch_id);
+    } catch {
+      // Malformed ULID — treat as stale to avoid permanent stuck items
+      claimedAt = 0;
+    }
+    if (claimedAt < staleThreshold) {
+      if (row.retry_count >= maxRetries) {
+        exhaustedIds.push(row.id);
+      } else {
+        staleIds.push(row.id);
+      }
+    }
+  }
+
+  if (staleIds.length === 0 && exhaustedIds.length === 0) return 0;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (exhaustedIds.length > 0) {
+      await client.query(
+        `UPDATE items SET status = 'failed', batch_id = NULL
+         WHERE id = ANY($1)`,
+        [exhaustedIds],
+      );
+    }
+
+    let recoveredCount = 0;
+    if (staleIds.length > 0) {
+      const result = await client.query(
+        `UPDATE items SET status = 'ready', batch_id = NULL, retry_count = retry_count + 1
+         WHERE id = ANY($1)`,
+        [staleIds],
+      );
+      recoveredCount = result.rowCount ?? 0;
+    }
+
+    await client.query('COMMIT');
+    return recoveredCount;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;

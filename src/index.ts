@@ -29,7 +29,7 @@ import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
 import { createSentimentTracker } from './knowledge/sentiment.js';
 import { createDivergenceTracker } from './knowledge/divergence.js';
-import { getSources, resetCrashed, getAppConfig } from './db/queries.js';
+import { getSources, resetCrashed, recoverStaleProcessing, getAppConfig } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
@@ -319,6 +319,16 @@ program
       } catch (err: unknown) {
         log.error({ err }, 'Daily catch-up check failed');
       }
+
+      // SP-003: Recover items stuck in 'processing' for >30 minutes mid-run
+      try {
+        const recovered = await recoverStaleProcessing(pool);
+        if (recovered > 0) {
+          log.info({ recovered }, 'Recovered stale processing items');
+        }
+      } catch (err: unknown) {
+        log.error({ err }, 'Stale processing recovery failed');
+      }
     }
 
     // ── 5. Create and start scheduler ─────────────────────────────────
@@ -357,7 +367,7 @@ program
 
       log.info({ reason }, 'shutting down...');
 
-      setTimeout(() => process.exit(1), 30_000).unref();
+      setTimeout(() => process.exit(1), 60_000).unref();
 
       try {
         await scheduler.stop();
