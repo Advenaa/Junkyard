@@ -22,12 +22,14 @@ import {
   type SourceRow,
   type ItemRow,
 } from './db/queries.js';
+import net from 'node:net';
 import { validateUrl } from './url-validator.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(obj)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
     result[camelKey] = value;
   }
@@ -394,7 +396,7 @@ export async function createServer(
         type: 'object',
         required: ['discordId'],
         properties: {
-          discordId: { type: 'string' },
+          discordId: { type: 'string', pattern: '^\\d{17,20}$' },
         },
       },
     },
@@ -410,8 +412,7 @@ export async function createServer(
 
   // --- GET /api/v1/status (CD-004) ---
   app.get('/api/v1/status', { preHandler: [authPreHandler] }, async () => {
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
     const { rows } = await pool.query<{
       items_ready: string;
       items_processing: string;
@@ -421,9 +422,9 @@ export async function createServer(
       `SELECT
         (SELECT count(*) FROM items WHERE status = 'ready') AS items_ready,
         (SELECT count(*) FROM items WHERE status = 'processing') AS items_processing,
-        (SELECT count(*) FROM summaries WHERE created_at > $1) AS summaries_today,
-        (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage WHERE created_at > $1) AS cost_today`,
-      [startOfToday],
+        (SELECT count(*) FROM summaries WHERE created_at > EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000) AS summaries_today,
+        (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage WHERE created_at > EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000) AS cost_today`,
+      [timezone],
     );
     const row = rows[0];
     return {
@@ -450,8 +451,8 @@ export async function createServer(
   }, async (request, reply) => {
     const { url } = request.body as { url: string };
     const validation = await validateUrl(url);
-    if (!validation.valid) {
-      return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason}` });
+    if (!validation.valid || !validation.resolvedIp) {
+      return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason ?? 'DNS resolution failed'}` });
     }
     try {
       const payload = JSON.stringify({
@@ -464,9 +465,13 @@ export async function createServer(
         }],
         allowed_mentions: { parse: [] },
       });
-      const response = await fetch(url, {
+      // Pin to resolved IP to prevent DNS rebinding (TOCTOU) between validateUrl and fetch
+      const parsed = new URL(url);
+      const pinnedUrl = new URL(url);
+      pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
+      const response = await fetch(pinnedUrl.toString(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Host: parsed.host },
         body: payload,
         signal: AbortSignal.timeout(15_000),
       });

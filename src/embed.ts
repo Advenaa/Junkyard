@@ -154,7 +154,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     return available;
   }
 
-  async function embed(text: string): Promise<EmbedResult | null> {
+  async function embed(text: string, taskType: TaskType = TaskType.RETRIEVAL_DOCUMENT): Promise<EmbedResult | null> {
     if (!available || !model) return null;
 
     await initQuota();
@@ -174,7 +174,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         () =>
           model.embedContent({
             content: { parts: [{ text }], role: 'user' },
-            taskType: TaskType.RETRIEVAL_DOCUMENT,
+            taskType,
           }),
         log,
       );

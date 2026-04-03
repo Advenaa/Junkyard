@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { TaskType } from '@google/generative-ai';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { VectorCache } from '../vector-cache.js';
@@ -6,7 +7,7 @@ import type { VectorCache } from '../vector-cache.js';
 // ── Types ──────────────────────────────────────────────────────────────
 
 export interface Embedder {
-  embed(text: string): Promise<{ vector: Float32Array } | null>;
+  embed(text: string, taskType?: TaskType): Promise<{ vector: Float32Array } | null>;
   prepareText(text: string, type: 'item' | 'summary' | 'entity' | 'report'): string;
 }
 
@@ -48,7 +49,7 @@ function createSemanticSearch(
       log.info({ query, type }, 'chat: semantic_search');
 
       const prepared = embedder.prepareText(query, type);
-      const embedding = await embedder.embed(prepared);
+      const embedding = await embedder.embed(prepared, TaskType.RETRIEVAL_QUERY);
       if (!embedding) return 'Error: embedding service unavailable';
 
       const results = vectorCache.search(embedding.vector, type, 10);

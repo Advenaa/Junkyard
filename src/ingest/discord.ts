@@ -78,6 +78,21 @@ const RESUMABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4000, 4001, 4002, 40
 const NON_RESUMABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4007, 4008, 1000]);
 
 const MAX_BACKOFF_MS = 60_000;
+const MAX_CONSECUTIVE_ERRORS = 20;
+
+const DISCORD_CDN_HOSTS: ReadonlySet<string> = new Set([
+  'cdn.discordapp.com',
+  'media.discordapp.net',
+]);
+
+function isValidDiscordUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && DISCORD_CDN_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
 const IDENTIFY_PROPERTIES = {
   os: 'Linux',
   browser: 'Chrome',
@@ -321,6 +336,13 @@ class TokenConnection {
     this.destroyed = true;
     this.drops.stop();
     this.clearHeartbeat();
+
+    // Drain concurrency queue so pending waiters resolve and don't block shutdown
+    for (const resolve of this.concurrency.queue) {
+      resolve();
+    }
+    this.concurrency.queue.length = 0;
+
     if (this.ws) {
       this.ws.removeAllListeners();
       if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
@@ -518,8 +540,15 @@ class TokenConnection {
     if (!content) return;
 
     const attachments = d.attachments ?? [];
-    const attachmentUrls = attachments.map((a) => a.url);
-    const imageUrls = attachments.filter(isImageAttachment).map((a) => a.url);
+    const validAttachments = attachments.filter((a) => isValidDiscordUrl(a.url));
+    const attachmentUrls = validAttachments.map((a) => a.url);
+    const imageUrls = validAttachments.filter(isImageAttachment).map((a) => a.url);
+
+    let ts = new Date(d.timestamp).getTime();
+    if (Number.isNaN(ts)) {
+      this.log.warn({ messageId: d.id }, 'invalid timestamp, using current time');
+      ts = Date.now();
+    }
 
     const rawItem: RawItem = {
       id: ulid(),
@@ -527,7 +556,7 @@ class TokenConnection {
       sourceId: d.channel_id,
       author: d.author.username,
       content,
-      timestamp: new Date(d.timestamp).getTime(),
+      timestamp: ts,
       engagement: 0,
       attachments: attachmentUrls.length > 0 ? attachmentUrls : undefined,
       metadata: {
@@ -640,6 +669,16 @@ class TokenConnection {
     if (this.destroyed) return;
 
     this.state.errorCount += 1;
+
+    if (this.state.errorCount >= MAX_CONSECUTIVE_ERRORS) {
+      this.log.error(
+        { tokenIndex: this.tokenIndex, errorCount: this.state.errorCount },
+        'too many consecutive errors — disabling token',
+      );
+      this.state.status = 'disabled';
+      this.onDeath(this.tokenIndex);
+      return;
+    }
 
     if (FATAL_CLOSE_CODES.has(code)) {
       this.log.error(

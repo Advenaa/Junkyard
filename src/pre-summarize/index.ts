@@ -10,7 +10,6 @@ interface LLMCaller {
     maxTokens: number;
     stage: string;
   }): Promise<{ content: string }>;
-  sanitizeForPrompt(content: string): string;
   wrapWithNonce(content: string): { wrapped: string; nonce: string };
 }
 
@@ -66,12 +65,11 @@ function classifyBatch(batch: Item[]): 'regulatory' | 'general' {
 
 function formatBatchContent(
   batch: Item[],
-  llm: { sanitizeForPrompt(content: string): string; wrapWithNonce(content: string): { wrapped: string; nonce: string } },
+  llm: { wrapWithNonce(content: string): { wrapped: string; nonce: string } },
 ): string {
   return batch
     .map((item, i) => {
-      const sanitized = llm.sanitizeForPrompt(item.content);
-      const { wrapped } = llm.wrapWithNonce(sanitized);
+      const { wrapped } = llm.wrapWithNonce(item.content);
       return `---[${i + 1}]---\n${wrapped}`;
     })
     .join('\n\n');
