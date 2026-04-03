@@ -113,33 +113,40 @@ export function createEntityManager(
           alias: string;
           entity_id: string;
           type: string;
+          status: string;
         }>(
-          `SELECT DISTINCT ea.alias, ea.entity_id, e.type
+          `SELECT DISTINCT ea.alias, ea.entity_id, e.type, e.status
            FROM entity_aliases ea
            JOIN entity_mentions em ON em.entity_id = ea.entity_id
            JOIN entities e ON e.id = ea.entity_id
            WHERE em.summary_id IN (
              SELECT summary_id FROM entity_mentions WHERE entity_id = ANY($1)
-           )
-           AND e.status = 'active'`,
+           )`,
           [resolvedIds],
         );
 
         // Key by alias + type to avoid cross-type collisions
-        const coOccurMap = new Map<string, string>();
+        const coOccurMap = new Map<string, { entityId: string; status: string }>();
         for (const row of coOccurring.rows) {
-          coOccurMap.set(`${row.alias}\0${row.type}`, row.entity_id);
+          coOccurMap.set(`${row.alias}\0${row.type}`, { entityId: row.entity_id, status: row.status });
         }
 
         for (const entity of unresolvedEntities) {
           const canonical = normalizeAlias(entity.name);
-          const matched = coOccurMap.get(`${canonical}\0${entity.type}`);
+          const match = coOccurMap.get(`${canonical}\0${entity.type}`);
 
-          if (matched) {
-            resolvedIds.push(matched);
-            entityIdMap.set(entity, matched);
+          if (match) {
+            if (match.status === 'archived') {
+              await client.query(
+                `UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = $1`,
+                [match.entityId],
+              );
+              log.info({ entityId: match.entityId, alias: canonical }, 'reactivated archived entity via Tier 2 co-occurrence');
+            }
+            resolvedIds.push(match.entityId);
+            entityIdMap.set(entity, match.entityId);
             log.info(
-              { name: canonical, entityId: matched },
+              { name: canonical, entityId: match.entityId },
               `Tier 2 resolved: ${canonical}`,
             );
           } else {

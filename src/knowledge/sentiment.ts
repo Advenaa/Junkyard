@@ -12,6 +12,7 @@ export interface MomentumEntry {
   mentionCount: number;
   momentum: number | null;
   trend: Trend;
+  date: string;
 }
 
 interface DailyAggRow {
@@ -309,6 +310,7 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
       mentionCount: row.mention_count,
       momentum: row.momentum,
       trend: classifyTrend(row.momentum, yesterdayMap.get(row.entity_id) ?? null),
+      date: row.date,
     }));
   }
 

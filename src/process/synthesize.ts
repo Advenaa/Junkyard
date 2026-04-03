@@ -161,6 +161,15 @@ function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
+// ── Narrative context ─────────────────────────────────────────────────
+
+interface NarrativeContext {
+  name: string;
+  growthRate: string;
+  summaryCount: number;
+  createdAt: number;
+}
+
 // ── Prompt builders ───────────────────────────────────────────────────
 
 interface ScoredSummary {
@@ -176,6 +185,8 @@ function buildDailyUserMessage(
   yesterdayTldr: string | null,
   momentum: MomentumEntry[],
   divergence: DivergenceEntry[],
+  narratives: NarrativeContext[],
+  quietDay: boolean = false,
 ): string {
   const parts: string[] = [];
 
@@ -216,8 +227,16 @@ function buildDailyUserMessage(
       const sign = momVal > 0 ? '+' : '';
       return `${escapeXml(m.entityName)}: avg=${m.avgSentiment.toFixed(2)}, momentum=${sign}${momVal.toFixed(2)} (${m.trend}), mentions=${m.mentionCount}`;
     });
+
+    // SY-003: Detect stale momentum data
+    const todayStr = new Date().toLocaleDateString('en-CA');
+    const latestDate = momentum.reduce((latest, m) => (m.date > latest ? m.date : latest), momentum[0].date);
+    const staleNote = latestDate !== todayStr
+      ? `\n[Note: momentum data is from ${latestDate}, not today — rollup may have failed]`
+      : '';
+
     parts.push(
-      `<sentiment_momentum>\n${momentumLines.join('\n')}\n</sentiment_momentum>`,
+      `<sentiment_momentum>\n${momentumLines.join('\n')}${staleNote}\n</sentiment_momentum>`,
     );
   }
 
@@ -229,6 +248,21 @@ function buildDailyUserMessage(
     parts.push(
       `<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`,
     );
+  }
+
+  // SY-001: Narrative context from clustering
+  if (narratives.length > 0) {
+    const narrativeLines = narratives.map((n) =>
+      `${escapeXml(n.name)}: growth=${n.growthRate}, summaries=${n.summaryCount}`,
+    );
+    parts.push(
+      `<narrative_context>\n${narrativeLines.join('\n')}\n</narrative_context>`,
+    );
+  }
+
+  // SY-006: Quiet day indicator
+  if (quietDay) {
+    parts.push(`<quiet_day>No new summaries today — write a brief "quiet market" update based on whatever context is available above (yesterday's TLDR, momentum, narratives). Keep it short.</quiet_day>`);
   }
 
   return parts.join('\n\n');
@@ -372,16 +406,17 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
 
     // Load summaries for the window
     const rows = await getSummariesByTimeWindow(pool, start, end);
-    if (rows.length === 0) {
-      log.info({ date: dateString }, 'No summaries found for today, skipping daily synthesis');
-      return null;
+    const quietDay = rows.length === 0;
+
+    if (quietDay) {
+      log.info({ date: dateString }, 'No summaries found for today — generating quiet market report');
+    } else {
+      log.info({ summaryCount: rows.length }, 'Loaded summaries for daily synthesis');
     }
 
-    log.info({ summaryCount: rows.length }, 'Loaded summaries for daily synthesis');
-
-    // Parse and score
+    // Parse and score (empty array on quiet days)
     let summaries = parseSummaries(rows);
-    if (summaries.length === 0) {
+    if (!quietDay && summaries.length === 0) {
       log.warn('All summaries failed to parse, skipping daily synthesis');
       return null;
     }
@@ -397,16 +432,21 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     const yesterdayTldr = await getYesterdayTldr();
 
     // Run cross-source correlation for the same window
-    const { correlated } = await correlator.run(start);
+    const { correlated } = quietDay
+      ? { correlated: [] as CorrelatedEntity[] }
+      : await correlator.run(start);
 
     log.info({ correlatedEntities: correlated.length }, 'Correlated entities for daily synthesis');
 
-    // Fetch sentiment momentum for correlated entities
+    // SM-008: Fetch entity IDs with alias fallback
     const entityNames = [...new Set(correlated.map((c) => c.entityName))];
+    const normalizedNames = entityNames.map((n) => n.toLowerCase());
     const entityIdRows = entityNames.length > 0
       ? (await pool.query<{ id: string }>(
-          `SELECT id FROM entities WHERE name = ANY($1)`,
-          [entityNames],
+          `SELECT DISTINCT e.id FROM entities e
+           LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+           WHERE e.name = ANY($1) OR ea.alias = ANY($2)`,
+          [entityNames, normalizedNames],
         )).rows
       : [];
     const entityIds = entityIdRows.map((r) => r.id);
@@ -421,8 +461,31 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
 
     log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for daily synthesis');
 
+    // SY-001: Fetch recent narratives (last 2 days)
+    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    const { rows: narrativeRows } = await pool.query<{
+      name: string;
+      signal_strength: string;
+      member_count: number;
+      created_at: number;
+    }>(
+      `SELECT name, signal_strength, member_count, created_at
+       FROM narratives
+       WHERE created_at > $1
+       ORDER BY member_count DESC LIMIT 10`,
+      [twoDaysAgo],
+    );
+    const narratives: NarrativeContext[] = narrativeRows.map((r) => ({
+      name: r.name,
+      growthRate: r.signal_strength,
+      summaryCount: r.member_count,
+      createdAt: r.created_at,
+    }));
+
+    log.info({ narrativeCount: narratives.length }, 'Loaded narrative context for daily synthesis');
+
     // Build prompt
-    const userMessage = buildDailyUserMessage(summaries, dedupedEvents, correlated, yesterdayTldr, momentum, divergence);
+    const userMessage = buildDailyUserMessage(summaries, dedupedEvents, correlated, yesterdayTldr, momentum, divergence, narratives, quietDay);
 
     log.info(
       { events: dedupedEvents.length, summaries: summaries.length, hasYesterday: !!yesterdayTldr },

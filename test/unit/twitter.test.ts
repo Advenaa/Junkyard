@@ -115,7 +115,15 @@ describe('Twitter adapter', () => {
         tweetId: '1234567890',
         likes: 10,
         retweets: 5,
+        replies: 0,
         quotes: 2,
+        views: 0,
+        bookmarks: 0,
+        lang: undefined,
+        isReply: undefined,
+        isVerified: undefined,
+        followers: undefined,
+        authorId: undefined,
       });
       assert.equal(lastId, '1234567890');
     });

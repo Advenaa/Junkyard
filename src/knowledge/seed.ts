@@ -11,6 +11,19 @@ interface CoinGeckoEntry {
   market_cap_rank?: number | null;
 }
 
+/**
+ * Well-known top crypto symbols that should get an empty context_key so they
+ * resolve without context during Tier 1 alias lookup.  The /coins/list endpoint
+ * does NOT return market_cap_rank, so we use a hardcoded set instead.
+ */
+const TOP_SYMBOLS = new Set([
+  'btc', 'eth', 'usdt', 'usdc', 'bnb', 'xrp', 'sol', 'ada', 'doge', 'trx',
+  'ton', 'link', 'avax', 'shib', 'dot', 'bch', 'dai', 'ltc', 'leo', 'uni',
+  'near', 'apt', 'matic', 'atom', 'icp', 'xlm', 'etc', 'vet', 'fil', 'hbar',
+  'arb', 'op', 'mkr', 'aave', 'grt', 'algo', 'ftm', 'inj', 'rune', 'theta',
+  'axs', 'sand', 'mana', 'ldo', 'snx', 'crv', 'ape', 'comp', 'sushi', 'yfi',
+]);
+
 const INDONESIAN_ENTITIES = [
   {
     name: 'OJK',
@@ -153,10 +166,9 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         // Top-100 tokens get empty context_key for their symbol (most likely match).
         // Others get a contextualized key so multiple entities can share the same
         // symbol without the first-seeded winning arbitrarily.
-        const symbolContextKey =
-          coin.market_cap_rank && coin.market_cap_rank <= 100
-            ? ''
-            : `coingecko:${coin.id}`;
+        const symbolContextKey = TOP_SYMBOLS.has(symbolAlias)
+          ? ''
+          : `coingecko:${coin.id}`;
 
         // Name and CoinGecko slug aliases always use empty context_key
         // (they are already unique enough).

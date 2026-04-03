@@ -7,6 +7,8 @@ import type { ReportRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import type { MomentumEntry } from '../knowledge/sentiment.js';
+import type { DivergenceEntry } from '../knowledge/divergence.js';
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
@@ -75,6 +77,14 @@ interface DriftFlag {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function parseSummaryBody(body: string): ParsedSummaryBody | null {
   try {
     const raw: unknown = JSON.parse(body);
@@ -137,9 +147,19 @@ function getDateString(timezone: string): string {
   return `${year}-${month}-${day}`;
 }
 
+// ── Tracker interfaces ──────────────────────────────────────────────
+
+interface SentimentTracker {
+  getMomentumContext(entityIds: string[]): Promise<MomentumEntry[]>;
+}
+
+interface DivergenceTracker {
+  getDivergence(startTime: number, endTime: number, minMentions?: number): Promise<DivergenceEntry[]>;
+}
+
 // ── Factory ──────────────────────────────────────────────────────────
 
-export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
+export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, sentimentTracker: SentimentTracker, divergenceTracker: DivergenceTracker) {
   /**
    * Get the prior pulse report (most recent pulse).
    */
@@ -217,6 +237,8 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
     summaries: { summary: string; source: string; entities: string; urgency: string }[],
     driftFlags: DriftFlag[],
     priorTldr: string | null,
+    momentum: MomentumEntry[],
+    divergence: DivergenceEntry[],
   ): string {
     const parts: string[] = [];
 
@@ -236,6 +258,26 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
       );
       parts.push(
         `<sentiment_drift>\nThe following entities had significant sentiment changes since the last pulse:\n${driftLines.join('\n')}\n</sentiment_drift>`,
+      );
+    }
+
+    if (momentum.length > 0) {
+      const momentumLines = momentum.map((m) => {
+        const momVal = m.momentum ?? 0;
+        const sign = momVal > 0 ? '+' : '';
+        return `${escapeXml(m.entityName)}: avg=${m.avgSentiment.toFixed(2)}, momentum=${sign}${momVal.toFixed(2)} (${m.trend}), mentions=${m.mentionCount}`;
+      });
+      parts.push(
+        `<sentiment_momentum>\n${momentumLines.join('\n')}\n</sentiment_momentum>`,
+      );
+    }
+
+    if (divergence.length > 0) {
+      const divergenceLines = divergence.map((d) =>
+        `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
+      );
+      parts.push(
+        `<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`,
       );
     }
 
@@ -344,11 +386,31 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
       );
     }
 
+    // Fetch sentiment momentum for mentioned entities
+    const entityNames = [...currentEntitySentiment.keys()];
+    const entityIdRows = entityNames.length > 0
+      ? (await pool.query<{ id: string }>(
+          `SELECT id FROM entities WHERE LOWER(name) = ANY($1)`,
+          [entityNames],
+        )).rows
+      : [];
+    const entityIds = entityIdRows.map((r) => r.id);
+    const momentum = entityIds.length > 0
+      ? await sentimentTracker.getMomentumContext(entityIds)
+      : [];
+
+    log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for pulse');
+
+    // Fetch regional divergence for the pulse window
+    const divergence = await divergenceTracker.getDivergence(windowStart, now);
+
+    log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for pulse');
+
     // Activity-scaled maxTokens
     const maxTokens = computeMaxTokens(parsedSummaries.length, hasBreaking, hasElevated);
 
     // Build prompt
-    const userMessage = buildUserMessage(parsedSummaries, driftFlags, prior.tldr);
+    const userMessage = buildUserMessage(parsedSummaries, driftFlags, prior.tldr, momentum, divergence);
 
     log.info(
       {

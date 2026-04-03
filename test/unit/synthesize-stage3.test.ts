@@ -104,7 +104,7 @@ function makeReportJson(overrides: Record<string, unknown> = {}): string {
 /**
  * Build standard mock pool responses for runDaily.
  * Query order: getAppConfig, dailyReportExists, getSummariesByTimeWindow,
- *              getYesterdayTldr, insertReport
+ *              getYesterdayTldr, (entity alias fallback if correlated), narratives, insertReport
  */
 function dailyPoolResponses(
   summaryRows: unknown[],
@@ -115,6 +115,7 @@ function dailyPoolResponses(
     { rows: [{ exists: opts.alreadyExists ?? false }] },     // dailyReportExists
     { rows: summaryRows },                                    // getSummariesByTimeWindow
     { rows: opts.yesterdayTldr ? [{ tldr: opts.yesterdayTldr }] : [] }, // getYesterdayTldr
+    { rows: [] },                                              // narratives query
     { rows: [{                                                  // insertReport RETURNING *
       id: 'report-1', date: '2024-01-01', type: 'daily',
       body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
@@ -175,11 +176,12 @@ describe('synthesize: runDaily', () => {
     assert.strictEqual(result, null);
   });
 
-  it('skips when no summaries found in the time window', async () => {
+  it('generates quiet-day report when no summaries found in the time window', async () => {
     const pool = mockPool(dailyPoolResponses([]));
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never, mockSentimentTracker() as never, mockDivergenceTracker() as never);
     const result = await synth.runDaily();
-    assert.strictEqual(result, null);
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.type, 'daily');
   });
 
   it('skips when all summary bodies fail to parse', async () => {
@@ -252,11 +254,20 @@ describe('synthesize: runDaily', () => {
     const pool = mockPool([
       { rows: [] },                       // getAppConfig → null (defaults to Asia/Jakarta)
       { rows: [{ exists: false }] },      // dailyReportExists
-      { rows: [] },                       // getSummariesByTimeWindow → empty
+      { rows: [] },                       // getSummariesByTimeWindow → empty (quiet day)
+      { rows: [] },                       // getYesterdayTldr
+      { rows: [] },                       // narratives query
+      { rows: [{                           // insertReport RETURNING *
+        id: 'report-tz', date: '2024-01-01', type: 'daily',
+        body: makeReportJson(), tldr: 'Quiet day.',
+        sentiment: null, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+      }] },
     ]);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never, mockSentimentTracker() as never, mockDivergenceTracker() as never);
     const result = await synth.runDaily();
-    assert.strictEqual(result, null);
+    // Quiet day still produces a report (not null)
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(result!.type, 'daily');
   });
 });
 
@@ -784,14 +795,16 @@ describe('synthesize: XML escaping in prompts', () => {
     // 1: dailyReportExists
     // 2: getSummariesByTimeWindow
     // 3: getYesterdayTldr
-    // 4: entity ID lookup for sentiment momentum
-    // 5: insertReport
+    // 4: entity ID lookup for sentiment momentum (alias fallback)
+    // 5: narratives query
+    // 6: insertReport
     const poolResponses = [
       { rows: [{ value: 'UTC' }] },                           // getAppConfig
       { rows: [{ exists: false }] },                           // dailyReportExists
       { rows: [row] },                                         // getSummariesByTimeWindow
       { rows: [] },                                            // getYesterdayTldr
-      { rows: [{ id: 'entity-xss-1' }] },                     // entity ID lookup
+      { rows: [{ id: 'entity-xss-1' }] },                     // entity ID lookup (alias fallback)
+      { rows: [] },                                            // narratives query
       { rows: [{                                                // insertReport RETURNING *
         id: 'report-xml-1', date: '2024-01-01', type: 'daily',
         body: makeReportJson(), tldr: 'Test report.',

@@ -18,6 +18,14 @@ const baseConfig = {
   models: { haiku: 'haiku-test', sonnet: 'sonnet-test' },
 } as any;
 
+const mockSentimentTracker = {
+  getMomentumContext: async (_ids: string[]) => [],
+};
+
+const mockDivergenceTracker = {
+  getDivergence: async (_start: number, _end: number) => [],
+};
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 function makeValidReport() {
@@ -86,6 +94,10 @@ function makePool(opts: {
       // getAppConfig: SELECT value FROM app_config WHERE key = $1
       if (sql.includes('app_config')) {
         return { rows: opts.appConfig ?? [{ value: 'Asia/Jakarta' }] };
+      }
+      // Entity ID lookup: SELECT id FROM entities WHERE LOWER(name) = ANY($1)
+      if (sql.includes('FROM entities')) {
+        return { rows: [] };
       }
       // insertReport: INSERT INTO reports ... RETURNING *
       if (sql.includes('INSERT INTO reports')) {
@@ -161,7 +173,7 @@ describe('MarketReportLLMSchema', () => {
 describe('runPulse — quality gates', () => {
   it('returns null when no summaries exist in the window', async () => {
     const pool = makePool({ summaries: [] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.equal(result, null);
   });
@@ -169,7 +181,7 @@ describe('runPulse — quality gates', () => {
   it('returns null when all summaries fail to parse', async () => {
     const badRow = makeSummaryRow({ body: 'not valid json at all' });
     const pool = makePool({ summaries: [badRow] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.equal(result, null);
   });
@@ -182,7 +194,7 @@ describe('runPulse — quality gates', () => {
 describe('runPulse — successful generation', () => {
   it('returns a valid ReportRow on success', async () => {
     const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.ok(result !== null);
     assert.ok(typeof result!.tldr === 'string');
@@ -204,7 +216,7 @@ describe('runPulse — successful generation', () => {
     // 2 summaries, routine = 300 tokens
     const rows = [makeSummaryRow({ id: 's1' }), makeSummaryRow({ id: 's2' })];
     const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
     assert.equal(capturedMaxTokens, 300);
   });
@@ -229,7 +241,7 @@ describe('runPulse — activity scaling', () => {
       makeSummaryRow({ id: `s${i}`, urgency }),
     );
     const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
     return capturedMaxTokens;
   }
@@ -283,7 +295,7 @@ describe('runPulse — prior pulse handling', () => {
       summaries: [makeSummaryRow()],
       priorPulse: [{ body: priorBody }],
     });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
     assert.ok(capturedMessage.includes('Markets were bullish earlier.'));
   });
@@ -299,7 +311,7 @@ describe('runPulse — prior pulse handling', () => {
     };
 
     const pool = makePool({ summaries: [makeSummaryRow()], priorPulse: [] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
     assert.ok(!capturedMessage.includes('prior_pulse_tldr'));
   });
@@ -334,7 +346,7 @@ describe('runPulse — sentiment drift', () => {
       summaries: [makeSummaryRow({ body: summaryBody })],
       priorPulse: [{ body: priorBody }],
     });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
     assert.ok(capturedMessage.includes('sentiment_drift'));
     assert.ok(capturedMessage.includes('Bitcoin'));
@@ -360,7 +372,7 @@ describe('runPulse — sentiment drift', () => {
       summaries: [makeSummaryRow()],
       priorPulse: [{ body: priorBody }],
     });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
     assert.ok(!capturedMessage.includes('sentiment_drift'));
   });
@@ -390,7 +402,7 @@ describe('runPulse — summary cap at 50', () => {
       }),
     );
     const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
 
     // The oldest 10 (indices 0-9) should be trimmed; newest 50 (indices 10-59) kept
@@ -417,7 +429,7 @@ describe('runPulse — summary cap at 50', () => {
       }),
     );
     const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
 
     // All 10 should be present
@@ -443,7 +455,7 @@ describe('runPulse — summary cap at 50', () => {
       }),
     );
     const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
 
     // All 50 should be present (no trimming at boundary)
@@ -469,7 +481,7 @@ describe('runPulse — LLM error handling', () => {
     };
 
     const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.ok(result !== null);
     assert.equal(callCount, 2);
@@ -482,7 +494,7 @@ describe('runPulse — LLM error handling', () => {
     };
 
     const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.equal(result, null);
   });
@@ -498,7 +510,7 @@ describe('runPulse — duplicate guard', () => {
       summaries: [makeSummaryRow()],
       existingPulse: [{ id: 'existing-pulse-id' }],
     });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm());
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.equal(result, null);
   });
@@ -518,7 +530,7 @@ describe('runPulse — code fence stripping', () => {
     };
 
     const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm);
+    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     const result = await runPulse();
     assert.ok(result !== null);
     assert.ok(typeof result!.tldr === 'string');

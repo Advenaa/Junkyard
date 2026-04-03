@@ -79,7 +79,7 @@ program
     const sentimentTracker = createSentimentTracker(pool, log);
     const divergenceTracker = createDivergenceTracker(pool, log);
     const synthesizer = createSynthesizer(pool, log, config, llm, correlator, sentimentTracker, divergenceTracker);
-    const pulse = createPulse(pool, log, config, llm);
+    const pulse = createPulse(pool, log, config, llm, sentimentTracker, divergenceTracker);
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
     const decayManager = createDecayManager(pool, log);

@@ -147,20 +147,20 @@ describe('EL-011: CoinGecko seed uses context_key for non-top-100 symbol aliases
     );
   });
 
-  it('differentiates top-100 from others using market_cap_rank', () => {
+  it('differentiates top symbols from others using TOP_SYMBOLS Set', () => {
     assert.match(
       src,
-      /market_cap_rank\s*&&\s*.*market_cap_rank\s*<=\s*100/,
-      'Must check market_cap_rank <= 100 to differentiate top tokens',
+      /TOP_SYMBOLS\.has\(/,
+      'Must use TOP_SYMBOLS.has() to differentiate top tokens from others',
     );
   });
 
-  it('top-100 tokens get empty context_key for their symbol', () => {
-    // The ternary should assign '' for top-100
+  it('top symbols get empty context_key for their symbol', () => {
+    // The ternary should assign '' for top symbols
     assert.match(
       src,
-      /market_cap_rank\s*<=\s*100\s*\?\s*''/,
-      'Top-100 tokens must get empty string context_key',
+      /TOP_SYMBOLS\.has\(symbolAlias\)\s*\?\s*''/,
+      'Top symbols must get empty string context_key',
     );
   });
 

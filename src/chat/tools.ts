@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { TaskType } from '@google/generative-ai';
 import type { Pool } from '../db/connection.js';
+import { normalizeAlias } from '../knowledge/entities.js';
 import type { Logger } from '../logger.js';
 import type { VectorCache } from '../vector-cache.js';
 
@@ -125,7 +126,7 @@ function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
          WHERE ea.alias = $1
          ORDER BY em.created_at DESC
          LIMIT 20`,
-        [entity.toLowerCase()],
+        [normalizeAlias(entity)],
       );
 
       if (dbResult.rows.length === 0) {

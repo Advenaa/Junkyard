@@ -248,15 +248,38 @@ export async function createServer(
   });
 
   // --- Search ---
-  app.get('/api/v1/search', { preHandler: [authPreHandler] }, async (request, reply) => {
-    const { q, limit: rawLimit } = request.query as { q?: string; limit?: string };
-    if (!q) {
-      return reply.code(400).send({ error: 'q query parameter is required' });
+  app.get('/api/v1/search', {
+    preHandler: [authPreHandler],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          q: { type: 'string', minLength: 1 },
+          limit: { type: 'integer', minimum: 1, maximum: 100 },
+          days: { type: 'integer', minimum: 1, maximum: 365 },
+          mode: { type: 'string', enum: ['keyword', 'semantic'] },
+        },
+        required: ['q'],
+        additionalProperties: false,
+      },
+    },
+  }, async (request, reply) => {
+    const { q, limit: rawLimit, days: rawDays, mode: rawMode } = request.query as {
+      q: string;
+      limit?: number;
+      days?: number;
+      mode?: 'keyword' | 'semantic';
+    };
+    const mode = rawMode ?? 'keyword';
+    if (mode === 'semantic') {
+      return reply.code(501).send({ error: 'semantic search is only available via the chat interface' });
     }
-    const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
+    const limit = Math.min(Math.max(rawLimit ?? 20, 1), 100);
+    const days = Math.min(Math.max(rawDays ?? 30, 1), 365);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const { rows: results } = await pool.query<SummaryRow>(
-      `SELECT * FROM summaries WHERE body ILIKE $1 ORDER BY created_at DESC LIMIT $2`,
-      [`%${q}%`, limit],
+      `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
+      [`%${q}%`, cutoff.toISOString(), limit],
     );
     return { results: results.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });

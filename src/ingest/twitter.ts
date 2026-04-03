@@ -7,18 +7,29 @@ import type { RawItem } from './rss.js';
 
 const BASE_URL = 'https://api.twitterapi.io';
 const MAX_PAGES = 5;
+const CONSECUTIVE_FAILURE_THRESHOLD = 10;
 
 const TwitterTweetSchema = z.object({
   id: z.string(),
   text: z.string().max(50_000),
   url: z.string().optional(),
-  likeCount: z.number().optional(),
-  retweetCount: z.number().optional(),
-  quoteCount: z.number().optional(),
+  likeCount: z.number().default(0),
+  retweetCount: z.number().default(0),
+  replyCount: z.number().default(0),
+  quoteCount: z.number().default(0),
+  viewCount: z.number().default(0),
+  bookmarkCount: z.number().default(0),
   createdAt: z.string(),
+  lang: z.string().optional(),
+  isReply: z.boolean().optional(),
+  inReplyToId: z.string().nullable().optional(),
+  conversationId: z.string().optional(),
   author: z.object({
     userName: z.string(),
     name: z.string().optional(),
+    id: z.string().optional(),
+    followers: z.number().optional(),
+    isBlueVerified: z.boolean().optional(),
   }),
 });
 
@@ -31,7 +42,7 @@ const TwitterResponseSchema = z.object({
 type TwitterTweet = z.infer<typeof TwitterTweetSchema>;
 
 function computeEngagement(tweet: TwitterTweet): number {
-  const raw = (tweet.likeCount ?? 0) + (tweet.retweetCount ?? 0) * 2 + (tweet.quoteCount ?? 0) * 3;
+  const raw = tweet.likeCount + tweet.retweetCount * 2 + tweet.quoteCount * 3;
   const score = Math.round(Math.log10(Math.max(1, raw)) * 20);
   return Math.min(100, Math.max(1, score));
 }
@@ -53,9 +64,17 @@ function tweetToRawItem(tweet: TwitterTweet, sourceId: string, log: Logger): Raw
     engagement: computeEngagement(tweet),
     metadata: {
       tweetId: tweet.id,
-      likes: tweet.likeCount ?? 0,
-      retweets: tweet.retweetCount ?? 0,
-      quotes: tweet.quoteCount ?? 0,
+      likes: tweet.likeCount,
+      retweets: tweet.retweetCount,
+      replies: tweet.replyCount,
+      quotes: tweet.quoteCount,
+      views: tweet.viewCount,
+      bookmarks: tweet.bookmarkCount,
+      lang: tweet.lang,
+      isReply: tweet.isReply,
+      isVerified: tweet.author.isBlueVerified,
+      followers: tweet.author.followers,
+      authorId: tweet.author.id,
     },
   };
 }
@@ -83,6 +102,7 @@ const DEFAULT_RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
   const sourceRateLimits = new Map<string, number>();
+  const consecutiveFailures = new Map<string, number>();
 
   /** Persist halted status in source_state so it survives process restarts. */
   async function haltAllTwitterSources(): Promise<void> {
@@ -206,6 +226,17 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     for (let page = 0; page < MAX_PAGES; page++) {
       const result = await fetchPage(sourceId, cursor);
       if (!result) {
+        const failures = (consecutiveFailures.get(sourceId) ?? 0) + 1;
+        consecutiveFailures.set(sourceId, failures);
+        log.warn(
+          { sourceId, consecutiveFailures: failures, threshold: CONSECUTIVE_FAILURE_THRESHOLD },
+          'Twitter fetchPage returned null — incrementing consecutive failure counter',
+        );
+        if (failures >= CONSECUTIVE_FAILURE_THRESHOLD) {
+          throw new Error(
+            `Twitter circuit breaker: ${failures} consecutive failures for source ${sourceId}`,
+          );
+        }
         paginationErrored = true;
         break;
       }
@@ -230,6 +261,11 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     // If we exhausted MAX_PAGES without error, pagination is complete (best-effort)
     if (!paginationComplete && !paginationErrored) {
       paginationComplete = true;
+    }
+
+    // Reset consecutive failure counter on any successful page fetch
+    if (!paginationErrored) {
+      consecutiveFailures.delete(sourceId);
     }
 
     if (allTweets.length > 0 && hasMore) {
