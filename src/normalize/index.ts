@@ -82,7 +82,11 @@ export function createNormalizer(
     // ── Gate 2 — Content hash dedup (early check to avoid wasting translation tokens)
     const contentHash = sha256(item.source + item.sourceId + item.content);
 
-    // Early check — skip expensive gates if this content was already processed
+    // Early check — skip expensive gates if this content was already processed.
+    // NOTE (NP-002): Under concurrency, two threads can pass this SELECT before
+    // either inserts. This is acceptable — the UNIQUE constraint on content_hash
+    // (ON CONFLICT in insertItem) is the authoritative dedup safety net. This
+    // early check is purely an optimisation to avoid wasting LLM tokens.
     const { rows: existingHash } = await pool.query<{ id: string }>(
       'SELECT id FROM items WHERE content_hash = $1 LIMIT 1',
       [contentHash],
@@ -189,6 +193,15 @@ export function createNormalizer(
           { id: item.id, error: message },
           'Indonesian translation failed, keeping original content',
         );
+        // NP-003: Re-validate minimum content length — the original Indonesian
+        // content may be too short to be useful without a successful translation.
+        if (item.content.trim().length < 5) {
+          log.debug(
+            { id: item.id, contentLength: item.content.trim().length },
+            'Original content too short after translation failure, dropping',
+          );
+          return 'dropped';
+        }
       }
     }
 

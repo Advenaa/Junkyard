@@ -104,7 +104,7 @@ function makeReportJson(overrides: Record<string, unknown> = {}): string {
 /**
  * Build standard mock pool responses for runDaily.
  * Query order: getAppConfig, dailyReportExists, getSummariesByTimeWindow,
- *              getYesterdayTldr, correlator.run(), insertReport
+ *              getYesterdayTldr, insertReport
  */
 function dailyPoolResponses(
   summaryRows: unknown[],
@@ -115,13 +115,19 @@ function dailyPoolResponses(
     { rows: [{ exists: opts.alreadyExists ?? false }] },     // dailyReportExists
     { rows: summaryRows },                                    // getSummariesByTimeWindow
     { rows: opts.yesterdayTldr ? [{ tldr: opts.yesterdayTldr }] : [] }, // getYesterdayTldr
-    { rows: [] },                                             // correlator.run() → no correlations
     { rows: [{                                                  // insertReport RETURNING *
       id: 'report-1', date: '2024-01-01', type: 'daily',
       body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
       sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
     }] },
   ];
+}
+
+/** Build a mock correlator that returns empty results by default. */
+function mockCorrelator(correlated: unknown[] = [], shouldFlash = false) {
+  return {
+    run: async () => ({ correlated, shouldFlash }),
+  };
 }
 
 /** Build a mock LLM that returns a given response. */
@@ -150,14 +156,14 @@ describe('synthesize: runDaily', () => {
       { rows: [{ value: 'Asia/Jakarta' }] },
       { rows: [{ exists: true }] },
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runDaily();
     assert.strictEqual(result, null);
   });
 
   it('skips when no summaries found in the time window', async () => {
     const pool = mockPool(dailyPoolResponses([]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runDaily();
     assert.strictEqual(result, null);
   });
@@ -165,7 +171,7 @@ describe('synthesize: runDaily', () => {
   it('skips when all summary bodies fail to parse', async () => {
     const badRow = makeSummaryRow({ body: 'not-json{{{' });
     const pool = mockPool(dailyPoolResponses([badRow]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runDaily();
     assert.strictEqual(result, null);
   });
@@ -174,7 +180,7 @@ describe('synthesize: runDaily', () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm();
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runDaily();
 
     assert.notStrictEqual(result, null);
@@ -189,7 +195,7 @@ describe('synthesize: runDaily', () => {
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm();
     const config = fakeConfig({ models: { haiku: 'h', sonnet: 'my-sonnet-model' } });
-    const synth = createSynthesizer(pool as never, silentLog, config, llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, config, llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     const llmCall = llm.calls[0] as Record<string, unknown>;
@@ -209,7 +215,7 @@ describe('synthesize: runDaily', () => {
     };
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runDaily();
 
     assert.strictEqual(callCount, 2, 'Should have retried once');
@@ -223,7 +229,7 @@ describe('synthesize: runDaily', () => {
     };
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runDaily();
     assert.strictEqual(result, null);
   });
@@ -234,7 +240,7 @@ describe('synthesize: runDaily', () => {
       { rows: [{ exists: false }] },      // dailyReportExists
       { rows: [] },                       // getSummariesByTimeWindow → empty
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runDaily();
     assert.strictEqual(result, null);
   });
@@ -247,7 +253,7 @@ describe('synthesize: runDaily', () => {
 describe('synthesize: runFlash', () => {
   it('skips when no correlated entities provided', async () => {
     const pool = mockPool([]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runFlash([]);
     assert.strictEqual(result, null);
   });
@@ -262,7 +268,7 @@ describe('synthesize: runFlash', () => {
     const pool = mockPool([
       { rows: [] },  // getSummariesByTimeWindow → empty
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runFlash([entity]);
     assert.strictEqual(result, null);
   });
@@ -283,7 +289,7 @@ describe('synthesize: runFlash', () => {
     const pool = mockPool([
       { rows: [row] },  // getSummariesByTimeWindow
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runFlash([entity]);
     assert.strictEqual(result, null);
   });
@@ -307,7 +313,7 @@ describe('synthesize: runFlash', () => {
       }] },
     ]);
     const llm = mockLlm();
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runFlash([entity]);
 
     assert.notStrictEqual(result, null);
@@ -334,7 +340,7 @@ describe('synthesize: runFlash', () => {
         sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
       }] },
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runFlash([entity]);
     assert.notStrictEqual(result, null);
   });
@@ -351,7 +357,7 @@ describe('synthesize: runFlash', () => {
       { rows: [row] },                              // getSummariesByTimeWindow
       { rows: [{ id: 'existing-flash' }] },          // flash duplicate check (created_at > fourHoursAgo) → exists
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     const result = await synth.runFlash([entity]);
     assert.strictEqual(result, null);
   });
@@ -383,7 +389,7 @@ describe('synthesize: runFlash', () => {
         sentiment: 0.7, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
       }] },
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runFlash([entity]);
 
     assert.strictEqual(callCount, 2);
@@ -441,7 +447,7 @@ describe('synthesize: scoring and ranking', () => {
     };
 
     const pool = mockPool(dailyPoolResponses(rows));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     // The breaking summary should be included in the LLM message (it scores higher)
@@ -494,7 +500,7 @@ describe('synthesize: scoring and ranking', () => {
     };
 
     const pool = mockPool(dailyPoolResponses(rows));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     // many-entities summary should survive the trim
@@ -512,7 +518,7 @@ describe('synthesize: LLM response parsing', () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm(fencedResponse);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runDaily();
 
     assert.notStrictEqual(result, null);
@@ -523,7 +529,7 @@ describe('synthesize: LLM response parsing', () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm(makeReportJson());
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     const result = await synth.runDaily();
     assert.notStrictEqual(result, null);
   });
@@ -538,7 +544,7 @@ describe('synthesize: LLM response parsing', () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm(reportWithSentiments);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     // Verify the body stored in the INSERT query contains the right entitySentiment
@@ -570,7 +576,7 @@ describe('synthesize: computeAvgSentiment', () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm(reportJson);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     // Find the INSERT query call and check the sentiment value
@@ -588,7 +594,7 @@ describe('synthesize: computeAvgSentiment', () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm(reportJson);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
@@ -614,7 +620,7 @@ describe('synthesize: prompt construction', () => {
       wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
     };
     const pool = mockPool(dailyPoolResponses([row], { yesterdayTldr: 'Yesterday markets were calm' }));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     assert.ok(llmUserMessage.includes('yesterday_tldr'));
@@ -632,7 +638,7 @@ describe('synthesize: prompt construction', () => {
       wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
     };
     const pool = mockPool(dailyPoolResponses([row]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     assert.ok(llmUserMessage.includes('[twitter]'), 'Prompt should include source tag');
@@ -664,7 +670,7 @@ describe('synthesize: prompt construction', () => {
       { rows: [{ value: 'UTC' }] },
       {},
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runFlash([entity]);
 
     assert.ok(llmUserMessage.includes('breaking_entities'));
@@ -687,7 +693,7 @@ describe('synthesize: prompt construction', () => {
       wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
     };
     const pool = mockPool(dailyPoolResponses([row]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runDaily();
 
     assert.ok(llmUserMessage.includes('key_events'));
@@ -703,7 +709,7 @@ describe('synthesize: report insertion', () => {
   it('inserts daily report with type "daily"', async () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     await synth.runDaily();
 
     const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
@@ -725,7 +731,7 @@ describe('synthesize: report insertion', () => {
       { rows: [{ value: 'UTC' }] },
       {},
     ]);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     await synth.runFlash([entity]);
 
     const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
@@ -736,7 +742,7 @@ describe('synthesize: report insertion', () => {
   it('report ID is a valid ULID', async () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never, mockCorrelator() as never);
     await synth.runDaily();
 
     const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
@@ -759,42 +765,34 @@ describe('synthesize: XML escaping in prompts', () => {
       }),
     });
 
-    // Pool responses for daily with correlated entities from correlator:
+    // Pool responses for daily (correlator is now injected, not queried via pool):
     // 0: getAppConfig(timezone)
     // 1: dailyReportExists
     // 2: getSummariesByTimeWindow
     // 3: getYesterdayTldr
-    // 4: correlator CORRELATION_SQL — returns a row with the XSS entity name
-    // 5: correlator trust weights batch
-    // 6: correlator urgency batch
-    // 7: insertReport
+    // 4: insertReport
     const poolResponses = [
       { rows: [{ value: 'UTC' }] },                           // getAppConfig
       { rows: [{ exists: false }] },                           // dailyReportExists
       { rows: [row] },                                         // getSummariesByTimeWindow
       { rows: [] },                                            // getYesterdayTldr
-      { rows: [{                                                // correlator: entity mentions
-        entity_id: 'ent-xss',
-        entity_name: xssEntityName,
-        mentions: [
-          { source: 'discord', summary_id: 'summary-1', sentiment: 0.5 },
-          { source: 'twitter', summary_id: 'summary-2', sentiment: 0.3 },
-        ],
-      }] },
-      { rows: [                                                 // correlator: trust weights
-        { source: 'discord', trust_weight: 0.8 },
-        { source: 'twitter', trust_weight: 0.7 },
-      ] },
-      { rows: [                                                 // correlator: urgencies
-        { id: 'summary-1', urgency: 'elevated' },
-        { id: 'summary-2', urgency: 'routine' },
-      ] },
       { rows: [{                                                // insertReport RETURNING *
         id: 'report-xml-1', date: '2024-01-01', type: 'daily',
         body: makeReportJson(), tldr: 'Test report.',
         sentiment: 0.5, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
       }] },
     ];
+
+    // Mock correlator returns the XSS entity
+    const xssCorrelator = mockCorrelator([{
+      entityName: xssEntityName,
+      sources: [
+        { source: 'discord', sourceId: 'src-1', trustWeight: 0.8 },
+        { source: 'twitter', sourceId: 'src-2', trustWeight: 0.7 },
+      ],
+      weightedSum: 1.5,
+      urgency: 'elevated',
+    }]);
 
     let llmUserMessage = '';
     const llm = {
@@ -806,7 +804,7 @@ describe('synthesize: XML escaping in prompts', () => {
     };
 
     const pool = mockPool(poolResponses);
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, xssCorrelator as never);
     await synth.runDaily();
 
     // The correlated_entities section must contain the escaped entity name
@@ -858,7 +856,7 @@ describe('synthesize: XML escaping in prompts', () => {
       }] },
     ]);
 
-    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never, mockCorrelator() as never);
     await synth.runFlash([entity]);
 
     // The breaking_entities section must contain escaped entity names

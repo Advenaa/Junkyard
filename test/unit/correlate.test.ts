@@ -109,6 +109,7 @@ function buildBatchPool(opts: {
   }>;
   trustWeights: Record<string, number>;
   urgencies: Record<string, string>;
+  sourceIds?: Record<string, string>;
 }) {
   // All distinct sources across all entities
   const allSources = [...new Set(opts.correlationRows.flatMap(r => r.mentions.map(m => m.source)))];
@@ -118,14 +119,18 @@ function buildBatchPool(opts: {
 
   // All distinct summary IDs across all entities
   const allSummaryIds = [...new Set(opts.correlationRows.flatMap(r => r.mentions.map(m => m.summary_id)))];
-  const urgencyRows = allSummaryIds
-    .filter(id => id in opts.urgencies)
-    .map(id => ({ id, urgency: opts.urgencies[id] }));
+  const summaryMetaRows = allSummaryIds
+    .filter(id => id in opts.urgencies || (opts.sourceIds && id in opts.sourceIds))
+    .map(id => ({
+      id,
+      urgency: opts.urgencies[id] ?? 'routine',
+      source_id: opts.sourceIds?.[id] ?? id,
+    }));
 
   return mockPool([
     { rows: opts.correlationRows },  // CORRELATION_SQL
     { rows: trustRows },              // batch trust weights
-    { rows: urgencyRows },            // batch urgencies
+    { rows: summaryMetaRows },        // batch summaries (urgency + source_id)
   ]);
 }
 

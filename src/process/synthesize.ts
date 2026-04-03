@@ -2,7 +2,6 @@ import { ulid } from 'ulid';
 import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
 import { deduplicateEvents } from './dedup-events.js';
-import { createCorrelator } from './correlate.js';
 import type { CorrelatedEntity } from './correlate.js';
 import {
   insertReport,
@@ -261,9 +260,15 @@ function computeAvgSentiment(report: MarketReport): number | null {
   return Math.round((sum / report.entitySentiment.length) * 100) / 100;
 }
 
+// ── Correlator interface ─────────────────────────────────────────────
+
+interface Correlator {
+  run(cutoff?: number): Promise<{ correlated: CorrelatedEntity[]; shouldFlash: boolean }>;
+}
+
 // ── Factory ───────────────────────────────────────────────────────────
 
-export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: LLM) {
+export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: LLM, correlator: Correlator) {
   /**
    * Parse all summaries into scored entries, filtering out unparseable bodies.
    */
@@ -335,7 +340,6 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     const yesterdayTldr = await getYesterdayTldr();
 
     // Run cross-source correlation for the same window
-    const correlator = createCorrelator(pool, log);
     const { correlated } = await correlator.run(start);
 
     log.info({ correlatedEntities: correlated.length }, 'Correlated entities for daily synthesis');

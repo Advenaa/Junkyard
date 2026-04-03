@@ -174,6 +174,83 @@ function backoffMs(attempt: number): number {
 
 const MAX_CONCURRENT_MESSAGES = 5;
 export const MAX_QUEUE_SIZE = 100;
+const DROP_FLUSH_INTERVAL_MS = 30_000;
+
+/**
+ * Accumulates queue-overflow drop counts per channel and flushes them
+ * periodically as health_events so there is an audit trail.
+ */
+class DropAccumulator {
+  private counts = new Map<string, number>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(
+    private readonly pool: Pool,
+    private readonly log: Logger,
+    private readonly tokenIndex: number,
+  ) {}
+
+  start(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      void this.flush();
+    }, DROP_FLUSH_INTERVAL_MS);
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    // Best-effort final flush (fire-and-forget on shutdown)
+    void this.flush();
+  }
+
+  record(channelId: string): void {
+    this.counts.set(channelId, (this.counts.get(channelId) ?? 0) + 1);
+  }
+
+  private async flush(): Promise<void> {
+    if (this.counts.size === 0) return;
+
+    const snapshot = new Map(this.counts);
+    this.counts.clear();
+
+    let totalDropped = 0;
+    const channelBreakdown: Record<string, number> = {};
+    for (const [ch, count] of snapshot) {
+      totalDropped += count;
+      channelBreakdown[ch] = count;
+    }
+
+    try {
+      const id = ulid();
+      const now = Date.now();
+      await this.pool.query(
+        `INSERT INTO health_events (id, category, severity, message, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          id,
+          'queue_overflow',
+          'warn',
+          `Dropped ${totalDropped} Discord message(s) due to queue overflow on token ${this.tokenIndex}`,
+          JSON.stringify({ tokenIndex: this.tokenIndex, totalDropped, channels: channelBreakdown }),
+          now,
+        ],
+      );
+      this.log.warn(
+        { tokenIndex: this.tokenIndex, totalDropped, channels: channelBreakdown },
+        'flushed queue overflow drops to health_events',
+      );
+    } catch (err: unknown) {
+      this.log.error({ err, tokenIndex: this.tokenIndex }, 'failed to flush queue overflow drops');
+      // Re-add counts so they aren't lost
+      for (const [ch, count] of snapshot) {
+        this.counts.set(ch, (this.counts.get(ch) ?? 0) + count);
+      }
+    }
+  }
+}
 
 async function withConcurrencyLimit<T>(
   state: { active: number; queue: (() => void)[] },
@@ -207,6 +284,7 @@ class TokenConnection {
   private reconnectAttempt = 0;
   private destroyed = false;
   private readonly concurrency = { active: 0, queue: [] as (() => void)[] };
+  private readonly drops: DropAccumulator;
 
   readonly state: TokenState;
 
@@ -216,7 +294,9 @@ class TokenConnection {
     private readonly log: Logger,
     private readonly onMessage: (item: RawItem) => Promise<void>,
     private readonly onDeath: (index: number) => void,
+    pool: Pool,
   ) {
+    this.drops = new DropAccumulator(pool, log, tokenIndex);
     this.state = {
       index: tokenIndex,
       status: 'idle',
@@ -232,12 +312,14 @@ class TokenConnection {
 
   async connect(): Promise<void> {
     if (this.destroyed) return;
+    this.drops.start();
     this.state.status = 'connecting';
     this.openSocket(GATEWAY_URL);
   }
 
   async disconnect(): Promise<void> {
     this.destroyed = true;
+    this.drops.stop();
     this.clearHeartbeat();
     if (this.ws) {
       this.ws.removeAllListeners();
@@ -458,10 +540,19 @@ class TokenConnection {
     try {
       await withConcurrencyLimit(this.concurrency, () => this.onMessage(rawItem));
     } catch (err: unknown) {
-      this.log.error(
-        { tokenIndex: this.tokenIndex, messageId: d.id, err },
-        'onMessage callback failed',
-      );
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('message queue full')) {
+        this.drops.record(d.channel_id);
+        this.log.warn(
+          { tokenIndex: this.tokenIndex, messageId: d.id, channelId: d.channel_id },
+          'message dropped due to queue overflow',
+        );
+      } else {
+        this.log.error(
+          { tokenIndex: this.tokenIndex, messageId: d.id, err },
+          'onMessage callback failed',
+        );
+      }
     }
   }
 
@@ -697,7 +788,7 @@ export function createDiscordAdapter(
   // Create connection objects for each token
   for (let i = 0; i < config.discordTokens.length; i++) {
     const token = config.discordTokens[i]!;
-    connections.push(new TokenConnection(i, token, log, onMessage, handleTokenDeath));
+    connections.push(new TokenConnection(i, token, log, onMessage, handleTokenDeath, pool));
   }
 
   async function connect(): Promise<void> {

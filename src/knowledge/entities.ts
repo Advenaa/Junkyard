@@ -78,8 +78,11 @@ export function createEntityManager(
         }
 
         const aliasResult = await client.query<{ entity_id: string }>(
-          'SELECT entity_id FROM entity_aliases WHERE alias = $1',
-          [canonical],
+          `SELECT ea.entity_id FROM entity_aliases ea
+           JOIN entities e ON e.id = ea.entity_id
+           WHERE ea.alias = $1 AND e.type = $2
+           ORDER BY ea.context_key = '' DESC, ea.context_key, ea.entity_id`,
+          [canonical, entity.type],
         );
 
         if (aliasResult.rows.length > 0) {

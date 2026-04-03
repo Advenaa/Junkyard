@@ -87,15 +87,16 @@ export function createCorrelator(pool: Pool, log: Logger) {
       : [];
     const trustMap = new Map(trustRows.map(r => [r.source, Math.max(0, Math.min(1, r.trust_weight))]));
 
-    // Batch-fetch urgencies (CR-003)
+    // Batch-fetch urgencies and source_ids from summaries (CR-003)
     const allSummaryIds = [...new Set(rows.flatMap(r => r.mentions.map(m => m.summary_id)))];
-    const urgencyRows = allSummaryIds.length > 0
-      ? (await pool.query<{ id: string; urgency: string }>(
-          'SELECT id, urgency FROM summaries WHERE id = ANY($1)',
+    const summaryMetaRows = allSummaryIds.length > 0
+      ? (await pool.query<{ id: string; urgency: string; source_id: string }>(
+          'SELECT id, urgency, source_id FROM summaries WHERE id = ANY($1)',
           [allSummaryIds],
         )).rows
       : [];
-    const urgencyMap = new Map(urgencyRows.map(r => [r.id, r.urgency]));
+    const urgencyMap = new Map(summaryMetaRows.map(r => [r.id, r.urgency]));
+    const sourceIdMap = new Map(summaryMetaRows.map(r => [r.id, r.source_id]));
 
     const correlated: CorrelatedEntity[] = [];
     let shouldFlash = false;
@@ -123,7 +124,7 @@ export function createCorrelator(pool: Pool, log: Logger) {
         }
         sources.push({
           source,
-          sourceId: summaryIds[0], // representative summary id
+          sourceId: sourceIdMap.get(summaryIds[0]) ?? source,
           trustWeight,
         });
         weightedSum += trustWeight;

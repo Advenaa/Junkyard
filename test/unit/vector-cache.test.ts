@@ -129,7 +129,6 @@ describe('VectorCache (unit, no pool)', () => {
     const size = cache.getSize();
     assert.equal(size.summaries, 0);
     assert.equal(size.reports, 0);
-    assert.equal(size.entities, 0);
   });
 
   it('update adds vectors and getSize reflects them', () => {
@@ -141,15 +140,14 @@ describe('VectorCache (unit, no pool)', () => {
     const size = cache.getSize();
     assert.equal(size.summaries, 2);
     assert.equal(size.reports, 1);
-    assert.equal(size.entities, 0);
   });
 
   it('update with same ID replaces (no duplicates)', () => {
     const cache = makeCache();
-    cache.update('entity', 'e1', vec(1, 0));
-    cache.update('entity', 'e1', vec(0, 1));
+    cache.update('summary', 's1', vec(1, 0));
+    cache.update('summary', 's1', vec(0, 1));
 
-    assert.equal(cache.getSize().entities, 1);
+    assert.equal(cache.getSize().summaries, 1);
   });
 
   it('search returns results sorted by descending score', () => {
@@ -175,10 +173,10 @@ describe('VectorCache (unit, no pool)', () => {
       const v = new Float32Array(3);
       v[0] = Math.cos(i);
       v[1] = Math.sin(i);
-      cache.update('entity', `e-${i}`, v);
+      cache.update('summary', `s-${i}`, v);
     }
 
-    const results = cache.search(vec(1, 0, 0), 'entity', 5);
+    const results = cache.search(vec(1, 0, 0), 'summary', 5);
     assert.equal(results.length, 5);
   });
 
@@ -192,14 +190,12 @@ describe('VectorCache (unit, no pool)', () => {
     const cache = makeCache();
     cache.update('summary', 'shared-id', vec(1));
     cache.update('report', 'shared-id', vec(2));
-    cache.update('entity', 'shared-id', vec(3));
-    cache.update('entity', 'other', vec(4));
+    cache.update('report', 'other', vec(4));
 
     const removed = cache.prune(['shared-id']);
-    assert.equal(removed, 3);
+    assert.equal(removed, 2);
     assert.equal(cache.getSize().summaries, 0);
-    assert.equal(cache.getSize().reports, 0);
-    assert.equal(cache.getSize().entities, 1);
+    assert.equal(cache.getSize().reports, 1);
   });
 
   it('prune returns 0 for unknown IDs', () => {
@@ -214,7 +210,7 @@ describe('VectorCache (unit, no pool)', () => {
     const cache = makeCache();
     cache.update('unknown_type', 'x', vec(1));
     const size = cache.getSize();
-    assert.equal(size.summaries + size.reports + size.entities, 0);
+    assert.equal(size.summaries + size.reports, 0);
   });
 
   it('eviction kicks in after MAX_VECTORS inserts', () => {

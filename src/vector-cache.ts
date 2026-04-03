@@ -10,10 +10,10 @@ export interface SearchResult {
 
 export interface VectorCache {
   load(): Promise<void>;
-  search(query: Float32Array, type: 'summary' | 'report' | 'entity', limit?: number): SearchResult[];
+  search(query: Float32Array, type: 'summary' | 'report', limit?: number): SearchResult[];
   update(targetType: string, targetId: string, vector: Float32Array): void;
   prune(deletedIds: string[]): number;
-  getSize(): { summaries: number; reports: number; entities: number };
+  getSize(): { summaries: number; reports: number };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -36,7 +36,7 @@ function bytesToVector(buf: Buffer): Float32Array {
 
 // ── Cache ──────────────────────────────────────────────────────────────
 
-const SEARCHABLE_TYPES = ['summary', 'report', 'entity'] as const;
+const SEARCHABLE_TYPES = ['summary', 'report'] as const;
 type SearchableType = typeof SEARCHABLE_TYPES[number];
 
 /** Maximum vectors per type map. At 768 dims x 4 bytes = ~3KB/vector, 20K = ~60MB per map. */
@@ -66,20 +66,20 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
   const maps: Record<SearchableType, Map<string, Float32Array>> = {
     summary: new Map(),
     report: new Map(),
-    entity: new Map(),
   };
 
   function getMap(type: string): Map<string, Float32Array> | undefined {
-    if (type === 'summary' || type === 'report' || type === 'entity') {
+    if (type === 'summary' || type === 'report') {
       return maps[type];
     }
     return undefined;
   }
 
   async function loadType(type: SearchableType): Promise<number> {
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const result = await pool.query<{ target_id: string; vector: Buffer }>(
-      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at DESC LIMIT $2',
-      [type, MAX_VECTORS],
+      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 AND created_at >= $2 ORDER BY created_at DESC LIMIT $3',
+      [type, thirtyDaysAgo, MAX_VECTORS],
     );
 
     const map = maps[type];
@@ -109,7 +109,7 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
   function search(
     query: Float32Array,
-    type: 'summary' | 'report' | 'entity',
+    type: 'summary' | 'report',
     limit = 10,
   ): SearchResult[] {
     const map = maps[type];
@@ -152,11 +152,10 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
     return removed;
   }
 
-  function getSize(): { summaries: number; reports: number; entities: number } {
+  function getSize(): { summaries: number; reports: number } {
     return {
       summaries: maps.summary.size,
       reports: maps.report.size,
-      entities: maps.entity.size,
     };
   }
 

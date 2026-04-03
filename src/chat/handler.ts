@@ -202,12 +202,16 @@ export function createChatHandler(
       // Track translation token usage
       trackTokens(userId, Math.ceil(query.length / 4 + (translateResult.content?.length ?? 0) / 4));
       // Validate translation result — fall back to original on failure (D-022)
+      // Indonesian text is often significantly longer than its English translation,
+      // so use a generous 5x multiplier to avoid false rejections.
       const translated = translateResult.content?.trim();
-      if (translated && translated.length > 0 && translated.length < query.length * 3) {
+      if (translated && translated.length > 0 && translated.length < query.length * 5) {
         processedQuery = translated;
       } else {
-        log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, using original query');
-        // processedQuery stays as original query
+        log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, re-embedding original Indonesian query');
+        // Re-embed the original Indonesian query so semantic search still works.
+        // processedQuery stays as original query — the LLM and tools will handle it.
+        processedQuery = query;
       }
     }
 

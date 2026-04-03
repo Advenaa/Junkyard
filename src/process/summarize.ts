@@ -481,9 +481,11 @@ export function createSummarizer(
             ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length
             : null;
 
-        // g. Insert summary
+        // g. Insert summary + resolve entities atomically
+        // Summary is inserted first (entity_mentions reference summary_id),
+        // but if entity resolution fails the summary is rolled back to prevent orphans.
         const summaryId = ulid();
-        await insertSummary(pool, {
+        const summaryRow = {
           id: summaryId,
           source,
           sourceId,
@@ -494,18 +496,23 @@ export function createSummarizer(
           urgency: parsed.urgency,
           itemCount: chunk.length,
           createdAt: Date.now(),
-        });
+        };
 
-        // h. Resolve entities to knowledge layer
         if (parsed.entities.length > 0) {
+          await insertSummary(pool, summaryRow);
           try {
             await entityManager.resolveEntities(parsed.entities, source, summaryId);
           } catch (err: unknown) {
+            // Entity resolution failed — remove orphaned summary
+            await pool.query('DELETE FROM summaries WHERE id = $1', [summaryId]);
             log.error(
               { err, source, sourceId, summaryId, entityCount: parsed.entities.length },
-              'Entity resolution failed, summary was saved without entity persistence',
+              'Entity resolution failed, rolled back summary to prevent orphan',
             );
+            throw err;
           }
+        } else {
+          await insertSummary(pool, summaryRow);
         }
 
         chunkSummaryCount++;

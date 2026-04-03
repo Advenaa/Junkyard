@@ -74,7 +74,7 @@ program
     const entityManager = createEntityManager(pool, log, config, llm);
     const summarizer = createSummarizer(pool, log, config, llm, entityManager);
     const correlator = createCorrelator(pool, log);
-    const synthesizer = createSynthesizer(pool, log, config, llm);
+    const synthesizer = createSynthesizer(pool, log, config, llm, correlator);
     const pulse = createPulse(pool, log, config, llm);
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);

@@ -31,15 +31,23 @@ export function createDecayManager(pool: Pool, log: Logger): DecayManager {
       );
       const decayed = decayResult.rowCount ?? 0;
 
-      // Archive entities with negligible relevance not seen in 90 days
-      const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      // Archive entities with negligible relevance not seen in 90 days.
+      // Check both last_seen AND recent entity_mentions to avoid archiving
+      // entities that had recent activity but whose mentions were pruned by retention.
+      const cutoff = Date.now() - ARCHIVE_STALE_DAYS * 24 * 60 * 60 * 1000;
+      const recentMentionCutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       const archiveResult = await client.query(
         `UPDATE entities SET status = 'archived'
          WHERE status = 'active'
-           AND relevance < 0.01
-           AND last_seen < $1`,
-        [cutoff],
+           AND relevance < $1
+           AND last_seen < $2
+           AND NOT EXISTS (
+             SELECT 1 FROM entity_mentions em
+             WHERE em.entity_id = entities.id
+               AND em.created_at > $3
+           )`,
+        [ARCHIVE_THRESHOLD, cutoff, recentMentionCutoff],
       );
       const archived = archiveResult.rowCount ?? 0;
 
