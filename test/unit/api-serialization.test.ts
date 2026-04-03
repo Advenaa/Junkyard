@@ -318,3 +318,234 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// 6. SV-001 — toCamelCase guards __proto__/constructor/prototype keys
+// ---------------------------------------------------------------------------
+
+describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', () => {
+  it('toCamelCase body skips __proto__ key', () => {
+    const fnStart = source.indexOf('function toCamelCase');
+    assert.ok(fnStart !== -1);
+    const braceStart = source.indexOf('{', fnStart);
+    let depth = 0;
+    let fnEnd = -1;
+    for (let i = braceStart; i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      if (source[i] === '}') depth--;
+      if (depth === 0) { fnEnd = i; break; }
+    }
+    const fnBody = source.slice(fnStart, fnEnd + 1);
+    assert.ok(
+      fnBody.includes('__proto__'),
+      'toCamelCase must guard against __proto__ key (prototype pollution)',
+    );
+  });
+
+  it('toCamelCase body skips constructor key', () => {
+    const fnStart = source.indexOf('function toCamelCase');
+    const braceStart = source.indexOf('{', fnStart);
+    let depth = 0;
+    let fnEnd = -1;
+    for (let i = braceStart; i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      if (source[i] === '}') depth--;
+      if (depth === 0) { fnEnd = i; break; }
+    }
+    const fnBody = source.slice(fnStart, fnEnd + 1);
+    assert.ok(
+      fnBody.includes("'constructor'"),
+      'toCamelCase must guard against constructor key (prototype pollution)',
+    );
+  });
+
+  it('toCamelCase body skips prototype key', () => {
+    const fnStart = source.indexOf('function toCamelCase');
+    const braceStart = source.indexOf('{', fnStart);
+    let depth = 0;
+    let fnEnd = -1;
+    for (let i = braceStart; i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      if (source[i] === '}') depth--;
+      if (depth === 0) { fnEnd = i; break; }
+    }
+    const fnBody = source.slice(fnStart, fnEnd + 1);
+    assert.ok(
+      fnBody.includes("'prototype'"),
+      'toCamelCase must guard against prototype key (prototype pollution)',
+    );
+  });
+
+  it('toCamelCase uses continue to skip dangerous keys', () => {
+    const fnStart = source.indexOf('function toCamelCase');
+    const braceStart = source.indexOf('{', fnStart);
+    let depth = 0;
+    let fnEnd = -1;
+    for (let i = braceStart; i < source.length; i++) {
+      if (source[i] === '{') depth++;
+      if (source[i] === '}') depth--;
+      if (depth === 0) { fnEnd = i; break; }
+    }
+    const fnBody = source.slice(fnStart, fnEnd + 1);
+    assert.ok(
+      fnBody.includes('continue'),
+      'toCamelCase must use continue to skip __proto__/constructor/prototype keys',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. SV-004 — test-webhook pins fetch to resolved IP (DNS rebinding prevention)
+// ---------------------------------------------------------------------------
+
+describe('SV-004 — test-webhook DNS rebinding prevention (server.ts source)', () => {
+  it('test-webhook endpoint exists', () => {
+    assert.ok(
+      source.includes("'/api/v1/config/test-webhook'"),
+      'test-webhook endpoint must be defined',
+    );
+  });
+
+  it('test-webhook calls validateUrl before fetching', () => {
+    const whStart = source.indexOf("'/api/v1/config/test-webhook'");
+    assert.ok(whStart !== -1);
+    const handlerSlice = source.slice(whStart, whStart + 2000);
+    assert.ok(
+      handlerSlice.includes('validateUrl'),
+      'test-webhook must call validateUrl for SSRF protection',
+    );
+  });
+
+  it('test-webhook checks for resolvedIp from validateUrl', () => {
+    const whStart = source.indexOf("'/api/v1/config/test-webhook'");
+    const handlerSlice = source.slice(whStart, whStart + 2000);
+    assert.ok(
+      handlerSlice.includes('resolvedIp'),
+      'test-webhook must use resolvedIp from validateUrl result',
+    );
+  });
+
+  it('test-webhook does NOT use bare fetch(url) after validation — uses pinnedUrl', () => {
+    const whStart = source.indexOf("'/api/v1/config/test-webhook'");
+    const handlerSlice = source.slice(whStart, whStart + 2000);
+    // The fetch call should use pinnedUrl or fetchValidated, NOT the raw user-provided url
+    const fetchCalls = handlerSlice.match(/fetch\(\s*(\w+)/g) ?? [];
+    for (const call of fetchCalls) {
+      assert.ok(
+        !call.includes('fetch(url') && !call.includes('fetch( url'),
+        'test-webhook must NOT use bare fetch(url) — must pin to resolved IP to prevent DNS rebinding (TOCTOU)',
+      );
+    }
+  });
+
+  it('test-webhook constructs a pinnedUrl with the resolved IP', () => {
+    const whStart = source.indexOf("'/api/v1/config/test-webhook'");
+    const handlerSlice = source.slice(whStart, whStart + 2000);
+    assert.ok(
+      handlerSlice.includes('pinnedUrl'),
+      'test-webhook must construct a pinnedUrl that replaces hostname with the resolved IP',
+    );
+  });
+
+  it('test-webhook sets Host header to original hostname', () => {
+    const whStart = source.indexOf("'/api/v1/config/test-webhook'");
+    const handlerSlice = source.slice(whStart, whStart + 2000);
+    assert.ok(
+      handlerSlice.includes('Host') && handlerSlice.includes('parsed.host'),
+      'test-webhook must set Host header to original hostname when fetching via pinned IP',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. SV-005 — PATCH /users/:discordId validates discordId as snowflake
+// ---------------------------------------------------------------------------
+
+describe('SV-005 — PATCH /users/:discordId snowflake validation (server.ts source)', () => {
+  it('PATCH /users/:discordId endpoint exists', () => {
+    assert.ok(
+      source.includes("'/api/v1/users/:discordId'"),
+      'PATCH /users/:discordId endpoint must be defined',
+    );
+  });
+
+  it('discordId param has pattern constraint for snowflake format', () => {
+    const patchStart = source.indexOf("'/api/v1/users/:discordId'");
+    assert.ok(patchStart !== -1);
+    const handlerSlice = source.slice(patchStart, patchStart + 800);
+    assert.ok(
+      handlerSlice.includes('pattern'),
+      'PATCH /users/:discordId must define a pattern on the discordId param schema',
+    );
+  });
+
+  it('discordId pattern matches exactly ^\\d{17,20}$', () => {
+    const patchStart = source.indexOf("'/api/v1/users/:discordId'");
+    const handlerSlice = source.slice(patchStart, patchStart + 800);
+    // The pattern in source is double-escaped: '^\\\\d{17,20}$'
+    assert.ok(
+      handlerSlice.includes("'^\\\\d{17,20}$'"),
+      'discordId pattern must be ^\\d{17,20}$ (Discord snowflake: 17-20 digit string)',
+    );
+  });
+
+  it('discordId is typed as string in params schema', () => {
+    const patchStart = source.indexOf("'/api/v1/users/:discordId'");
+    const handlerSlice = source.slice(patchStart, patchStart + 800);
+    assert.ok(
+      handlerSlice.includes("discordId: { type: 'string'"),
+      'discordId param must be typed as string with pattern validation',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. SV-010 — GET /status uses AT TIME ZONE for configured timezone
+// ---------------------------------------------------------------------------
+
+describe('SV-010 — GET /status timezone-aware day boundary (server.ts source)', () => {
+  it('GET /status endpoint exists', () => {
+    assert.ok(
+      source.includes("'/api/v1/status'"),
+      'GET /status endpoint must be defined',
+    );
+  });
+
+  it('GET /status fetches timezone from getAppConfig', () => {
+    const statusStart = source.indexOf("'/api/v1/status'");
+    assert.ok(statusStart !== -1);
+    const handlerSlice = source.slice(statusStart, statusStart + 1200);
+    assert.ok(
+      handlerSlice.includes('getAppConfig') && handlerSlice.includes('timezone'),
+      'GET /status must fetch timezone via getAppConfig',
+    );
+  });
+
+  it('GET /status SQL uses AT TIME ZONE for day boundary', () => {
+    const statusStart = source.indexOf("'/api/v1/status'");
+    const handlerSlice = source.slice(statusStart, statusStart + 1200);
+    assert.ok(
+      handlerSlice.includes('AT TIME ZONE'),
+      'GET /status SQL must use AT TIME ZONE for timezone-aware day boundary calculation',
+    );
+  });
+
+  it('GET /status passes timezone as a SQL parameter (not interpolated)', () => {
+    const statusStart = source.indexOf("'/api/v1/status'");
+    const handlerSlice = source.slice(statusStart, statusStart + 1200);
+    // Should pass timezone as $1 parameter, not string interpolation
+    assert.ok(
+      handlerSlice.includes('[timezone]'),
+      'GET /status must pass timezone as a parameterized SQL value to prevent injection',
+    );
+  });
+
+  it('GET /status defaults timezone to Asia/Jakarta', () => {
+    const statusStart = source.indexOf("'/api/v1/status'");
+    const handlerSlice = source.slice(statusStart, statusStart + 1200);
+    assert.ok(
+      handlerSlice.includes('Asia/Jakarta'),
+      'GET /status must default timezone to Asia/Jakarta when not configured',
+    );
+  });
+});
