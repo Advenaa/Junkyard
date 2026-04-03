@@ -18,6 +18,13 @@ interface EmbedTarget {
   type: 'item' | 'summary' | 'report';
 }
 
+// ── Allowlist for table/column interpolation (EM-024) ─────────────────
+
+const ALLOWED_TABLES: Record<string, string[]> = {
+  summaries: ['body'],
+  reports: ['body'],
+};
+
 // ── Pipeline ──────────────────────────────────────────────────────────
 
 export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder, cache: VectorCache) {
@@ -28,6 +35,11 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
     tableName: string,
     textColumn: string,
   ): Promise<{ id: string; text: string }[]> {
+    const allowedColumns = ALLOWED_TABLES[tableName];
+    if (!allowedColumns || !allowedColumns.includes(textColumn)) {
+      throw new Error(`fetchUnembedded: invalid table/column: ${tableName}.${textColumn}`);
+    }
+
     const query = `
       SELECT t.id, t.${textColumn} AS text
       FROM ${tableName} t

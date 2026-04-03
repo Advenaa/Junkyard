@@ -237,10 +237,21 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
 
         chunksCompleted += 1;
 
-        for (let j = 0; j < batchResult.embeddings.length; j++) {
-          const vector = new Float32Array(batchResult.embeddings[j].values);
-          results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
-          totalInputTokens += estimateTokens(chunk[j]);
+        if (batchResult.embeddings.length !== chunk.length) {
+          log.warn({
+            expected: chunk.length,
+            got: batchResult.embeddings.length,
+          }, 'embed: batch result count mismatch — some items may have been filtered');
+        }
+
+        for (let j = 0; j < chunk.length; j++) {
+          if (j < batchResult.embeddings.length) {
+            const vector = new Float32Array(batchResult.embeddings[j].values);
+            results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
+            totalInputTokens += estimateTokens(chunk[j]);
+          } else {
+            results.push(null);
+          }
         }
       }
     } catch (err) {

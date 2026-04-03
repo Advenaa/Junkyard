@@ -87,14 +87,17 @@ export function parseModel(model: string): { provider: string; modelId: string }
 
 export function extractHttpStatus(err: unknown): number | null {
   if (err instanceof Error) {
-    const msg = err.message;
-    const match = /\b(4\d{2}|5\d{2})\b/.exec(msg);
-    if (match) return parseInt(match[1], 10);
-
+    // Check structured properties first — more reliable than regex
     const record = err as unknown as Record<string, unknown>;
     if (typeof record['status'] === 'number') return record['status'];
     if (typeof record['statusCode'] === 'number')
       return record['statusCode'] as number;
+
+    // Fallback: extract from message, rejecting word-char suffixes
+    // like "432ms" or "500MB"
+    const msg = err.message;
+    const match = /\b(4\d{2}|5\d{2})(?!\w)/.exec(msg);
+    if (match) return parseInt(match[1], 10);
   }
   return null;
 }
@@ -397,8 +400,9 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
     s = s.replace(/[\u202A-\u202E\u2066-\u2069]/g, '');
     // NFKC normalize
     s = s.normalize('NFKC');
-    // Escape angle brackets
-    s = s.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Escape ampersands first (so pre-existing &lt; becomes &amp;lt;),
+    // then angle brackets
+    s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return s;
   }
 

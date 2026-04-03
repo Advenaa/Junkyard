@@ -115,11 +115,35 @@ export function createPreSummarizer(
   llm: LLMCaller,
 ) {
   async function run(): Promise<number> {
+    // PS-020: Atomically claim items as 'processing' to prevent race with main summarize pipeline
+    // PS-022: ORDER BY created_at ASC for deterministic processing order
+    // PS-021: AND retry_count < 3 to stop retrying items that repeatedly fail parsing
     const { rows } = await pool.query<Item>(
-      `SELECT id, source, content FROM items WHERE status = 'ready' AND source IN ('rss', 'news') AND LENGTH(content) > 4000 AND content_anchor IS NULL LIMIT 100`,
+      `UPDATE items SET status = 'processing'
+       WHERE id IN (
+         SELECT id FROM items
+         WHERE status = 'ready' AND source IN ('rss', 'news')
+         AND LENGTH(content) > 4000 AND content_anchor IS NULL
+         AND retry_count < 3
+         ORDER BY created_at ASC
+         LIMIT 100
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING id, source, content`,
     );
 
     const eligible = rows.filter(item => !shouldSkip(item));
+
+    // Set skipped items (that were claimed) back to 'ready'
+    const skippedIds = rows
+      .filter(item => shouldSkip(item))
+      .map(item => item.id);
+    if (skippedIds.length > 0) {
+      await pool.query(
+        `UPDATE items SET status = 'ready' WHERE id = ANY($1::text[])`,
+        [skippedIds],
+      );
+    }
 
     if (eligible.length === 0) {
       log.info('pre-summarize: no eligible items');
@@ -140,7 +164,7 @@ export function createPreSummarizer(
           model: config.models.haiku,
           system: systemPrompt,
           messages: [{ role: 'user' as const, content: batchedContent }],
-          maxTokens: 300 * batch.length,
+          maxTokens: 500 * batch.length,
           stage: 'pre-summarize',
         });
 
@@ -150,6 +174,7 @@ export function createPreSummarizer(
         const updateIds: string[] = [];
         const updateContents: string[] = [];
         const updateAnchors: string[] = [];
+        const failedIds: string[] = [];
         for (let i = 0; i < batch.length; i++) {
           const summary = summaries[i];
           if (summary) {
@@ -157,6 +182,7 @@ export function createPreSummarizer(
             updateContents.push(summary);
             updateAnchors.push(batch[i].content.slice(0, 800));
           } else {
+            failedIds.push(batch[i].id);
             log.warn(
               `pre-summarize: parse failure for item ${batch[i].id}, keeping original`,
             );
@@ -165,16 +191,30 @@ export function createPreSummarizer(
 
         if (updateIds.length > 0) {
           await pool.query(
-            `UPDATE items SET content = data.content, content_anchor = data.anchor
+            `UPDATE items SET content = data.content, content_anchor = data.anchor, status = 'ready'
              FROM (SELECT unnest($1::text[]) AS id, unnest($2::text[]) AS content, unnest($3::text[]) AS anchor) AS data
              WHERE items.id = data.id`,
             [updateIds, updateContents, updateAnchors],
           );
           compressed += updateIds.length;
         }
+
+        // PS-021: Increment retry_count for failed parses and set back to 'ready'
+        if (failedIds.length > 0) {
+          await pool.query(
+            `UPDATE items SET retry_count = retry_count + 1, status = 'ready' WHERE id = ANY($1::text[])`,
+            [failedIds],
+          );
+        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         log.error(`pre-summarize: LLM call failed for batch, keeping originals: ${message}`);
+        // PS-020: On LLM error, release all batch items back to 'ready'
+        const batchIds = batch.map(item => item.id);
+        await pool.query(
+          `UPDATE items SET status = 'ready' WHERE id = ANY($1::text[])`,
+          [batchIds],
+        );
       }
     }
 
