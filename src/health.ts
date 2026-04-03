@@ -1,3 +1,4 @@
+import net from 'node:net';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 import type { Config } from './config.js';
@@ -253,10 +254,17 @@ export function createHealthMonitor(
     if (!config.alertWebhookUrl) return;
 
     const validation = await validateUrl(config.alertWebhookUrl);
-    if (!validation.valid) {
+    if (!validation.valid || !validation.resolvedIp) {
       log.error({ reason: validation.reason }, 'Alert webhook URL failed SSRF validation');
       return;
     }
+
+    // Pin to resolved IP to prevent DNS rebinding
+    const parsed = new URL(config.alertWebhookUrl);
+    const pinnedUrl = new URL(config.alertWebhookUrl);
+    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp)
+      ? `[${validation.resolvedIp}]`
+      : validation.resolvedIp;
 
     const body = {
       embeds: [
@@ -271,9 +279,9 @@ export function createHealthMonitor(
     };
 
     try {
-      await fetch(config.alertWebhookUrl, {
+      await fetch(pinnedUrl.toString(), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Host': parsed.host },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(10_000),
       });
