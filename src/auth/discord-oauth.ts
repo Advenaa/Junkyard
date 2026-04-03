@@ -34,6 +34,9 @@ export function registerOAuthRoutes(
   sessionManager: ReturnType<typeof createSessionManager>,
 ): void {
 
+  // Track consumed OAuth states to prevent replay (AU-007)
+  const consumedStates = new Set<string>();
+
   // --- GET /api/v1/auth/discord ---
   app.get('/api/v1/auth/discord', async (request, reply) => {
     if (!config.discordClientId || !config.publicUrl) {
@@ -43,6 +46,9 @@ export function registerOAuthRoutes(
     }
 
     const state = crypto.randomBytes(32).toString('hex');
+
+    // Auto-expire after 10 minutes
+    setTimeout(() => consumedStates.delete(state), 10 * 60 * 1000).unref();
 
     reply.setCookie('oauth_state', state, {
       httpOnly: true,
@@ -96,6 +102,12 @@ export function registerOAuthRoutes(
       log.warn('OAuth state mismatch — possible CSRF');
       return reply.status(403).send({ error: 'Invalid OAuth state' });
     }
+
+    if (consumedStates.has(state)) {
+      log.warn({ state: state.slice(0, 8) }, 'OAuth state already consumed (replay attempt)');
+      return reply.status(403).send({ error: 'OAuth state already used' });
+    }
+    consumedStates.add(state);
 
     if (!code) {
       return reply.status(400).send({ error: 'Missing authorization code' });

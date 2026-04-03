@@ -18,14 +18,23 @@ import type { Config } from '../../src/config.js';
 function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []) {
   let callIndex = 0;
   const calls: Array<{ text: string; values: unknown[] }> = [];
+  const queryFn = async (text: string, values?: unknown[]) => {
+    calls.push({ text, values: values ?? [] });
+    // Skip BEGIN/COMMIT/ROLLBACK/FOR UPDATE — return empty for transaction control
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim()) || text.includes('FOR UPDATE')) {
+      return { rows: [], rowCount: 0 };
+    }
+    const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
+    callIndex++;
+    return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
+  };
   return {
     calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-      const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
-      callIndex++;
-      return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
-    },
+    query: queryFn,
+    connect: async () => ({
+      query: queryFn,
+      release: () => {},
+    }),
   };
 }
 
@@ -157,11 +166,11 @@ describe('createSessionManager', () => {
       await mgr.create('user-1', '127.0.0.1', 'TestAgent');
       const after = Date.now();
 
-      // Second query is the INSERT
-      const insertCall = pool.calls[1]!;
-      assert.ok(insertCall.text.includes('INSERT INTO sessions'));
+      // Find the INSERT query (position varies due to transaction control queries)
+      const insertCall = pool.calls.find(c => c.text.includes('INSERT INTO sessions'));
+      assert.ok(insertCall, 'should have INSERT INTO sessions query');
 
-      const expiresAt = insertCall.values[4] as number;
+      const expiresAt = insertCall!.values[4] as number;
       const thirtyDaysMs = SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
       assert.ok(expiresAt >= before + thirtyDaysMs);
       assert.ok(expiresAt <= after + thirtyDaysMs);
@@ -177,11 +186,12 @@ describe('createSessionManager', () => {
       const mgr = createSessionManager(pool as never, silentLog);
       await mgr.create('user-1', '127.0.0.1', 'TestAgent');
 
-      // Should have 3 queries: SELECT, DELETE, INSERT
-      assert.strictEqual(pool.calls.length, 3);
-      const deleteCall = pool.calls[1]!;
-      assert.ok(deleteCall.text.includes('DELETE FROM sessions'));
-      assert.deepStrictEqual(deleteCall.values, [['old-1', 'old-2']]);
+      // Verify DELETE and INSERT queries exist (transaction adds BEGIN/COMMIT/FOR UPDATE)
+      const deleteCall = pool.calls.find(c => c.text.includes('DELETE FROM sessions'));
+      assert.ok(deleteCall, 'should have DELETE query');
+      assert.deepStrictEqual(deleteCall!.values, [['old-1', 'old-2']]);
+      const insertCall = pool.calls.find(c => c.text.includes('INSERT INTO sessions'));
+      assert.ok(insertCall, 'should have INSERT query');
     });
   });
 

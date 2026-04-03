@@ -58,32 +58,52 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       const now = Date.now();
       const expiresAt =
         now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
+      const normalizedUA = normalizeUA(userAgent);
 
-      // Enforce max sessions per user — delete oldest if exceeded
-      const existing = await pool.query<{ id: string }>(
-        `SELECT id FROM sessions
-         WHERE discord_id = $1
-         ORDER BY created_at DESC
-         OFFSET $2`,
-        [discordId, MAX_SESSIONS_PER_USER - 1],
-      );
+      // Wrap eviction + insert in a transaction with FOR UPDATE lock
+      // to prevent concurrent logins exceeding MAX_SESSIONS_PER_USER (AU-010)
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      if (existing.rows.length > 0) {
-        const idsToDelete = existing.rows.map((r) => r.id);
-        await pool.query(`DELETE FROM sessions WHERE id = ANY($1)`, [
-          idsToDelete,
-        ]);
-        log.info(
-          { discordId, count: idsToDelete.length },
-          'Evicted oldest sessions to enforce limit',
+        // Lock user's sessions to prevent concurrent overflow
+        await client.query(
+          'SELECT id FROM sessions WHERE discord_id = $1 FOR UPDATE',
+          [discordId],
         );
-      }
 
-      await pool.query(
-        `INSERT INTO sessions (id, discord_id, ip_address, user_agent, expires_at, last_refreshed_at, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $6)`,
-        [sessionId, discordId, ip, userAgent, expiresAt, now],
-      );
+        // Evict oldest sessions if at limit
+        const existing = await client.query<{ id: string }>(
+          `SELECT id FROM sessions WHERE discord_id = $1 ORDER BY created_at DESC OFFSET $2`,
+          [discordId, MAX_SESSIONS_PER_USER - 1],
+        );
+
+        if (existing.rows.length > 0) {
+          const idsToDelete = existing.rows.map((r) => r.id);
+          await client.query(
+            'DELETE FROM sessions WHERE id = ANY($1)',
+            [idsToDelete],
+          );
+          log.info(
+            { discordId, count: idsToDelete.length },
+            'Evicted oldest sessions to enforce limit',
+          );
+        }
+
+        // Insert new session
+        await client.query(
+          `INSERT INTO sessions (id, discord_id, ip_address, user_agent, expires_at, last_refreshed_at, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $6)`,
+          [sessionId, discordId, ip, normalizedUA, expiresAt, now],
+        );
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
 
       log.info({ discordId, sessionId: logSessionId(sessionId) }, 'Session created');
       return sessionId;

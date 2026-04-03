@@ -125,6 +125,8 @@ export function createChatHandler(
   const tools = createChatTools(pool, log, vectorCache, embedder, llm);
 
   // Per-user daily token budget tracking (D-020)
+  // In-memory — resets on process restart. Acceptable for single-process deploy (pm2/systemd).
+  // Budget resets daily at midnight UTC regardless. A restart mid-day gives users a fresh budget.
   const userTokens = new Map<string, { count: number; day: string }>();
   const MAX_DAILY_TOKENS_PER_USER = 100_000; // ~$1.50/day/user at Sonnet pricing
 
