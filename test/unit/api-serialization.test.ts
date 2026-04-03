@@ -105,10 +105,16 @@ describe('toCamelCase — unit', () => {
 // 2. Structural tests — verify toCamelCase exists and is applied in server.ts
 // ---------------------------------------------------------------------------
 
+const QUERIES_SRC = resolve(__dirname, '../../src/db/queries.ts');
+
 let source: string;
+let queriesSource: string;
 
 before(async () => {
-  source = await readFile(SERVER_SRC, 'utf-8');
+  [source, queriesSource] = await Promise.all([
+    readFile(SERVER_SRC, 'utf-8'),
+    readFile(QUERIES_SRC, 'utf-8'),
+  ]);
 });
 
 describe('toCamelCase — structural (server.ts source)', () => {
@@ -170,6 +176,145 @@ describe('toCamelCase — structural (server.ts source)', () => {
     assert.ok(
       handlerSlice.includes('.map(') && handlerSlice.includes('toCamelCase'),
       'GET /api/v1/reports should map rows through toCamelCase',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. CD-012 — getAllSourcesWithState uses LEFT JOIN, returns all sources
+// ---------------------------------------------------------------------------
+
+describe('CD-012 — getAllSourcesWithState (queries.ts source)', () => {
+  it('exports a function named getAllSourcesWithState', () => {
+    assert.ok(
+      queriesSource.includes('export async function getAllSourcesWithState'),
+      'queries.ts must export getAllSourcesWithState',
+    );
+  });
+
+  it('uses LEFT JOIN to join sources with source_state', () => {
+    // Extract the function body
+    const fnStart = queriesSource.indexOf('function getAllSourcesWithState');
+    assert.ok(fnStart !== -1, 'getAllSourcesWithState must exist');
+    const fnSlice = queriesSource.slice(fnStart, fnStart + 600);
+    assert.ok(
+      /LEFT\s+JOIN\s+source_state/i.test(fnSlice),
+      'getAllSourcesWithState must use LEFT JOIN source_state so sources without state are still returned',
+    );
+  });
+
+  it('does NOT filter by enabled = true', () => {
+    const fnStart = queriesSource.indexOf('function getAllSourcesWithState');
+    assert.ok(fnStart !== -1);
+    const fnSlice = queriesSource.slice(fnStart, fnStart + 600);
+    assert.ok(
+      !fnSlice.includes('WHERE enabled = true') && !fnSlice.includes('WHERE enabled=true'),
+      'getAllSourcesWithState must NOT filter WHERE enabled = true — all sources should be visible',
+    );
+  });
+
+  it('server.ts sources endpoint calls getAllSourcesWithState (not getSources)', () => {
+    const sourcesEndpoint = source.indexOf("'/api/v1/sources'");
+    assert.ok(sourcesEndpoint !== -1, 'sources endpoint must exist');
+    // Look at the GET handler (first occurrence)
+    const handlerSlice = source.slice(sourcesEndpoint, sourcesEndpoint + 400);
+    assert.ok(
+      handlerSlice.includes('getAllSourcesWithState'),
+      'GET /api/v1/sources must call getAllSourcesWithState, not getSources',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. CD-013 — feed endpoint parses attachments JSON
+// ---------------------------------------------------------------------------
+
+describe('CD-013 — feed endpoint parses attachments (server.ts source)', () => {
+  it('feed endpoint exists at /api/v1/feed/:sourceId', () => {
+    assert.ok(
+      source.includes("'/api/v1/feed/:sourceId'"),
+      'feed endpoint must be defined',
+    );
+  });
+
+  it('feed response handling includes JSON.parse for attachments', () => {
+    const feedStart = source.indexOf("'/api/v1/feed/:sourceId'");
+    assert.ok(feedStart !== -1);
+    // Scan forward to find the handler body (up to next app. route or end)
+    const feedSlice = source.slice(feedStart, feedStart + 1500);
+    assert.ok(
+      feedSlice.includes('JSON.parse') && feedSlice.includes('attachments'),
+      'feed endpoint must JSON.parse the attachments column',
+    );
+  });
+
+  it('defaults null/undefined attachments to an empty array', () => {
+    const feedStart = source.indexOf("'/api/v1/feed/:sourceId'");
+    assert.ok(feedStart !== -1);
+    const feedSlice = source.slice(feedStart, feedStart + 1500);
+    // Should have a fallback to [] for null attachments — e.g. ?? [] or || []
+    assert.ok(
+      feedSlice.includes('[]'),
+      'feed endpoint must default null attachments to an empty array ([])',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. CD-014 — reports/:id endpoint parses body JSON
+// ---------------------------------------------------------------------------
+
+describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
+  it('reports/:id endpoint exists', () => {
+    assert.ok(
+      source.includes("'/api/v1/reports/:id'"),
+      'reports/:id endpoint must be defined',
+    );
+  });
+
+  it('parses the report body as JSON', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    assert.ok(reportIdStart !== -1);
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(
+      handlerSlice.includes('JSON.parse') && handlerSlice.includes('body'),
+      'reports/:id must JSON.parse the body column',
+    );
+  });
+
+  it('extracts keyEvents from parsed body', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(
+      handlerSlice.includes('keyEvents'),
+      'reports/:id must extract keyEvents from the parsed body',
+    );
+  });
+
+  it('extracts entitySentiment from parsed body', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(
+      handlerSlice.includes('entitySentiment'),
+      'reports/:id must extract entitySentiment from the parsed body',
+    );
+  });
+
+  it('extracts sections from parsed body', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(
+      handlerSlice.includes('sections'),
+      'reports/:id must extract sections from the parsed body',
+    );
+  });
+
+  it('wraps JSON.parse in a try/catch for invalid body JSON', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(
+      handlerSlice.includes('try') && handlerSlice.includes('catch'),
+      'reports/:id must wrap body JSON.parse in try/catch to handle invalid JSON',
     );
   });
 });

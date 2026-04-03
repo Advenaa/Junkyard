@@ -296,9 +296,29 @@ export async function dailyReportExists(pool: Pool, date: string): Promise<boole
 
 // ── Sources ─────────────────────────────────────────────────────────────
 
+export interface SourceWithState extends SourceRow {
+  last_fetched_at: number | null;
+  last_id: string | null;
+  error_count: number | null;
+  last_error: string | null;
+  state_status: string | null;
+}
+
+/** Scheduler-only: returns enabled sources for polling. */
 export async function getSources(pool: Pool): Promise<SourceRow[]> {
   const { rows } = await pool.query<SourceRow>(
     `SELECT * FROM sources WHERE enabled = true`,
+  );
+  return rows;
+}
+
+/** Admin dashboard: returns ALL sources (including disabled) with source_state. */
+export async function getAllSourcesWithState(pool: Pool): Promise<SourceWithState[]> {
+  const { rows } = await pool.query<SourceWithState>(
+    `SELECT s.*, ss.last_fetched_at, ss.last_id, ss.error_count, ss.last_error, ss.status AS state_status
+     FROM sources s
+     LEFT JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
+     ORDER BY s.source, s.source_id`,
   );
   return rows;
 }

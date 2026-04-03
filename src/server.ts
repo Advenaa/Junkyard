@@ -13,6 +13,7 @@ import { requireAuth, requireAdmin } from './auth/middleware.js';
 import { createSessionManager } from './auth/sessions.js';
 import {
   getSources,
+  getAllSourcesWithState,
   insertSource,
   getAppConfig,
   setAppConfig,
@@ -145,12 +146,24 @@ export async function createServer(
     if (rows.length === 0) {
       return reply.code(404).send({ error: 'Report not found' });
     }
-    return reply.send({ report: toCamelCase(rows[0] as unknown as Record<string, unknown>) });
+    const report = toCamelCase<Record<string, unknown>>(rows[0] as unknown as Record<string, unknown>);
+    // Parse body JSON to extract nested fields for the frontend
+    if (typeof report.body === 'string') {
+      try {
+        const parsed = JSON.parse(report.body) as Record<string, unknown>;
+        report.keyEvents = (parsed.keyEvents ?? parsed.key_events ?? []) as unknown[];
+        report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
+        report.sections = (parsed.sections ?? []) as unknown[];
+      } catch {
+        // body is not valid JSON — leave it as-is
+      }
+    }
+    return reply.send({ report });
   });
 
   // --- Sources ---
   app.get('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
-    const sources = await getSources(pool);
+    const sources = await getAllSourcesWithState(pool);
     return { sources: sources.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
@@ -282,7 +295,21 @@ export async function createServer(
     }
 
     const { rows: items } = await pool.query<ItemRow>(sql, params);
-    return { items: items.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
+    const parsed = items.map(r => {
+      const camelRow = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
+      // Parse attachments JSON string to array
+      if (typeof camelRow.attachments === 'string') {
+        try {
+          camelRow.attachments = JSON.parse(camelRow.attachments);
+        } catch {
+          camelRow.attachments = [];
+        }
+      } else if (camelRow.attachments === null || camelRow.attachments === undefined) {
+        camelRow.attachments = [];
+      }
+      return camelRow;
+    });
+    return { items: parsed };
   });
 
   app.post('/api/v1/chat', {
