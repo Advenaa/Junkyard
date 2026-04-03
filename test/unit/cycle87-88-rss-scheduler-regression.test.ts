@@ -1,0 +1,303 @@
+/**
+ * Structural regression tests for cycle 87-88 RSS, scheduler, and source toggle fixes.
+ *
+ * RS-010: RSS feed body capped at 5 MB (Content-Length + body length checks)
+ * RS-011: Items per poll capped at 50
+ * RS-012: RSS feed URLs validated at source creation
+ * TM-002: Pulse/health crons use configured timezone
+ * CR-001: PATCH /sources returns 409 for halted sources
+ * CR-002: Dashboard toggle uses stateStatus, not bare s.enabled
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+function readSrc(relPath: string): string {
+  return readFileSync(path.join(ROOT, relPath), 'utf-8');
+}
+
+// ===========================================================================
+// RS-010: Feed body capped at 5 MB
+// ===========================================================================
+
+describe('RS-010: RSS feed body capped at 5 MB', () => {
+  const src = readSrc('src/ingest/rss.ts');
+
+  it('defines MAX_FEED_BYTES constant', () => {
+    assert.match(
+      src,
+      /const\s+MAX_FEED_BYTES\s*=\s*5\s*\*\s*1024\s*\*\s*1024/,
+      'MAX_FEED_BYTES must be defined as 5 * 1024 * 1024',
+    );
+  });
+
+  it('checks Content-Length header before reading body', () => {
+    const pollFnStart = src.indexOf('async function pollFeed');
+    assert.ok(pollFnStart !== -1, 'pollFeed must exist');
+    const pollFnBody = src.slice(pollFnStart);
+
+    // Content-Length check must appear before .text()
+    const contentLengthCheck = pollFnBody.indexOf('contentLength > MAX_FEED_BYTES');
+    const textCall = pollFnBody.indexOf('feedResponse.text()');
+    assert.ok(contentLengthCheck !== -1, 'Must check contentLength against MAX_FEED_BYTES');
+    assert.ok(textCall !== -1, 'Must call feedResponse.text()');
+    assert.ok(
+      contentLengthCheck < textCall,
+      'Content-Length check must happen before reading body with .text()',
+    );
+  });
+
+  it('checks body length after reading text', () => {
+    const pollFnStart = src.indexOf('async function pollFeed');
+    const pollFnBody = src.slice(pollFnStart);
+
+    const textCall = pollFnBody.indexOf('feedResponse.text()');
+    const bodyLengthCheck = pollFnBody.indexOf('feedXml.length > MAX_FEED_BYTES');
+    assert.ok(bodyLengthCheck !== -1, 'Must check feedXml.length against MAX_FEED_BYTES');
+    assert.ok(
+      bodyLengthCheck > textCall,
+      'Body length check must happen after .text() call',
+    );
+  });
+
+  it('returns early with empty items when feed is too large', () => {
+    // Both checks should return { items: [], lastId }
+    const matches = src.match(/return\s*\{\s*items\s*:\s*\[\]\s*,\s*lastId\s*\}/g);
+    assert.ok(matches && matches.length >= 2, 'Must have at least 2 early returns with empty items for size checks');
+  });
+});
+
+// ===========================================================================
+// RS-011: Items per poll capped at 50
+// ===========================================================================
+
+describe('RS-011: Items per poll capped at 50', () => {
+  const src = readSrc('src/ingest/rss.ts');
+
+  it('defines MAX_ITEMS_PER_POLL constant as 50', () => {
+    assert.match(
+      src,
+      /const\s+MAX_ITEMS_PER_POLL\s*=\s*50/,
+      'MAX_ITEMS_PER_POLL must be defined as 50',
+    );
+  });
+
+  it('compares filtered length against MAX_ITEMS_PER_POLL', () => {
+    assert.match(
+      src,
+      /filtered\.length\s*>\s*MAX_ITEMS_PER_POLL/,
+      'Must check filtered.length > MAX_ITEMS_PER_POLL',
+    );
+  });
+
+  it('slices to keep newest items using .slice(-MAX_ITEMS_PER_POLL)', () => {
+    assert.match(
+      src,
+      /filtered\s*=\s*filtered\.slice\(\s*-MAX_ITEMS_PER_POLL\s*\)/,
+      'Must reassign filtered to filtered.slice(-MAX_ITEMS_PER_POLL) to keep newest',
+    );
+  });
+});
+
+// ===========================================================================
+// RS-012: RSS feed URLs validated at source creation
+// ===========================================================================
+
+describe('RS-012: RSS feed URLs validated at POST /sources', () => {
+  const src = readSrc('src/server.ts');
+
+  it('imports validateUrl from url-validator', () => {
+    assert.match(
+      src,
+      /import\s*\{[^}]*validateUrl[^}]*\}\s*from\s*['"]\.\/url-validator/,
+      'server.ts must import validateUrl from url-validator',
+    );
+  });
+
+  it('POST /sources handler checks source === rss', () => {
+    const postSourcesStart = src.indexOf("app.post('/api/v1/sources'");
+    assert.ok(postSourcesStart !== -1, 'POST /api/v1/sources route must exist');
+
+    const handlerBody = src.slice(postSourcesStart, postSourcesStart + 1500);
+    assert.ok(
+      handlerBody.includes("source === 'rss'"),
+      'POST /sources handler must check if source is rss',
+    );
+  });
+
+  it('calls validateUrl on RSS sourceId', () => {
+    const postSourcesStart = src.indexOf("app.post('/api/v1/sources'");
+    const handlerBody = src.slice(postSourcesStart, postSourcesStart + 1500);
+
+    assert.ok(
+      handlerBody.includes('validateUrl(sourceId)'),
+      'POST /sources handler must call validateUrl(sourceId) for RSS sources',
+    );
+  });
+
+  it('returns 400 for invalid RSS feed URLs', () => {
+    const postSourcesStart = src.indexOf("app.post('/api/v1/sources'");
+    const handlerBody = src.slice(postSourcesStart, postSourcesStart + 1500);
+
+    assert.ok(
+      handlerBody.includes('400') && handlerBody.includes('Invalid RSS feed URL'),
+      'Must return 400 with descriptive error for invalid RSS URLs',
+    );
+  });
+});
+
+// ===========================================================================
+// TM-002: Pulse/health crons use configured timezone
+// ===========================================================================
+
+describe('TM-002: Pulse/health crons use configured timezone', () => {
+  const src = readSrc('src/scheduler.ts');
+
+  it('market-pulse register call includes timezone in options', () => {
+    const pulseRegister = src.indexOf("register('market-pulse'");
+    assert.ok(pulseRegister !== -1, "register('market-pulse', ...) must exist");
+
+    const callEnd = src.indexOf(');', pulseRegister);
+    const callStr = src.slice(pulseRegister, callEnd + 2);
+
+    assert.ok(
+      callStr.includes('timezone'),
+      'market-pulse register call must include timezone in options',
+    );
+  });
+
+  it('health-monitor register call includes timezone in options', () => {
+    const healthRegister = src.indexOf("register('health-monitor'");
+    assert.ok(healthRegister !== -1, "register('health-monitor', ...) must exist");
+
+    const callEnd = src.indexOf(');', healthRegister);
+    const callStr = src.slice(healthRegister, callEnd + 2);
+
+    assert.ok(
+      callStr.includes('timezone'),
+      'health-monitor register call must include timezone in options',
+    );
+  });
+
+  it('timezone is fetched from app_config before registering cron jobs', () => {
+    assert.match(
+      src,
+      /getAppConfig\s*\(\s*pool\s*,\s*['"]timezone['"]\s*\)/,
+      "Must fetch timezone from app_config via getAppConfig(pool, 'timezone')",
+    );
+  });
+
+  it('timezone defaults to Asia/Jakarta', () => {
+    assert.match(
+      src,
+      /timezone[^;]*\?\?\s*['"]Asia\/Jakarta['"]/,
+      'timezone must default to Asia/Jakarta',
+    );
+  });
+});
+
+// ===========================================================================
+// CR-001: PATCH /sources returns 409 for halted sources
+// ===========================================================================
+
+describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
+  const src = readSrc('src/server.ts');
+
+  it('PATCH /sources handler exists', () => {
+    assert.ok(
+      src.includes("app.patch('/api/v1/sources/:source/:sourceId'"),
+      'PATCH /api/v1/sources/:source/:sourceId route must exist',
+    );
+  });
+
+  it('checks for halted status', () => {
+    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    assert.ok(patchStart !== -1);
+
+    const handlerBody = src.slice(patchStart, patchStart + 2000);
+    assert.ok(
+      handlerBody.includes("=== 'halted'"),
+      'PATCH handler must check if current status is halted',
+    );
+  });
+
+  it('returns 409 when source is halted and trying to enable', () => {
+    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    const handlerBody = src.slice(patchStart, patchStart + 2000);
+
+    assert.ok(
+      handlerBody.includes('409'),
+      'PATCH handler must send 409 status code for halted sources',
+    );
+  });
+
+  it('includes last_error in 409 response', () => {
+    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    const handlerBody = src.slice(patchStart, patchStart + 2000);
+
+    assert.ok(
+      handlerBody.includes('lastError') && handlerBody.includes('last_error'),
+      'PATCH handler 409 response must include lastError from source state',
+    );
+  });
+
+  it('queries source_state table for current status', () => {
+    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    const handlerBody = src.slice(patchStart, patchStart + 2000);
+
+    assert.ok(
+      handlerBody.includes('source_state') && handlerBody.includes('status'),
+      'PATCH handler must query source_state for current status',
+    );
+  });
+});
+
+// ===========================================================================
+// CR-002: Dashboard toggle uses stateStatus
+// ===========================================================================
+
+describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => {
+  const src = readSrc('dashboard/src/pages/Settings.tsx');
+
+  it('Source interface includes stateStatus field', () => {
+    assert.match(
+      src,
+      /stateStatus\s*:\s*string/,
+      'Source interface must include stateStatus field',
+    );
+  });
+
+  it('toggleSource uses stateStatus to determine active state', () => {
+    const fnStart = src.indexOf('toggleSource');
+    assert.ok(fnStart !== -1, 'toggleSource function must exist');
+
+    const fnBody = src.slice(fnStart, fnStart + 500);
+    assert.ok(
+      fnBody.includes("stateStatus === 'active'") || fnBody.includes('stateStatus === "active"'),
+      'toggleSource must check stateStatus === active, not s.enabled',
+    );
+  });
+
+  it('toggle button visual state is driven by stateStatus', () => {
+    const buttonArea = src.slice(src.indexOf('toggleSource(s)'));
+    assert.ok(
+      buttonArea.includes("s.stateStatus === 'active'"),
+      'Toggle button visual state must use s.stateStatus, not s.enabled',
+    );
+  });
+
+  it('optimistic state update sets stateStatus, not enabled', () => {
+    const setSourcesStart = src.indexOf('setSources((prev)');
+    assert.ok(setSourcesStart !== -1, 'setSources call must exist in toggleSource');
+
+    const updateBody = src.slice(setSourcesStart, setSourcesStart + 300);
+    assert.ok(
+      updateBody.includes('stateStatus:'),
+      'Optimistic update must set stateStatus field',
+    );
+  });
+});
