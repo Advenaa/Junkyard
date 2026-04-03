@@ -105,6 +105,8 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
     }
   }
 
+  const MIN_SIMILARITY = 0.5;
+
   function search(
     query: Float32Array,
     type: 'summary' | 'report' | 'entity',
@@ -115,7 +117,9 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
     for (const [targetId, vector] of map) {
       const score = cosineSimilarity(query, vector);
-      results.push({ targetId, score });
+      if (score >= MIN_SIMILARITY) {
+        results.push({ targetId, score });
+      }
     }
 
     results.sort((a, b) => b.score - a.score);

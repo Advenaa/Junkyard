@@ -178,7 +178,18 @@ export async function markProcessed(pool: Pool, batchId: string): Promise<void> 
   );
 }
 
-export async function resetCrashed(pool: Pool): Promise<number> {
+/**
+ * On startup, reset orphaned 'processing' items back to 'ready'.
+ * Items that have already exhausted their retry budget are marked 'failed' instead (DP-003).
+ */
+export async function resetCrashed(pool: Pool, maxRetries = 3): Promise<number> {
+  // Mark exhausted items as failed
+  await pool.query(
+    `UPDATE items SET status = 'failed', batch_id = NULL
+     WHERE status = 'processing' AND retry_count >= $1`,
+    [maxRetries],
+  );
+  // Reset remaining orphaned items to ready
   const result = await pool.query(
     `UPDATE items SET status = 'ready', batch_id = NULL WHERE status = 'processing'`,
   );

@@ -41,6 +41,9 @@ function stubEmbedder(vector: Float32Array | null = new Float32Array([1, 0, 0]))
     async embed() {
       return vector ? { vector } : null;
     },
+    prepareText(text: string, type: string) {
+      return `${type}: ${text}`;
+    },
   };
 }
 

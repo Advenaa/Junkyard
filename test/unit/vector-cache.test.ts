@@ -160,15 +160,13 @@ describe('VectorCache (unit, no pool)', () => {
     cache.update('summary', 'close', vec(0.9, 0.1, 0));
 
     const results = cache.search(vec(1, 0, 0), 'summary');
-    assert.equal(results.length, 3);
+    // orthogonal vector (score ~0) is below MIN_SIMILARITY threshold, filtered out
+    assert.equal(results.length, 2);
     // exact match first
     assert.equal(results[0].targetId, 'exact');
     assert.ok(Math.abs(results[0].score - 1.0) < 1e-6);
     // close second
     assert.equal(results[1].targetId, 'close');
-    // orthogonal last
-    assert.equal(results[2].targetId, 'ortho');
-    assert.ok(Math.abs(results[2].score) < 1e-6);
   });
 
   it('search respects limit', () => {

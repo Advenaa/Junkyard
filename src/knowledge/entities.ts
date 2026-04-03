@@ -323,6 +323,7 @@ export function createEntityManager(
 
         for (const alias of entity.aliases) {
           const normalizedAlias = normalizeAlias(alias);
+          if (!normalizedAlias) continue;
           aliasTuples.push({ alias: normalizedAlias, entityId });
         }
 

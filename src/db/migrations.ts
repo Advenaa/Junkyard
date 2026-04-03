@@ -338,6 +338,13 @@ const migrations: Migration[] = [
         CHECK (status IN ('ready', 'filtered', 'processing', 'processed', 'failed'))
     `);
   },
+
+  // Migration 9: Add retry_count to items for retry limiting (DP-003)
+  async (client) => {
+    await client.query(
+      `ALTER TABLE items ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
+    );
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

@@ -327,12 +327,14 @@ describe('createPreSummarizer.run()', () => {
 
     assert.equal(result, 2);
 
-    // Find the content UPDATE (not the content_anchor one)
+    // DP-001: content and content_anchor are set atomically in a single UPDATE
     const contentUpdateIdx = queries.findIndex(
-      q => q.includes('SET content =') && !q.includes('content_anchor'),
+      q => q.includes('SET content =') && q.includes('content_anchor'),
     );
-    assert.ok(contentUpdateIdx >= 0, 'expected a content UPDATE query');
+    assert.ok(contentUpdateIdx >= 0, 'expected an atomic content + content_anchor UPDATE query');
     assert.deepEqual(queryValues[contentUpdateIdx][0], ['item-1', 'item-2']);
     assert.deepEqual(queryValues[contentUpdateIdx][1], ['First summary', 'Second summary']);
+    // Third param is the content_anchor values (first 800 chars of original content)
+    assert.deepEqual(queryValues[contentUpdateIdx][2], [content.slice(0, 800), content.slice(0, 800)]);
   });
 });

@@ -706,7 +706,7 @@ describe('translation nonce wrapping (D-004)', () => {
       }),
       callFn: async () => ({
         // Simulate LLM leaking nonce tags in its output
-        content: `<scraped_content_${nonce}>Bitcoin price today</scraped_content_${nonce}>`,
+        content: `<scraped_content_${nonce}>Bitcoin price dropped significantly today and may recover tomorrow</scraped_content_${nonce}>`,
       }),
     });
     const { normalize } = createNormalizer(pool, log, config, llm);
@@ -716,7 +716,7 @@ describe('translation nonce wrapping (D-004)', () => {
 
     // The nonce tags should have been stripped from the final content
     assert.ok(!item.content.includes(`scraped_content_${nonce}`), 'Nonce tags should be stripped from output');
-    assert.ok(item.content.includes('Bitcoin price today'), 'Translation content should be preserved');
+    assert.ok(item.content.includes('Bitcoin price dropped significantly today'), 'Translation content should be preserved');
   });
 });
 

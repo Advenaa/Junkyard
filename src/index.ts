@@ -264,9 +264,9 @@ program
 
     async function onDaily(): Promise<void> {
       let reportRow = null;
-      try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
       try { await embedPipeline.run(); } catch (err: unknown) { log.error({ err }, 'embed pipeline failed'); }
       try { await narrativeDetector.detectNarratives(); } catch (err: unknown) { log.error({ err }, 'narrative detection failed'); }
+      try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
       try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
       // delivery only if report succeeded
       if (reportRow) {
@@ -291,7 +291,8 @@ program
         const [dh, dm] = digestTime.split(':').map(Number);
         const bufferMinutes = 5;
         const totalMinutes = dh * 60 + dm + bufferMinutes;
-        const catchUpTime = `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
+        const catchUpHours = Math.floor(totalMinutes / 60) % 24;
+        const catchUpTime = `${String(catchUpHours).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
         const nowLocal = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false, hour: '2-digit', minute: '2-digit' });
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
         if (nowLocal >= catchUpTime) {

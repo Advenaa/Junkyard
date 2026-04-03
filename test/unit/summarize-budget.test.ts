@@ -467,13 +467,13 @@ describe('summarize: poison pill (single oversized item)', () => {
     );
     assert.ok(failedCallIdx >= 0, 'Should have a per-item status=failed UPDATE');
 
-    // The batch cleanup "reset to ready" should come after the per-item mark
-    const resetCallIdx = pool.calls.findIndex(
-      (c, i) => i > failedCallIdx && c.text.includes("status = 'ready'") && c.text.includes('UPDATE items'),
+    // The batch cleanup (DP-003 retry_count increment with CASE) should come after the per-item mark
+    const retryCallIdx = pool.calls.findIndex(
+      (c, i) => i > failedCallIdx && c.text.includes('retry_count') && c.text.includes('UPDATE items'),
     );
     assert.ok(
-      resetCallIdx > failedCallIdx,
-      'Per-item failed mark should precede batch cleanup reset',
+      retryCallIdx > failedCallIdx,
+      'Per-item failed mark should precede batch cleanup retry-count update',
     );
   });
 

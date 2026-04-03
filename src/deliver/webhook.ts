@@ -293,6 +293,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     const webhookUrl = await getAppConfig(pool, 'webhook_url');
     if (!webhookUrl) {
       log.warn('no webhook_url configured, skipping delivery');
+      await updateDeliveryStatus(pool, report.id, 'failed');
       return false;
     }
 

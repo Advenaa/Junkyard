@@ -128,16 +128,6 @@ export function createPreSummarizer(
       return 0;
     }
 
-    // Store content_anchor for all eligible items in a single UPDATE
-    const anchorIds = eligible.map(item => item.id);
-    const anchors = eligible.map(item => item.content.slice(0, 800));
-    await pool.query(
-      `UPDATE items SET content_anchor = data.anchor
-       FROM (SELECT unnest($1::text[]) AS id, unnest($2::text[]) AS anchor) AS data
-       WHERE items.id = data.id`,
-      [anchorIds, anchors],
-    );
-
     const batches = chunk(eligible, 3, 5);
     let compressed = 0;
 
@@ -161,11 +151,13 @@ export function createPreSummarizer(
         // Collect successful summaries for batch UPDATE
         const updateIds: string[] = [];
         const updateContents: string[] = [];
+        const updateAnchors: string[] = [];
         for (let i = 0; i < batch.length; i++) {
           const summary = summaries[i];
           if (summary) {
             updateIds.push(batch[i].id);
             updateContents.push(summary);
+            updateAnchors.push(batch[i].content.slice(0, 800));
           } else {
             log.warn(
               `pre-summarize: parse failure for item ${batch[i].id}, keeping original`,
@@ -175,10 +167,10 @@ export function createPreSummarizer(
 
         if (updateIds.length > 0) {
           await pool.query(
-            `UPDATE items SET content = data.content
-             FROM (SELECT unnest($1::text[]) AS id, unnest($2::text[]) AS content) AS data
+            `UPDATE items SET content = data.content, content_anchor = data.anchor
+             FROM (SELECT unnest($1::text[]) AS id, unnest($2::text[]) AS content, unnest($3::text[]) AS anchor) AS data
              WHERE items.id = data.id`,
-            [updateIds, updateContents],
+            [updateIds, updateContents, updateAnchors],
           );
           compressed += updateIds.length;
         }

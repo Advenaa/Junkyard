@@ -7,6 +7,7 @@ import type { VectorCache } from '../vector-cache.js';
 
 export interface Embedder {
   embed(text: string): Promise<{ vector: Float32Array } | null>;
+  prepareText(text: string, type: 'item' | 'summary' | 'entity' | 'report'): string;
 }
 
 export interface LLM {
@@ -46,7 +47,8 @@ function createSemanticSearch(
 
       log.info({ query, type }, 'chat: semantic_search');
 
-      const embedding = await embedder.embed(query);
+      const prepared = embedder.prepareText(query, type);
+      const embedding = await embedder.embed(prepared);
       if (!embedding) return 'Error: embedding service unavailable';
 
       const results = vectorCache.search(embedding.vector, type, 10);

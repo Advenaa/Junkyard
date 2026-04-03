@@ -10,6 +10,9 @@ import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import type { ExtractedEntity } from '../knowledge/entities.js';
 
+/** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
+const MAX_ITEM_RETRIES = 3;
+
 interface EntityManager {
   resolveEntities(
     entities: ExtractedEntity[],
@@ -543,13 +546,23 @@ export function createSummarizer(
     }
 
     if (failedIds.length > 0) {
-      log.warn(
-        { failedCount: failedIds.length, source, sourceId, batchId },
-        'Resetting failed chunk items back to ready',
-      );
+      // Increment retry_count; items exceeding MAX_ITEM_RETRIES are marked 'failed' (DP-003)
       await pool.query(
-        `UPDATE items SET status = 'ready', batch_id = NULL WHERE id = ANY($1::text[])`,
-        [failedIds],
+        `UPDATE items
+           SET retry_count = retry_count + 1,
+               batch_id = NULL,
+               status = CASE
+                 WHEN retry_count + 1 >= $2 THEN 'failed'
+                 ELSE 'ready'
+               END
+         WHERE id = ANY($1::text[])`,
+        [failedIds, MAX_ITEM_RETRIES],
+      );
+
+      const retryable = failedIds.length;
+      log.warn(
+        { failedCount: retryable, maxRetries: MAX_ITEM_RETRIES, source, sourceId, batchId },
+        'Incremented retry_count on failed chunk items; items at limit marked as failed',
       );
     }
 

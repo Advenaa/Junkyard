@@ -173,7 +173,15 @@ export function createNormalizer(
         const cleaned = result.content
           .replace(new RegExp(`</?scraped_content_${nonce}>`, 'g'), '')
           .trim();
-        item.content = cleaned || result.content;
+        // If cleaned result is too short, the LLM likely returned only nonce tags — treat as failure
+        if (cleaned.length < 20) {
+          log.warn(
+            { id: item.id, cleanedLength: cleaned.length },
+            'Translation returned nonce-only content, keeping original',
+          );
+        } else {
+          item.content = cleaned;
+        }
         translated = true;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
