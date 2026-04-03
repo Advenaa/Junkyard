@@ -8,18 +8,17 @@ the current pipeline does with heuristics or not at all.
 
 ## 1. What Gets Embedded
 
-Four embedding targets, in priority order:
+Two embedding targets (items are intentionally excluded to conserve Gemini quota):
 
 | Target | Text Input | When | Why |
 |--------|-----------|------|-----|
-| **Summaries** | `summaries.body` JSON stringified (the ChunkSummary text, not metadata) | After Stage 1 | Primary search surface. 12-30 per day, low volume, high value. |
-| **Items** | `items.content` (raw post/article text, post-truncation) | During Stage 0 normalize | Semantic dedup, similar-item detection, topic clustering. High volume. |
-| **Entities** | `entities.name + type + description` (description extracted from first meaningful mention) | On entity creation/update | Entity disambiguation ("Mercury" token vs "Mercury" company). Low volume. `[PLANNED — not yet implemented]` |
-| **Reports** | `reports.tldr + key_events` (extracted from body JSON) | After Stage 3 | Report search ("what happened the week of the ETH ETF?"). 1-2 per day. |
+| **Summaries** | `summaries.body` JSON stringified (the ChunkSummary text, not metadata) | After Stage 1 (via embed pipeline) | Primary search surface. 12-30 per day, low volume, high value. |
+| **Reports** | `reports.body` (extracted from body JSON) | After Stage 3 (via embed pipeline) | Report search ("what happened the week of the ETH ETF?"). 1-2 per day. |
 
-**What does NOT get embedded**: raw metadata fields, author names, URLs,
-engagement scores. These are filterable via SQL — no need to waste embedding
-dimensions on structured data.
+**Not embedded**: items (raw posts — too high volume for the value gained),
+entities (`[PLANNED — not yet implemented]`), raw metadata fields, author
+names, URLs, engagement scores. These are filterable via SQL — no need to
+waste embedding dimensions on structured data.
 
 **Embedding text preparation**: before embedding, strip Discord formatting
 (`**bold**`, `> quotes`, `<@mentions>`), collapse whitespace, truncate to
@@ -104,15 +103,12 @@ CREATE INDEX idx_embeddings_type ON embeddings(target_type, created_at);
 
 | Target | Count | Size (vectors only) | Size (with overhead) |
 |--------|-------|--------------------|--------------------|
-| Items | 150,000 | 439 MB | ~525 MB |
 | Summaries | 900 (30/day * 30) | 2.6 MB | ~3 MB |
-| Entities | ~2,000 | 5.9 MB | ~7 MB |
 | Reports | 30-35 | 102 KB | ~150 KB |
-| **Total** | ~153,000 | **~448 MB** | **~535 MB** |
+| **Total** | ~935 | **~2.7 MB** | **~3.2 MB** |
 
-Item vectors dominate. The `embeddings` table will be the largest table in the
-DB. Data retention cron should delete item embeddings alongside item records
-(cascade on the 30-day TTL).
+With items excluded from embedding, the `embeddings` table is small. Summary
+and report vectors fit comfortably in the in-memory vector cache.
 
 ---
 
@@ -120,46 +116,49 @@ DB. Data retention cron should delete item embeddings alongside item records
 
 ### Embedding Pipeline
 
+The embed pipeline runs at two points — **after each source poll tick** and
+**during onDaily** — so new summaries are searchable within minutes, not
+just once a day.
+
 ```
-Item arrives
-  → Stage 0 (normalize)
-    → if status = 'ready': queue for embedding
-      → embed in micro-batches of 100 (Gemini batch endpoint)
-      → write BYTEA to embeddings table
-  → Stage 1 (summarize)
-    → after Haiku returns: embed the summary text
-    → write BYTEA to embeddings table
+Source poll tick (every minute)
+  → Stage 1 (summarize) produces new summaries
+  → embedPipeline.run()
+    → fetches un-embedded summaries + reports (LEFT JOIN embeddings)
+    → batches up to 100 at a time via Gemini batch endpoint
+    → writes BYTEA to embeddings table + updates vector cache
 
-Entity created/updated                    [PLANNED — not yet implemented]
-  → embed entity description
-  → write/replace BYTEA
-
-Stage 3 (synthesize)
-  → after report generated: embed tldr + key_events
-  → write BYTEA
+onDaily (at digest_time)
+  → synthesize.runDaily() produces a report
+  → embedPipeline.run()
+    → embeds the new report (and any missed summaries)
 ```
 
 ### Batching Strategy
 
 Do NOT embed one-at-a-time. The Gemini embeddings API accepts batch requests.
 
-- **Items**: batch embed every 15 minutes via a dedicated cron job. Claim
-  un-embedded items (`LEFT JOIN embeddings ... WHERE embeddings.id IS NULL`),
-  batch into groups of 100, call API. At 5K items/day, that is ~21 items per
-  15-min window — one API call per cycle.
-- **Summaries/reports/entities**: batched together with items in a single
-  `run()` call. All three types are processed through the same batch pipeline,
-  not embedded inline individually.
+- **Summaries + reports**: batched together in a single `run()` call. The
+  pipeline claims un-embedded rows (`LEFT JOIN embeddings ... WHERE
+  embeddings.id IS NULL`), batches into groups of 100, calls the API.
+- **Items**: intentionally excluded — embedding raw items would waste Gemini
+  quota without adding search value over summary embeddings.
 
 ### Failure Handling
 
 - On API error (429, 5xx): retry with same backoff as `llm.ts` (2s/8s/32s).
-- On persistent failure: mark items as `embedding_failed` in a status column
-  (or a separate `embedding_status` column on the items table). Retry on next
-  cycle. Do not block the LLM pipeline — embedding is async and non-blocking.
+- On persistent failure: retry on next cycle. Do not block the LLM pipeline —
+  embedding is async and non-blocking.
 - On model change: re-embed everything. Add a `model` column to track which
   model generated each vector. Migration script: delete all embeddings where
   `model != current_model`, let the batch job re-embed.
+
+### Quota Persistence
+
+Daily quota (Gemini free tier: 1,500 requests/day) is tracked in-memory but
+**restored from the `llm_usage` table on startup**. The embedder counts
+today's `stage = 'embedding'` rows in `llm_usage` so quota survives process
+restarts without double-counting or losing track.
 
 ---
 
@@ -268,12 +267,11 @@ Embeddings **layer on top** of the existing architecture. No stage is removed
 or replaced. The pipeline becomes:
 
 ```
-Sources → Ingest → Normalize (Stage 0) → Embed (new) → Process → Knowledge → Surface
-                                            |
-                                            ├─ item vectors (async, batched)
-                                            ├─ summary vectors (batched, after Stage 1)
-                                            ├─ entity vectors (PLANNED — not yet implemented)
-                                            └─ report vectors (batched, after Stage 3)
+Sources → Ingest → Normalize (Stage 0) → Process → Knowledge → Surface
+                                                        |
+                                            embedPipeline.run() (after each poll tick + onDaily)
+                                                        ├─ summary vectors (batched)
+                                                        └─ report vectors (batched)
 ```
 
 ### What Changes
@@ -285,11 +283,7 @@ Sources → Ingest → Normalize (Stage 0) → Embed (new) → Process → Knowl
 | `db/queries.ts` | Add embedding CRUD + similarity queries | No |
 | New: `src/embed.ts` | Gemini embedding wrapper (like `llm.ts` — single call site, retry, cost logging) | No |
 | New: `src/embed-pipeline.ts` | Batch embedding cron job + inline embedding helpers | No |
-| `src/scheduler.ts` | Add 15-min embedding cron job | No |
-| `src/process/summarize.ts` | After writing summary, call `embedSummary()` | No |
-| `src/process/synthesize.ts` | After writing report, call `embedReport()` | No |
-| `src/knowledge/entities.ts` | After entity create/update, call `embedEntity()` | No |
-| `src/normalize/dedup.ts` | Add semantic dedup check | No |
+| `src/index.ts` | `onSourcePollTick` and `onDaily` both call `embedPipeline.run()` | No |
 | `src/server.ts` | Extend search endpoint with `mode=semantic` | No |
 | `llm_usage` table | Log embedding API costs alongside LLM costs | No |
 
@@ -320,15 +314,12 @@ Average tokens per target (estimated):
 
 | Target | Count/day | Requests/day (batched @ 100) | Cost/day |
 |--------|-----------|------------------------------|---------|
-| Items | 5,000 | ~50 | $0 (free tier) |
-| Summaries | 30 | 30 (inline, 1 per call) | $0 |
-| Entities | ~10 new/updated | 10 | $0 |
-| Reports | 1-2 | 2 | $0 |
+| Summaries | 30 | 1 (batched) | $0 (free tier) |
+| Reports | 1-2 | 1 (batched with summaries) | $0 |
 | Search queries | ~50 | 50 | $0 |
-| **Total** | | **~142 req/day** | **$0/day** |
+| **Total** | | **~52 req/day** | **$0/day** |
 
-142 requests/day is well within the 1,500/day free tier limit. At 10K items/day
-(~100 item batch requests + overhead), still under 250 req/day.
+52 requests/day is well within the 1,500/day free tier limit.
 
 ### If Free Tier Is Exceeded
 

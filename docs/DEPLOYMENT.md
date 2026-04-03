@@ -104,6 +104,13 @@ systemd sends `SIGABRT` if the watchdog timeout expires. Combine with `Restart=a
 */5 * * * * [ $(( $(date +%s) - $(stat -c %Y /tmp/podders-heartbeat 2>/dev/null || echo 0) )) -gt 300 ] && systemctl restart podders
 ```
 
+## Reverse Proxy Notes
+
+Fastify is configured with `trustProxy: 1` (not `true`) when `PUBLIC_URL` is
+set. This trusts exactly one hop (the Caddy/nginx reverse proxy) and prevents
+IP spoofing via chained `X-Forwarded-For` headers. When `PUBLIC_URL` is unset,
+`trustProxy` is `false`.
+
 ## TLS / HTTPS
 
 **Caddy** as reverse proxy — automatic HTTPS with Let's Encrypt, ~10MB RAM.
@@ -162,19 +169,22 @@ Crash recovery handles in-flight LLM work: orphaned `processing` items reset to 
 
 ### Daily Backup
 
-Automated via cron. Runs daily at 02:00 UTC, writes compressed dumps to `/var/backups/podders/`. Retains 7 daily backups; older files are deleted automatically.
+Automated inside `onDaily()` — runs after daily synthesis and delivery
+complete. Writes compressed dumps to `DATA_DIR` (default `./data`). Retains 7
+daily backups; older files are deleted automatically.
 
-**Cron line** (add to the `podders` user's crontab):
+The backup code parses `DATABASE_URL` to extract host/port/username/dbname and
+passes `PGPASSWORD` via the child process environment — credentials never
+appear as CLI arguments. Example invocation (internal):
 
-```bash
-0 2 * * * pg_dump $DATABASE_URL | gzip > /var/backups/podders/podders_$(date +\%Y\%m\%d).sql.gz && find /var/backups/podders/ -mtime +7 -delete
+```
+PGPASSWORD=xxx pg_dump --host ... --port ... --username ... --dbname ... --no-password | gzip > data/podders_YYYYMMDD.sql.gz
 ```
 
-Ensure `/var/backups/podders/` exists and is writable by the `podders` user:
+Ensure the `DATA_DIR` directory exists and is writable:
 
 ```bash
-sudo mkdir -p /var/backups/podders
-sudo chown podders:podders /var/backups/podders
+mkdir -p ./data
 ```
 
 ### Verification
@@ -244,6 +254,23 @@ Dashboard login uses Discord OAuth2. This is separate from the bot — `DISCORD_
 
 - **`SESSION_SECRET` rotation**: update the env var (or the value in `app_config`), restart the server. All existing sessions are invalidated — cookies signed with the old secret can't be verified. Users must re-login via Discord OAuth.
 - **`DISCORD_CLIENT_SECRET` rotation**: rotate the secret in the Discord Developer Portal first, then update the env var and restart. In-flight OAuth flows will fail; users retry and it works.
+
+## Postgres Operational Details
+
+### Advisory Lock on Migrations
+
+`runMigrations()` acquires `pg_advisory_lock(42424242)` before checking
+`schema_version`. This prevents two instances from running migrations
+concurrently during rolling deploys or accidental double-starts. The lock is
+released after migrations complete (or when the connection is returned to the
+pool on error).
+
+### Statement Timeout
+
+Every new connection from the pool sets `statement_timeout = 30000` (30s) via
+`pool.on('connect')`. This prevents runaway queries from holding connections
+indefinitely. Long-running operations (like `pg_dump` for backups) use their
+own process and are not subject to this timeout.
 
 ## Postgres Storage
 

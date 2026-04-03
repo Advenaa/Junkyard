@@ -37,22 +37,17 @@ Cron registration order matches this table top-to-bottom. Event-driven jobs (Sta
 
 | Job | Type | Cron Expression | Calls | Depends On |
 |-----|------|-----------------|-------|------------|
-| Stage 1 micro-batch (Twitter/RSS/News) | per-source | Each source's `poll_interval` (e.g., Twitter 2h, RSS 15min) | `summarize.runBatch()` | Items with `status='ready'` for sources due for processing. Low-confidence non-routine chunks may escalate to Sonnet. |
-| Stage 1 Poisson claim (Discord) | check every 60s | Adaptive: Poisson threshold against `source_rate_history` | `summarize.runBatch()` | Discord `ready` items exceeding expected rate x 1.5 OR > 10 items |
-| Stage 3 daily | cron | `{mm} {hh} * * *` in configured TZ (default `0 9 * * *`) | `synthesize.runDaily()` | Summaries from previous calendar day |
+| Source poll tick | cron | `* * * * *` (every minute) | `onSourcePollTick()` | Checks each source's `poll_interval` elapsed time, polls due sources (Twitter/RSS), runs pre-summarizer, then `summarize.runBatch()` per source. Runs embed pipeline after each tick. |
+| Stage 3 daily | cron | `{mm} {hh} * * *` in configured TZ (default `0 9 * * *`) | `onDaily()` | Runs synthesis, embed pipeline, narrative detection, entity decay, delivery, backup, and retention — all inside `onDaily`. |
 | Market pulse | cron | `0 */3 * * *` UTC (every 3h) | `pulse.run()` | Summaries from last 3h window. Sonnet. Output scales with activity. |
-| Entity decay | cron | `0 0 * * *` UTC | `decay.run()` | Active entities only. Archives (not deletes) entities below threshold. |
-| Data retention | cron | `5 0 * * *` UTC (after decay) | `retention.run()` | Runs after decay so pruned entities are already decayed |
-| Backup | cron | `10 0 * * *` UTC (after retention) | `db.backup()` (pg_dump) | Runs after retention so backup is clean |
-| Scraper health | cron | `*/5 * * * *` (every 5min) | `sources.healthCheck()` | `source_state` rows with `status='backoff'` |
 | Health check | cron | `*/5 * * * *` (every 5min) | `health.check()` | 7 checks: source silence, source disabled, LLM failures, missed pulse, missed daily, DB pool, cost spike. Inserts into `health_events`. Critical → `ALERT_WEBHOOK_URL`. Dedup: skip if same category+message unacknowledged within 30min. |
-| Narrative clustering | direct call | Before Stage 3 daily synthesis | `narratives.detect()` | Summary embeddings from previous day |
+| Narrative clustering | inside onDaily | After synthesis + embed pipeline | `narratives.detect()` | Summary embeddings from previous day |
 | Stage 2 correlate | direct call | After each Stage 1 | `correlate.run()` | Stage 1 completion |
 | Stage 3 flash | direct call | When Stage 1 returns `urgency: 'breaking'` | `synthesize.runFlash()` | Breaking chunk from Stage 1 |
 | Delivery | direct call | After Stage 3 daily | `webhook.deliver(report)` | Stage 3 daily completion |
 | Trust weight adjust | direct call | 1 hour after flash delivery | `trust.adjustWeights(flashId)` | Flash delivery completion |
 
-The midnight UTC cluster (decay at `:00`, retention at `:05`, backup at `:10`) is staggered by 5 minutes to spread load.
+Backup, retention, and entity decay are **not** separate cron jobs — they run sequentially inside `onDaily()` after synthesis and delivery complete.
 
 ---
 
@@ -61,33 +56,22 @@ The midnight UTC cluster (decay at `:00`, retention at `:05`, backup at `:10`) i
 Each cron job has a `running` boolean flag scoped to that job. Implementation:
 
 ```typescript
-const jobState: Record<string, boolean> = {
-  'stage1': false,
-  'stage3-daily': false,
-  'pulse': false,
-  'entity-decay': false,
-  'retention': false,
-  'backup': false,
-  'health-check': false,
-  'health-monitor': false,
-};
+const mutexes: Record<string, boolean> = {};
 
-function withMutex(jobName: string, fn: () => Promise<void>): () => Promise<void> {
-  return async () => {
-    if (shuttingDown) return;
-    if (jobState[jobName]) {
-      log.warn({ job: jobName }, 'skipped: previous run still in progress');
-      return;
-    }
-    jobState[jobName] = true;
-    try {
-      await fn();
-    } catch (err) {
-      log.error({ job: jobName, err }, 'job failed');
-    } finally {
-      jobState[jobName] = false;
-    }
-  };
+async function withMutex(key: string, fn: () => Promise<void>): Promise<void> {
+  if (mutexes[key]) {
+    log.warn({ key }, 'job overlap — skipping');
+    return;
+  }
+  if (shuttingDown) return;
+  mutexes[key] = true;
+  try {
+    await fn();
+  } catch (err) {
+    log.error({ err, key }, 'job failed');
+  } finally {
+    mutexes[key] = false;
+  }
 }
 ```
 
@@ -137,11 +121,11 @@ Lambda is stored in `source_rate_history`, keyed by `(source, source_id, hour_of
 
 Two entry points, zero event emitters.
 
-### Entry 1: Stage 1 (per-source intervals, parallel processing)
+### Entry 1: Source Poll Tick (every minute)
 
 ```
-scheduler checks due sources (per poll_interval)
-  └─ withMutex('stage1', async () => {
+cron('* * * * *', { timezone: 'UTC' })
+  └─ withMutex('source-poll-tick', async () => {
        const batches = await summarize.runBatch()
        //   ├─ queries sources due for processing (last_processed_at + poll_interval <= NOW())
        //   ├─ processes all due sources in parallel via Promise.allSettled
@@ -169,6 +153,9 @@ scheduler checks due sources (per poll_interval)
            //   └─ unconfirmed sources: trust_weight -= 0.03 (floored at initial - 0.2)
          }
        }
+
+       await embedPipeline.run()
+       //   └─ embed new summaries + reports so chat semantic search stays fresh
      })
 ```
 
@@ -194,14 +181,7 @@ cron('0 */3 * * *', { timezone: 'UTC' })
 
 ```
 cron('{mm} {hh} * * *', { timezone })
-  └─ withMutex('stage3-daily', async () => {
-       const narratives = await narratives.detect()
-       //   ├─ loads summary embeddings from previous calendar day
-       //   ├─ runs k-means clustering with silhouette-based k selection
-       //   ├─ names clusters with 3+ members via Haiku (~3-5 calls)
-       //   ├─ classifies signal strength vs previous day (new/emerging/strong/stable/fading)
-       //   └─ writes to narratives table
-
+  └─ withMutex('daily-synthesis', async () => {
        const report = await synthesize.runDaily()
        //   ├─ reads summaries where window overlaps previous calendar day
        //   ├─ reads correlated entities for same window
@@ -212,6 +192,10 @@ cron('{mm} {hh} * * *', { timezone })
        //   ├─ calls Sonnet via llm.ts
        //   └─ writes report with type='daily'
 
+       await embedPipeline.run()            // embed any new summaries/reports
+       await narratives.detect()            // cluster summary embeddings
+       await decay.runDecay()               // entity relevance decay
+
        if (report) {
          await webhook.deliver(report)
          //   ├─ POST to configured Discord webhook URL
@@ -219,6 +203,9 @@ cron('{mm} {hh} * * *', { timezone })
          //   ├─ 3 retries: 2s → 8s → 32s
          //   └─ updates reports.delivery_status
        }
+
+       await backup.run()                   // pg_dump with PGPASSWORD env
+       await retention.run()                // prune old items/summaries
      })
 ```
 

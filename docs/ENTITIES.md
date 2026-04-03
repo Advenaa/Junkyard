@@ -24,18 +24,20 @@ for each extracted entity (name, aliases, type):
             INSERT ... ON CONFLICT DO NOTHING INTO entities (id, name, type, relevance, status, first_seen, last_seen)
                 VALUES (entity_id, name, type, 0, 'active', now, now)
             -- If IGNORE fired (concurrent batch wrote same name+type), fetch the winner:
-            entity_id = SELECT id FROM entities WHERE name = name AND type = type AND status = 'active'
+            entity_id = SELECT id FROM entities WHERE name = name AND type = type
+            -- Guard: if no rows returned (shouldn't happen), skip this entity
+            if entity_id is NULL: continue
         INSERT ... ON CONFLICT DO NOTHING INTO entity_aliases (alias, entity_id) VALUES (canonical, entity_id)
 
     for each alias in aliases:
-        normalized = lowercase(strip_prefix('$', alias))
+        normalized = trim(lowercase(strip_prefix('$', alias)))
         INSERT ... ON CONFLICT DO NOTHING INTO entity_aliases (alias, entity_id) VALUES (normalized, entity_id)
 
     UPDATE entities SET last_seen = now, relevance = <decay formula> WHERE id = entity_id
     INSERT entity_mention row
 ```
 
-All aliases are **lowercased** before storage. The `$` prefix (common in crypto tickers like `$ETH`) is stripped so that `$ETH`, `ETH`, and `eth` all resolve to the same alias key.
+All aliases are **trimmed and lowercased** before storage (`normalizeAlias` applies `.trim().toLowerCase().replace(/^\$/, '')`). The `$` prefix (common in crypto tickers like `$ETH`) is stripped so that `$ETH`, `ETH`, and `eth` all resolve to the same alias key.
 
 `INSERT ... ON CONFLICT DO NOTHING` is the concurrency pattern. Two Stage 1 batches processing simultaneously may both try to insert the same entity or alias. The first writer wins; the second silently skips. No locks, no retries, no conflicts.
 

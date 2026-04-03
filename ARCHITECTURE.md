@@ -654,7 +654,7 @@ All API routes use **Fastify JSON Schema validation**:
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: strict-origin-when-cross-origin`
 
-Global rate limit: 100 req/s per IP across all `/api/v1/*` routes via `@fastify/rate-limit` (in addition to the 5/min auth failure limit).
+Global rate limit: 50 req/s per IP across all `/api/v1/*` routes via `@fastify/rate-limit` (in addition to the 5/min auth failure limit).
 
 ### URL Validation (shared)
 
@@ -683,16 +683,16 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/api/v1/users` | `{ users: [{ discordId, username, avatar, role, createdAt, lastLoginAt }] }` |
-| `POST` | `/api/v1/users` | Body: `{ discordId, role }`. Invite user. |
-| `PATCH` | `/api/v1/users/:discordId` | Body: `{ role }`. Change role. |
-| `DELETE` | `/api/v1/users/:discordId` | Remove user (revokes all sessions). |
+| `POST` | `/api/v1/users` | `[PLANNED]` Body: `{ discordId, role }`. Invite user. |
+| `PATCH` | `/api/v1/users/:discordId` | `[PLANNED]` Body: `{ role }`. Change role. |
+| `DELETE` | `/api/v1/users/:discordId` | `[PLANNED]` Remove user (revokes all sessions). |
 
 **Reports:**
 
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/api/v1/reports` | `{ reports: [{ id, date, type, tldr, createdAt }] }` — paginated `?limit=20&offset=0&type=daily\|flash\|pulse` |
-| `GET` | `/api/v1/reports/latest` | `{ report: MarketReport }` or `{ report: null }` if no reports exist |
+| `GET` | `/api/v1/reports/latest` | `[PLANNED]` `{ report: MarketReport }` or `{ report: null }` if no reports exist |
 | `GET` | `/api/v1/reports/:id` | `{ report: MarketReport }` |
 
 **Sources:**
@@ -701,11 +701,11 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 |--------|------|----------|
 | `GET` | `/api/v1/sources` | `{ sources: [{ source, sourceId, label, enabled, pollInterval, lastFetchedAt, errorCount, lastError, status }] }` — JOINs `sources` + `source_state` |
 | `POST` | `/api/v1/sources` | Body: `{ source, sourceId, label, pollInterval? }`. Per-type validation. |
-| `PATCH` | `/api/v1/sources/:source/:sourceId` | Body: `{ enabled?, label?, pollInterval? }` |
-| `DELETE` | `/api/v1/sources/:source/:sourceId` | Removes source config (keeps historical items) |
-| `POST` | `/api/v1/sources/:source/:sourceId/test` | Test connection. Returns `{ ok: true }` or `{ ok: false, error: "..." }` |
-| `GET` | `/api/v1/sources/discover/discord` | Returns `{ guilds: [{ id, name, icon, channels: [{ id, name }] }] }` from connected tokens |
-| `POST` | `/api/v1/sources/discover/rss` | Body: `{ url }`. Fetches HTML, finds `<link rel="alternate">` RSS/Atom feeds. Returns `{ feeds: [{ url, title }] }` |
+| `PATCH` | `/api/v1/sources/:source/:sourceId` | `[PLANNED]` Body: `{ enabled?, label?, pollInterval? }` |
+| `DELETE` | `/api/v1/sources/:source/:sourceId` | `[PLANNED]` Removes source config (keeps historical items) |
+| `POST` | `/api/v1/sources/:source/:sourceId/test` | `[PLANNED]` Test connection. Returns `{ ok: true }` or `{ ok: false, error: "..." }` |
+| `GET` | `/api/v1/sources/discover/discord` | `[PLANNED]` Returns `{ guilds: [{ id, name, icon, channels: [{ id, name }] }] }` from connected tokens |
+| `POST` | `/api/v1/sources/discover/rss` | `[PLANNED]` Body: `{ url }`. Fetches HTML, finds `<link rel="alternate">` RSS/Atom feeds. Returns `{ feeds: [{ url, title }] }` |
 
 **Config & Health:**
 
@@ -713,9 +713,9 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 |--------|------|----------|
 | `GET` | `/api/v1/config` | `{ webhookUrl, digestTime, timezone, publicUrl }` |
 | `PATCH` | `/api/v1/config` | Body: partial of above |
-| `GET` | `/api/v1/status` | `{ stages: { ingest, summarize, synthesize, delivery }, llmCostToday, allSourcesDisabled: bool }` |
-| `PATCH` | `/api/v1/health/:id` | Acknowledge a health event |
-| `POST` | `/api/v1/auth/rotate` | `{ apiKey: "new-key-displayed-once" }` |
+| `GET` | `/api/v1/status` | `[PLANNED]` `{ stages: { ingest, summarize, synthesize, delivery }, llmCostToday, allSourcesDisabled: bool }` |
+| `PATCH` | `/api/v1/health/:id` | `[PLANNED]` Acknowledge a health event |
+| `POST` | `/api/v1/auth/rotate` | `[PLANNED]` `{ apiKey: "new-key-displayed-once" }` |
 
 **Search (after full-text search, build step 8.5):**
 
@@ -733,7 +733,7 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 
 | Method | Path | Response |
 |--------|------|----------|
-| `POST` | `/api/v1/chat` | Body: `{ message: string, conversationId?: string }`. Response: `{ answer: string, sources: [{ type: string, id: string, snippet: string }], toolCalls?: [{ name: string, args: Record<string, unknown> }], conversationId: string }` |
+| `POST` | `/api/v1/chat` | Body: `{ query: string, conversationId?: string }`. Response: `{ answer: string, sources: [{ type: string, id: string, snippet: string }], toolCalls?: [{ name: string, args: Record<string, unknown> }], conversationId: string }` |
 
 How it works: Sonnet is given three retrieval tools and picks the right strategy per query (A-RAG pattern, Feb 2026):
 
@@ -751,21 +751,21 @@ Sonnet calls tools iteratively until it has enough context, then generates a gro
 
 | Method | Path | Response |
 |--------|------|----------|
-| `PATCH` | `/api/v1/settings` | Body: `{ webhookUrl?, digestTime?, alertWebhookUrl? }`. Update webhook URL, digest time, or alert webhook. |
+| `PATCH` | `/api/v1/settings` | `[PLANNED]` Body: `{ webhookUrl?, digestTime?, alertWebhookUrl? }`. Update webhook URL, digest time, or alert webhook. |
 
 **Deliveries:**
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/api/v1/deliveries?status=failed` | `{ deliveries: [{ id, reportId, status, error, createdAt, retriedAt }] }` — list failed deliveries |
-| `POST` | `/api/v1/deliveries/:id/retry` | `{ ok: true }` — retry a failed delivery |
-| `DELETE` | `/api/v1/deliveries/:id` | `{ ok: true }` — clear a failed delivery from the list |
+| `GET` | `/api/v1/deliveries?status=failed` | `[PLANNED]` `{ deliveries: [{ id, reportId, status, error, createdAt, retriedAt }] }` — list failed deliveries |
+| `POST` | `/api/v1/deliveries/:id/retry` | `[PLANNED]` `{ ok: true }` — retry a failed delivery |
+| `DELETE` | `/api/v1/deliveries/:id` | `[PLANNED]` `{ ok: true }` — clear a failed delivery from the list |
 
 **Costs:**
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/api/v1/costs?period=day\|week\|month` | `{ costs: [{ model, stage, calls, inputTokens, outputTokens, costUsd }], total: number }` — cost breakdown by model and stage |
+| `GET` | `/api/v1/costs?period=day\|week\|month` | `[PLANNED]` `{ costs: [{ model, stage, calls, inputTokens, outputTokens, costUsd }], total: number }` — cost breakdown by model and stage |
 
 **Source Admin:**
 

@@ -77,7 +77,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 ## Coding Guidelines
 
 - **No secrets in DB** — only exception is the hashed API key (`argon2`) in `app_config`. All other secrets live in `.env` / environment variables.
-- **Five-layer prompt injection defense** — (1) Unicode NFKC normalization + zero-width character stripping in normalize step, (2) InstructDetector scan at ingest (cached, items flagged as `filtered` with reason `injection_detected`), (3) XML `<scraped_content>` wrapping with nonce-based tags and explicit "treat as untrusted data" instruction, (4) entity post-verification against raw source text, (5) structural privilege separation via zod schema validation on Haiku's JSON-only output (Decision 06).
+- **Five-layer prompt injection defense** — (1) Unicode NFKC normalization + zero-width character stripping in normalize step. Diacritical marks are stripped only for injection scanning (not stored content). (2) InstructDetector scan at ingest with homoglyph transliteration (Cyrillic/Greek→Latin) and narrowed XML pattern matching (prompt-template tags only). (3) XML `<scraped_content>` wrapping with nonce-based tags and explicit "treat as untrusted data" instruction, (4) entity post-verification against raw source text, (5) structural privilege separation via zod schema validation on Haiku's JSON-only output (Decision 06).
 - **SSRF validation via `url-validator.ts`** — all outbound URL fetches (RSS, webhooks, news extraction) must go through the shared validator. Require HTTPS, reject private IPs, reject non-standard ports, block `file://`.
 - **Market pulse every 3h** — a Sonnet synthesis that runs every 3 hours, producing a short market pulse. Output length scales with activity (quiet periods get shorter pulses). Delivered via webhook with muted grey embed.
 - **Session cookie masking** — add `podders_session` to the Pino secret masking list in `logger.ts`.
@@ -100,8 +100,10 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 | `DATABASE_URL` | Yes | Postgres connection string (e.g. `postgresql://user:pass@localhost:5432/podders`) |
 | `DISCORD_CLIENT_ID` | Yes (for auth) | Discord OAuth2 application client ID |
 | `DISCORD_CLIENT_SECRET` | Yes (for auth) | Discord OAuth2 application client secret |
-| `ADMIN_USER_IDS` | Yes | Comma-separated Discord user IDs with admin access |
-| `SESSION_SECRET` | No | Auto-generated on first run, stored in app_config |
+| `ADMIN_USER_IDS` | No | Comma-separated Discord user IDs with admin access. If unset, no bootstrap admins (API key auth still works) |
+| `SESSION_SECRET` | No | Auto-generated on first run if missing. Ephemeral — set explicitly in .env for persistence across restarts |
+| `MODEL_HAIKU` | No | Override Haiku model ID (default: `claude-haiku-4-5-20251001`) |
+| `MODEL_SONNET` | No | Override Sonnet model ID (default: `claude-sonnet-4-6-20250514`) |
 | `PORT` | No | Default 3000 |
 | `DATA_DIR` | No | Backups location, default ./data |
 | `PUBLIC_URL` | No | For "View full report" links in webhooks |
