@@ -27,7 +27,7 @@ import { createHealthMonitor } from './health.js';
 import { createBackup } from './ops/backup.js';
 import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
-import { getSources, resetCrashed } from './db/queries.js';
+import { getSources, resetCrashed, getAppConfig } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
@@ -281,6 +281,27 @@ program
 
     async function onHealthCheck(): Promise<void> {
       await healthMonitor.check();
+
+      // Daily report catch-up: if past digest time and no report exists, retry synthesis
+      try {
+        const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+        const digestTime = (await getAppConfig(pool, 'digest_time')) ?? '09:00';
+        const nowLocal = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false, hour: '2-digit', minute: '2-digit' });
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+        if (nowLocal >= digestTime) {
+          const { rows } = await pool.query<{ exists: boolean }>(
+            `SELECT EXISTS(SELECT 1 FROM reports WHERE date = $1 AND type = 'daily') AS exists`,
+            [todayStr],
+          );
+          if (!rows[0]?.exists) {
+            log.info({ date: todayStr }, 'Daily report missing after digest time, attempting catch-up');
+            const reportRow = await synthesizer.runDaily();
+            if (reportRow) await delivery.deliver(reportRow);
+          }
+        }
+      } catch (err: unknown) {
+        log.error({ err }, 'Daily catch-up check failed');
+      }
     }
 
     // ── 5. Create and start scheduler ─────────────────────────────────

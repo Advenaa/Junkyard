@@ -34,9 +34,11 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
   rss: 2.0,
 };
 
-/** Normalize an alias: lowercase + strip leading $ */
+/** Normalize an alias: trim, lowercase, strip leading $.
+ *  Returns empty string for inputs like "$" or whitespace — callers must check. */
 export function normalizeAlias(alias: string): string {
-  return alias.trim().toLowerCase().replace(/^\$/, '');
+  const result = alias.trim().toLowerCase().replace(/^\$/, '');
+  return result;
 }
 
 interface EntityManager {
@@ -70,6 +72,10 @@ export function createEntityManager(
       // ── Tier 1: Alias lookup ────────────────────────────────────────────
       for (const entity of entities) {
         const canonical = normalizeAlias(entity.name);
+        if (!canonical) {
+          log.debug({ rawName: entity.name }, 'Entity name normalizes to empty, skipping');
+          continue;
+        }
 
         const aliasResult = await client.query<{ entity_id: string }>(
           'SELECT entity_id FROM entity_aliases WHERE alias = $1',
