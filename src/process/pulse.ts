@@ -390,7 +390,9 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
     const entityNames = [...currentEntitySentiment.keys()];
     const entityIdRows = entityNames.length > 0
       ? (await pool.query<{ id: string }>(
-          `SELECT id FROM entities WHERE LOWER(name) = ANY($1)`,
+          `SELECT DISTINCT e.id FROM entities e
+           LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+           WHERE LOWER(e.name) = ANY($1) OR ea.alias = ANY($1)`,
           [entityNames],
         )).rows
       : [];

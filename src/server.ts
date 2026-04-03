@@ -220,7 +220,20 @@ export async function createServer(
     return { digestTime, timezone, webhookUrl };
   });
 
-  app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async (request, reply) => {
+  app.patch('/api/v1/config', {
+    preHandler: [authPreHandler, requireAdmin],
+    schema: {
+      body: {
+        type: 'object',
+        properties: {
+          digest_time: { type: 'string' },
+          timezone: { type: 'string' },
+          webhook_url: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (request, reply) => {
     const body = request.body as Record<string, string>;
     const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
 
@@ -276,10 +289,10 @@ export async function createServer(
     }
     const limit = Math.min(Math.max(rawLimit ?? 20, 1), 100);
     const days = Math.min(Math.max(rawDays ?? 30, 1), 365);
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
     const { rows: results } = await pool.query<SummaryRow>(
       `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
-      [`%${q}%`, cutoff.toISOString(), limit],
+      [`%${q}%`, cutoff, limit],
     );
     return { results: results.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });

@@ -29,8 +29,11 @@ export function shouldSkip(item: { source: string; content: string }): boolean {
   if (item.source === 'discord' || item.source === 'twitter') return true;
   if (item.content.length <= 4000) return true;
 
+  // Urgency items still need pre-summarization if extremely long
   const lower = item.content.toLowerCase();
-  if (URGENCY_KEYWORDS.some(kw => lower.includes(kw))) return true;
+  const isUrgent = URGENCY_KEYWORDS.some(kw => lower.includes(kw));
+  if (isUrgent && item.content.length <= 8000) return true; // Short urgent: skip pre-summarize
+  // Long urgent (>8000): fall through to pre-summarization
 
   const tokenEstimate = item.content.length / 4;
   const entityHints = (

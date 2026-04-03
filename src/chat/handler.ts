@@ -226,10 +226,7 @@ export function createChatHandler(
       }
     }
 
-    // Step 2: Sanitize user input before LLM
-    processedQuery = llm.sanitizeForPrompt(processedQuery);
-
-    // Step 3: Build conversation context
+    // Step 2: Build conversation context
     const history = conversations.get(conversationId, userId);
 
     // Step 4: Build messages for LLM
@@ -318,8 +315,7 @@ export function createChatHandler(
 
         try {
           const toolResult = await tool.execute(call.args);
-          const sanitizedResult = llm.sanitizeForPrompt(toolResult);
-          const truncatedResult = truncateToolResult(sanitizedResult, MAX_TOOL_RESULT_CHARS);
+          const truncatedResult = truncateToolResult(toolResult, MAX_TOOL_RESULT_CHARS);
           totalToolResultChars += truncatedResult.length;
           toolResults.push(buildToolResultMessage(call.name, truncatedResult));
           // Reset failure counter on success

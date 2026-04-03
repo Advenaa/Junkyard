@@ -170,8 +170,8 @@ describe('semantic_search', () => {
     ];
     const pool = recordingPool([
       [
-        { id: 'id-a', content: 'content a', created_at: '2026-01-01' },
-        { id: 'id-b', content: 'content b', created_at: '2026-01-02' },
+        { id: 'id-a', body: 'content a', created_at: '2026-01-01' },
+        { id: 'id-b', body: 'content b', created_at: '2026-01-02' },
       ],
     ]);
     const tools = createChatTools(pool, noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
@@ -225,7 +225,7 @@ describe('semantic_search', () => {
 
   it('wraps content in nonce-tagged search_result blocks', async () => {
     const vectorResults: SearchResult[] = [{ targetId: 'sum-x', score: 0.9 }];
-    const dbRows = [{ id: 'sum-x', content: 'Some content', created_at: '2026-01-01' }];
+    const dbRows = [{ id: 'sum-x', body: 'Some content', created_at: '2026-01-01' }];
     const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 

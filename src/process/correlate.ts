@@ -58,7 +58,7 @@ const CORRELATION_SQL = `
          )) AS mentions
   FROM entity_mentions em
   JOIN entities e ON e.id = em.entity_id
-  WHERE em.created_at > $1
+  WHERE em.created_at >= $1
   GROUP BY em.entity_id, e.name
   HAVING COUNT(DISTINCT em.source) >= 2
 `;

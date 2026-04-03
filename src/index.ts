@@ -276,7 +276,19 @@ program
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
         await sentimentTracker.runDaily(todayStr, timezone);
       } catch (err: unknown) { log.error({ err }, 'sentiment rollup failed'); }
-      try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
+      // Advisory lock prevents health-check catch-up from running synthesis concurrently
+      const { rows: lockRows } = await pool.query<{ acquired: boolean }>(
+        'SELECT pg_try_advisory_lock(42424243) AS acquired',
+      );
+      if (!lockRows[0]?.acquired) {
+        log.info('Daily synthesis advisory lock held (catch-up in progress?), skipping');
+      } else {
+        try {
+          try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
+        } finally {
+          await pool.query('SELECT pg_advisory_unlock(42424243)');
+        }
+      }
       try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
       // delivery only if report succeeded
       if (reportRow) {
@@ -311,9 +323,21 @@ program
             [todayStr],
           );
           if (!rows[0]?.exists) {
-            log.info({ date: todayStr }, 'Daily report missing after digest time, attempting catch-up');
-            const reportRow = await synthesizer.runDaily();
-            if (reportRow) await delivery.deliver(reportRow);
+            // Advisory lock prevents racing with onDaily's synthesizer.runDaily()
+            const { rows: lockRows } = await pool.query<{ acquired: boolean }>(
+              'SELECT pg_try_advisory_lock(42424243) AS acquired',
+            );
+            if (!lockRows[0]?.acquired) {
+              log.info('Daily synthesis already in progress, skipping catch-up');
+            } else {
+              try {
+                log.info({ date: todayStr }, 'Daily report missing after digest time, attempting catch-up');
+                const reportRow = await synthesizer.runDaily();
+                if (reportRow) await delivery.deliver(reportRow);
+              } finally {
+                await pool.query('SELECT pg_advisory_unlock(42424243)');
+              }
+            }
           }
         }
       } catch (err: unknown) {

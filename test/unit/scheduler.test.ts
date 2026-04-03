@@ -350,8 +350,8 @@ describe('SD-005: onDaily runs embed + narratives before synthesis', () => {
     const onDailyStart = source.indexOf('async function onDaily()');
     assert.ok(onDailyStart !== -1, 'onDaily function must exist in src/index.ts');
 
-    // Grab a generous slice starting from onDaily (the function is ~20 lines)
-    const onDailySlice = source.slice(onDailyStart, onDailyStart + 800);
+    // Grab a generous slice starting from onDaily (the function may be 30+ lines with advisory lock)
+    const onDailySlice = source.slice(onDailyStart, onDailyStart + 1500);
 
     const embedPos = onDailySlice.indexOf('embedPipeline.run()');
     const narrativePos = onDailySlice.indexOf('narrativeDetector.detectNarratives()');

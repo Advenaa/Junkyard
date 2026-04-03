@@ -505,8 +505,9 @@ export function createSummarizer(
           createdAt: Date.now(),
         };
 
+        await insertSummary(pool, summaryRow);
+
         if (parsed.entities.length > 0) {
-          await insertSummary(pool, summaryRow);
           try {
             // Determine predominant language of items in this chunk
             const langCounts = new Map<string, number>();
@@ -518,17 +519,12 @@ export function createSummarizer(
             const predominantLang = [...langCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
             await entityManager.resolveEntities(parsed.entities, source, summaryId, predominantLang);
-          } catch (err: unknown) {
-            // Entity resolution failed — remove orphaned summary
-            await pool.query('DELETE FROM summaries WHERE id = $1', [summaryId]);
-            log.error(
-              { err, source, sourceId, summaryId, entityCount: parsed.entities.length },
-              'Entity resolution failed, rolled back summary to prevent orphan',
+          } catch (entityErr: unknown) {
+            log.warn(
+              { summaryId, err: entityErr, source, sourceId, entityCount: parsed.entities.length },
+              'Entity resolution failed for summary, keeping summary without entities',
             );
-            throw err;
           }
-        } else {
-          await insertSummary(pool, summaryRow);
         }
 
         chunkSummaryCount++;

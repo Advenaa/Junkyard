@@ -456,8 +456,10 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
 
     log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for daily synthesis');
 
-    // Fetch regional divergence for the daily window
-    const divergence = await divergenceTracker.getDivergence(start, end);
+    // Use trailing 24h for divergence (not calendar day) to capture prior afternoon/evening
+    const divergenceEnd = Date.now();
+    const divergenceStart = divergenceEnd - 24 * 60 * 60 * 1000;
+    const divergence = await divergenceTracker.getDivergence(divergenceStart, divergenceEnd);
 
     log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for daily synthesis');
 

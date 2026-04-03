@@ -95,8 +95,8 @@ describe('SR-008: Search endpoint days and mode query params', () => {
 
   it('cutoff is computed from days variable, not hardcoded 30', () => {
     assert.ok(
-      src.includes('new Date(Date.now() - days * 24 * 60 * 60 * 1000)'),
-      'Cutoff must use days variable: new Date(Date.now() - days * 24 * 60 * 60 * 1000)',
+      src.includes('Date.now() - days * 24 * 60 * 60 * 1000'),
+      'Cutoff must use days variable: Date.now() - days * 24 * 60 * 60 * 1000',
     );
     // Ensure no hardcoded 30-day cutoff
     assert.doesNotMatch(

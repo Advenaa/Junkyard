@@ -89,10 +89,21 @@ function createSemanticSearch(
         const entry = contentMap.get(result.targetId);
         if (!entry) continue;
 
+        // Truncate each result body so more results survive the handler's MAX_TOOL_RESULT_CHARS limit
+        const truncatedBody = entry.content.length > 300
+          ? entry.content.slice(0, 300) + '...'
+          : entry.content;
+
+        // Display created_at as YYYY-MM-DD instead of raw epoch-ms
+        const epochMs = Number(entry.createdAt);
+        const dateStr = Number.isFinite(epochMs) && epochMs > 1e12
+          ? new Date(epochMs).toISOString().slice(0, 10)
+          : String(entry.createdAt).slice(0, 10);
+
         // Already pipeline-processed content — wrap but don't re-sanitize
-        const wrapped = wrapNonce('search_result', entry.content);
+        const wrapped = wrapNonce('search_result', truncatedBody);
         lines.push(
-          `[${result.targetId}] (score: ${result.score.toFixed(3)}, date: ${entry.createdAt})\n${wrapped}`,
+          `[${result.targetId}] (score: ${result.score.toFixed(3)}, date: ${dateStr})\n${wrapped}`,
         );
       }
 

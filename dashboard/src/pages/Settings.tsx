@@ -126,7 +126,7 @@ function SourcesTab() {
                 <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.source}</td>
                 <td className="px-4 py-3 text-text-primary font-body">{s.label}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge status={s.status} />
+                  <StatusBadge status={s.stateStatus ?? 'unknown'} />
                   {s.lastError && (
                     <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>
                   )}
