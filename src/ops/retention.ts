@@ -5,6 +5,7 @@ export interface RetentionResult {
   itemsDeleted: number;
   summariesDeleted: number;
   mentionsDeleted: number;
+  sentimentDailyDeleted: number;
   embeddingsDeleted: number;
   sessionsDeleted: number;
 }
@@ -38,6 +39,17 @@ export function createRetention(pool: Pool, log: Logger) {
     const mentionsDeleted = mentionsResult.rowCount ?? 0;
     log.info({ mentionsDeleted }, 'retention: deleted entity mentions older than 90 days');
 
+    const sentimentRetentionDays = 365; // Keep 1 year of daily sentiment data
+    const sentimentCutoff = now - sentimentRetentionDays * 24 * 60 * 60 * 1000;
+    // entity_sentiment_daily.date is a DATE string, not epoch
+    const cutoffDate = new Date(sentimentCutoff).toISOString().slice(0, 10);
+    const sentimentResult = await pool.query(
+      `DELETE FROM entity_sentiment_daily WHERE date < $1`,
+      [cutoffDate],
+    );
+    const sentimentDailyDeleted = sentimentResult.rowCount ?? 0;
+    log.info({ sentimentDailyDeleted }, 'retention: deleted entity_sentiment_daily older than 365 days');
+
     let embeddingsDeleted = 0;
     for (const [targetType, sourceTable] of [['item', 'items'], ['summary', 'summaries']] as const) {
       let deleted: number;
@@ -68,6 +80,7 @@ export function createRetention(pool: Pool, log: Logger) {
       itemsDeleted,
       summariesDeleted,
       mentionsDeleted,
+      sentimentDailyDeleted,
       embeddingsDeleted,
       sessionsDeleted,
     };

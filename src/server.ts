@@ -188,6 +188,12 @@ export async function createServer(
     if (!source || !sourceId) {
       return reply.code(400).send({ error: 'source and sourceId are required' });
     }
+    if (source === 'rss') {
+      const validation = await validateUrl(sourceId);
+      if (!validation.valid) {
+        return reply.code(400).send({ error: `Invalid RSS feed URL: ${validation.reason}` });
+      }
+    }
     try {
       await insertSource(pool, source, sourceId, label ?? null, 1.0, Math.floor(Date.now() / 1000));
     } catch (err: unknown) {
@@ -369,14 +375,28 @@ export async function createServer(
   }, async (request, reply) => {
     const { source, sourceId } = request.params as { source: string; sourceId: string };
     const { enabled } = request.body as { enabled: boolean };
+
+    // Check current status — block re-enabling halted sources (CR-001)
+    const { rows: stateRows } = await pool.query<{ status: string; last_error: string | null }>(
+      `SELECT status, last_error FROM source_state WHERE source = $1 AND source_id = $2`,
+      [source, sourceId],
+    );
+    if (stateRows.length === 0) {
+      return reply.code(404).send({ error: 'Source not found' });
+    }
+    const currentStatus = stateRows[0].status;
+    if (currentStatus === 'halted' && enabled) {
+      return reply.code(409).send({
+        error: 'Source is halted — fix the underlying issue before re-enabling',
+        lastError: stateRows[0].last_error,
+      });
+    }
+
     const newStatus = enabled ? 'active' : 'disabled';
-    const { rowCount } = await pool.query(
+    await pool.query(
       `UPDATE source_state SET status = $1 WHERE source = $2 AND source_id = $3`,
       [newStatus, source, sourceId],
     );
-    if (rowCount === 0) {
-      return reply.code(404).send({ error: 'Source not found' });
-    }
     return { source, sourceId, status: newStatus };
   });
 

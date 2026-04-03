@@ -16,6 +16,7 @@ interface Source {
   errorCount: number;
   lastError: string | null;
   status: string;
+  stateStatus: string | null;
 }
 
 interface PipelineStatus {
@@ -69,15 +70,16 @@ function SourcesTab() {
 
   const toggleSource = async (s: Source) => {
     setError(null);
+    const isActive = s.stateStatus === 'active';
     try {
       await apiFetch(`/sources/${s.source}/${s.sourceId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ enabled: !s.enabled }),
+        body: JSON.stringify({ enabled: !isActive }),
       });
       setSources((prev) =>
         prev.map((src) =>
           src.sourceId === s.sourceId && src.source === s.source
-            ? { ...src, enabled: !src.enabled }
+            ? { ...src, stateStatus: isActive ? 'disabled' : 'active' }
             : src,
         ),
       );
@@ -136,12 +138,12 @@ function SourcesTab() {
                   <button
                     onClick={() => toggleSource(s)}
                     className={`relative w-10 h-5 rounded-full transition-colors ${
-                      s.enabled ? 'bg-accent-green' : 'bg-border'
+                      s.stateStatus === 'active' ? 'bg-accent-green' : 'bg-border'
                     }`}
                   >
                     <span
                       className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                        s.enabled ? 'left-5' : 'left-0.5'
+                        s.stateStatus === 'active' ? 'left-5' : 'left-0.5'
                       }`}
                     />
                   </button>

@@ -46,6 +46,7 @@ interface EntityManager {
     entities: ExtractedEntity[],
     source: string,
     summaryId: string,
+    language?: string | null,
   ): Promise<void>;
 }
 
@@ -59,6 +60,7 @@ export function createEntityManager(
     entities: ExtractedEntity[],
     source: string,
     summaryId: string,
+    language?: string | null,
   ): Promise<void> {
     const client = await pool.connect();
     try {
@@ -77,8 +79,8 @@ export function createEntityManager(
           continue;
         }
 
-        const aliasResult = await client.query<{ entity_id: string }>(
-          `SELECT ea.entity_id FROM entity_aliases ea
+        const aliasResult = await client.query<{ entity_id: string; status: string }>(
+          `SELECT ea.entity_id, e.status FROM entity_aliases ea
            JOIN entities e ON e.id = ea.entity_id
            WHERE ea.alias = $1 AND e.type = $2
            ORDER BY ea.context_key = '' DESC, ea.context_key, ea.entity_id`,
@@ -86,30 +88,16 @@ export function createEntityManager(
         );
 
         if (aliasResult.rows.length > 0) {
-          const entityId = aliasResult.rows[0].entity_id;
-          resolvedIds.push(entityId);
-          entityIdMap.set(entity, entityId);
-          continue;
-        }
-
-        // Check archived
-        const archivedResult = await client.query<{ id: string }>(
-          "SELECT id FROM entities WHERE name = $1 AND type = $2 AND status = 'archived'",
-          [canonical, entity.type],
-        );
-
-        if (archivedResult.rows.length > 0) {
-          const entityId = archivedResult.rows[0].id;
-          await client.query(
-            "UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = $1",
-            [entityId],
-          );
-          log.info(
-            { entityId, name: canonical },
-            `Reactivated archived entity: ${canonical}`,
-          );
-          resolvedIds.push(entityId);
-          entityIdMap.set(entity, entityId);
+          const row = aliasResult.rows[0];
+          if (row.status === 'archived') {
+            await client.query(
+              `UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = $1`,
+              [row.entity_id],
+            );
+            log.info({ entityId: row.entity_id, alias: canonical }, 'reactivated archived entity via alias match');
+          }
+          resolvedIds.push(row.entity_id);
+          entityIdMap.set(entity, row.entity_id);
           continue;
         }
 
@@ -124,24 +112,27 @@ export function createEntityManager(
         const coOccurring = await client.query<{
           alias: string;
           entity_id: string;
+          type: string;
         }>(
-          `SELECT DISTINCT ea.alias, ea.entity_id
+          `SELECT DISTINCT ea.alias, ea.entity_id, e.type
            FROM entity_aliases ea
            JOIN entity_mentions em ON em.entity_id = ea.entity_id
+           JOIN entities e ON e.id = ea.entity_id
            WHERE em.summary_id IN (
              SELECT summary_id FROM entity_mentions WHERE entity_id = ANY($1)
            )`,
           [resolvedIds],
         );
 
+        // Key by alias + type to avoid cross-type collisions
         const coOccurMap = new Map<string, string>();
         for (const row of coOccurring.rows) {
-          coOccurMap.set(row.alias, row.entity_id);
+          coOccurMap.set(`${row.alias}\0${row.type}`, row.entity_id);
         }
 
         for (const entity of unresolvedEntities) {
           const canonical = normalizeAlias(entity.name);
-          const matched = coOccurMap.get(canonical);
+          const matched = coOccurMap.get(`${canonical}\0${entity.type}`);
 
           if (matched) {
             resolvedIds.push(matched);
@@ -386,9 +377,9 @@ export function createEntityManager(
         const mentionValues: string[] = [];
         const mentionParams: unknown[] = [];
         for (let i = 0; i < mentionRows.length; i++) {
-          const offset = i * 7;
+          const offset = i * 8;
           mentionValues.push(
-            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`,
+            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8})`,
           );
           mentionParams.push(
             mentionRows[i].id,
@@ -398,10 +389,11 @@ export function createEntityManager(
             mentionRows[i].sentiment,
             mentionRows[i].mentionCount,
             now,
+            language ?? null,
           );
         }
         await client.query(
-          `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at)
+          `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at, language)
            VALUES ${mentionValues.join(', ')}`,
           mentionParams,
         );

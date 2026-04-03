@@ -20,6 +20,8 @@ export interface RawItem {
 }
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+const MAX_FEED_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_ITEMS_PER_POLL = 50;
 
 function syntheticGuid(pubDate: string | undefined, title: string | undefined): string {
   const input = `${pubDate ?? ''}${title ?? ''}`;
@@ -37,6 +39,10 @@ async function extractArticle(link: string, originalContent: string, log: Logger
     }
 
     const html = await response.text();
+    if (html.length > MAX_FEED_BYTES) {
+      log.warn({ link, size: html.length }, 'Article body exceeded size limit');
+      return originalContent;
+    }
     const { document } = parseHTML(html);
     const reader = new Readability(document);
     const article = reader.parse();
@@ -70,7 +76,16 @@ export async function pollFeed(
     if (!feedResponse.ok) {
       throw new Error(`RSS fetch failed: ${feedResponse.status}`);
     }
+    const contentLength = Number(feedResponse.headers.get('content-length') ?? 0);
+    if (contentLength > MAX_FEED_BYTES) {
+      log.warn({ feedUrl, contentLength }, 'Feed too large, skipping');
+      return { items: [], lastId };
+    }
     const feedXml = await feedResponse.text();
+    if (feedXml.length > MAX_FEED_BYTES) {
+      log.warn({ feedUrl, size: feedXml.length }, 'Feed body exceeded size limit');
+      return { items: [], lastId };
+    }
     const feed = await parser.parseString(feedXml);
 
     const feedItems = (feed.items ?? []).map((item) => {
@@ -107,6 +122,12 @@ export async function pollFeed(
       const timeB = new Date(b.isoDate ?? 0).getTime();
       return timeA - timeB;
     });
+
+    // RS-011: Cap item count to prevent unbounded article extraction
+    if (filtered.length > MAX_ITEMS_PER_POLL) {
+      log.warn({ feedUrl, total: filtered.length, cap: MAX_ITEMS_PER_POLL }, 'Feed item cap reached');
+      filtered = filtered.slice(-MAX_ITEMS_PER_POLL); // Keep newest
+    }
 
     const BATCH_SIZE = 5;
     const items: RawItem[] = [];

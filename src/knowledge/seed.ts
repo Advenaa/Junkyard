@@ -7,6 +7,8 @@ interface CoinGeckoEntry {
   id: string;
   symbol: string;
   name: string;
+  /** Present when fetched from /coins/markets; absent from /coins/list. */
+  market_cap_rank?: number | null;
 }
 
 const INDONESIAN_ENTITIES = [
@@ -147,19 +149,36 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         const entityId = nameToId.get(name);
         if (!entityId) continue;
 
-        const aliases = new Set([
-          name,
-          normalizeAlias(coin.symbol),
-          normalizeAlias(coin.id),
-        ]);
+        const symbolAlias = normalizeAlias(coin.symbol);
+        // Top-100 tokens get empty context_key for their symbol (most likely match).
+        // Others get a contextualized key so multiple entities can share the same
+        // symbol without the first-seeded winning arbitrarily.
+        const symbolContextKey =
+          coin.market_cap_rank && coin.market_cap_rank <= 100
+            ? ''
+            : `coingecko:${coin.id}`;
 
-        for (const alias of aliases) {
+        // Name and CoinGecko slug aliases always use empty context_key
+        // (they are already unique enough).
+        const plainAliases = new Set([name, normalizeAlias(coin.id)]);
+
+        for (const alias of plainAliases) {
           if (!alias) continue;
-          const offset = aliasIdx * 2;
+          const offset = aliasIdx * 3;
           aliasPlaceholders.push(
-            `($${offset + 1}, '', $${offset + 2})`,
+            `($${offset + 1}, $${offset + 2}, $${offset + 3})`,
           );
-          aliasValues.push(alias, entityId);
+          aliasValues.push(alias, '', entityId);
+          aliasIdx++;
+        }
+
+        // Insert symbol alias separately with its context_key
+        if (symbolAlias && !plainAliases.has(symbolAlias)) {
+          const offset = aliasIdx * 3;
+          aliasPlaceholders.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3})`,
+          );
+          aliasValues.push(symbolAlias, symbolContextKey, entityId);
           aliasIdx++;
         }
       }

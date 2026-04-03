@@ -68,11 +68,11 @@ export function createScheduler(deps: SchedulerDeps) {
     const recovered = await deps.onCrashRecovery();
     log.info({ recovered }, 'crash recovery complete');
 
-    register('source-poll-tick', '* * * * *', deps.onSourcePollTick);
-    register('market-pulse', '0 */3 * * *', deps.onPulse);
-    register('health-monitor', '*/5 * * * *', deps.onHealthCheck);
-
     const { expression, timezone } = await buildDailyCron();
+
+    register('source-poll-tick', '* * * * *', deps.onSourcePollTick);
+    register('market-pulse', '0 */3 * * *', deps.onPulse, { scheduled: true, timezone });
+    register('health-monitor', '*/5 * * * *', deps.onHealthCheck, { scheduled: true, timezone });
     register('daily-synthesis', expression, deps.onDaily, {
       scheduled: true,
       timezone,

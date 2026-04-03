@@ -45,10 +45,11 @@ function shiftDate(dateString: string, days: number): string {
 
 /** Convert a YYYY-MM-DD date string to epoch-ms bounds [startMs, endMs) in the given timezone. */
 function dateToEpochMsBounds(dateString: string, timezone: string): { startMs: number; endMs: number } {
-  // Compute UTC offset for the given timezone (DST-safe, matches synthesize.ts approach)
-  const now = new Date();
-  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
-  const localStr = now.toLocaleString('en-US', { timeZone: timezone });
+  // Compute UTC offset for the given timezone using the target date (not now) to handle DST correctly
+  // Use midday of the target date to avoid midnight edge cases
+  const referenceDate = new Date(dateString + 'T12:00:00Z');
+  const utcStr = referenceDate.toLocaleString('en-US', { timeZone: 'UTC' });
+  const localStr = referenceDate.toLocaleString('en-US', { timeZone: timezone });
   const offsetMs = new Date(localStr).getTime() - new Date(utcStr).getTime();
 
   // Midnight in target timezone expressed as UTC epoch
