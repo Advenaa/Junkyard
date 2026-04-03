@@ -74,13 +74,20 @@ export function loadConfig(): Config {
   let apiKey = process.env['API_KEY'] || null;
   if (!apiKey) {
     apiKey = `pk_${ulid()}`;
-    console.warn('WARNING: API_KEY not set — auto-generated (set API_KEY in .env for persistence)');
+    console.error('╔══════════════════════════════════════════════════════════════╗');
+    console.error('║ WARNING: API_KEY not set — auto-generated ephemeral key     ║');
+    console.error('║ Sessions will be lost on restart. Set API_KEY in .env       ║');
+    console.error(`║ Generated: ${apiKey.padEnd(48)}║`);
+    console.error('╚══════════════════════════════════════════════════════════════╝');
   }
 
   let sessionSecret = process.env['SESSION_SECRET'] || null;
   if (!sessionSecret) {
     sessionSecret = crypto.randomBytes(32).toString('hex');
-    console.warn('WARNING: SESSION_SECRET not set — auto-generated (set SESSION_SECRET in .env for persistence)');
+    console.error('╔══════════════════════════════════════════════════════════════╗');
+    console.error('║ WARNING: SESSION_SECRET not set — auto-generated ephemeral  ║');
+    console.error('║ All sessions will be lost on restart. Set in .env           ║');
+    console.error('╚══════════════════════════════════════════════════════════════╝');
   }
 
   const rawPort = process.env['PORT'];

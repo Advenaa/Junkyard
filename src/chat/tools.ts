@@ -58,22 +58,22 @@ function createSemanticSearch(
       // Fetch content for each result
       const ids = results.map((r) => r.targetId);
       const tableName = type === 'summary' ? 'summaries' : 'reports';
-      const contentColumn = type === 'summary' ? 'content' : 'content';
+      const contentColumn = 'body';
 
       const placeholders = ids.map((_, i) => `$${i + 1}`).join(', ');
       const dbResult = await pool.query<{
         id: string;
-        content: string;
+        body: string;
         created_at: string;
       }>(
-        `SELECT id, ${contentColumn} AS content, created_at FROM ${tableName} WHERE id IN (${placeholders})`,
+        `SELECT id, body, created_at FROM ${tableName} WHERE id IN (${placeholders})`,
         ids,
       );
 
       const contentMap = new Map<string, { content: string; createdAt: string }>();
       for (const row of dbResult.rows) {
         contentMap.set(row.id, {
-          content: row.content,
+          content: row.body,
           createdAt: row.created_at,
         });
       }

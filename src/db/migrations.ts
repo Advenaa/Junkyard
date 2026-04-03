@@ -328,6 +328,16 @@ const migrations: Migration[] = [
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_flash_per_day ON reports(date) WHERE type = 'flash'`);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_daily_per_day ON reports(date) WHERE type = 'daily'`);
   },
+
+  // Migration 8: Add 'failed' to items.status CHECK constraint (CF-002)
+  async (client) => {
+    await client.query(`ALTER TABLE items DROP CONSTRAINT IF EXISTS chk_items_status`);
+    await client.query(`
+      ALTER TABLE items
+        ADD CONSTRAINT chk_items_status
+        CHECK (status IN ('ready', 'filtered', 'processing', 'processed', 'failed'))
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

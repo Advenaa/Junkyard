@@ -102,8 +102,8 @@ describe('semantic_search', () => {
       { targetId: 'sum-002', score: 0.82 },
     ];
     const dbRows = [
-      { id: 'sum-001', content: 'Bitcoin rallied 5%', created_at: '2026-04-01' },
-      { id: 'sum-002', content: 'ETH gas fees dropped', created_at: '2026-04-02' },
+      { id: 'sum-001', body: 'Bitcoin rallied 5%', created_at: '2026-04-01' },
+      { id: 'sum-002', body: 'ETH gas fees dropped', created_at: '2026-04-02' },
     ];
     const tools = createChatTools(
       stubPool(dbRows),

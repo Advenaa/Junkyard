@@ -117,7 +117,21 @@ export async function createServer(
     return { sources };
   });
 
-  app.post('/api/v1/sources', { preHandler: [authPreHandler] }, async (request, reply) => {
+  app.post('/api/v1/sources', {
+    preHandler: [authPreHandler],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['source', 'sourceId'],
+        properties: {
+          source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
+          sourceId: { type: 'string', minLength: 1, maxLength: 255 },
+          label: { type: 'string', maxLength: 255 },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (request, reply) => {
     const { source, sourceId, label } = request.body as { source?: string; sourceId?: string; label?: string };
     if (!source || !sourceId) {
       return reply.code(400).send({ error: 'source and sourceId are required' });

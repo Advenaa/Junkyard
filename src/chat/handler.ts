@@ -228,21 +228,39 @@ export function createChatHandler(
     const toolDefsText = JSON.stringify(TOOL_DEFINITIONS);
     const systemWithTools = `${SYSTEM_PROMPT}\n\nTool definitions:\n${toolDefsText}\n\nTo use a tool, respond with a <tool_call> block containing JSON with "name" and "args". You may use multiple tool calls. When you have enough information, respond with your final answer as plain text (no tool_call blocks).`;
 
+    // Count input tokens once (user query + history)
+    const inputTokens = Math.ceil(messages.reduce((sum, m) => sum + m.content.length / 4, 0));
+    trackTokens(userId, inputTokens);
+
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
 
-      const result = await llm.call({
-        model: config.models.sonnet,
-        system: systemWithTools,
-        messages,
-        maxTokens: 4096,
-        stage: 'chat',
-      });
+      let result: LLMCallResult;
+      try {
+        result = await llm.call({
+          model: config.models.sonnet,
+          system: systemWithTools,
+          messages,
+          maxTokens: 4096,
+          stage: 'chat',
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('halted') || msg.includes('401') || msg.includes('unauthorized')) {
+          log.error({ err, conversationId }, 'chat: LLM service halted');
+          return { response: 'Chat service is temporarily unavailable. Please try again later.', toolsUsed };
+        }
+        if (msg.includes('context') || msg.includes('token')) {
+          log.warn({ err, conversationId }, 'chat: context length exceeded');
+          return { response: 'Your conversation is too long. Please start a new conversation.', toolsUsed };
+        }
+        log.error({ err, conversationId }, 'chat: LLM call failed');
+        return { response: 'An error occurred processing your request. Please try again.', toolsUsed };
+      }
 
-      // Track estimated token usage — include full message context, not just query+response
-      const msgTokens = messages.reduce((sum, m) => sum + m.content.length / 4, 0);
-      const responseTokens = (result.content?.length ?? 0) / 4;
-      trackTokens(userId, Math.ceil(msgTokens + responseTokens));
+      // Track only new tokens this round — response + any tool results added
+      const responseTokens = Math.ceil((result.content?.length ?? 0) / 4);
+      trackTokens(userId, responseTokens);
 
       const toolCalls = parseToolCalls(result.content);
 

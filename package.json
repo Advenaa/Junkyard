@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cd dashboard && npm run build && cd ..",
     "dev": "tsx watch src/index.ts -- run",
     "start": "node dist/index.js run",
     "test": "node --import tsx/esm --test test/unit/*.test.ts",
