@@ -19,8 +19,8 @@ export interface ConversationManager {
 
 // ── Constants ─────────────────────────────────────────────────────────
 
-const MAX_MESSAGES = 50;
-const IDLE_TIMEOUT_MS = 3_600_000; // 1 hour
+export const MAX_MESSAGES = 50;
+export const IDLE_TIMEOUT_MS = 3_600_000; // 1 hour
 export const MAX_CONVERSATIONS_PER_USER = 10;
 export const MAX_CONVERSATIONS_TOTAL = 1000;
 

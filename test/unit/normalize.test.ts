@@ -1,7 +1,8 @@
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkSpam, SPAM_RULES } from '../../src/normalize/spam.js';
 import { detectInjection, sanitizeContent } from '../../src/normalize/instruct-detector.js';
+import { createNormalizer } from '../../src/normalize/index.js';
 import type { RawItem } from '../../src/ingest/rss.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -436,5 +437,258 @@ describe('evasion via Unicode obfuscation', () => {
     const result = detectInjection(evasion);
     assert.equal(result.detected, true);
     assert.equal(result.pattern, 'xml-closing-tag');
+  });
+});
+
+// ── Normalize Pipeline (D-004, D-015, D-016) ──────────────────────
+
+// Shared mock factories for normalize pipeline tests
+
+function makeMockLog() {
+  return {
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    debug: () => {},
+    child: () => makeMockLog(),
+  } as any;
+}
+
+function makeMockConfig() {
+  return {
+    models: { haiku: 'claude-3-haiku-20240307', sonnet: 'claude-3-sonnet' },
+  } as any;
+}
+
+/**
+ * Creates a mock pool. By default:
+ * - SELECT queries return empty rows (no dedup hit)
+ * - INSERT queries return rowCount 1
+ */
+function makeMockPool(overrides?: {
+  queryFn?: (text: string, params?: unknown[]) => any;
+}) {
+  const queryFn =
+    overrides?.queryFn ??
+    ((text: string) => {
+      if (text.trim().startsWith('SELECT')) {
+        return { rows: [] };
+      }
+      // INSERT — simulate successful insert (rowCount 1)
+      return { rows: [], rowCount: 1 };
+    });
+
+  return { query: mock.fn(queryFn) } as any;
+}
+
+function makeMockLlm(overrides?: {
+  callFn?: (...args: any[]) => any;
+  wrapWithNonceFn?: (content: string) => { wrapped: string; nonce: string };
+}) {
+  return {
+    call: mock.fn(
+      overrides?.callFn ??
+        (async () => ({ content: 'translated text' })),
+    ),
+    wrapWithNonce: mock.fn(
+      overrides?.wrapWithNonceFn ??
+        ((content: string) => ({
+          wrapped: `<scraped_content_abcd1234>${content}</scraped_content_abcd1234>`,
+          nonce: 'abcd1234',
+        })),
+    ),
+    estimateTokens: () => 100,
+    sanitizeForPrompt: (s: string) => s,
+    getBudgetHint: () => '',
+  } as any;
+}
+
+// ── D-016: Surrogate-safe truncation ────────────────────────────────
+
+describe('surrogate-safe truncation (D-016)', () => {
+  it('does not split a surrogate pair at the truncation boundary', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    // Build content that is exactly MAX_CONTENT_LENGTH + 1 with the last
+    // character before the boundary being a high surrogate (first half of
+    // an emoji). The emoji U+1F680 (🚀) is encoded as two UTF-16 code
+    // units: 0xD83D (high surrogate) + 0xDE80 (low surrogate).
+    // We place it so the high surrogate lands at index 19999 and the low
+    // surrogate at index 20000, which is the first char past the limit.
+    const padding = 'a'.repeat(19_999);
+    const content = padding + '🚀' + 'b'; // length = 19999 + 2 + 1 = 20002
+
+    const item = makeItem({ content });
+    const result = await normalize(item);
+
+    // The item should be processed (not error)
+    assert.notEqual(result, 'error');
+
+    // The truncated content should NOT end with an unpaired high surrogate.
+    // It should be 19999 chars (stepped back one from 20000 because
+    // charCodeAt(19999) is a high surrogate).
+    assert.equal(item.content.length <= 20_000, true);
+
+    // Verify no unpaired surrogate at the end
+    const lastCode = item.content.charCodeAt(item.content.length - 1);
+    const isUnpairedHighSurrogate = lastCode >= 0xD800 && lastCode <= 0xDBFF;
+    assert.equal(isUnpairedHighSurrogate, false, 'Content must not end with an unpaired high surrogate');
+  });
+
+  it('does not truncate content under the limit', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const content = 'Short content with emoji 🚀 that is well under the limit';
+    const item = makeItem({ content });
+    await normalize(item);
+
+    // Content may be sanitized (NFKC etc) but should not be truncated
+    assert.equal(item.content.length < 20_000, true);
+  });
+});
+
+// ── D-015: Early content hash dedup ─────────────────────────────────
+
+describe('early content hash dedup (D-015)', () => {
+  it('returns dropped when content hash already exists in DB', async () => {
+    const pool = makeMockPool({
+      queryFn: (text: string) => {
+        // The early dedup SELECT returns a match
+        if (text.includes('content_hash')) {
+          return { rows: [{ id: 'existing-id' }] };
+        }
+        return { rows: [], rowCount: 1 };
+      },
+    });
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({
+      content: 'This content already exists in the database for dedup testing',
+    });
+    const result = await normalize(item);
+
+    assert.equal(result, 'dropped');
+    // LLM should never have been called (no translation wasted)
+    assert.equal(llm.call.mock.callCount(), 0);
+  });
+});
+
+// ── D-004: Translation nonce wrapping ───────────────────────────────
+
+describe('translation nonce wrapping (D-004)', () => {
+  it('wraps Indonesian content with nonce tags before sending to LLM', async () => {
+    // Use text that franc reliably detects as 'ind' (Indonesian)
+    const indonesianText =
+      'Saya ingin membeli aset kripto karena harga sudah turun banyak sekali hari ini ' +
+      'dan saya berharap besok akan naik kembali dengan sangat baik untuk semua orang';
+
+    let capturedCallArgs: any = null;
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm({
+      callFn: async (args: any) => {
+        capturedCallArgs = args;
+        return { content: 'Bitcoin price today experienced significant increase' };
+      },
+    });
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({ content: indonesianText });
+    await normalize(item);
+
+    // wrapWithNonce should have been called with the sanitized content
+    assert.equal(llm.wrapWithNonce.mock.callCount(), 1);
+
+    // The LLM call should have been made (translation triggered)
+    assert.equal(llm.call.mock.callCount(), 1);
+
+    // The content sent to LLM should contain the nonce-wrapped XML tags
+    assert.ok(capturedCallArgs, 'LLM call should have been made');
+    const userMessage = capturedCallArgs.messages[0].content;
+    assert.match(userMessage, /scraped_content_/, 'LLM input should contain nonce-wrapped content');
+  });
+
+  it('strips leaked nonce tags from translation output', async () => {
+    const indonesianText =
+      'Saya ingin membeli aset kripto karena harga sudah turun banyak sekali hari ini ' +
+      'dan saya berharap besok akan naik kembali dengan sangat baik untuk semua orang';
+
+    const nonce = 'deadbeef';
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm({
+      wrapWithNonceFn: (content: string) => ({
+        wrapped: `<scraped_content_${nonce}>${content}</scraped_content_${nonce}>`,
+        nonce,
+      }),
+      callFn: async () => ({
+        // Simulate LLM leaking nonce tags in its output
+        content: `<scraped_content_${nonce}>Bitcoin price today</scraped_content_${nonce}>`,
+      }),
+    });
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({ content: indonesianText });
+    await normalize(item);
+
+    // The nonce tags should have been stripped from the final content
+    assert.ok(!item.content.includes(`scraped_content_${nonce}`), 'Nonce tags should be stripped from output');
+    assert.ok(item.content.includes('Bitcoin price today'), 'Translation content should be preserved');
+  });
+});
+
+// ── Top-level error handling ────────────────────────────────────────
+
+describe('normalize error handling', () => {
+  it('returns error (does not throw) when pool throws', async () => {
+    const pool = makeMockPool({
+      queryFn: () => {
+        throw new Error('connection refused');
+      },
+    });
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({
+      content: 'Some legitimate content that should still fail due to pool error',
+    });
+
+    // Should not throw — returns 'error'
+    const result = await normalize(item);
+    assert.equal(result, 'error');
+  });
+
+  it('returns error when pool.query rejects with async error', async () => {
+    const pool = makeMockPool({
+      queryFn: async () => {
+        throw new Error('timeout');
+      },
+    });
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({
+      content: 'Content for async error test in the normalize pipeline here',
+    });
+
+    const result = await normalize(item);
+    assert.equal(result, 'error');
   });
 });
