@@ -327,6 +327,31 @@ function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []
   };
 }
 
+describe('deliver — missing webhook_url marks failed (SD-001 regression)', () => {
+  it('marks report as failed when webhook_url is not configured', async () => {
+    // Pool responses:
+    // 1. getAppConfig('webhook_url') → no rows (not configured)
+    // 2. UPDATE reports SET delivery_status = 'failed'
+    const pool = mockPool([
+      { rows: [] },
+      { rowCount: 1 },
+    ]);
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+    const result = await deliver(FAKE_REPORT);
+
+    // deliver returns false when webhook_url is missing
+    assert.strictEqual(result, false);
+
+    // Verify delivery_status was updated to 'failed'
+    const updateQuery = pool.calls.find((c) => c.text.includes('UPDATE reports SET delivery_status'));
+    assert.ok(updateQuery, 'Expected an UPDATE delivery_status query');
+    assert.strictEqual(updateQuery.values[0], 'failed');
+    assert.strictEqual(updateQuery.values[2], FAKE_REPORT.id);
+  });
+});
+
 describe('deliver — idempotency guard', () => {
   it('skips delivery when report already delivered', async (t) => {
     // Pool responses:

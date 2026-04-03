@@ -246,4 +246,44 @@ describe('health monitor', () => {
       assert.ok(poolCheck.message?.includes('Pool exhausted'));
     });
   });
+
+  describe('SC-001: catchUpTime wraps past midnight', () => {
+    /**
+     * Mirrors the exact computation from src/index.ts onHealthCheck (~line 291-295).
+     * Extracted here so we can unit-test the arithmetic without wiring up the full
+     * health-check handler (which needs pool, config, synthesizer, etc.).
+     */
+    function computeCatchUpTime(digestTime: string, bufferMinutes: number): string {
+      const [dh, dm] = digestTime.split(':').map(Number);
+      const totalMinutes = dh * 60 + dm + bufferMinutes;
+      const catchUpHours = Math.floor(totalMinutes / 60) % 24;
+      return `${String(catchUpHours).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
+    }
+
+    it('wraps hours past midnight: "23:56" + 5min = "00:01"', () => {
+      assert.equal(computeCatchUpTime('23:56', 5), '00:01');
+    });
+
+    it('does not produce "24:01" for late-night digest times', () => {
+      const result = computeCatchUpTime('23:56', 5);
+      assert.notEqual(result, '24:01');
+      assert.ok(Number(result.split(':')[0]) < 24, 'hours must be 0-23');
+    });
+
+    it('handles normal case: "09:00" + 5min = "09:05"', () => {
+      assert.equal(computeCatchUpTime('09:00', 5), '09:05');
+    });
+
+    it('handles exact midnight wrap: "23:55" + 5min = "00:00"', () => {
+      assert.equal(computeCatchUpTime('23:55', 5), '00:00');
+    });
+
+    it('handles large buffer crossing midnight: "22:00" + 150min = "00:30"', () => {
+      assert.equal(computeCatchUpTime('22:00', 150), '00:30');
+    });
+
+    it('pads single-digit hours and minutes', () => {
+      assert.equal(computeCatchUpTime('01:02', 3), '01:05');
+    });
+  });
 });

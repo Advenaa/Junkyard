@@ -186,6 +186,43 @@ describe('semantic_search', () => {
     assert.deepEqual(pool.calls[0].params, ['id-a', 'id-b']);
   });
 
+  it('calls prepareText before embed so query gets the same type prefix as stored vectors (CS-001)', async () => {
+    const calls: { method: string; args: unknown[] }[] = [];
+    const preparedText = 'summary: bitcoin price';
+    const embedder: Embedder = {
+      prepareText(text: string, type: string): string {
+        calls.push({ method: 'prepareText', args: [text, type] });
+        return preparedText;
+      },
+      async embed(text: string) {
+        calls.push({ method: 'embed', args: [text] });
+        return { vector: new Float32Array([1, 0, 0]) };
+      },
+    };
+
+    const vectorResults: SearchResult[] = [{ targetId: 'sum-1', score: 0.9 }];
+    const dbRows = [{ id: 'sum-1', body: 'content', created_at: '2026-01-01' }];
+    const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), embedder, stubLlm());
+    const search = toolByName(tools, 'semantic_search');
+
+    await search.execute({ query: 'bitcoin price' });
+
+    // prepareText must be called with the raw query and 'summary' type
+    const prepareCall = calls.find((c) => c.method === 'prepareText');
+    assert.ok(prepareCall, 'prepareText should have been called');
+    assert.deepEqual(prepareCall.args, ['bitcoin price', 'summary']);
+
+    // embed must receive the prepared (prefixed) text, not the raw query
+    const embedCall = calls.find((c) => c.method === 'embed');
+    assert.ok(embedCall, 'embed should have been called');
+    assert.equal(embedCall.args[0], preparedText, 'embed should receive prepareText output, not raw query');
+
+    // prepareText must be called before embed
+    const prepareIdx = calls.findIndex((c) => c.method === 'prepareText');
+    const embedIdx = calls.findIndex((c) => c.method === 'embed');
+    assert.ok(prepareIdx < embedIdx, 'prepareText must be called before embed');
+  });
+
   it('wraps content in nonce-tagged search_result blocks', async () => {
     const vectorResults: SearchResult[] = [{ targetId: 'sum-x', score: 0.9 }];
     const dbRows = [{ id: 'sum-x', content: 'Some content', created_at: '2026-01-01' }];

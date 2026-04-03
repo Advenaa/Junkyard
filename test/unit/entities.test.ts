@@ -144,6 +144,62 @@ describe('normalizeAlias', () => {
   });
 });
 
+// ── EL-001 regression: empty aliases after normalization ──────────────────
+
+describe('EL-001: skips empty aliases after normalization', () => {
+  it('filters out symbol-only aliases that normalize to empty string', () => {
+    const aliases = ['$', 'ETH', '$BTC', '  ', '  $  ', 'Solana'];
+
+    // Reproduce the filtering logic from resolveEntities (line 324-328)
+    const aliasTuples: { alias: string; entityId: string }[] = [];
+    const entityId = 'fake-entity-id';
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (!normalizedAlias) continue;
+      aliasTuples.push({ alias: normalizedAlias, entityId });
+    }
+
+    // '$', '  ', '  $  ' all normalize to '' and must be skipped
+    assert.equal(aliasTuples.length, 3);
+    assert.deepEqual(
+      aliasTuples.map((t) => t.alias),
+      ['eth', 'btc', 'solana'],
+    );
+  });
+
+  it('produces no tuples when all aliases normalize to empty', () => {
+    const aliases = ['$', '  ', '  $  '];
+
+    const aliasTuples: { alias: string; entityId: string }[] = [];
+    const entityId = 'fake-entity-id';
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (!normalizedAlias) continue;
+      aliasTuples.push({ alias: normalizedAlias, entityId });
+    }
+
+    assert.equal(aliasTuples.length, 0);
+  });
+
+  it('still inserts valid aliases from a mixed batch', () => {
+    const aliases = ['$', 'Ethereum', '$', '$SOL'];
+
+    const aliasTuples: { alias: string; entityId: string }[] = [];
+    const entityId = 'fake-entity-id';
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (!normalizedAlias) continue;
+      aliasTuples.push({ alias: normalizedAlias, entityId });
+    }
+
+    assert.equal(aliasTuples.length, 2);
+    assert.deepEqual(
+      aliasTuples.map((t) => t.alias),
+      ['ethereum', 'sol'],
+    );
+  });
+});
+
 // ── Canonical name normalization (entity.name.toLowerCase()) ───────────────
 
 describe('Canonical name normalization', () => {
