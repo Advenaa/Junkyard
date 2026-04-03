@@ -23,6 +23,16 @@ import {
 } from './db/queries.js';
 import { validateUrl } from './url-validator.js';
 
+/** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
+function toCamelCase<T>(obj: Record<string, unknown>): T {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    result[camelKey] = value;
+  }
+  return result as T;
+}
+
 interface UserRow {
   discord_id: string;
   username: string;
@@ -123,7 +133,7 @@ export async function createServer(
       `SELECT COUNT(*) AS count FROM reports ${countWhere}`,
       countParams,
     );
-    return { reports, total: parseInt(countRows[0].count, 10) };
+    return { reports: reports.map(r => toCamelCase(r as unknown as Record<string, unknown>)), total: parseInt(countRows[0].count, 10) };
   });
 
   app.get('/api/v1/reports/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
@@ -135,13 +145,13 @@ export async function createServer(
     if (rows.length === 0) {
       return reply.code(404).send({ error: 'Report not found' });
     }
-    return reply.send({ report: rows[0] });
+    return reply.send({ report: toCamelCase(rows[0] as unknown as Record<string, unknown>) });
   });
 
   // --- Sources ---
   app.get('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
     const sources = await getSources(pool);
-    return { sources };
+    return { sources: sources.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
   app.post('/api/v1/sources', {
@@ -176,7 +186,7 @@ export async function createServer(
       [source, sourceId],
     );
     reply.code(201);
-    return rows[0];
+    return toCamelCase(rows[0] as unknown as Record<string, unknown>);
   });
 
   // --- Config ---
@@ -186,7 +196,7 @@ export async function createServer(
       getAppConfig(pool, 'timezone'),
       getAppConfig(pool, 'webhook_url'),
     ]);
-    return { digest_time: digestTime, timezone, webhook_url: webhookUrl };
+    return { digestTime, timezone, webhookUrl };
   });
 
   app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async (request, reply) => {
@@ -213,7 +223,7 @@ export async function createServer(
       getAppConfig(pool, 'timezone'),
       getAppConfig(pool, 'webhook_url'),
     ]);
-    return { digest_time: digestTime, timezone, webhook_url: webhookUrl };
+    return { digestTime, timezone, webhookUrl };
   });
 
   // --- Search ---
@@ -227,7 +237,7 @@ export async function createServer(
       `SELECT * FROM summaries WHERE body ILIKE $1 ORDER BY created_at DESC LIMIT $2`,
       [`%${q}%`, limit],
     );
-    return { results };
+    return { results: results.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
   // --- Raw feed ---
@@ -272,7 +282,7 @@ export async function createServer(
     }
 
     const { rows: items } = await pool.query<ItemRow>(sql, params);
-    return { items };
+    return { items: items.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
   app.post('/api/v1/chat', {
@@ -303,7 +313,7 @@ export async function createServer(
     const { rows: users } = await pool.query<UserRow>(
       `SELECT * FROM users ORDER BY created_at DESC`,
     );
-    return { users };
+    return { users: users.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
   // --- PATCH /sources/:source/:sourceId (CD-002) ---
@@ -390,10 +400,10 @@ export async function createServer(
     );
     const row = rows[0];
     return {
-      items_ready: parseInt(row.items_ready, 10),
-      items_processing: parseInt(row.items_processing, 10),
-      summaries_today: parseInt(row.summaries_today, 10),
-      cost_today: parseFloat(row.cost_today),
+      itemsReady: parseInt(row.items_ready, 10),
+      itemsProcessing: parseInt(row.items_processing, 10),
+      summariesToday: parseInt(row.summaries_today, 10),
+      costToday: parseFloat(row.cost_today),
     };
   });
 

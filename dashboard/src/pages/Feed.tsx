@@ -9,6 +9,16 @@ interface FeedSource {
   label: string;
 }
 
+interface FeedItemRaw {
+  id: string;
+  source: string;
+  author: string;
+  content: string;
+  timestamp: string;
+  attachments: string | string[] | null;
+  engagement: Record<string, number> | null;
+}
+
 interface FeedItem {
   id: string;
   source: string;
@@ -17,6 +27,16 @@ interface FeedItem {
   timestamp: string;
   attachments: string[];
   engagement: Record<string, number> | null;
+}
+
+function normalizeFeedItem(raw: FeedItemRaw): FeedItem {
+  let attachments: string[] = [];
+  if (Array.isArray(raw.attachments)) {
+    attachments = raw.attachments;
+  } else if (typeof raw.attachments === 'string') {
+    try { attachments = JSON.parse(raw.attachments); } catch { attachments = []; }
+  }
+  return { ...raw, attachments };
 }
 
 function formatTime(ts: string): string {
@@ -74,11 +94,12 @@ export function Feed() {
           if (newestTs) {
             url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=0&after=${encodeURIComponent(newestTs)}`;
           }
-          const res = await apiFetch<{ items: FeedItem[] }>(url);
+          const res = await apiFetch<{ items: FeedItemRaw[] }>(url);
           if (res.items.length > 0) {
+            const normalized = res.items.map(normalizeFeedItem);
             setItems((prev) => {
               const existingIds = new Set(prev.map((item) => item.id));
-              const newItems = res.items.filter((item) => !existingIds.has(item.id));
+              const newItems = normalized.filter((item) => !existingIds.has(item.id));
               if (newItems.length === 0) return prev;
               const combined = [...newItems, ...prev];
               return combined.length > MAX_ITEMS ? combined.slice(0, MAX_ITEMS) : combined;
@@ -86,15 +107,16 @@ export function Feed() {
           }
           return;
         }
-        const res = await apiFetch<{ items: FeedItem[] }>(url);
+        const res = await apiFetch<{ items: FeedItemRaw[] }>(url);
+        const normalized = res.items.map(normalizeFeedItem);
         if (mode === 'append') {
           setItems((prev) => {
             const existingIds = new Set(prev.map((i) => i.id));
-            const newItems = res.items.filter((i: FeedItem) => !existingIds.has(i.id));
+            const newItems = normalized.filter((i) => !existingIds.has(i.id));
             return [...prev, ...newItems];
           });
         } else {
-          setItems(res.items);
+          setItems(normalized);
         }
         setHasMore(res.items.length === PAGE_SIZE);
       } catch (err) {

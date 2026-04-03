@@ -19,9 +19,10 @@ interface Source {
 }
 
 interface PipelineStatus {
-  stages: Record<string, { lastRun: string | null; status: string }>;
-  llmCostToday: number;
-  allSourcesDisabled: boolean;
+  itemsReady: number;
+  itemsProcessing: number;
+  summariesToday: number;
+  costToday: number;
 }
 
 interface Config {
@@ -165,15 +166,15 @@ function DeliveryTab() {
   const [testResult, setTestResult] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<{ digest_time?: string; timezone?: string; webhook_url?: string }>('/config').then((res) => {
+    apiFetch<{ digestTime?: string; timezone?: string; webhookUrl?: string }>('/config').then((res) => {
       const mapped: Config = {
-        webhookUrl: res.webhook_url ?? '',
-        digestTime: res.digest_time ?? '09:00',
+        webhookUrl: res.webhookUrl ?? '',
+        digestTime: res.digestTime ?? '09:00',
         timezone: res.timezone ?? 'Asia/Jakarta',
         publicUrl: null,
       };
       setConfig(mapped);
-      setWebhookUrl(res.webhook_url ?? '');
+      setWebhookUrl(res.webhookUrl ?? '');
     });
   }, []);
 
@@ -283,23 +284,24 @@ function PipelineTab() {
 
   return (
     <div className="space-y-6">
-      {/* Pipeline Stages */}
+      {/* Pipeline Counters */}
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary px-4 py-3 border-b border-border">
           Pipeline Status
         </h3>
         <div className="divide-y divide-border">
-          {Object.entries(status.stages).map(([name, stage]) => (
-            <div key={name} className="flex items-center justify-between px-4 py-3">
-              <span className="text-text-primary text-sm font-body capitalize">{name}</span>
-              <div className="flex items-center gap-3">
-                <span className="text-text-secondary text-xs font-mono">
-                  {stage.lastRun ? formatRelativeTime(stage.lastRun) : 'Never'}
-                </span>
-                <StatusBadge status={stage.status} />
-              </div>
-            </div>
-          ))}
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-text-primary text-sm font-body">Items Ready</span>
+            <span className="text-text-primary text-sm font-mono">{status.itemsReady}</span>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-text-primary text-sm font-body">Items Processing</span>
+            <span className="text-text-primary text-sm font-mono">{status.itemsProcessing}</span>
+          </div>
+          <div className="flex items-center justify-between px-4 py-3">
+            <span className="text-text-primary text-sm font-body">Summaries Today</span>
+            <span className="text-text-primary text-sm font-mono">{status.summariesToday}</span>
+          </div>
         </div>
       </div>
 
@@ -309,19 +311,10 @@ function PipelineTab() {
           LLM Cost
         </h3>
         <p className="text-text-primary text-lg font-mono">
-          ${status.llmCostToday.toFixed(2)}{' '}
+          ${status.costToday.toFixed(2)}{' '}
           <span className="text-text-secondary text-xs">today</span>
         </p>
       </div>
-
-      {/* All Sources Disabled Warning */}
-      {status.allSourcesDisabled && (
-        <div className="bg-accent-red/10 border border-accent-red/30 rounded-lg p-4">
-          <p className="text-accent-red text-sm font-body">
-            All sources are currently disabled. The pipeline cannot collect data.
-          </p>
-        </div>
-      )}
     </div>
   );
 }
