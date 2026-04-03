@@ -7,7 +7,7 @@ Updated automatically when skills are created or modified.
 
 | Skill | Path | Created | Last Updated | Purpose |
 |-------|------|---------|-------------|---------|
-| podders-audit | .claude/skills/podders-audit/ | Cycle 95 | Cycle 95 | Audit specific module for bug patterns |
+| podders-audit | .claude/skills/podders-audit/ | Cycle 95 | Cycle 100 | Audit specific module for bug patterns |
 | podders-migration | .claude/skills/podders-migration/ | Cycle 95 | Cycle 95 | Create new DB migrations following conventions |
 | podders-source | .claude/skills/podders-source/ | Cycle 95 | Cycle 95 | Scaffold new ingest source adapter |
 | podders-fix | .claude/skills/podders-fix/ | Cycle 95 | Cycle 95 | Fix a specific finding from research queue |
@@ -15,6 +15,7 @@ Updated automatically when skills are created or modified.
 ## Skill Evolution Log
 
 - **Cycle 95**: Initial creation of 4 project-local skills (audit, migration, source, fix)
+- **Cycle 100**: Updated podders-audit with 8 new bug patterns from cycles 95-100 (claim-before-process, livelock on retry, batch length mismatch, HTML double-encoding, SQL interpolation, HTTP status regex, ULID stale detection, engagement sentinel -1)
 
 ## Planned Skills (create when pattern emerges)
 

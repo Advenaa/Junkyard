@@ -58,17 +58,25 @@ If `$ARGUMENTS` does not match any module above, list the valid module names and
    - **Prompt injection vectors in LLM inputs**: User-controlled or scraped content interpolated directly into LLM prompts without sanitization or delimiter fencing.
    - **Race conditions in DB operations**: SELECT-then-UPDATE patterns that should be atomic `UPDATE ... RETURNING` or use transactions. Especially dangerous for status transitions (e.g., `pending` -> `processing`).
    - **Missing error handling orphaning items in 'processing' state**: If an item's status is set to `processing` before an operation, and the operation can throw without a catch/finally that resets the status.
+   - **Claim-before-process pattern**: Any module that SELECT+processes DB rows must use atomic `UPDATE ... RETURNING` + `FOR UPDATE SKIP LOCKED`, not a bare SELECT followed by processing. A bare SELECT allows two workers to claim the same row.
+   - **SQL table/column interpolation**: Any dynamic table or column names interpolated into SQL strings must be validated against a hardcoded allowlist. Parameterized queries do not protect identifiers — only values.
 
    ### High (correctness)
    - **Snake_case leaking into API responses**: Response objects should go through `toCamelCase` transform. Flag any `res.json()` with snake_case keys.
    - **INTEGER columns that should be BIGINT for epoch-ms**: In migrations or schema definitions, timestamp columns declared as INTEGER instead of BIGINT.
    - **Missing zod validation on LLM output**: LLM responses parsed with `JSON.parse()` without subsequent zod schema validation.
    - **Uncapped retries or missing retry-after caps**: Retry loops without a max retry count, or retry delays that can grow unbounded (no cap on exponential backoff).
+   - **Livelock on retry**: Any retry loop must have a max retry count. Items that fail repeatedly must eventually be marked `failed`, not retried forever. Check for `while(true)` or unbounded loops around fallible operations.
+   - **Batch result length mismatch**: Any code that pairs API batch results (e.g., LLM batch responses, embedding arrays) with input arrays must verify that `results.length === inputs.length` before zipping. Off-by-one or partial-failure responses silently misalign data.
+   - **HTML entity double-encoding**: Sanitize functions must escape `&` before escaping `<` and `>`. If `<` is escaped to `&lt;` first and then `&` is escaped, the result is `&amp;lt;` — double-encoded. Check ordering in any HTML/XML sanitization logic.
+   - **HTTP status regex false positives**: Extracting HTTP status codes from error messages via regex (e.g., `/(\d{3})/`) can match non-status numbers like `"432ms"` or `"1024 bytes"`. Flag any status-code regex that doesn't anchor to known patterns (e.g., `HTTP `, `status `).
 
    ### Medium (edge case, UX)
    - **UTF-16 surrogate pair issues in string truncation**: `.slice()` or `.substring()` on strings that may contain emoji or CJK without checking surrogate pair boundaries.
    - **Missing status filters**: Queries that fetch entities/items without filtering out `archived` or `deleted` status, potentially mixing stale data with active data.
    - **Timezone-naive date operations**: Using `new Date()`, `Date.now()`, or date formatting without referencing the configured timezone from `app_config`. Flag bare `toLocaleDateString()` or `toISOString()` where user-facing timezone matters.
+   - **ULID timestamp decoding for stale detection**: Batch IDs and row IDs are ULIDs that encode their creation time. Use `decodeTime(ulid)` to extract the timestamp instead of adding extra `created_at` columns or passing timestamps alongside IDs. Flag any code that adds a timestamp column solely to track when a ULID-keyed row was created.
+   - **Engagement sentinel -1**: Sources without engagement metrics (retweets, likes, etc.) must use `-1` as the sentinel value, not `0`. A value of `0` is a valid engagement count and misleads LLMs into thinking a post had zero engagement rather than unknown engagement. Flag any `engagement = 0` or `?? 0` defaults for engagement fields.
 
 4. **Format findings** using the `.research-queue.md` format:
 
