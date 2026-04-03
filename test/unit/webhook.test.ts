@@ -442,3 +442,96 @@ describe('deliver — idempotency guard', () => {
     resolve6Mock.mock.restore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// DL-010 — truncate() preserves UTF-16 surrogate pairs (cycle 92)
+// ---------------------------------------------------------------------------
+
+describe('truncate — UTF-16 surrogate pair safety (DL-010)', () => {
+  it('backs up before a high surrogate at the cut point', () => {
+    // '🚀' is a surrogate pair at positions 6-7. Slicing to 7 (10-3) would
+    // land after the high surrogate. The fix backs up to 6.
+    const result = truncate('Hello 🚀 world', 10);
+    assert.strictEqual(result, 'Hello ...');
+  });
+
+  it('returns short text unchanged', () => {
+    assert.strictEqual(truncate('abc', 10), 'abc');
+  });
+
+  it('returns text unchanged when exactly at limit', () => {
+    assert.strictEqual(truncate('abcdefghij', 10), 'abcdefghij');
+  });
+
+  it('truncates 11-char ASCII string correctly', () => {
+    assert.strictEqual(truncate('abcdefghijk', 10), 'abcdefg...');
+  });
+
+  it('truncates normally when emoji is not at the cut point', () => {
+    // Emoji at the start, cut lands well after the pair
+    const result = truncate('🚀 abcdefghijklmnop', 14);
+    assert.strictEqual(result.length, 14);
+    assert.ok(result.endsWith('...'));
+    // Should not corrupt — no surrogate at cut boundary
+    assert.ok(!result.includes('\uFFFD'), 'No replacement characters');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DL-011 — Retry-After capped at 60s with NaN guard (cycle 92)
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from 'node:fs';
+
+describe('Retry-After cap — structural verification (DL-011)', () => {
+  const webhookSrc = readFileSync(
+    new URL('../../src/deliver/webhook.ts', import.meta.url),
+    'utf-8',
+  );
+
+  it('defines MAX_RETRY_AFTER_MS = 60_000', () => {
+    assert.ok(
+      /MAX_RETRY_AFTER_MS\s*=\s*60[_]?000/.test(webhookSrc),
+      'Expected MAX_RETRY_AFTER_MS constant equal to 60000',
+    );
+  });
+
+  it('uses Number.isFinite for NaN guard', () => {
+    assert.ok(
+      webhookSrc.includes('Number.isFinite'),
+      'Expected Number.isFinite guard on Retry-After parsing',
+    );
+  });
+
+  it('uses Math.min to cap the retry value', () => {
+    assert.ok(
+      /Math\.min\b.*MAX_RETRY_AFTER_MS/.test(webhookSrc),
+      'Expected Math.min(…, MAX_RETRY_AFTER_MS) to cap retry delay',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DL-014 — Atomic idempotency via UPDATE...RETURNING (cycle 92)
+// ---------------------------------------------------------------------------
+
+describe('Atomic idempotency — structural verification (DL-014)', () => {
+  const webhookSrc = readFileSync(
+    new URL('../../src/deliver/webhook.ts', import.meta.url),
+    'utf-8',
+  );
+
+  it('uses UPDATE reports … RETURNING instead of SELECT', () => {
+    assert.ok(
+      /UPDATE\s+reports[\s\S]*?RETURNING/i.test(webhookSrc),
+      'Expected UPDATE reports … RETURNING for atomic idempotency',
+    );
+  });
+
+  it('includes delivery_status != delivered in WHERE clause', () => {
+    assert.ok(
+      /delivery_status\s*!=\s*'delivered'/.test(webhookSrc),
+      "Expected WHERE delivery_status != 'delivered' guard",
+    );
+  });
+});
