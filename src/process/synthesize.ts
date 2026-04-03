@@ -134,6 +134,17 @@ function scoreSummary(row: SummaryRow, parsed: ParsedSummaryBody): number {
   return (urgencyScore * 3) + (entityCount * 2) + Math.log(1 + engagement);
 }
 
+// ── XML escaping ─────────────────────────────────────────────────────
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 // ── Prompt builders ───────────────────────────────────────────────────
 
 interface ScoredSummary {
@@ -160,7 +171,7 @@ function buildDailyUserMessage(
     const entities = s.parsed.entities
       .map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`)
       .join(', ');
-    return `[${s.row.source}] ${s.parsed.summary}\nEntities: ${entities}`;
+    return `[${escapeXml(s.row.source)}] ${s.parsed.summary}\nEntities: ${entities}`;
   });
   parts.push(`<summaries>\n${summaryBlocks.join('\n\n')}\n</summaries>`);
 
@@ -173,7 +184,7 @@ function buildDailyUserMessage(
   if (correlated.length > 0) {
     const entityLines = correlated.map(
       (c) =>
-        `${c.entityName}: weight=${c.weightedSum.toFixed(2)}, urgency=${c.urgency}, sources=${c.sources.map((s) => s.source).join('+')}`,
+        `${escapeXml(c.entityName)}: weight=${c.weightedSum.toFixed(2)}, urgency=${c.urgency}, sources=${c.sources.map((s) => escapeXml(s.source)).join('+')}`,
     );
     parts.push(
       `<correlated_entities>\n${entityLines.join('\n')}\n</correlated_entities>`,
@@ -194,7 +205,7 @@ function buildFlashUserMessage(
   // Correlated entity context
   const entityLines = correlated.map(
     (c) =>
-      `${c.entityName}: weight=${c.weightedSum.toFixed(2)}, urgency=${c.urgency}, sources=${c.sources.map((s) => s.source).join('+')}`,
+      `${escapeXml(c.entityName)}: weight=${c.weightedSum.toFixed(2)}, urgency=${c.urgency}, sources=${c.sources.map((s) => escapeXml(s.source)).join('+')}`,
   );
   parts.push(
     `<breaking_entities>\n${entityLines.join('\n')}\n</breaking_entities>`,
@@ -210,7 +221,7 @@ function buildFlashUserMessage(
       const entities = s.parsed.entities
         .map((e) => `${e.name} (sentiment: ${e.sentiment})`)
         .join(', ');
-      return `[${s.row.source}] ${s.parsed.summary}\nEntities: ${entities}`;
+      return `[${escapeXml(s.row.source)}] ${s.parsed.summary}\nEntities: ${entities}`;
     });
     parts.push(`<recent_summaries>\n${summaryBlocks.join('\n\n')}\n</recent_summaries>`);
   }

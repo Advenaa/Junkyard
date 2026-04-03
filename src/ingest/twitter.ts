@@ -36,14 +36,19 @@ function computeEngagement(tweet: TwitterTweet): number {
   return Math.min(100, Math.max(1, score));
 }
 
-function tweetToRawItem(tweet: TwitterTweet, sourceId: string): RawItem {
+function tweetToRawItem(tweet: TwitterTweet, sourceId: string, log: Logger): RawItem {
+  let timestamp = new Date(tweet.createdAt).getTime();
+  if (isNaN(timestamp)) {
+    log.warn({ sourceId, tweetId: tweet.id }, 'Invalid createdAt, using current time');
+    timestamp = Date.now();
+  }
   return {
     id: ulid(),
     source: 'twitter',
     sourceId,
     author: tweet.author.userName,
     content: tweet.text,
-    timestamp: new Date(tweet.createdAt).getTime(),
+    timestamp,
     url: tweet.url ?? undefined,
     engagement: computeEngagement(tweet),
     metadata: {
@@ -78,7 +83,7 @@ const DEFAULT_RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
   let halted = false;
-  let rateLimitedUntil = 0;
+  const sourceRateLimits = new Map<string, number>();
 
   async function fetchPage(
     sourceId: string,
@@ -114,7 +119,7 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
       const backoffMs = Number.isFinite(delayMs) && delayMs > 0
         ? delayMs
         : DEFAULT_RATE_LIMIT_MS;
-      rateLimitedUntil = Date.now() + backoffMs;
+      sourceRateLimits.set(sourceId, Date.now() + backoffMs);
       log.warn(
         { sourceId, status: 429, backoffMs },
         'Twitter API rate limited — backing off',
@@ -165,6 +170,7 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
       return empty;
     }
 
+    const rateLimitedUntil = sourceRateLimits.get(sourceId) ?? 0;
     if (Date.now() < rateLimitedUntil) {
       log.debug({ sourceId, rateLimitedUntil }, 'Twitter poll skipped — rate limit backoff active');
       return empty;
@@ -172,25 +178,37 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
 
     const allTweets: TwitterTweet[] = [];
     let cursor: string | undefined;
+    let hasMore = false;
 
     for (let page = 0; page < MAX_PAGES; page++) {
       const result = await fetchPage(sourceId, cursor);
       if (!result) break;
 
       allTweets.push(...result.tweets);
+      hasMore = result.has_next_page;
 
       if (!result.has_next_page || !result.next_cursor) break;
       cursor = result.next_cursor;
+    }
+
+    if (allTweets.length > 0 && hasMore) {
+      log.warn({ sourceId, maxPages: MAX_PAGES, fetched: allTweets.length }, 'Hit pagination limit — some tweets may not be ingested');
     }
 
     if (allTweets.length === 0) {
       return empty;
     }
 
+    // Validate tweet IDs are numeric before BigInt operations
+    const validTweets = allTweets.filter(t => /^\d+$/.test(t.id));
+    if (validTweets.length < allTweets.length) {
+      log.warn({ sourceId, invalid: allTweets.length - validTweets.length }, 'Skipped tweets with non-numeric IDs');
+    }
+
     // Dedup: filter out tweets we've already seen
     const filtered = lastId
-      ? allTweets.filter((t) => BigInt(t.id) > BigInt(lastId))
-      : allTweets;
+      ? validTweets.filter((t) => BigInt(t.id) > BigInt(lastId))
+      : validTweets;
 
     if (filtered.length === 0) {
       return { items: [], lastId };
@@ -201,7 +219,7 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
       return BigInt(t.id) > BigInt(max) ? t.id : max;
     }, filtered[0].id);
 
-    const items = filtered.map((t) => tweetToRawItem(t, sourceId));
+    const items = filtered.map((t) => tweetToRawItem(t, sourceId, log));
 
     return { items, lastId: newestId };
   }

@@ -25,10 +25,6 @@ interface TrustRow {
   trust_weight: number;
 }
 
-interface UrgencyRow {
-  urgency: string;
-}
-
 type UrgencyLevel = 'breaking' | 'elevated' | 'routine';
 
 const URGENCY_RANK: Record<UrgencyLevel, number> = {
@@ -66,34 +62,9 @@ const CORRELATION_SQL = `
   HAVING COUNT(DISTINCT em.source) >= 2
 `;
 
-const TRUST_WEIGHT_SQL = `
-  SELECT source, trust_weight FROM sources WHERE source = $1
-`;
-
-const URGENCY_SQL = `
-  SELECT urgency FROM summaries WHERE id = $1
-`;
-
 // ── Factory ──────────────────────────────────────────────────────────
 
 export function createCorrelator(pool: Pool, log: Logger) {
-  async function getTrustWeight(source: string): Promise<number> {
-    const { rows } = await pool.query<TrustRow>(TRUST_WEIGHT_SQL, [source]);
-    if (rows.length === 0) {
-      log.warn({ source }, 'No trust_weight found for source, defaulting to 0.5');
-      return 0.5;
-    }
-    return rows[0].trust_weight;
-  }
-
-  async function getUrgency(summaryId: string): Promise<string> {
-    const { rows } = await pool.query<UrgencyRow>(URGENCY_SQL, [summaryId]);
-    if (rows.length === 0) {
-      return 'routine';
-    }
-    return rows[0].urgency;
-  }
-
   async function run(cutoff?: number): Promise<{ correlated: CorrelatedEntity[]; shouldFlash: boolean }> {
     const effectiveCutoff = cutoff ?? (Date.now() - 24 * 60 * 60 * 1000);
 
@@ -105,6 +76,26 @@ export function createCorrelator(pool: Pool, log: Logger) {
     }
 
     log.info({ entityCount: rows.length }, 'Found cross-source correlated entities');
+
+    // Batch-fetch trust weights (CR-003 + CR-010: clamp to [0, 1])
+    const allSources = [...new Set(rows.flatMap(r => r.mentions.map(m => m.source)))];
+    const trustRows = allSources.length > 0
+      ? (await pool.query<TrustRow>(
+          'SELECT source, trust_weight FROM sources WHERE source = ANY($1)',
+          [allSources],
+        )).rows
+      : [];
+    const trustMap = new Map(trustRows.map(r => [r.source, Math.max(0, Math.min(1, r.trust_weight))]));
+
+    // Batch-fetch urgencies (CR-003)
+    const allSummaryIds = [...new Set(rows.flatMap(r => r.mentions.map(m => m.summary_id)))];
+    const urgencyRows = allSummaryIds.length > 0
+      ? (await pool.query<{ id: string; urgency: string }>(
+          'SELECT id, urgency FROM summaries WHERE id = ANY($1)',
+          [allSummaryIds],
+        )).rows
+      : [];
+    const urgencyMap = new Map(urgencyRows.map(r => [r.id, r.urgency]));
 
     const correlated: CorrelatedEntity[] = [];
     let shouldFlash = false;
@@ -126,7 +117,10 @@ export function createCorrelator(pool: Pool, log: Logger) {
       let weightedSum = 0;
 
       for (const [source, { summaryIds }] of seenSources) {
-        const trustWeight = await getTrustWeight(source);
+        const trustWeight = trustMap.get(source) ?? 0.5;
+        if (!trustMap.has(source)) {
+          log.warn({ source }, 'No trust_weight found for source, defaulting to 0.5');
+        }
         sources.push({
           source,
           sourceId: summaryIds[0], // representative summary id
@@ -136,14 +130,10 @@ export function createCorrelator(pool: Pool, log: Logger) {
       }
 
       // Collect urgencies from all referenced summaries
-      const allSummaryIds = row.mentions.map((m) => m.summary_id);
-      const uniqueSummaryIds = [...new Set(allSummaryIds)];
-      const urgencies: string[] = [];
-
-      for (const summaryId of uniqueSummaryIds) {
-        const urgency = await getUrgency(summaryId);
-        urgencies.push(urgency);
-      }
+      const uniqueSummaryIds = [...new Set(row.mentions.map((m) => m.summary_id))];
+      const urgencies: string[] = uniqueSummaryIds.map(
+        (id) => urgencyMap.get(id) ?? 'routine',
+      );
 
       const entityUrgency = highestUrgency(urgencies);
 
