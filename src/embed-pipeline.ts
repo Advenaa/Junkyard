@@ -107,15 +107,15 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
   async function run(): Promise<number> {
     if (!embedder.isAvailable()) return 0;
 
-    const [summaryRows, itemRows, reportRows] = await Promise.all([
+    // Note: items are NOT embedded — only summaries and reports are searchable via vector cache.
+    // Embedding raw items would waste Gemini quota without adding search value.
+    const [summaryRows, reportRows] = await Promise.all([
       fetchUnembedded('summary', 'summaries', 'body'),
-      fetchUnembedded('item', 'items', 'content'),
       fetchUnembedded('report', 'reports', 'body'),
     ]);
 
     const targets: EmbedTarget[] = [
       ...summaryRows.map(r => ({ id: r.id, text: r.text, type: 'summary' as const })),
-      ...itemRows.map(r => ({ id: r.id, text: r.text, type: 'item' as const })),
       ...reportRows.map(r => ({ id: r.id, text: r.text, type: 'report' as const })),
     ];
 
@@ -125,7 +125,7 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
     }
 
     log.info(
-      { summaries: summaryRows.length, items: itemRows.length, reports: reportRows.length },
+      { summaries: summaryRows.length, reports: reportRows.length },
       'embed-pipeline: embedding batch',
     );
 

@@ -123,6 +123,26 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
   let dailyCount = 0;
   let dayStart = Date.now();
 
+  let initialized = false;
+
+  async function initQuota(): Promise<void> {
+    if (initialized) return;
+    initialized = true;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) as count FROM llm_usage WHERE stage = 'embedding' AND created_at > $1`,
+        [new Date(today + 'T00:00:00Z').getTime()],
+      );
+      dailyCount = parseInt(rows[0]?.count ?? '0', 10);
+      if (dailyCount > 0) {
+        log.info({ dailyCount }, 'Restored embedding quota from DB');
+      }
+    } catch {
+      log.warn('Could not restore embedding quota from DB, starting at 0');
+    }
+  }
+
   function resetIfNewDay(): void {
     const now = Date.now();
     const currentDay = new Date(now).toISOString().slice(0, 10);
@@ -130,6 +150,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     if (currentDay !== storedDay) {
       dailyCount = 0;
       dayStart = now;
+      initialized = false; // Re-init on new day
     }
   }
 
@@ -140,6 +161,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
   async function embed(text: string): Promise<EmbedResult | null> {
     if (!available || !model) return null;
 
+    await initQuota();
     resetIfNewDay();
     if (dailyCount + 1 > DAILY_QUOTA_LIMIT) {
       log.warn(
@@ -187,6 +209,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     // Each batch chunk is one API request; total requests = ceil(texts.length / BATCH_CHUNK_SIZE)
     const totalRequests = Math.ceil(texts.length / BATCH_CHUNK_SIZE);
 
+    await initQuota();
     resetIfNewDay();
     if (dailyCount + totalRequests > DAILY_QUOTA_LIMIT) {
       log.warn(

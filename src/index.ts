@@ -97,82 +97,86 @@ program
       const now = Date.now();
 
       // Load source_state for each source to decide if it's time to poll
-      const pollPromises = sources.map(async (src) => {
-        const { rows: stateRows } = await pool.query<{
-          last_fetched_at: number | null;
-          last_id: string | null;
-          status: string;
-        }>(
-          'SELECT last_fetched_at, last_id, status FROM source_state WHERE source = $1 AND source_id = $2',
-          [src.source, src.source_id],
-        );
+      // Process sources with limited concurrency (max 5 parallel)
+      const POLL_CONCURRENCY = 5;
+      for (let i = 0; i < sources.length; i += POLL_CONCURRENCY) {
+        const batch = sources.slice(i, i + POLL_CONCURRENCY);
+        const pollPromises = batch.map(async (src) => {
+          const { rows: stateRows } = await pool.query<{
+            last_fetched_at: number | null;
+            last_id: string | null;
+            status: string;
+          }>(
+            'SELECT last_fetched_at, last_id, status FROM source_state WHERE source = $1 AND source_id = $2',
+            [src.source, src.source_id],
+          );
 
-        const state = stateRows[0];
+          const state = stateRows[0];
 
-        // Skip disabled sources
-        if (state?.status === 'disabled') return;
+          // Skip disabled sources
+          if (state?.status === 'disabled') return;
 
-        // Check if enough time has elapsed since last poll
-        const lastFetched = state?.last_fetched_at ?? 0;
-        const intervalMs = src.poll_interval * 1000;
-        if (now - lastFetched < intervalMs) return;
+          // Check if enough time has elapsed since last poll
+          const lastFetched = state?.last_fetched_at ?? 0;
+          const intervalMs = src.poll_interval * 1000;
+          if (now - lastFetched < intervalMs) return;
 
-        const lastId = state?.last_id ?? null;
+          const lastId = state?.last_id ?? null;
 
-        try {
-          let items: RawItem[] = [];
-          let newLastId: string | null = lastId;
+          try {
+            let items: RawItem[] = [];
+            let newLastId: string | null = lastId;
 
-          if (src.source === 'twitter') {
-            const result = await twitterAdapter.poll(src.source_id, lastId);
-            items = result.items;
-            newLastId = result.lastId ?? lastId;
-          } else if (src.source === 'rss') {
-            const result = await pollFeed(src.source_id, lastId, log);
-            items = result.items;
-            newLastId = result.lastId ?? lastId;
-          } else if (src.source === 'discord') {
-            // Discord is push-based via gateway — no polling needed
-            // Just update last_fetched_at to keep health monitor happy
-            await updateSourceState(pool, src.source, src.source_id, now, lastId);
-            return;
-          }
+            if (src.source === 'twitter') {
+              const result = await twitterAdapter.poll(src.source_id, lastId);
+              items = result.items;
+              newLastId = result.lastId ?? lastId;
+            } else if (src.source === 'rss') {
+              const result = await pollFeed(src.source_id, lastId, log);
+              items = result.items;
+              newLastId = result.lastId ?? lastId;
+            } else if (src.source === 'discord') {
+              // Discord is push-based via gateway — no polling needed
+              // Just update last_fetched_at to keep health monitor happy
+              await updateSourceState(pool, src.source, src.source_id, now, lastId);
+              return;
+            }
 
-          // Normalize each item
-          for (const item of items) {
-            await normalizer.normalize(item);
-          }
+            // Normalize each item
+            for (const item of items) {
+              await normalizer.normalize(item);
+            }
 
-          // Update source state
-          await updateSourceState(pool, src.source, src.source_id, now, newLastId);
+            // Update source state
+            await updateSourceState(pool, src.source, src.source_id, now, newLastId);
 
-          if (items.length > 0) {
-            log.info(
-              { source: src.source, sourceId: src.source_id, count: items.length },
-              'ingested and normalized items',
+            if (items.length > 0) {
+              log.info(
+                { source: src.source, sourceId: src.source_id, count: items.length },
+                'ingested and normalized items',
+              );
+            }
+          } catch (err: unknown) {
+            log.error(
+              { err, source: src.source, sourceId: src.source_id },
+              'source poll failed',
+            );
+            // Increment error count in source_state
+            await pool.query(
+              `INSERT INTO source_state (source, source_id, error_count, last_error, status)
+               VALUES ($2, $3, 1, $1, 'active')
+               ON CONFLICT (source, source_id)
+               DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
+              [
+                err instanceof Error ? err.message : String(err),
+                src.source,
+                src.source_id,
+              ],
             );
           }
-        } catch (err: unknown) {
-          log.error(
-            { err, source: src.source, sourceId: src.source_id },
-            'source poll failed',
-          );
-          // Increment error count in source_state
-          await pool.query(
-            `INSERT INTO source_state (source, source_id, error_count, last_error, status)
-             VALUES ($2, $3, 1, $1, 'active')
-             ON CONFLICT (source, source_id)
-             DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
-            [
-              err instanceof Error ? err.message : String(err),
-              src.source,
-              src.source_id,
-            ],
-          );
-        }
-      });
-
-      await Promise.allSettled(pollPromises);
+        });
+        await Promise.allSettled(pollPromises);
+      }
 
       // Run pre-summarizer on eligible items
       try {

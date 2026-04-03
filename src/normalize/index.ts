@@ -49,7 +49,7 @@ export function createNormalizer(
 
     const injection = detectInjection(item.content);
     if (injection.detected) {
-      const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 2000));
+      const contentHash = sha256(item.source + item.sourceId + item.content);
       await insertItem(pool, {
         id: ulid(),
         source: item.source,
@@ -72,7 +72,7 @@ export function createNormalizer(
     }
 
     // ── Gate 2 — Content hash dedup (early check to avoid wasting translation tokens)
-    const contentHash = sha256(item.source + item.sourceId + item.content.slice(0, 2000));
+    const contentHash = sha256(item.source + item.sourceId + item.content);
 
     // Early check — skip expensive gates if this content was already processed
     const { rows: existingHash } = await pool.query<{ id: string }>(

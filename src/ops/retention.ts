@@ -37,10 +37,10 @@ export function createRetention(pool: Pool, log: Logger) {
     log.info({ summariesDeleted }, 'retention: deleted summaries older than 90 days');
 
     const embItemsResult = await pool.query(
-      `DELETE FROM embeddings WHERE target_type = 'item' AND target_id NOT IN (SELECT id FROM items)`,
+      `DELETE FROM embeddings e WHERE e.target_type = 'item' AND NOT EXISTS (SELECT 1 FROM items i WHERE i.id = e.target_id)`,
     );
     const embSummariesResult = await pool.query(
-      `DELETE FROM embeddings WHERE target_type = 'summary' AND target_id NOT IN (SELECT id FROM summaries)`,
+      `DELETE FROM embeddings e WHERE e.target_type = 'summary' AND NOT EXISTS (SELECT 1 FROM summaries s WHERE s.id = e.target_id)`,
     );
     const embeddingsDeleted =
       (embItemsResult.rowCount ?? 0) + (embSummariesResult.rowCount ?? 0);

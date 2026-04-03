@@ -124,6 +124,30 @@ export function createChatHandler(
   const conversations = createConversationManager();
   const tools = createChatTools(pool, log, vectorCache, embedder, llm);
 
+  // Per-user daily token budget tracking (D-020)
+  const userTokens = new Map<string, { count: number; day: string }>();
+  const MAX_DAILY_TOKENS_PER_USER = 100_000; // ~$1.50/day/user at Sonnet pricing
+
+  function checkUserBudget(userId: string): boolean {
+    const today = new Date().toISOString().slice(0, 10);
+    const entry = userTokens.get(userId);
+    if (!entry || entry.day !== today) {
+      userTokens.set(userId, { count: 0, day: today });
+      return true;
+    }
+    return entry.count < MAX_DAILY_TOKENS_PER_USER;
+  }
+
+  function trackTokens(userId: string, tokens: number): void {
+    const today = new Date().toISOString().slice(0, 10);
+    const entry = userTokens.get(userId);
+    if (!entry || entry.day !== today) {
+      userTokens.set(userId, { count: tokens, day: today });
+    } else {
+      entry.count += tokens;
+    }
+  }
+
   const toolMap = new Map<string, ChatTool>();
   for (const tool of tools) {
     toolMap.set(tool.name, tool);
@@ -144,6 +168,10 @@ export function createChatHandler(
     conversationId: string,
     userId: string,
   ): Promise<ChatResult> {
+    if (!checkUserBudget(userId)) {
+      return { response: 'You have reached your daily query limit. Please try again tomorrow.', toolsUsed: [] };
+    }
+
     if (query.length > 4000) {
       return { response: 'Query is too long. Please keep it under 4000 characters.', toolsUsed: [] };
     }
@@ -162,7 +190,14 @@ export function createChatHandler(
         maxTokens: 1024,
         stage: 'translate',
       });
-      processedQuery = translateResult.content;
+      // Validate translation result — fall back to original on failure (D-022)
+      const translated = translateResult.content?.trim();
+      if (translated && translated.length > 0 && translated.length < query.length * 3) {
+        processedQuery = translated;
+      } else {
+        log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, using original query');
+        // processedQuery stays as original query
+      }
     }
 
     // Step 2: Sanitize user input before LLM
@@ -194,6 +229,9 @@ export function createChatHandler(
         maxTokens: 4096,
         stage: 'chat',
       });
+
+      // Track estimated token usage (D-020)
+      trackTokens(userId, processedQuery.length / 4 + (result.content?.length ?? 0) / 4);
 
       const toolCalls = parseToolCalls(result.content);
 
