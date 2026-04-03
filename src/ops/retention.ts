@@ -22,13 +22,8 @@ export function createRetention(pool: Pool, log: Logger) {
     const itemsDeleted = itemsResult.rowCount ?? 0;
     log.info({ itemsDeleted }, 'retention: deleted processed items older than 30 days');
 
-    const mentionsResult = await pool.query(
-      `DELETE FROM entity_mentions WHERE created_at < $1`,
-      [ninetyDaysAgo],
-    );
-    const mentionsDeleted = mentionsResult.rowCount ?? 0;
-    log.info({ mentionsDeleted }, 'retention: deleted entity mentions older than 90 days');
-
+    // Delete summaries first — CASCADE handles associated entity_mentions.
+    // Then delete remaining mentions by date to catch any not tied to summaries.
     const summariesResult = await pool.query(
       `DELETE FROM summaries WHERE created_at < $1`,
       [ninetyDaysAgo],
@@ -36,14 +31,30 @@ export function createRetention(pool: Pool, log: Logger) {
     const summariesDeleted = summariesResult.rowCount ?? 0;
     log.info({ summariesDeleted }, 'retention: deleted summaries older than 90 days');
 
-    const embItemsResult = await pool.query(
-      `DELETE FROM embeddings e WHERE e.target_type = 'item' AND NOT EXISTS (SELECT 1 FROM items i WHERE i.id = e.target_id)`,
+    const mentionsResult = await pool.query(
+      `DELETE FROM entity_mentions WHERE created_at < $1`,
+      [ninetyDaysAgo],
     );
-    const embSummariesResult = await pool.query(
-      `DELETE FROM embeddings e WHERE e.target_type = 'summary' AND NOT EXISTS (SELECT 1 FROM summaries s WHERE s.id = e.target_id)`,
-    );
-    const embeddingsDeleted =
-      (embItemsResult.rowCount ?? 0) + (embSummariesResult.rowCount ?? 0);
+    const mentionsDeleted = mentionsResult.rowCount ?? 0;
+    log.info({ mentionsDeleted }, 'retention: deleted entity mentions older than 90 days');
+
+    let embeddingsDeleted = 0;
+    for (const [targetType, sourceTable] of [['item', 'items'], ['summary', 'summaries']] as const) {
+      let deleted: number;
+      do {
+        const result = await pool.query(
+          `DELETE FROM embeddings WHERE id IN (
+            SELECT e.id FROM embeddings e
+            WHERE e.target_type = $1
+              AND NOT EXISTS (SELECT 1 FROM ${sourceTable} t WHERE t.id = e.target_id)
+            LIMIT 1000
+          )`,
+          [targetType],
+        );
+        deleted = result.rowCount ?? 0;
+        embeddingsDeleted += deleted;
+      } while (deleted > 0);
+    }
     log.info({ embeddingsDeleted }, 'retention: deleted orphaned embeddings');
 
     const sessionsResult = await pool.query(

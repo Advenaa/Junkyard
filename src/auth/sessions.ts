@@ -1,4 +1,4 @@
-import { ulid } from 'ulid';
+import crypto from 'node:crypto';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 
@@ -47,6 +47,9 @@ function logSessionId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) + '...' : id;
 }
 
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+let lastCleanupAt = 0;
+
 export function createSessionManager(pool: Pool, log: Logger): SessionManager {
   return {
     async create(
@@ -54,7 +57,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       ip: string,
       userAgent: string,
     ): Promise<string> {
-      const sessionId = ulid();
+      const sessionId = crypto.randomBytes(32).toString('hex');
       const now = Date.now();
       const expiresAt =
         now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
@@ -154,7 +157,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
           await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
           return null;
         }
-        if (normalizeUA(row.user_agent) !== normalizeUA(userAgent)) {
+        if (row.user_agent !== normalizeUA(userAgent)) {
           log.warn(
             {
               sessionId: logSessionId(sessionId),
@@ -187,10 +190,28 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         (now - row.last_refreshed_at) / (1000 * 60 * 60);
 
       if (hoursSinceRefresh > SLIDING_REFRESH_HOURS) {
+        const newExpiresAt =
+          now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
         await pool.query(
-          `UPDATE sessions SET last_refreshed_at = $1 WHERE id = $2`,
-          [now, sessionId],
+          `UPDATE sessions SET last_refreshed_at = $1, expires_at = $3 WHERE id = $2`,
+          [now, sessionId, newExpiresAt],
         );
+      }
+
+      // Opportunistic cleanup of expired sessions (AU-022)
+      if (now - lastCleanupAt > CLEANUP_INTERVAL_MS) {
+        lastCleanupAt = now;
+        pool
+          .query(`DELETE FROM sessions WHERE expires_at < $1`, [now])
+          .then((res) => {
+            const count = res.rowCount ?? 0;
+            if (count > 0) {
+              log.info({ count }, 'Cleaned up expired sessions (opportunistic)');
+            }
+          })
+          .catch((err: unknown) => {
+            log.warn({ err }, 'Opportunistic session cleanup failed');
+          });
       }
 
       return { discordId: row.discord_id, role: row.role };

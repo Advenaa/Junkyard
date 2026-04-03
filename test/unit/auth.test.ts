@@ -147,7 +147,7 @@ describe('Session constants', () => {
 
 describe('createSessionManager', () => {
   describe('create()', () => {
-    it('returns a ULID session ID', async () => {
+    it('returns a cryptographic random session ID (AU-025)', async () => {
       const pool = mockPool([
         { rows: [] },  // SELECT existing sessions
         {},             // INSERT
@@ -155,8 +155,8 @@ describe('createSessionManager', () => {
       const mgr = createSessionManager(pool as never, silentLog);
       const id = await mgr.create('user-1', '127.0.0.1', 'TestAgent');
 
-      // ULID: 26 uppercase alphanumeric chars
-      assert.match(id, /^[0-9A-Z]{26}$/);
+      // crypto.randomBytes(32).toString('hex') = 64 hex chars
+      assert.match(id, /^[0-9a-f]{64}$/);
     });
 
     it('inserts session with correct expiry (~30 days)', async () => {
@@ -237,7 +237,7 @@ describe('createSessionManager', () => {
               expires_at: Date.now() + 86400000, // future
               last_refreshed_at: Date.now(),       // recent
               ip_address: '127.0.0.1',
-              user_agent: 'TestAgent',
+              user_agent: 'unknown/unknown', // normalized form of 'TestAgent' (AU-024)
             },
           ],
         },
@@ -259,17 +259,21 @@ describe('createSessionManager', () => {
               expires_at: Date.now() + 86400000,
               last_refreshed_at: staleTime,
               ip_address: '127.0.0.1',
-              user_agent: 'TestAgent',
+              user_agent: 'unknown/unknown', // normalized (AU-024)
             },
           ],
         },
-        {}, // UPDATE sliding refresh
+        {}, // UPDATE sliding refresh (now includes expires_at per AU-026)
+        {}, // AU-022: opportunistic cleanup (fire-and-forget)
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
       await mgr.validate('stale-session', '127.0.0.1', 'TestAgent');
 
-      assert.strictEqual(pool.calls.length, 2);
-      assert.ok(pool.calls[1]!.text.includes('UPDATE sessions SET last_refreshed_at'));
+      // At least 2 calls: SELECT + UPDATE. May also have cleanup query.
+      assert.ok(pool.calls.length >= 2);
+      const updateCall = pool.calls.find((c: any) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
+      assert.ok(updateCall, 'should trigger sliding refresh UPDATE');
+      assert.ok(updateCall.text.includes('expires_at'), 'AU-026: sliding refresh should also extend expires_at');
     });
 
     it('does NOT trigger sliding refresh when fresh (<24h)', async () => {
@@ -283,16 +287,18 @@ describe('createSessionManager', () => {
               expires_at: Date.now() + 86400000,
               last_refreshed_at: freshTime,
               ip_address: '127.0.0.1',
-              user_agent: 'TestAgent',
+              user_agent: 'unknown/unknown', // normalized (AU-024)
             },
           ],
         },
+        {}, // AU-022: opportunistic cleanup may fire
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
       await mgr.validate('fresh-session', '127.0.0.1', 'TestAgent');
 
-      // Only the SELECT query, no UPDATE
-      assert.strictEqual(pool.calls.length, 1);
+      // No UPDATE for refresh — only SELECT (and possibly cleanup)
+      const hasRefresh = pool.calls.some((c: any) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
+      assert.ok(!hasRefresh, 'should NOT trigger sliding refresh when fresh');
     });
 
     it('invalidates session on User-Agent mismatch', async () => {
@@ -329,10 +335,11 @@ describe('createSessionManager', () => {
               expires_at: Date.now() + 86400000,
               last_refreshed_at: Date.now(),
               ip_address: '192.168.1.1',
-              user_agent: 'TestAgent',
+              user_agent: 'unknown/unknown', // normalized (AU-024)
             },
           ],
         },
+        {}, // AU-022: opportunistic cleanup may fire
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
       const result = await mgr.validate('mobile-session', '10.0.0.1', 'TestAgent');

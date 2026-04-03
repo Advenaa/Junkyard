@@ -5,7 +5,11 @@ import { StatusBadge } from './StatusBadge';
 export function ReportCard({ report }: { report: Report }) {
   const truncated = report.tldr.length > 120 ? report.tldr.slice(0, 120) + '...' : report.tldr;
   const { sentiment } = report;
-  const sentimentColor = sentiment !== null && sentiment >= 0 ? 'text-accent-green' : 'text-accent-red';
+  const sentimentColor = sentiment !== null
+    ? sentiment >= 0.3 ? 'text-accent-green'
+    : sentiment <= -0.3 ? 'text-accent-red'
+    : 'text-text-secondary'
+    : 'text-text-secondary';
 
   return (
     <div className="bg-surface-raised border border-border rounded-lg p-4 flex flex-col gap-2 hover:border-accent/40 transition-colors">

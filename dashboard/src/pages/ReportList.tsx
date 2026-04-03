@@ -53,8 +53,13 @@ export function ReportList() {
 
   const loadMore = async () => {
     setLoadingMore(true);
-    await fetchReports(reports.length, true);
-    setLoadingMore(false);
+    try {
+      await fetchReports(reports.length, true);
+    } catch {
+      setError('Failed to load more reports. Please try again.');
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   return (

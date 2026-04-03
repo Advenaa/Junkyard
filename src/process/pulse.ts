@@ -1,4 +1,5 @@
 import { ulid } from 'ulid';
+import { z } from 'zod';
 import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
 import { getSummariesByTimeWindow, insertReport, getAppConfig } from '../db/queries.js';
@@ -44,18 +45,20 @@ Rules:
 
 // ── Types ────────────────────────────────────────────────────────────
 
-interface ParsedSummaryBody {
-  summary: string;
-  urgency: string;
-  entities: {
-    name: string;
-    type: string;
-    sentiment: number;
-    mentionCount: number;
-  }[];
-  keyEvents: string[];
-  confidence: number;
-}
+const ParsedSummaryBodySchema = z.object({
+  summary: z.string(),
+  urgency: z.string(),
+  entities: z.array(z.object({
+    name: z.string(),
+    type: z.string(),
+    sentiment: z.number(),
+    mentionCount: z.number(),
+  })),
+  keyEvents: z.array(z.string()),
+  confidence: z.number(),
+});
+
+type ParsedSummaryBody = z.infer<typeof ParsedSummaryBodySchema>;
 
 interface EntitySentimentEntry {
   name: string;
@@ -74,7 +77,9 @@ interface DriftFlag {
 
 function parseSummaryBody(body: string): ParsedSummaryBody | null {
   try {
-    return JSON.parse(body) as ParsedSummaryBody;
+    const raw: unknown = JSON.parse(body);
+    const result = ParsedSummaryBodySchema.safeParse(raw);
+    return result.success ? result.data : null;
   } catch {
     return null;
   }

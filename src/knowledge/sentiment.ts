@@ -20,15 +20,6 @@ interface DailyAggRow {
   mention_count: string; // COUNT returns bigint string in pg
 }
 
-interface WindowAvgRow {
-  avg_sentiment: number | null;
-}
-
-interface WindowSumRow {
-  sum_sentiment: number | null;
-  day_count: string; // COUNT returns bigint string in pg
-}
-
 interface MomentumRow {
   entity_id: string;
   entity_name: string;
@@ -50,6 +41,13 @@ function shiftDate(dateString: string, days: number): string {
   const d = new Date(dateString + 'T00:00:00Z');
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/** Convert a YYYY-MM-DD date string to epoch-ms bounds [startMs, endMs). */
+function dateToEpochMsBounds(dateString: string): { startMs: number; endMs: number } {
+  const startMs = new Date(dateString + 'T00:00:00Z').getTime();
+  const endMs = startMs + 86_400_000; // +24h
+  return { startMs, endMs };
 }
 
 /** Classify momentum + day-over-day change into a human-readable trend. */
@@ -81,16 +79,29 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
   async function runDaily(dateString: string): Promise<void> {
     const client = await pool.connect();
     try {
+      // SM-006: Idempotency guard — skip if we already ran for this date
+      const { rowCount: alreadyRan } = await client.query(
+        `SELECT 1 FROM entity_sentiment_daily WHERE date = $1 LIMIT 1`,
+        [dateString],
+      );
+      if (alreadyRan && alreadyRan > 0) {
+        log.info({ date: dateString }, 'Sentiment rollup: already ran for this date, skipping');
+        return;
+      }
+
+      // SM-005: Use epoch-ms range bounds instead of to_char() for index usage
+      const { startMs, endMs } = dateToEpochMsBounds(dateString);
+
       // 1. Aggregate today's mentions per entity
       const { rows: todayAggs } = await client.query<DailyAggRow>(
         `SELECT entity_id,
                 AVG(sentiment) AS avg_sentiment,
                 COUNT(*)       AS mention_count
          FROM entity_mentions
-         WHERE to_char(to_timestamp(created_at / 1000.0), 'YYYY-MM-DD') = $1
+         WHERE created_at >= $1 AND created_at < $2
            AND sentiment IS NOT NULL
          GROUP BY entity_id`,
-        [dateString],
+        [startMs, endMs],
       );
 
       if (todayAggs.length === 0) {
@@ -103,47 +114,76 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
         `Sentiment rollup: processing ${todayAggs.length} entities`,
       );
 
-      // 2. For each entity, compute momentum and upsert
-      await client.query('BEGIN');
+      // SM-003: Batch window lookups into a single query using CTEs
+      const recentStart = shiftDate(dateString, -2);
+      const priorStart = shiftDate(dateString, -10);
+      const priorEnd = shiftDate(dateString, -3);
+
+      const entityIds = todayAggs.map((a) => a.entity_id);
+
+      interface WindowRow {
+        entity_id: string;
+        recent_sum: number | null;
+        recent_count: string;
+        prior_avg: number | null;
+      }
+
+      const { rows: windowRows } = await client.query<WindowRow>(
+        `WITH recent AS (
+           SELECT entity_id,
+                  SUM(avg_sentiment) AS sum_sentiment,
+                  COUNT(*)           AS day_count
+           FROM entity_sentiment_daily
+           WHERE entity_id = ANY($1)
+             AND date >= $2
+             AND date <= $3
+           GROUP BY entity_id
+         ),
+         prior AS (
+           SELECT entity_id,
+                  AVG(avg_sentiment) AS avg_sentiment
+           FROM entity_sentiment_daily
+           WHERE entity_id = ANY($1)
+             AND date >= $4
+             AND date <= $5
+           GROUP BY entity_id
+         )
+         SELECT e.entity_id,
+                r.sum_sentiment AS recent_sum,
+                COALESCE(r.day_count, 0) AS recent_count,
+                p.avg_sentiment AS prior_avg
+         FROM unnest($1::text[]) AS e(entity_id)
+         LEFT JOIN recent r ON r.entity_id = e.entity_id
+         LEFT JOIN prior  p ON p.entity_id = e.entity_id`,
+        [entityIds, recentStart, dateString, priorStart, priorEnd],
+      );
+
+      // Index window results by entity_id for O(1) lookup
+      const windowMap = new Map<string, WindowRow>();
+      for (const row of windowRows) {
+        windowMap.set(row.entity_id, row);
+      }
+
+      // Build bulk upsert values
+      const upsertValues: unknown[] = [];
+      const placeholders: string[] = [];
+      let paramIdx = 1;
 
       for (const agg of todayAggs) {
         const mentionCount = parseInt(agg.mention_count, 10);
-
-        // Recent window: last 3 days including today (dateString - 2 .. dateString)
-        const recentStart = shiftDate(dateString, -2);
-        const { rows: recentRows } = await client.query<WindowSumRow>(
-          `SELECT SUM(avg_sentiment) AS sum_sentiment,
-                  COUNT(*)           AS day_count
-           FROM entity_sentiment_daily
-           WHERE entity_id = $1
-             AND date >= $2
-             AND date <= $3`,
-          [agg.entity_id, recentStart, dateString],
-        );
-
-        // Prior window: days -10 to -3 relative to today
-        const priorStart = shiftDate(dateString, -10);
-        const priorEnd = shiftDate(dateString, -3);
-        const { rows: priorRows } = await client.query<WindowAvgRow>(
-          `SELECT AVG(avg_sentiment) AS avg_sentiment
-           FROM entity_sentiment_daily
-           WHERE entity_id = $1
-             AND date >= $2
-             AND date <= $3`,
-          [agg.entity_id, priorStart, priorEnd],
-        );
+        const window = windowMap.get(agg.entity_id);
 
         // Include today's value in the recent average calculation.
-        // The recent window query above only covers already-persisted rows,
+        // The recent window query only covers already-persisted rows,
         // so we blend in today's fresh avg_sentiment manually.
-        const recentSum = recentRows[0]?.sum_sentiment;
-        const recentCount = parseInt(recentRows[0]?.day_count ?? '0', 10);
+        const recentSum = window?.recent_sum ?? null;
+        const recentCount = parseInt(window?.recent_count ?? '0', 10);
         const recentAvg =
           recentCount > 0 && recentSum !== null && recentSum !== undefined
             ? (recentSum + agg.avg_sentiment) / (recentCount + 1)
             : agg.avg_sentiment;
 
-        const priorAvg = priorRows[0]?.avg_sentiment;
+        const priorAvg = window?.prior_avg ?? null;
 
         // Momentum = recent_avg - prior_avg; null if no prior history
         const momentum =
@@ -151,16 +191,24 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
             ? recentAvg - priorAvg
             : null;
 
-        await client.query(
-          `INSERT INTO entity_sentiment_daily (entity_id, date, avg_sentiment, mention_count, momentum)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (entity_id, date)
-           DO UPDATE SET avg_sentiment  = EXCLUDED.avg_sentiment,
-                         mention_count  = EXCLUDED.mention_count,
-                         momentum       = EXCLUDED.momentum`,
-          [agg.entity_id, dateString, agg.avg_sentiment, mentionCount, momentum],
+        placeholders.push(
+          `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4})`,
         );
+        upsertValues.push(agg.entity_id, dateString, agg.avg_sentiment, mentionCount, momentum);
+        paramIdx += 5;
       }
+
+      await client.query('BEGIN');
+
+      await client.query(
+        `INSERT INTO entity_sentiment_daily (entity_id, date, avg_sentiment, mention_count, momentum)
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (entity_id, date)
+         DO UPDATE SET avg_sentiment  = EXCLUDED.avg_sentiment,
+                       mention_count  = EXCLUDED.mention_count,
+                       momentum       = EXCLUDED.momentum`,
+        upsertValues,
+      );
 
       await client.query('COMMIT');
 
@@ -205,23 +253,25 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
 
     if (latestRows.length === 0) return [];
 
-    // Get yesterday's momentum for each entity to detect reversals
-    const latestEntityIds = latestRows.map((r) => r.entity_id);
-    const latestDates = latestRows.map((r) => r.date);
+    // SM-004: Get yesterday's momentum paired per entity via lateral join
+    // Build a VALUES list that pairs each entity_id with its specific yesterday date
+    const pairValues: unknown[] = [];
+    const pairPlaceholders: string[] = [];
+    let pIdx = 1;
+    for (const row of latestRows) {
+      const yesterday = shiftDate(row.date, -1);
+      pairPlaceholders.push(`($${pIdx}, $${pIdx + 1})`);
+      pairValues.push(row.entity_id, yesterday);
+      pIdx += 2;
+    }
 
     const { rows: yesterdayRows } = await pool.query<YesterdayMomentumRow>(
       `SELECT sd.entity_id, sd.momentum
-       FROM entity_sentiment_daily sd
-       WHERE sd.entity_id = ANY($1)
-         AND sd.date = ANY(
-           SELECT to_char(
-             (to_date(unnest, 'YYYY-MM-DD') - INTERVAL '1 day'),
-             'YYYY-MM-DD'
-           )
-           FROM unnest($2::text[])
-         )
-         AND sd.entity_id = ANY($1)`,
-      [latestEntityIds, latestDates],
+       FROM (VALUES ${pairPlaceholders.join(', ')}) AS v(entity_id, yesterday_date)
+       JOIN entity_sentiment_daily sd
+         ON sd.entity_id = v.entity_id
+        AND sd.date = v.yesterday_date::date`,
+      pairValues,
     );
 
     const yesterdayMap = new Map<string, number | null>();

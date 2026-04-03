@@ -174,8 +174,9 @@ export function createHealthMonitor(
   function checkDbPoolExhaustion(): HealthCheckResult {
     const total = pool.totalCount;
     const idle = pool.idleCount;
+    const poolMax = pool.options?.max ?? 10;
 
-    if (idle === 0 && total >= 10) {
+    if (idle === 0 && total >= poolMax) {
       return {
         name: 'db_pool_exhaustion',
         status: 'warn',
@@ -199,12 +200,10 @@ export function createHealthMonitor(
       SELECT
         (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage
          WHERE created_at >= $1) AS today_cost,
-        (SELECT COALESCE(AVG(daily_total), 0) FROM (
-           SELECT SUM(cost_usd) AS daily_total
+        (SELECT COALESCE(SUM(cost_usd), 0) / 7.0
            FROM llm_usage
            WHERE created_at >= $2 AND created_at < $1
-           GROUP BY (created_at / 86400000)
-        ) daily_costs) AS avg_cost
+        ) AS avg_cost
     `, [todayStart, sevenDaysAgo]);
 
     const todayCost = parseFloat(rows[0].today_cost ?? '0');
@@ -305,23 +304,37 @@ export function createHealthMonitor(
   }
 
   async function runChecks(): Promise<HealthCheckResult[]> {
-    const settled = await Promise.allSettled([
-      checkDbConnectivity(),
+    // Run DB connectivity first — if DB is down, skip DB-dependent checks
+    // to avoid cascading spurious critical alerts.
+    const dbResult = await checkDbConnectivity();
+    if (dbResult.status === 'critical') {
+      return [dbResult, checkDbPoolExhaustion()];
+    }
+
+    const dbDependentChecks = [
       checkSourceSilence(),
       checkSourceDisabled(),
       checkLlmFailures(),
       checkMissedPulse(),
       checkMissedDaily(),
-      Promise.resolve(checkDbPoolExhaustion()),
       checkCostSpike(),
-    ]);
+    ];
 
-    return settled.map((s, i) => {
-      if (s.status === 'fulfilled') return s.value;
-      const names = ['db_connectivity', 'source_silence', 'source_disabled', 'llm_failures', 'missed_pulse', 'missed_daily', 'db_pool', 'cost_spike'];
-      const msg = s.reason instanceof Error ? s.reason.message : String(s.reason);
-      return { name: names[i] ?? 'unknown', status: 'critical' as const, message: `Check failed: ${msg}` };
-    });
+    const settled = await Promise.allSettled(dbDependentChecks);
+    const names = ['source_silence', 'source_disabled', 'llm_failures', 'missed_pulse', 'missed_daily', 'cost_spike'];
+
+    const results: HealthCheckResult[] = [dbResult, checkDbPoolExhaustion()];
+    for (let i = 0; i < settled.length; i++) {
+      const s = settled[i];
+      if (s.status === 'fulfilled') {
+        results.push(s.value);
+      } else {
+        const msg = s.reason instanceof Error ? s.reason.message : String(s.reason);
+        results.push({ name: names[i] ?? 'unknown', status: 'critical' as const, message: `Check failed: ${msg}` });
+      }
+    }
+
+    return results;
   }
 
   async function check(): Promise<void> {

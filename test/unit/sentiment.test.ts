@@ -57,8 +57,10 @@ describe('Momentum calculation (runDaily)', () => {
     // recentAvg = (0.6 + 0.3) / (2 + 1) = 0.3
     // priorAvg = 0.6
     // momentum = 0.3 - 0.6 = -0.3
-    let windowCallCount = 0;
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-1', avg_sentiment: 0.3, mention_count: '10' }],
@@ -68,12 +70,8 @@ describe('Momentum calculation (runDaily)', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        // Recent window: 2 stored days, sum_sentiment=0.6
-        return { rows: [{ sum_sentiment: 0.6, day_count: '2' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        // Prior window: avg of prior 7 days
-        return { rows: [{ avg_sentiment: 0.6 }] };
+        // CTE: recent sum=0.6 (2 days), prior avg=0.6
+        return { rows: [{ entity_id: 'ent-1', recent_sum: 0.6, recent_count: '2', prior_avg: 0.6 }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -98,6 +96,9 @@ describe('Momentum calculation (runDaily)', () => {
 
   it('returns null momentum when no prior history exists', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-new', avg_sentiment: 0.5, mention_count: '3' }],
@@ -107,12 +108,8 @@ describe('Momentum calculation (runDaily)', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        // Recent window: no prior rows stored
-        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        // Prior window: no history
-        return { rows: [{ avg_sentiment: null }] };
+        // CTE: no recent or prior history
+        return { rows: [{ entity_id: 'ent-new', recent_sum: null, recent_count: '0', prior_avg: null }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -132,6 +129,9 @@ describe('Momentum calculation (runDaily)', () => {
 
   it('computes ~0 momentum when recent and prior averages are equal', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-flat', avg_sentiment: 0.5, mention_count: '7' }],
@@ -141,13 +141,8 @@ describe('Momentum calculation (runDaily)', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        // Recent window: 2 stored days with avg 0.5 each => sum=1.0
-        // Blend: (1.0 + 0.5) / (2 + 1) = 0.5
-        return { rows: [{ sum_sentiment: 1.0, day_count: '2' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        // Prior window avg = 0.5 too
-        return { rows: [{ avg_sentiment: 0.5 }] };
+        // CTE: recent sum=1.0 (2 days), prior avg=0.5
+        return { rows: [{ entity_id: 'ent-flat', recent_sum: 1.0, recent_count: '2', prior_avg: 0.5 }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -246,8 +241,11 @@ describe('Trend classification', () => {
 // ── 3. Daily rollup SQL (runDaily) ──────────────────────────────────────
 
 describe('Daily rollup SQL (runDaily)', () => {
-  it('calls entity_mentions aggregation with the correct date', async () => {
+  it('calls entity_mentions aggregation with epoch-ms bounds', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return { rows: [] }; // no mentions today
       }
@@ -262,11 +260,18 @@ describe('Daily rollup SQL (runDaily)', () => {
 
     const aggCall = calls.find((c) => c.sql.includes('FROM entity_mentions'));
     assert.ok(aggCall, 'Should query entity_mentions for aggregation');
-    assert.equal(aggCall.params[0], '2025-04-01', 'Should pass date parameter');
+
+    const expectedStart = new Date('2025-04-01T00:00:00Z').getTime();
+    const expectedEnd = expectedStart + 86_400_000;
+    assert.equal(aggCall.params[0], expectedStart, 'Should pass epoch-ms start bound');
+    assert.equal(aggCall.params[1], expectedEnd, 'Should pass epoch-ms end bound');
   });
 
   it('excludes entities with NULL sentiment via WHERE clause', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return { rows: [] };
       }
@@ -284,8 +289,11 @@ describe('Daily rollup SQL (runDaily)', () => {
     );
   });
 
-  it('calls UPSERT with correct parameters for each entity', async () => {
+  it('calls bulk UPSERT with correct parameters for all entities', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [
@@ -298,13 +306,16 @@ describe('Daily rollup SQL (runDaily)', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        return { rows: [{ avg_sentiment: null }] };
+        // CTE: no recent or prior history for either entity
+        return {
+          rows: [
+            { entity_id: 'ent-btc', recent_sum: null, recent_count: '0', prior_avg: null },
+            { entity_id: 'ent-eth', recent_sum: null, recent_count: '0', prior_avg: null },
+          ],
+        };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
-        return { rows: [], rowCount: 1 };
+        return { rows: [], rowCount: 2 };
       }
       return { rows: [] };
     });
@@ -313,23 +324,28 @@ describe('Daily rollup SQL (runDaily)', () => {
     await tracker.runDaily('2025-04-01');
 
     const upsertCalls = calls.filter((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
-    assert.equal(upsertCalls.length, 2, 'Should UPSERT once per entity');
+    assert.equal(upsertCalls.length, 1, 'Should issue a single bulk UPSERT for all entities');
 
-    // First entity: ent-btc
-    assert.equal(upsertCalls[0].params[0], 'ent-btc');
-    assert.equal(upsertCalls[0].params[1], '2025-04-01');
-    assert.equal(upsertCalls[0].params[2], 0.4); // avg_sentiment
-    assert.equal(upsertCalls[0].params[3], 12);   // mention_count (parsed from string)
+    const params = upsertCalls[0].params;
+    // Bulk VALUES: [entity_id, date, avg_sentiment, mention_count, momentum] x2
+    // First entity: ent-btc (params 0-4)
+    assert.equal(params[0], 'ent-btc');
+    assert.equal(params[1], '2025-04-01');
+    assert.equal(params[2], 0.4); // avg_sentiment
+    assert.equal(params[3], 12);   // mention_count (parsed from string)
 
-    // Second entity: ent-eth
-    assert.equal(upsertCalls[1].params[0], 'ent-eth');
-    assert.equal(upsertCalls[1].params[1], '2025-04-01');
-    assert.equal(upsertCalls[1].params[2], -0.2);
-    assert.equal(upsertCalls[1].params[3], 5);
+    // Second entity: ent-eth (params 5-9)
+    assert.equal(params[5], 'ent-eth');
+    assert.equal(params[6], '2025-04-01');
+    assert.equal(params[7], -0.2);
+    assert.equal(params[8], 5);
   });
 
   it('UPSERT query uses ON CONFLICT for idempotent writes', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-1', avg_sentiment: 0.5, mention_count: '3' }],
@@ -339,10 +355,7 @@ describe('Daily rollup SQL (runDaily)', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        return { rows: [{ avg_sentiment: null }] };
+        return { rows: [{ entity_id: 'ent-1', recent_sum: null, recent_count: '0', prior_avg: null }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -367,6 +380,9 @@ describe('Daily rollup SQL (runDaily)', () => {
 
   it('skips processing when no mentions have sentiment today', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return { rows: [] }; // no rows
       }
@@ -447,7 +463,7 @@ describe('getMomentumContext', () => {
         };
       }
       // Yesterday's momentum query
-      if (sql.includes('INTERVAL') || sql.includes('unnest')) {
+      if (sql.includes('yesterday_date')) {
         return {
           rows: [
             { entity_id: 'ent-sol', momentum: -0.3 }, // big reversal: 0.05 vs -0.3
@@ -496,7 +512,7 @@ describe('getMomentumContext', () => {
         };
       }
       // No yesterday data
-      if (sql.includes('INTERVAL') || sql.includes('unnest')) {
+      if (sql.includes('yesterday_date')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -526,7 +542,7 @@ describe('getMomentumContext', () => {
           ],
         };
       }
-      if (sql.includes('INTERVAL') || sql.includes('unnest')) {
+      if (sql.includes('yesterday_date')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -564,6 +580,9 @@ describe('SM-001: equal-weight 3-day blending', () => {
     // recentAvg = (0.8 + 0.8) / (2 + 1) = 1.6 / 3 = 0.5333...
     // Prior window avg = 0.0 (so momentum = recentAvg - 0 = 0.5333)
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-x', avg_sentiment: 0.8, mention_count: '5' }],
@@ -573,12 +592,8 @@ describe('SM-001: equal-weight 3-day blending', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        // 2 stored prior days: 0.5 + 0.3 = 0.8
-        return { rows: [{ sum_sentiment: 0.8, day_count: '2' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        // Prior window: not relevant for this test's assertion, use 0
-        return { rows: [{ avg_sentiment: 0.0 }] };
+        // CTE: recent sum=0.8 (2 days), prior avg=0.0
+        return { rows: [{ entity_id: 'ent-x', recent_sum: 0.8, recent_count: '2', prior_avg: 0.0 }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -610,6 +625,9 @@ describe('SM-001: equal-weight 3-day blending', () => {
 
   it('uses today directly when 0 prior days exist', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-y', avg_sentiment: 0.7, mention_count: '3' }],
@@ -619,12 +637,8 @@ describe('SM-001: equal-weight 3-day blending', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        // No stored recent days
-        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        // Prior window has data so momentum is computable
-        return { rows: [{ avg_sentiment: 0.3 }] };
+        // CTE: no recent days, prior avg=0.3
+        return { rows: [{ entity_id: 'ent-y', recent_sum: null, recent_count: '0', prior_avg: 0.3 }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -649,6 +663,9 @@ describe('SM-001: equal-weight 3-day blending', () => {
 
   it('blends 1 prior day + today with equal weight: (prior + today) / 2', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-z', avg_sentiment: 0.6, mention_count: '4' }],
@@ -658,11 +675,8 @@ describe('SM-001: equal-weight 3-day blending', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        // 1 stored prior day with avg_sentiment = 0.4
-        return { rows: [{ sum_sentiment: 0.4, day_count: '1' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        return { rows: [{ avg_sentiment: 0.2 }] };
+        // CTE: recent sum=0.4 (1 day), prior avg=0.2
+        return { rows: [{ entity_id: 'ent-z', recent_sum: 0.4, recent_count: '1', prior_avg: 0.2 }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };
@@ -687,6 +701,9 @@ describe('SM-001: equal-weight 3-day blending', () => {
 
   it('queries use SUM/COUNT, not AVG, for the recent window', async () => {
     const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('SELECT 1 FROM entity_sentiment_daily WHERE date')) {
+        return { rows: [], rowCount: 0 };
+      }
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-1', avg_sentiment: 0.5, mention_count: '2' }],
@@ -696,10 +713,8 @@ describe('SM-001: equal-weight 3-day blending', () => {
         return { rows: [] };
       }
       if (sql.includes('SUM(avg_sentiment)')) {
-        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
-      }
-      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
-        return { rows: [{ avg_sentiment: null }] };
+        // CTE returns WindowRow shape
+        return { rows: [{ entity_id: 'ent-1', recent_sum: null, recent_count: '0', prior_avg: null }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
         return { rows: [], rowCount: 1 };

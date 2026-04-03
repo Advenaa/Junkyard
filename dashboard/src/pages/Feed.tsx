@@ -58,7 +58,7 @@ export function Feed() {
       if (discordSources.length > 0 && !selectedSource) {
         setSelectedSource(discordSources[0].sourceId);
       }
-    });
+    }).catch(() => setError('Failed to load sources.'));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchItems = useCallback(
@@ -135,8 +135,13 @@ export function Feed() {
 
   const loadMore = async () => {
     setLoadingMore(true);
-    await fetchItems(items.length, 'append');
-    setLoadingMore(false);
+    try {
+      await fetchItems(items.length, 'append');
+    } catch {
+      setError('Failed to load more items. Please try again.');
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   return (

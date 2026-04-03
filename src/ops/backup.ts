@@ -62,6 +62,7 @@ export function createBackup(config: Config, log: Logger) {
         // Kill pg_dump if it hangs for more than 5 minutes
         const killTimeout = setTimeout(() => {
           pgDump.kill('SIGTERM');
+          unlink(tmpPath).catch(() => {});
           reject(new Error('pg_dump timed out after 5 minutes'));
         }, 300_000);
 

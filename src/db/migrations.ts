@@ -361,6 +361,28 @@ const migrations: Migration[] = [
     await client.query(`CREATE INDEX idx_sentiment_daily_date ON entity_sentiment_daily(date)`);
     await client.query(`CREATE INDEX idx_sentiment_daily_entity ON entity_sentiment_daily(entity_id, date DESC)`);
   },
+
+  // Migration 11: Add language column to entity_mentions for regional divergence analysis
+  async (client) => {
+    await client.query(`ALTER TABLE entity_mentions ADD COLUMN IF NOT EXISTS language TEXT`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_mentions_language ON entity_mentions(language) WHERE language IS NOT NULL`);
+  },
+
+  // Migration 12: Add missing indexes for time-window queries (DB-020..023)
+  async (client) => {
+    // DB-020: summaries.created_at for time-window queries
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_summaries_created_at ON summaries(created_at DESC)`);
+
+    // DB-021: llm_usage.created_at for health monitor queries
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage(created_at)`);
+
+    // DB-022: reports(type, created_at) for health monitor queries
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_reports_type_created ON reports(type, created_at)`);
+
+    // DB-023: Rebuild idx_items_claim with source_id column for claimBatch
+    await client.query(`DROP INDEX IF EXISTS idx_items_claim`);
+    await client.query(`CREATE INDEX idx_items_claim ON items(status, source, source_id, timestamp)`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
@@ -402,7 +424,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 
     await client.query('SELECT pg_advisory_unlock(42424242)');
   } catch (err) {
-    // Advisory lock is released when the connection is returned to the pool
+    await client.query('SELECT pg_advisory_unlock(42424242)').catch(() => {});
     throw err;
   } finally {
     client.release();

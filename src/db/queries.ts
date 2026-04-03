@@ -191,17 +191,27 @@ export async function markProcessed(pool: Pool, batchId: string): Promise<void> 
  * Items that have already exhausted their retry budget are marked 'failed' instead (DP-003).
  */
 export async function resetCrashed(pool: Pool, maxRetries = 3): Promise<number> {
-  // Mark exhausted items as failed
-  await pool.query(
-    `UPDATE items SET status = 'failed', batch_id = NULL
-     WHERE status = 'processing' AND retry_count >= $1`,
-    [maxRetries],
-  );
-  // Reset remaining orphaned items to ready
-  const result = await pool.query(
-    `UPDATE items SET status = 'ready', batch_id = NULL WHERE status = 'processing'`,
-  );
-  return result.rowCount ?? 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Mark exhausted items as failed
+    await client.query(
+      `UPDATE items SET status = 'failed', batch_id = NULL
+       WHERE status = 'processing' AND retry_count >= $1`,
+      [maxRetries],
+    );
+    // Reset remaining orphaned items to ready
+    const result = await client.query(
+      `UPDATE items SET status = 'ready', batch_id = NULL WHERE status = 'processing'`,
+    );
+    await client.query('COMMIT');
+    return result.rowCount ?? 0;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ── Summaries ───────────────────────────────────────────────────────────
@@ -419,7 +429,8 @@ export async function getSentimentMomentum(
      FROM entity_sentiment_daily
      WHERE entity_id = ANY($1)
        AND date >= (CURRENT_DATE - ($2 || ' days')::interval)::text
-     ORDER BY entity_id, date DESC`,
+     ORDER BY entity_id, date DESC
+     LIMIT 5000`,
     [entityIds, days],
   );
   return rows;
@@ -474,7 +485,8 @@ export async function getRegionalDivergence(
        AND eng.language = 'eng'
        AND ind.language = 'ind'
      WHERE ABS(eng.avg_sentiment - ind.avg_sentiment) > 0.3
-     ORDER BY divergence DESC`,
+     ORDER BY divergence DESC
+     LIMIT 500`,
     [startTime, endTime, minMentions],
   );
   return rows;

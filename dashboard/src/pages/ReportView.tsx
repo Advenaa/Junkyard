@@ -108,6 +108,7 @@ export function ReportView() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError(null);
 
@@ -119,10 +120,18 @@ export function ReportView() {
 
     fetchReport
       .then((res) => {
-        setReport((res as { report: FullReport | null }).report ?? null);
+        if (!cancelled) {
+          setReport((res as { report: FullReport | null }).report ?? null);
+        }
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, [id]);
 
   if (loading) {

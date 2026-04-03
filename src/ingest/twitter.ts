@@ -10,11 +10,11 @@ const MAX_PAGES = 5;
 
 const TwitterTweetSchema = z.object({
   id: z.string(),
-  text: z.string(),
+  text: z.string().max(50_000),
   url: z.string().optional(),
-  likeCount: z.number().default(0),
-  retweetCount: z.number().default(0),
-  quoteCount: z.number().default(0),
+  likeCount: z.number().optional(),
+  retweetCount: z.number().optional(),
+  quoteCount: z.number().optional(),
   createdAt: z.string(),
   author: z.object({
     userName: z.string(),
@@ -31,7 +31,7 @@ const TwitterResponseSchema = z.object({
 type TwitterTweet = z.infer<typeof TwitterTweetSchema>;
 
 function computeEngagement(tweet: TwitterTweet): number {
-  const raw = tweet.likeCount + tweet.retweetCount * 2 + tweet.quoteCount * 3;
+  const raw = (tweet.likeCount ?? 0) + (tweet.retweetCount ?? 0) * 2 + (tweet.quoteCount ?? 0) * 3;
   const score = Math.round(Math.log10(Math.max(1, raw)) * 20);
   return Math.min(100, Math.max(1, score));
 }
@@ -53,9 +53,9 @@ function tweetToRawItem(tweet: TwitterTweet, sourceId: string, log: Logger): Raw
     engagement: computeEngagement(tweet),
     metadata: {
       tweetId: tweet.id,
-      likes: tweet.likeCount,
-      retweets: tweet.retweetCount,
-      quotes: tweet.quoteCount,
+      likes: tweet.likeCount ?? 0,
+      retweets: tweet.retweetCount ?? 0,
+      quotes: tweet.quoteCount ?? 0,
     },
   };
 }
@@ -147,6 +147,11 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
       return null;
     }
 
+    if (response.status >= 400 && response.status < 500 && response.status !== 401 && response.status !== 429) {
+      log.warn({ sourceId, status: response.status }, 'Twitter API client error — skipping');
+      return null;
+    }
+
     let body: unknown;
     try {
       body = await response.json();
@@ -195,16 +200,36 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     const allTweets: TwitterTweet[] = [];
     let cursor: string | undefined;
     let hasMore = false;
+    let paginationComplete = false;
+    let paginationErrored = false;
 
     for (let page = 0; page < MAX_PAGES; page++) {
       const result = await fetchPage(sourceId, cursor);
-      if (!result) break;
+      if (!result) {
+        paginationErrored = true;
+        break;
+      }
 
       allTweets.push(...result.tweets);
       hasMore = result.has_next_page;
 
-      if (!result.has_next_page || !result.next_cursor) break;
+      if (!result.has_next_page || !result.next_cursor) {
+        paginationComplete = true;
+        break;
+      }
+
+      if (allTweets.length > 5000) {
+        log.warn({ sourceId, count: allTweets.length }, 'Tweet accumulation cap reached — stopping pagination');
+        paginationComplete = true;
+        break;
+      }
+
       cursor = result.next_cursor;
+    }
+
+    // If we exhausted MAX_PAGES without error, pagination is complete (best-effort)
+    if (!paginationComplete && !paginationErrored) {
+      paginationComplete = true;
     }
 
     if (allTweets.length > 0 && hasMore) {
@@ -236,6 +261,13 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     }, filtered[0].id);
 
     const items = filtered.map((t) => tweetToRawItem(t, sourceId, log));
+
+    // Only advance lastId if pagination completed cleanly;
+    // otherwise return original lastId so next poll retries from the same position
+    if (!paginationComplete) {
+      log.warn({ sourceId }, 'Pagination incomplete due to error — not advancing lastId');
+      return { items, lastId: lastId ?? newestId };
+    }
 
     return { items, lastId: newestId };
   }

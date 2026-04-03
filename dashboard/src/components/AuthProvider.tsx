@@ -27,7 +27,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const onFocus = () => {
       // Re-validate session when user returns to tab
-      apiFetch<User>('/auth/me').then(setUser).catch(() => setUser(null));
+      // Only clear user on 401 (handled by apiFetch redirect to /login)
+      // On network errors, keep current user to avoid false logouts
+      apiFetch<User>('/auth/me').then(setUser).catch(() => {});
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);

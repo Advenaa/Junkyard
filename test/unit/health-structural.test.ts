@@ -86,36 +86,20 @@ describe('HM-001: cost spike timezone fix', () => {
   });
 });
 
-describe('HM-002: 7-day avg query excludes zero-activity days (open issue)', () => {
-  it('avg_cost subquery still uses GROUP BY integer division (zero-activity days excluded from AVG)', () => {
-    // The current query groups by (created_at / 86400000) which is integer
-    // division in epoch-ms. Days with zero activity simply have no rows, so
-    // they are absent from the GROUP BY and thus excluded from AVG.
-    // This inflates the average and could mask a real spike.
-    //
-    // This test documents the open issue: when this is fixed, the query
-    // should produce explicit zero-cost rows for inactive days within the window.
+describe('HM-002: 7-day avg uses total/7 instead of per-day AVG (RESOLVED)', () => {
+  it('checkCostSpike uses SUM/7.0 or equivalent for correct 7-day average', () => {
     const fnStart = source.indexOf('async function checkCostSpike');
     const fnBody = source.slice(fnStart, source.indexOf('\n  async function', fnStart + 1));
 
-    const usesIntegerDivisionGrouping = fnBody.includes('GROUP BY (created_at / 86400000)');
-    // If someone fixes HM-002, they would use generate_series or a date-based approach
+    // HM-002 fix: use total-over-period (SUM/7.0) instead of GROUP BY + AVG
+    const usesTotalDivision = fnBody.includes('/ 7.0') || fnBody.includes('/7.0');
     const usesGenerateSeries = fnBody.includes('generate_series');
-    const usesDateTrunc = fnBody.includes('date_trunc');
+    const noGroupByDivision = !fnBody.includes('GROUP BY (created_at / 86400000)');
 
-    if (usesIntegerDivisionGrouping && !usesGenerateSeries && !usesDateTrunc) {
-      // Issue is still open — document it
-      assert.ok(
-        true,
-        'HM-002 is still open: zero-activity days are excluded from 7-day avg, inflating the average',
-      );
-    } else {
-      // Someone appears to have fixed it — this test should be updated
-      assert.ok(
-        usesGenerateSeries || usesDateTrunc,
-        'HM-002 appears partially fixed but does not use generate_series or date_trunc',
-      );
-    }
+    assert.ok(
+      (usesTotalDivision || usesGenerateSeries) && noGroupByDivision,
+      'HM-002: should use SUM/7.0 or generate_series, not GROUP BY integer division',
+    );
   });
 });
 

@@ -1,10 +1,11 @@
 const BASE = '/api/v1';
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const { headers: extraHeaders, ...rest } = options ?? {};
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    ...rest,
   });
   if (res.status === 401 && window.location.pathname !== '/login') {
     window.location.href = '/login';

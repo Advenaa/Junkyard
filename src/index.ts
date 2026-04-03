@@ -400,10 +400,17 @@ program
   .description('Run database migrations and exit')
   .action(async () => {
     const config = loadConfig();
+    const log = createLogger(config.secrets);
     const pool = createPool(config.databaseUrl);
-
-    await runMigrations(pool);
-    await pool.end();
+    try {
+      await runMigrations(pool);
+      log.info('migrations complete');
+    } catch (err) {
+      log.fatal({ err }, 'migration failed');
+      process.exit(1);
+    } finally {
+      await pool.end();
+    }
     process.exit(0);
   });
 

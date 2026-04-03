@@ -107,29 +107,29 @@ function createMockLogger() {
 
 describe('retention run()', () => {
   it('deletes old items, mentions, summaries, orphaned embeddings, and expired sessions', async () => {
-    //                items  mentions  summaries  embItems  embSummaries  sessions
-    const rowCounts = [10,   5,        3,         2,        1,            4];
+    // Order: items, summaries, mentions, emb(item,r1), emb(item,r2=0), emb(summary,r1), emb(summary,r2=0), sessions
+    const rowCounts = [10, 5, 3, 2, 0, 1, 0, 4];
     const { pool, calls } = createMockPool(rowCounts);
     const log = createMockLogger();
 
     const retention = createRetention(pool as any, log as any);
     const result = await retention.run();
 
-    // Should make exactly 6 queries
-    assert.equal(calls.length, 6);
+    // RT-001: summaries before mentions. RT-002: batched embeddings loop.
+    // items(1) + summaries(1) + mentions(1) + emb_items(2) + emb_summaries(2) + sessions(1) = 8
+    assert.equal(calls.length, 8);
 
-    // Verify query order and SQL content
+    // Verify query order and SQL content (RT-001: summaries before mentions)
     assert.ok(calls[0].text.includes('DELETE FROM items'));
     assert.ok(calls[0].text.includes("status = 'processed'"));
 
-    assert.ok(calls[1].text.includes('DELETE FROM entity_mentions'));
+    assert.ok(calls[1].text.includes('DELETE FROM summaries'));
 
-    assert.ok(calls[2].text.includes('DELETE FROM summaries'));
+    assert.ok(calls[2].text.includes('DELETE FROM entity_mentions'));
 
+    // RT-002: embeddings delete in batched loop (LIMIT 1000)
     assert.ok(calls[3].text.includes('DELETE FROM embeddings'));
-    assert.ok(calls[4].text.includes('DELETE FROM embeddings'));
-
-    assert.ok(calls[5].text.includes('DELETE FROM sessions'));
+    assert.ok(calls[3].text.includes('LIMIT 1000'));
   });
 
   it('uses NOT EXISTS (not NOT IN) for orphaned embeddings', async () => {
@@ -140,19 +140,22 @@ describe('retention run()', () => {
     const retention = createRetention(pool as any, log as any);
     await retention.run();
 
-    // Embedding queries are calls[3] and calls[4]
+    // Embedding queries start at index 3 (after items, summaries, mentions)
+    // RT-002: batched loop — first call per target type is index 3 (item) and 4 (summary)
     const embItemsQuery = calls[3].text;
     const embSummariesQuery = calls[4].text;
 
     assert.ok(embItemsQuery.includes('NOT EXISTS'), 'item embeddings query should use NOT EXISTS');
     assert.ok(!embItemsQuery.includes('NOT IN'), 'item embeddings query should not use NOT IN');
+    assert.ok(embItemsQuery.includes('LIMIT 1000'), 'item embeddings query should batch with LIMIT');
 
     assert.ok(embSummariesQuery.includes('NOT EXISTS'), 'summary embeddings query should use NOT EXISTS');
     assert.ok(!embSummariesQuery.includes('NOT IN'), 'summary embeddings query should not use NOT IN');
   });
 
   it('returns correct counts from rowCount values', async () => {
-    const rowCounts = [10, 5, 3, 2, 1, 4];
+    // Order: items, summaries, mentions, emb(item,r1), emb(item,r2=0), emb(summary,r1), emb(summary,r2=0), sessions
+    const rowCounts = [10, 3, 5, 2, 0, 1, 0, 4];
     const { pool } = createMockPool(rowCounts);
     const log = createMockLogger();
 
@@ -186,6 +189,7 @@ describe('retention run()', () => {
   });
 
   it('deletes expired sessions using current time', async () => {
+    // items, summaries, mentions, emb(item,r1=0), emb(summary,r1=0), sessions
     const rowCounts = [0, 0, 0, 0, 0, 7];
     const { pool, calls } = createMockPool(rowCounts);
     const log = createMockLogger();
@@ -195,8 +199,8 @@ describe('retention run()', () => {
     await retention.run();
     const after = Date.now();
 
-    // Sessions query is the last one (index 5)
-    const sessionsQuery = calls[5];
+    // Sessions query is the last one
+    const sessionsQuery = calls[calls.length - 1];
     assert.ok(sessionsQuery.text.includes('DELETE FROM sessions'));
     assert.ok(sessionsQuery.text.includes('expires_at'));
 
