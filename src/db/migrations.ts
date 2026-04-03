@@ -333,6 +333,9 @@ const migrations: Migration[] = [
 export async function runMigrations(pool: pg.Pool): Promise<void> {
   const client = await pool.connect();
   try {
+    // Acquire advisory lock to prevent concurrent migrations (D-008)
+    await client.query('SELECT pg_advisory_lock(42424242)');
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)
     `);
@@ -363,6 +366,11 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
         throw err;
       }
     }
+
+    await client.query('SELECT pg_advisory_unlock(42424242)');
+  } catch (err) {
+    // Advisory lock is released when the connection is returned to the pool
+    throw err;
   } finally {
     client.release();
   }

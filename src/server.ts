@@ -21,6 +21,7 @@ import {
   type SourceRow,
   type ItemRow,
 } from './db/queries.js';
+import { validateUrl } from './url-validator.js';
 
 interface UserRow {
   discord_id: string;
@@ -147,9 +148,18 @@ export async function createServer(
     return { digest_time: digestTime, timezone, webhook_url: webhookUrl };
   });
 
-  app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async (request) => {
+  app.patch('/api/v1/config', { preHandler: [authPreHandler, requireAdmin] }, async (request, reply) => {
     const body = request.body as Record<string, string>;
     const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
+
+    // Validate webhook_url if provided (SSRF protection — D-010)
+    if ('webhook_url' in body && body['webhook_url']) {
+      const validation = await validateUrl(body['webhook_url']);
+      if (!validation.valid) {
+        return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason}` });
+      }
+    }
+
     const updates: Array<Promise<void>> = [];
     for (const key of allowedKeys) {
       if (key in body) {

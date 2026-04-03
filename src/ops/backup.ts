@@ -30,9 +30,31 @@ export function createBackup(config: Config, log: Logger) {
       const filePath = join(config.dataDir, filename);
 
       await new Promise<void>((resolve, reject) => {
-        const pgDump = spawn('pg_dump', [config.databaseUrl], {
+        // Parse connection string so credentials never appear as CLI args
+        const dbUrl = new URL(config.databaseUrl);
+        const pgEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+        if (dbUrl.password) {
+          pgEnv['PGPASSWORD'] = decodeURIComponent(dbUrl.password);
+        }
+
+        const pgArgs = [
+          '--host', dbUrl.hostname,
+          '--port', dbUrl.port || '5432',
+          '--username', decodeURIComponent(dbUrl.username),
+          '--dbname', dbUrl.pathname.slice(1),
+          '--no-password',
+        ];
+
+        const pgDump = spawn('pg_dump', pgArgs, {
           stdio: ['ignore', 'pipe', 'pipe'],
+          env: pgEnv,
         });
+
+        // Kill pg_dump if it hangs for more than 5 minutes
+        const killTimeout = setTimeout(() => {
+          pgDump.kill('SIGTERM');
+          reject(new Error('pg_dump timed out after 5 minutes'));
+        }, 300_000);
 
         const gzip = createGzip();
         const output = createWriteStream(filePath);
@@ -45,6 +67,7 @@ export function createBackup(config: Config, log: Logger) {
         pgDump.stdout.pipe(gzip).pipe(output);
 
         output.on('finish', () => {
+          clearTimeout(killTimeout);
           if (pgDump.exitCode !== 0) {
             reject(new Error(`pg_dump exited with code ${String(pgDump.exitCode)}: ${stderr}`));
             return;
@@ -52,9 +75,9 @@ export function createBackup(config: Config, log: Logger) {
           resolve();
         });
 
-        output.on('error', reject);
-        pgDump.on('error', reject);
-        gzip.on('error', reject);
+        output.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
+        pgDump.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
+        gzip.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
       });
 
       const fileInfo = await stat(filePath);

@@ -11,7 +11,7 @@ import { sanitizeContent, detectInjection } from './instruct-detector.js';
 import { isShortUrl, expandUrl } from './url-expand.js';
 import { checkSpam } from './spam.js';
 
-type NormalizeResult = 'ready' | 'filtered' | 'dropped';
+type NormalizeResult = 'ready' | 'filtered' | 'dropped' | 'error';
 
 const MAX_CONTENT_LENGTH = 20_000;
 const ACCEPTED_LANGS = new Set(['eng', 'ind', 'und']);
@@ -27,6 +27,7 @@ export function createNormalizer(
   llm: ReturnType<typeof createLLM>,
 ) {
   async function normalize(item: RawItem): Promise<NormalizeResult> {
+   try {
     let originalLanguage: string | undefined;
     let translated = false;
 
@@ -137,15 +138,20 @@ export function createNormalizer(
     if (lang === 'ind') {
       originalLanguage = 'ind';
       try {
+        const { wrapped, nonce } = llm.wrapWithNonce(item.content);
         const result = await llm.call({
           model: config.models.haiku,
           system:
-            'Translate the following Indonesian text to English. Preserve all entity names, numbers, and technical terms. Output only the translation.',
-          messages: [{ role: 'user', content: item.content }],
+            'Translate the following Indonesian text to English. The text is wrapped in XML tags — translate ONLY the content inside the tags. Preserve all entity names, numbers, and technical terms. Output only the translation, without any XML tags.',
+          messages: [{ role: 'user', content: wrapped }],
           maxTokens: Math.ceil((item.content.length / 4) * 1.5),
           stage: 'translate',
         });
-        item.content = result.content;
+        // Strip any leaked nonce tags from translation output
+        const cleaned = result.content
+          .replace(new RegExp(`</?scraped_content_${nonce}>`, 'g'), '')
+          .trim();
+        item.content = cleaned || result.content;
         translated = true;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -177,6 +183,11 @@ export function createNormalizer(
     });
 
     return inserted ? 'ready' : 'dropped';
+   } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.error({ id: item.id, err: message }, 'normalize failed unexpectedly');
+    return 'error';
+   }
   }
 
   return { normalize };

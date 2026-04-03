@@ -2,6 +2,7 @@ import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { getAppConfig } from '../db/queries.js';
+import { validateUrl } from '../url-validator.js';
 
 interface EntitySentiment {
   name: string;
@@ -288,6 +289,13 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     const webhookUrl = await getAppConfig(pool, 'webhook_url');
     if (!webhookUrl) {
       log.warn('no webhook_url configured, skipping delivery');
+      return false;
+    }
+
+    const validation = await validateUrl(webhookUrl);
+    if (!validation.valid) {
+      log.error({ url: webhookUrl, reason: validation.reason }, 'webhook URL failed SSRF validation');
+      await updateDeliveryStatus(pool, report.id, 'failed');
       return false;
     }
 

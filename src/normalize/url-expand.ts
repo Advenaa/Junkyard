@@ -1,3 +1,5 @@
+import { validateUrl } from '../url-validator.js';
+
 const SHORT_HOSTS = new Set([
   't.co',
   'bit.ly',
@@ -47,6 +49,10 @@ export async function expandUrl(url: string): Promise<string> {
 
       // Only follow HTTPS redirects
       if (resolved.protocol !== 'https:') return current;
+
+      // SSRF check — reject private IPs and non-standard ports
+      const validation = await validateUrl(resolved.href);
+      if (!validation.valid) return current;
 
       current = resolved.href;
     } catch {

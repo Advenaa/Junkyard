@@ -2,6 +2,7 @@ import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 import type { Config } from './config.js';
 import { ulid } from 'ulid';
+import { validateUrl } from './url-validator.js';
 
 export interface HealthCheckResult {
   name: string;
@@ -251,6 +252,12 @@ export function createHealthMonitor(
   async function sendAlertWebhook(event: HealthEvent): Promise<void> {
     if (!config.alertWebhookUrl) return;
 
+    const validation = await validateUrl(config.alertWebhookUrl);
+    if (!validation.valid) {
+      log.error({ reason: validation.reason }, 'Alert webhook URL failed SSRF validation');
+      return;
+    }
+
     const body = {
       embeds: [
         {
@@ -260,6 +267,7 @@ export function createHealthMonitor(
           timestamp: new Date().toISOString(),
         },
       ],
+      allowed_mentions: { parse: [] as string[] },
     };
 
     try {
