@@ -50,11 +50,17 @@ const EMBED_COLORS: Record<string, number> = {
 
 const MAX_RETRIES = 3;
 const MAX_RATE_LIMIT_RETRIES = 5;
+const MAX_RETRY_AFTER_MS = 60_000;
 const BACKOFF_MS = [2000, 8000, 32000];
 
 export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
-  return text.slice(0, max - 3) + '...';
+  let end = max - 3;
+  // Don't split UTF-16 surrogate pairs
+  if (end > 0 && text.charCodeAt(end - 1) >= 0xD800 && text.charCodeAt(end - 1) <= 0xDBFF) {
+    end--;
+  }
+  return text.slice(0, end) + '...';
 }
 
 export function colorForType(type: string): number {
@@ -215,8 +221,9 @@ async function postWithRetry(
           return false;
         }
         const retryAfterHeader = response.headers.get('Retry-After');
-        const retryAfterMs = retryAfterHeader
-          ? Math.ceil(parseFloat(retryAfterHeader) * 1000)
+        const parsed = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
+        const retryAfterMs = Number.isFinite(parsed) && parsed > 0
+          ? Math.min(Math.ceil(parsed * 1000), MAX_RETRY_AFTER_MS)
           : BACKOFF_MS[attempt] ?? 32000;
         log.warn(
           { status: 429, retryAfterMs, attempt: attempt + 1, rateLimitCount },
@@ -312,12 +319,14 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     const pinnedWebhookUrl = pinnedUrl.toString();
     const originalHost = new URL(webhookUrl).host;
 
-    // Idempotency guard: skip if already delivered (DL-001)
-    const { rows: statusRows } = await pool.query<{ delivery_status: string }>(
-      'SELECT delivery_status FROM reports WHERE id = $1',
+    // Atomic idempotency: claim this report for delivery (skip if already delivered)
+    const { rows: claimRows } = await pool.query<{ delivery_status: string }>(
+      `UPDATE reports SET delivery_status = 'pending'
+       WHERE id = $1 AND delivery_status != 'delivered'
+       RETURNING delivery_status`,
       [report.id],
     );
-    if (statusRows[0]?.delivery_status === 'delivered') {
+    if (claimRows.length === 0) {
       log.info({ reportId: report.id }, 'Report already delivered, skipping');
       return true;
     }

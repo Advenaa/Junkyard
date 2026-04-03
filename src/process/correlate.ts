@@ -149,8 +149,8 @@ export function createCorrelator(pool: Pool, log: Logger) {
 
       // Flash trigger
       if (
-        weightedSum >= 1.5 &&
-        (entityUrgency === 'breaking' || entityUrgency === 'elevated')
+        weightedSum >= 2.0 &&
+        entityUrgency === 'breaking'
       ) {
         shouldFlash = true;
         log.info(

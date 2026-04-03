@@ -26,6 +26,11 @@ export function Chat() {
   const [conversationId, setConversationId] = useState(generateId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const conversationIdRef = useRef(conversationId);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -35,6 +40,8 @@ export function Chat() {
     const query = input.trim();
     if (!query || loading) return;
 
+    const requestConversationId = conversationId;
+
     setInput('');
     setMessages((prev) => [...prev, { id: generateId(), role: 'user', content: query }]);
     setLoading(true);
@@ -42,19 +49,23 @@ export function Chat() {
     try {
       const data = await apiFetch<ChatResponse>('/chat', {
         method: 'POST',
-        body: JSON.stringify({ query, conversationId }),
+        body: JSON.stringify({ query, conversationId: requestConversationId }),
       });
+      if (conversationIdRef.current !== requestConversationId) return;
       setMessages((prev) => [
         ...prev,
         { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed },
       ]);
     } catch (err) {
+      if (conversationIdRef.current !== requestConversationId) return;
       setMessages((prev) => [
         ...prev,
         { id: generateId(), role: 'assistant', content: 'Something went wrong. Please try again.' },
       ]);
     } finally {
-      setLoading(false);
+      if (conversationIdRef.current === requestConversationId) {
+        setLoading(false);
+      }
     }
   }, [input, loading, conversationId]);
 

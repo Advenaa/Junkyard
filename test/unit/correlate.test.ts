@@ -332,40 +332,40 @@ describe('createCorrelator.run() — flash trigger', () => {
     });
   }
 
-  it('triggers flash when weightedSum >= 1.5 and urgency is breaking', async () => {
-    const pool = flashPool(1.6, 'breaking');
+  it('triggers flash when weightedSum >= 2.0 and urgency is breaking', async () => {
+    const pool = flashPool(2.1, 'breaking');
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
     assert.strictEqual(result.shouldFlash, true);
   });
 
-  it('triggers flash when weightedSum >= 1.5 and urgency is elevated', async () => {
-    const pool = flashPool(1.5, 'elevated');
+  it('does NOT trigger flash when urgency is elevated (CO-010)', async () => {
+    const pool = flashPool(2.5, 'elevated');
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
-    assert.strictEqual(result.shouldFlash, true);
+    assert.strictEqual(result.shouldFlash, false);
   });
 
   it('does NOT trigger flash when urgency is routine even with high weightedSum', async () => {
-    const pool = flashPool(2.0, 'routine');
+    const pool = flashPool(3.0, 'routine');
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
     assert.strictEqual(result.shouldFlash, false);
   });
 
-  it('does NOT trigger flash when weightedSum < 1.5 even with breaking urgency', async () => {
-    const pool = flashPool(1.4, 'breaking');
+  it('does NOT trigger flash when weightedSum < 2.0 even with breaking urgency', async () => {
+    const pool = flashPool(1.9, 'breaking');
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
     assert.strictEqual(result.shouldFlash, false);
   });
 
-  it('triggers flash at exact boundary: weightedSum=1.5, urgency=breaking', async () => {
-    const pool = flashPool(1.5, 'breaking');
+  it('triggers flash at exact boundary: weightedSum=2.0, urgency=breaking', async () => {
+    const pool = flashPool(2.0, 'breaking');
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
@@ -413,6 +413,10 @@ describe('createCorrelator.run() — multiple entities', () => {
   });
 
   it('shouldFlash is true if ANY entity triggers flash', async () => {
+    // Bitcoin: routine urgency → no flash. Ethereum: breaking + high weightedSum → flash.
+    // Ethereum weightedSum = 0.9*0.9 + 1.0*0.9 = 0.81+0.9 = 1.71... need >= 2.0
+    // Use higher sentiments: rss: 0.9*1.0 + news: 1.0*1.0 = 0.9+1.0 = 1.9... bump trust
+    // rss: 1.0*0.9 + news: 1.0*1.0 = 0.9+1.0 = 1.9... use 3 sources
     const pool = buildBatchPool({
       correlationRows: [
         {
@@ -427,13 +431,14 @@ describe('createCorrelator.run() — multiple entities', () => {
           entity_id: 'ent-2',
           entity_name: 'Ethereum',
           mentions: [
-            { source: 'rss', summary_id: 'sum-3', sentiment: 0.3 },
-            { source: 'news', summary_id: 'sum-4', sentiment: 0.6 },
+            { source: 'rss', summary_id: 'sum-3', sentiment: 0.9 },
+            { source: 'news', summary_id: 'sum-4', sentiment: 0.9 },
+            { source: 'twitter', summary_id: 'sum-5', sentiment: 0.8 },
           ],
         },
       ],
-      trustWeights: { discord: 0.3, twitter: 0.3, rss: 0.8, news: 0.9 },
-      urgencies: { 'sum-1': 'routine', 'sum-2': 'routine', 'sum-3': 'breaking', 'sum-4': 'breaking' },
+      trustWeights: { discord: 0.3, twitter: 0.8, rss: 0.9, news: 1.0 },
+      urgencies: { 'sum-1': 'routine', 'sum-2': 'routine', 'sum-3': 'breaking', 'sum-4': 'breaking', 'sum-5': 'breaking' },
     });
 
     const correlator = createCorrelator(pool as never, silentLog);

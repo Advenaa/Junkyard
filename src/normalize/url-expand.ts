@@ -1,3 +1,4 @@
+import net from 'node:net';
 import { validateUrl } from '../url-validator.js';
 
 const SHORT_HOSTS = new Set([
@@ -25,6 +26,8 @@ export function isShortUrl(url: string): boolean {
 
 export async function expandUrl(url: string): Promise<string> {
   let current = url;
+  let pinnedFetchUrl: string | undefined;
+  let pinnedHost: string | undefined;
 
   try {
     // Quick validation — will throw on invalid URLs
@@ -35,11 +38,25 @@ export async function expandUrl(url: string): Promise<string> {
 
   for (let i = 0; i < MAX_REDIRECTS; i++) {
     try {
-      const response = await fetch(current, {
+      const fetchHeaders: Record<string, string> = {};
+      let fetchTarget = current;
+
+      // Use DNS-pinned URL if available from previous hop's validation
+      if (pinnedFetchUrl && pinnedHost) {
+        fetchTarget = pinnedFetchUrl;
+        fetchHeaders['Host'] = pinnedHost;
+      }
+
+      const response = await fetch(fetchTarget, {
         method: 'HEAD',
         redirect: 'manual',
         signal: AbortSignal.timeout(5000),
+        headers: fetchHeaders,
       });
+
+      // Reset pinning — will be set again if we follow another redirect
+      pinnedFetchUrl = undefined;
+      pinnedHost = undefined;
 
       const location = response.headers.get('location');
       if (!location) return current;
@@ -55,6 +72,16 @@ export async function expandUrl(url: string): Promise<string> {
       if (!validation.valid) return current;
 
       current = resolved.href;
+
+      // Pin next fetch to the validated IP to close the TOCTOU window
+      if (validation.resolvedIp) {
+        const pinned = new URL(current);
+        pinnedHost = pinned.hostname;
+        pinned.hostname = net.isIPv6(validation.resolvedIp)
+          ? `[${validation.resolvedIp}]`
+          : validation.resolvedIp;
+        pinnedFetchUrl = pinned.href;
+      }
     } catch {
       return current;
     }

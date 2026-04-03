@@ -18,6 +18,7 @@ interface EntityManager {
     entities: ExtractedEntity[],
     source: string,
     summaryId: string,
+    language?: string | null,
   ): Promise<void>;
 }
 
@@ -42,6 +43,7 @@ interface ClaimedItem {
   author: string;
   engagement: number;
   timestamp: number;
+  original_language: string | null;
 }
 
 // ── System prompt ─────────────────────────────────────────────────────
@@ -342,6 +344,11 @@ export function createSummarizer(
     return parsed;
   }
 
+  interface ProcessedChunk {
+    parsed: ChunkSummary;
+    itemCount: number;
+  }
+
   /**
    * Process a single chunk end-to-end. Handles context-length splitting recursively.
    */
@@ -353,7 +360,7 @@ export function createSummarizer(
     windowEnd: number,
     depth: number,
     callBudget: CallBudget,
-  ): Promise<ChunkSummary[]> {
+  ): Promise<ProcessedChunk[]> {
     const systemPrompt = buildChunkSystemPrompt(source, sourceId, windowStart, windowEnd, chunk);
     const userContent = buildUserContent(chunk);
     const rawText = chunk.map((item) => item.content).join(' ');
@@ -372,7 +379,7 @@ export function createSummarizer(
       // Confidence escalation
       parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, source, sourceId, callBudget);
 
-      return [parsed];
+      return [{ parsed, itemCount: chunk.length }];
     } catch (err: unknown) {
       if (err instanceof ContextLengthExceededError) {
         if (depth >= 3) {
@@ -400,7 +407,7 @@ export function createSummarizer(
         );
 
         const mid = Math.ceil(chunk.length / 2);
-        const results: ChunkSummary[] = [];
+        const results: ProcessedChunk[] = [];
         for (const half of [chunk.slice(0, mid), chunk.slice(mid)]) {
           try {
             const halfResults = await processChunk(half, source, sourceId, windowStart, windowEnd, depth + 1, callBudget);
@@ -431,7 +438,7 @@ export function createSummarizer(
 
     // b. Load claimed items
     const { rows: items } = await pool.query<ClaimedItem>(
-      'SELECT id, content, author, engagement, timestamp FROM items WHERE batch_id = $1 ORDER BY timestamp ASC',
+      'SELECT id, content, author, engagement, timestamp, original_language FROM items WHERE batch_id = $1 ORDER BY timestamp ASC',
       [batchId],
     );
 
@@ -469,7 +476,7 @@ export function createSummarizer(
       let chunkSummaryCount = 0;
       let chunkHasBreaking = false;
 
-      for (const parsed of parsedResults) {
+      for (const { parsed, itemCount } of parsedResults) {
         if (parsed.urgency === 'breaking') {
           chunkHasBreaking = true;
         }
@@ -494,14 +501,23 @@ export function createSummarizer(
           body: JSON.stringify(parsed),
           sentiment: avgSentiment,
           urgency: parsed.urgency,
-          itemCount: chunk.length,
+          itemCount,
           createdAt: Date.now(),
         };
 
         if (parsed.entities.length > 0) {
           await insertSummary(pool, summaryRow);
           try {
-            await entityManager.resolveEntities(parsed.entities, source, summaryId);
+            // Determine predominant language of items in this chunk
+            const langCounts = new Map<string, number>();
+            for (const item of chunk) {
+              if (item.original_language) {
+                langCounts.set(item.original_language, (langCounts.get(item.original_language) ?? 0) + 1);
+              }
+            }
+            const predominantLang = [...langCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+            await entityManager.resolveEntities(parsed.entities, source, summaryId, predominantLang);
           } catch (err: unknown) {
             // Entity resolution failed — remove orphaned summary
             await pool.query('DELETE FROM summaries WHERE id = $1', [summaryId]);

@@ -80,7 +80,7 @@ export function createNormalizer(
     }
 
     // ── Gate 2 — Content hash dedup (early check to avoid wasting translation tokens)
-    const contentHash = sha256(item.source + item.sourceId + item.content);
+    let contentHash = sha256(item.source + item.sourceId + item.content);
 
     // Early check — skip expensive gates if this content was already processed.
     // NOTE (NP-002): Under concurrency, two threads can pass this SELECT before
@@ -185,8 +185,9 @@ export function createNormalizer(
           );
         } else {
           item.content = cleaned;
+          contentHash = sha256(item.source + item.sourceId + item.content);
+          translated = true;
         }
-        translated = true;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         log.warn(

@@ -25,6 +25,12 @@ export function AppRouter() {
                 <Route path="/feed" element={<Feed />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="*" element={
+                  <div className="flex flex-col items-center justify-center py-20 text-text-secondary">
+                    <h1 className="text-2xl font-bold mb-2">Page not found</h1>
+                    <a href="/" className="text-accent hover:underline">Go to dashboard</a>
+                  </div>
+                } />
               </Route>
             </Route>
           </Routes>

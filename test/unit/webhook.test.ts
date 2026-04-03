@@ -356,10 +356,10 @@ describe('deliver — idempotency guard', () => {
   it('skips delivery when report already delivered', async (t) => {
     // Pool responses:
     // 1. getAppConfig('webhook_url') → returns a valid webhook URL
-    // 2. SELECT delivery_status → 'delivered'
+    // 2. Atomic UPDATE...RETURNING → 0 rows (already delivered)
     const pool = mockPool([
       { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
-      { rows: [{ delivery_status: 'delivered' }] },
+      { rows: [] },
     ]);
 
     // Mock DNS so validateUrl passes
@@ -381,10 +381,10 @@ describe('deliver — idempotency guard', () => {
     assert.strictEqual(result, true);
     assert.strictEqual(fetchMock.mock.callCount(), 0);
 
-    // Verify the delivery_status SELECT was made
-    const statusQuery = pool.calls.find((c) => c.text.includes('SELECT delivery_status'));
-    assert.ok(statusQuery, 'Expected a SELECT delivery_status query');
-    assert.deepStrictEqual(statusQuery.values, [FAKE_REPORT.id]);
+    // Verify the atomic UPDATE was made (DL-014: atomic idempotency)
+    const claimQuery = pool.calls.find((c) => c.text.includes('UPDATE reports') && c.text.includes('RETURNING'));
+    assert.ok(claimQuery, 'Expected an atomic UPDATE...RETURNING query');
+    assert.deepStrictEqual(claimQuery.values, [FAKE_REPORT.id]);
 
     fetchMock.mock.restore();
     resolve4Mock.mock.restore();
@@ -394,7 +394,7 @@ describe('deliver — idempotency guard', () => {
   it('proceeds with delivery when status is pending', async (t) => {
     // Pool responses:
     // 1. getAppConfig('webhook_url') → returns a valid webhook URL
-    // 2. SELECT delivery_status → 'pending'
+    // 2. Atomic UPDATE...RETURNING → 1 row (claimed for delivery)
     // 3. UPDATE reports SET delivery_status = 'delivered'
     const pool = mockPool([
       { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
@@ -432,7 +432,7 @@ describe('deliver — idempotency guard', () => {
     assert.strictEqual(body.embeds.length, 1);
 
     // Verify delivery_status was updated to 'delivered'
-    const updateQuery = pool.calls.find((c) => c.text.includes('UPDATE reports SET delivery_status'));
+    const updateQuery = pool.calls.find((c) => c.text.includes("delivery_status = $1") && !c.text.includes('RETURNING'));
     assert.ok(updateQuery, 'Expected an UPDATE delivery_status query');
     assert.strictEqual(updateQuery.values[0], 'delivered');
     assert.strictEqual(updateQuery.values[2], FAKE_REPORT.id);
