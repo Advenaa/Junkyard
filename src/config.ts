@@ -40,6 +40,14 @@ function commaSplit(raw: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
+function validateModelId(id: string, name: string): void {
+  if (!/^[a-zA-Z0-9][\w.\-/]{2,100}$/.test(id)) {
+    throw new Error(
+      `Invalid model ID for ${name}: "${id}" — must be 3-101 chars, alphanumeric/hyphens/dots/underscores/slashes`
+    );
+  }
+}
+
 export function loadConfig(): Config {
   dotenv.config();
 
@@ -103,6 +111,8 @@ export function loadConfig(): Config {
     haiku: process.env['MODEL_HAIKU'] || 'claude-haiku-4-5-20251001',
     sonnet: process.env['MODEL_SONNET'] || 'claude-sonnet-4-6-20250514',
   };
+  validateModelId(models.haiku, 'MODEL_HAIKU');
+  validateModelId(models.sonnet, 'MODEL_SONNET');
 
   const secrets: string[] = [
     anthropicApiKey,

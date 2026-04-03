@@ -192,26 +192,30 @@ export function createChatHandler(
     const detectedLang = franc(query, { minLength: 3 });
     if (detectedLang === 'ind') {
       log.info({ conversationId }, 'chat: detected Indonesian, translating');
-      const translateResult = await llm.call({
-        model: config.models.haiku,
-        system: 'Translate the following Indonesian text to English. Return only the translation, nothing else.',
-        messages: [{ role: 'user', content: query }],
-        maxTokens: 1024,
-        stage: 'translate',
-      });
-      // Track translation token usage
-      trackTokens(userId, Math.ceil(query.length / 4 + (translateResult.content?.length ?? 0) / 4));
-      // Validate translation result — fall back to original on failure (D-022)
-      // Indonesian text is often significantly longer than its English translation,
-      // so use a generous 5x multiplier to avoid false rejections.
-      const translated = translateResult.content?.trim();
-      if (translated && translated.length > 0 && translated.length < query.length * 5) {
-        processedQuery = translated;
-      } else {
-        log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, re-embedding original Indonesian query');
-        // Re-embed the original Indonesian query so semantic search still works.
-        // processedQuery stays as original query — the LLM and tools will handle it.
-        processedQuery = query;
+      try {
+        const translateResult = await llm.call({
+          model: config.models.haiku,
+          system: 'Translate the following Indonesian text to English. Return only the translation, nothing else.',
+          messages: [{ role: 'user', content: query }],
+          maxTokens: 1024,
+          stage: 'translate',
+        });
+        // Track translation token usage
+        trackTokens(userId, Math.ceil(query.length / 4 + (translateResult.content?.length ?? 0) / 4));
+        // Validate translation result — fall back to original on failure (D-022)
+        // Indonesian text is often significantly longer than its English translation,
+        // so use a generous 5x multiplier to avoid false rejections.
+        const translated = translateResult.content?.trim();
+        if (translated && translated.length > 0 && translated.length < query.length * 5) {
+          processedQuery = translated;
+        } else {
+          log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, re-embedding original Indonesian query');
+          // Re-embed the original Indonesian query so semantic search still works.
+          // processedQuery stays as original query — the LLM and tools will handle it.
+          processedQuery = query;
+        }
+      } catch (err: unknown) {
+        log.warn({ conversationId, err }, 'chat: Indonesian translation failed, using original query');
       }
     }
 
@@ -237,6 +241,8 @@ export function createChatHandler(
     // Count input tokens once (user query + history)
     const inputTokens = Math.ceil(messages.reduce((sum, m) => sum + m.content.length / 4, 0));
     trackTokens(userId, inputTokens);
+
+    const toolFailures = new Map<string, number>();
 
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
@@ -295,12 +301,22 @@ export function createChatHandler(
           const toolResult = await tool.execute(call.args);
           const sanitizedResult = llm.sanitizeForPrompt(toolResult);
           toolResults.push(buildToolResultMessage(call.name, sanitizedResult));
+          // Reset failure counter on success
+          toolFailures.delete(call.name);
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : 'Unknown error';
           log.error({ tool: call.name, err }, 'chat: tool execution failed');
-          toolResults.push(
-            buildToolResultMessage(call.name, `Error: ${errMsg}`),
-          );
+          const failures = (toolFailures.get(call.name) ?? 0) + 1;
+          toolFailures.set(call.name, failures);
+          if (failures >= 2) {
+            toolResults.push(
+              buildToolResultMessage(call.name, `Error: tool "${call.name}" has failed ${failures} times and is temporarily unavailable. Use a different approach.`),
+            );
+          } else {
+            toolResults.push(
+              buildToolResultMessage(call.name, `Error: ${errMsg}`),
+            );
+          }
         }
       }
 

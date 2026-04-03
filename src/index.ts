@@ -353,6 +353,7 @@ program
 
     // ── 8. Start background services ──────────────────────────────────
     await vectorCache.load();
+    try { await healthMonitor.check(); } catch (err) { log.warn({ err }, 'Initial health check failed'); }
     await scheduler.start();
     await discordAdapter.connect();
 

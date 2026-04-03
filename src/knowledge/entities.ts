@@ -120,7 +120,8 @@ export function createEntityManager(
            JOIN entities e ON e.id = ea.entity_id
            WHERE em.summary_id IN (
              SELECT summary_id FROM entity_mentions WHERE entity_id = ANY($1)
-           )`,
+           )
+           AND e.status = 'active'`,
           [resolvedIds],
         );
 

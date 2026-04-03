@@ -150,7 +150,11 @@ export async function pollFeed(
               content = extracted;
             }
           }
-          const timestamp = new Date(item.isoDate ?? Date.now()).getTime();
+          const hasDate = item.isoDate !== undefined && item.isoDate !== null;
+          const timestamp = hasDate ? new Date(item.isoDate!).getTime() : Date.now();
+          if (!hasDate) {
+            log.warn({ guid: item._guid, title: item.title }, 'RSS item missing pubDate, using current time');
+          }
 
           // RS-011: Resolve relative URLs against the feed URL
           let link = item.link ?? null;

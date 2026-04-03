@@ -29,6 +29,15 @@ export function createHealthMonitor(
   log: Logger,
   config: Config,
 ): HealthMonitor {
+  // HM-001: Validate alert webhook URL at startup so admins learn early about misconfigurations
+  if (config.alertWebhookUrl) {
+    validateUrl(config.alertWebhookUrl).then(validation => {
+      if (!validation.valid) {
+        log.warn({ url: config.alertWebhookUrl, reason: validation.reason }, 'Alert webhook URL failed validation at startup — alerts will not be delivered');
+      }
+    }).catch(() => {});
+  }
+
   async function checkDbConnectivity(): Promise<HealthCheckResult> {
     try {
       const start = Date.now();

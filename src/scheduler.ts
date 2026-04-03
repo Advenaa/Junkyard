@@ -20,6 +20,7 @@ export function createScheduler(deps: SchedulerDeps) {
   const tasks: cron.ScheduledTask[] = [];
   const mutexes: Record<string, boolean> = {};
   let shuttingDown = false;
+  let dailyTask: cron.ScheduledTask | null = null;
 
   async function withMutex(key: string, fn: () => Promise<void>): Promise<void> {
     if (mutexes[key]) {
@@ -64,19 +65,28 @@ export function createScheduler(deps: SchedulerDeps) {
     return { expression, timezone };
   }
 
+  async function refreshDailyCron(): Promise<void> {
+    if (dailyTask) {
+      dailyTask.stop();
+      const idx = tasks.indexOf(dailyTask);
+      if (idx !== -1) tasks.splice(idx, 1);
+    }
+    const { expression, timezone } = await buildDailyCron();
+    dailyTask = cron.schedule(expression, () => {
+      void withMutex('daily-synthesis', deps.onDaily);
+    }, { timezone });
+    tasks.push(dailyTask);
+    log.info({ job: 'daily-synthesis', cron: expression, timezone }, 'daily cron rebuilt');
+  }
+
   async function start(): Promise<void> {
     const recovered = await deps.onCrashRecovery();
     log.info({ recovered }, 'crash recovery complete');
 
-    const { expression, timezone } = await buildDailyCron();
-
     register('source-poll-tick', '* * * * *', deps.onSourcePollTick);
-    register('market-pulse', '0 */3 * * *', deps.onPulse, { scheduled: true, timezone });
-    register('health-monitor', '*/5 * * * *', deps.onHealthCheck, { scheduled: true, timezone });
-    register('daily-synthesis', expression, deps.onDaily, {
-      scheduled: true,
-      timezone,
-    });
+    register('market-pulse', '0 */3 * * *', deps.onPulse, { scheduled: true, timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta' });
+    register('health-monitor', '*/5 * * * *', deps.onHealthCheck, { scheduled: true, timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta' });
+    await refreshDailyCron();
 
     log.info('scheduler started');
   }
@@ -105,5 +115,5 @@ export function createScheduler(deps: SchedulerDeps) {
     log.info('scheduler stopped');
   }
 
-  return { start, stop, /** @internal — exposed for unit tests */ withMutex };
+  return { start, stop, refreshDailyCron, /** @internal — exposed for unit tests */ withMutex };
 }

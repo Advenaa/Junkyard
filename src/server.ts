@@ -545,6 +545,14 @@ export async function startServer(
   port: number,
   log: Logger,
 ): Promise<void> {
-  await app.listen({ port, host: '0.0.0.0' });
-  log.info(`Server listening on port ${port}`);
+  try {
+    await app.listen({ port, host: '0.0.0.0' });
+    log.info(`Server listening on port ${port}`);
+  } catch (err: unknown) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+      log.fatal({ port }, `Port ${port} is already in use — is another instance running?`);
+      process.exit(1);
+    }
+    throw err;
+  }
 }
