@@ -276,7 +276,7 @@ export function createHealthMonitor(
   }
 
   async function runChecks(): Promise<HealthCheckResult[]> {
-    const results = await Promise.all([
+    const settled = await Promise.allSettled([
       checkDbConnectivity(),
       checkSourceSilence(),
       checkSourceDisabled(),
@@ -287,7 +287,12 @@ export function createHealthMonitor(
       checkCostSpike(),
     ]);
 
-    return results;
+    return settled.map((s, i) => {
+      if (s.status === 'fulfilled') return s.value;
+      const names = ['db_connectivity', 'source_silence', 'source_disabled', 'llm_failures', 'missed_pulse', 'missed_daily', 'db_pool', 'cost_spike'];
+      const msg = s.reason instanceof Error ? s.reason.message : String(s.reason);
+      return { name: names[i] ?? 'unknown', status: 'critical' as const, message: `Check failed: ${msg}` };
+    });
   }
 
   async function check(): Promise<void> {

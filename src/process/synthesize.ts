@@ -375,15 +375,24 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
 
-    const reportRow = await insertReport(pool, {
-      id: reportId,
-      date: dateString,
-      type: 'daily',
-      body: JSON.stringify(report),
-      tldr: report.tldr,
-      sentiment: avgSentiment,
-      createdAt: Date.now(),
-    });
+    let reportRow: ReportRow;
+    try {
+      reportRow = await insertReport(pool, {
+        id: reportId,
+        date: dateString,
+        type: 'daily',
+        body: JSON.stringify(report),
+        tldr: report.tldr,
+        sentiment: avgSentiment,
+        createdAt: Date.now(),
+      });
+    } catch (err: unknown) {
+      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+        log.info({ date: dateString }, 'Daily report race: another process created it first');
+        return null;
+      }
+      throw err;
+    }
 
     log.info(
       { reportId, date: dateString, sections: report.sections.length, events: report.keyEvents.length },
