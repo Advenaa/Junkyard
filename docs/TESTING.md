@@ -1,13 +1,18 @@
 # Testing Spec — Podders v2
 
-Four test types: golden file, normalize pipeline, entity resolution, API endpoint. Plus one integration script.
+**965 tests** across unit, structural, regression, integration, and prompt regression suites. Six test types: golden file, normalize pipeline, entity resolution, API endpoint, structural verification, and cycle regression. Plus one integration script.
+
+> Test count history: 486 (cycle 74) → 965 (cycle 89) — +479 tests added across 15 cycles.
 
 ## 1. Test File Structure
+
+### Core unit tests
 
 | Test file | Source file | What it covers |
 |-----------|-------------|----------------|
 | `test/unit/summarize.test.ts` | `src/process/summarize.ts` | Stage 1 Haiku output parsing, chunking, batch claiming |
 | `test/unit/synthesize.test.ts` | `src/process/synthesize.ts` | Stage 3 Sonnet output parsing, daily/flash branching |
+| `test/unit/synthesize-stage3.test.ts` | `src/process/synthesize.ts` | Stage 3 extended: mock updates for interface changes |
 | `test/unit/correlate.test.ts` | `src/process/correlate.ts` | Stage 2 SQL cross-source grouping |
 | `test/unit/dedup.test.ts` | `src/normalize/dedup.ts` | Content hash, URL match, URL expansion |
 | `test/unit/filter.test.ts` | `src/normalize/filter.ts` | Spam rules (EN + ID), language detection |
@@ -20,6 +25,29 @@ Four test types: golden file, normalize pipeline, entity resolution, API endpoin
 | `test/unit/url-validator.test.ts` | `src/url-validator.ts` | SSRF protection, private IP rejection |
 | `test/unit/config.test.ts` | `src/config.ts` | Env loading, defaults, missing required vars |
 | `test/unit/scheduler.test.ts` | `src/scheduler.ts` | Mutex guard, crash recovery, cron wiring |
+| `test/unit/sentiment.test.ts` | `src/process/sentiment.ts` | Sentiment blending math, updated mocks for interface changes |
+| `test/unit/twitter.test.ts` | `src/ingest/twitter.ts` | Twitter adapter, updated mocks for interface changes |
+| `test/unit/ops.test.ts` | `src/ops.ts` | Ops helpers, updated mocks for interface changes |
+| `test/unit/auth.test.ts` | `src/auth/` | Auth middleware, updated mocks for interface changes |
+
+### Structural and regression tests (cycles 75-89)
+
+| Test file | What it covers |
+|-----------|----------------|
+| `test/unit/connection.test.ts` | Pool error handler: connect/query tracking via mock pool |
+| `test/unit/health-structural.test.ts` | Health check structural tests: reads source to verify endpoint patterns |
+| `test/unit/regression.test.ts` | AU-021, TW-006, FE-012 structural tests |
+| `test/unit/api-serialization.test.ts` | toCamelCase utility, API contract serialization tests |
+| `test/unit/discord-structural.test.ts` | Discord adapter structural tests: reads source to verify patterns |
+| `test/unit/cycle85-structural.test.ts` | Embed TaskType enum, sanitization structural verification |
+| `test/unit/cycle80-83-regression.test.ts` | New endpoints, BIGINT handling, sentiment timezone regression |
+| `test/unit/cycle87-88-regression.test.ts` | Entity lifecycle regression tests |
+| `test/unit/cycle87-88-rss-scheduler-regression.test.ts` | RSS adapter, scheduler, source toggle regression |
+
+### Integration and prompt regression
+
+| Test file | Source file | What it covers |
+|-----------|-------------|----------------|
 | `test/integration/pipeline.test.ts` | Full pipeline | Seed data through normalize to report delivery |
 | `test/prompts/stage1-regression.ts` | Stage 1 prompt | Diff Haiku outputs against saved baselines |
 | `test/prompts/stage3-regression.ts` | Stage 3 prompt | Diff Sonnet outputs against saved baselines |
@@ -495,7 +523,54 @@ The integration test takes 30-60 seconds due to real LLM calls. It is designed t
 
 ---
 
-## 7. Prompt Regression Tests
+## 7. Structural Test Pattern
+
+Structural tests verify that source files contain expected code patterns without executing the code. They use `readFileSync` to read the TypeScript source and assert on string/regex matches. This pattern is used extensively in cycles 75-89 to validate code changes that are difficult to test behaviorally without a full runtime (e.g., database pool wiring, adapter method signatures, enum definitions).
+
+### How it works
+
+```typescript
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
+const src = readFileSync(resolve(__dirname, '../../src/some-module.ts'), 'utf-8');
+
+test('module exports expected function', () => {
+  expect(src).toContain('export function handlePoolError');
+});
+
+test('pool error handler calls logger.error', () => {
+  expect(src).toMatch(/logger\.error\(/);
+});
+
+test('uses BIGINT parser for count queries', () => {
+  expect(src).toMatch(/parseInt\(.*count/);
+});
+```
+
+### When to use structural tests
+
+- **Pool/connection wiring** (`connection.test.ts`): verify error handlers are attached, connect/query methods exist
+- **Adapter compliance** (`discord-structural.test.ts`): verify Discord adapter exports required methods, handles gateway opcodes
+- **Health endpoints** (`health-structural.test.ts`): verify health check route registration, response shape patterns
+- **Enum/type correctness** (`cycle85-structural.test.ts`): verify TaskType enum values, sanitization function signatures
+- **Regression guards** (`regression.test.ts`): verify specific bug fixes remain in place (AU-021 auth fix, TW-006 Twitter pagination, FE-012 filter edge case)
+
+### Supporting mock patterns
+
+Structural tests are complemented by mock-based behavioral tests:
+
+- **Mock pool**: tracks `connect()` and `query()` calls with call recording, used in `connection.test.ts`
+- **Mock logger**: records calls to `info()`, `warn()`, `error()` for assertion, used across regression tests
+- **Behavioral math tests**: sentiment blending, epoch-to-timestamp conversion, and other pure logic tested with real inputs/outputs in cycle regression files
+
+### Cycle regression test naming
+
+Tests from specific development cycles follow the naming pattern `cycle{NN}-*.test.ts` or `cycle{NN}-{MM}-*.test.ts` for multi-cycle batches. Each file documents which bugs or features it guards against in its describe block.
+
+---
+
+## 8. Prompt Regression Tests
 
 Separate from golden file tests (which validate parsing of frozen LLM output). Prompt regression tests send real inputs to the LLM and assert on output **properties**, not exact text. They catch regressions when prompts are edited.
 
@@ -561,7 +636,8 @@ A prompt change is a **regression** if entity recall drops below 80% or urgency 
 
 | Test type | When | LLM calls |
 |-----------|------|-----------|
-| Structural tests (zod parsing, chunking, decision tree) | Every push | None |
+| Unit tests (golden file, normalize, entity, API — 965 tests) | Every push | None |
+| Structural tests (source pattern verification, regression guards) | Every push | None |
 | Prompt regression tests (`npm run test:prompts`) | Manual, before merging prompt changes | Yes (~$0.25/run) |
 
 Prompt tests are never automated in CI — they cost money and are non-deterministic. Run them locally before any PR that touches system prompts or few-shot examples.

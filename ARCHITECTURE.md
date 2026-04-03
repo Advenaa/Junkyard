@@ -35,7 +35,7 @@ CREATE TABLE sources (
   poll_interval INTEGER DEFAULT 7200,  -- per-source poll interval in seconds (default 2h)
   trust_weight REAL NOT NULL DEFAULT 0.5,         -- manual trust weight (0.1-1.0). High=1.0, Medium=0.7, Default=0.5, Low=0.3
   initial_trust_weight REAL NOT NULL DEFAULT 0.5, -- floor for auto-adjustment (system nudges ±0.2 from this)
-  added_at INTEGER NOT NULL,
+  added_at BIGINT NOT NULL,
   PRIMARY KEY (source, source_id)
 );
 ```
@@ -48,6 +48,9 @@ CREATE TABLE sources (
 - On startup: connect each token sequentially with 5s gap (IDENTIFY rate limit).
 - Partition channels across tokens round-robin from `sources` table.
 - Listen to `MESSAGE_CREATE` only. Ignore presence, typing, reactions. Capture attachment URLs from `message.attachments` array (Discord CDN URLs) into `items.attachments` as JSON array.
+- **CDN URL validation**: attachment URLs are validated against an allowlist of Discord CDN hosts (`cdn.discordapp.com`, `media.discordapp.net`) with HTTPS enforcement. Malformed or non-CDN URLs are silently dropped.
+- **NaN timestamp fallback**: if `new Date(d.timestamp).getTime()` produces NaN, falls back to `Date.now()` rather than inserting invalid data.
+- **Circuit breaker**: after 20 consecutive WebSocket errors on a single connection, the token is disabled and `onDeath` fires (halts all channels on that token). Error count resets on successful message receipt.
 - On fatal close codes (4004, 4010-4014): disable that token's channels, log CRITICAL.
 - On resumable codes (4000-4003, 4009): resume with stored session.
 - On 4007 (invalid seq): fresh IDENTIFY (do not resume).
@@ -74,12 +77,12 @@ Each scraper tracks state in `source_state`:
 CREATE TABLE source_state (
   source TEXT NOT NULL,
   source_id TEXT NOT NULL,
-  status TEXT DEFAULT 'active',     -- active | backoff | disabled
-  last_fetched_at INTEGER,
+  status TEXT DEFAULT 'active',     -- active | backoff | disabled | halted
+  last_fetched_at BIGINT,
   last_id TEXT,
   error_count INTEGER DEFAULT 0,
   last_error TEXT,
-  next_retry_at INTEGER,
+  next_retry_at BIGINT,
   PRIMARY KEY (source, source_id)
 );
 ```
@@ -197,8 +200,11 @@ scheduler (node-cron, daily at digest_time)
 ```
 
 scheduler (node-cron, every 5min)
-  → health.check()                 # 7 checks → inserts into health_events if threshold breached
+  → health.check()                 # 8 checks → inserts into health_events if threshold breached
+                                   # Checks: db_connectivity, db_pool, source_silence, source_disabled,
+                                   #   source_halted (auth failures), llm_failures, missed_pulse, missed_daily, cost_spike
                                    # Critical events → POST to ALERT_WEBHOOK_URL (red Discord embed)
+                                   # DB-down bypass: when DB is unreachable, critical alerts sent directly to webhook
                                    # Dedup: skip if same category+message unacknowledged within 30min
 
 Each `→` is a direct function call. No message passing, no event emitters.
@@ -231,8 +237,8 @@ See [PIPELINE.md](./PIPELINE.md) for prompt details, chunking code, and validati
 Four terminal states: `ready` → `processing` → `processed` (or `failed`). Items that fail LLM processing are marked `failed` instead of staying stuck in `processing`.
 
 **Entity resolution** uses a three-tier disambiguation pipeline:
-1. **Rule-based alias lookup** — lowercase-normalized lookup against `entity_aliases` table. Handles ~95% of entities (ETH, Bitcoin, OJK) instantly. CoinGecko token list seeds the alias table.
-2. **Context-based disambiguation** — if alias has multiple candidates, use co-occurring entities from the same chunk as free context to disambiguate (DeepEL pattern). "Wormhole" + "bridge" + "exploit" = DeFi protocol, not the game.
+1. **Rule-based alias lookup** — lowercase-normalized lookup against `entity_aliases` table. Handles ~95% of entities (ETH, Bitcoin, OJK) instantly. CoinGecko token list seeds the alias table with contextualized symbols (symbol + name + category as context key) to prevent ambiguity (e.g., "SOL" as currency vs. protocol).
+2. **Type-aware context-based disambiguation** — if alias has multiple candidates, use co-occurring entities from the same chunk as free context to disambiguate (DeepEL pattern), matching on both alias and entity type. "Wormhole" + "bridge" + "exploit" = DeFi protocol, not the game. Archived entities are reactivated with `status = 'active'` and `relevance = 0.5` when re-mentioned, preserving full history.
 3. **Batched LLM disambiguation** — remaining ambiguous entities across all chunks in a processing cycle are batched into a single Haiku call. Results saved as new context-aware aliases (`alias` + `context_key`) for future rule-based resolution. Self-improving: each disambiguation reduces future LLM calls.
 
 `INSERT ... ON CONFLICT DO NOTHING` handles concurrent batch writes gracefully.
@@ -299,7 +305,7 @@ CREATE TABLE items (
   source_id TEXT NOT NULL,
   author TEXT NOT NULL,
   content TEXT NOT NULL,
-  timestamp INTEGER NOT NULL,
+  timestamp BIGINT NOT NULL,
   url TEXT,
   engagement INTEGER DEFAULT 0,
   attachments TEXT,               -- JSON array of attachment URLs (e.g., Discord CDN image URLs)
@@ -310,10 +316,14 @@ CREATE TABLE items (
   filter_reason TEXT,              -- reason for filtering (e.g., 'spam', 'injection_detected'); NULL if not filtered
   status TEXT DEFAULT 'ready',    -- ready | filtered | processing | processed | failed
   batch_id TEXT,
-  created_at INTEGER NOT NULL
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  created_at BIGINT NOT NULL
 );
-CREATE INDEX idx_items_claim ON items(status, source, timestamp);
+CREATE INDEX idx_items_claim ON items(status, source, source_id, timestamp);
 CREATE INDEX idx_items_hash ON items(content_hash);
+CREATE UNIQUE INDEX idx_items_content_hash ON items(content_hash) WHERE content_hash IS NOT NULL;
+CREATE INDEX idx_items_url ON items(url) WHERE url IS NOT NULL;
+CREATE INDEX idx_items_batch_id ON items(batch_id) WHERE batch_id IS NOT NULL;
 ```
 
 **items full-text search** (Postgres tsvector)
@@ -335,14 +345,16 @@ CREATE TABLE summaries (
   id TEXT PRIMARY KEY,
   source TEXT NOT NULL,
   source_id TEXT NOT NULL,
-  window_start INTEGER NOT NULL,
-  window_end INTEGER NOT NULL,
+  window_start BIGINT NOT NULL,
+  window_end BIGINT NOT NULL,
   body TEXT NOT NULL,              -- JSON ChunkSummary
   sentiment REAL,                  -- derived: avg of per-entity sentiments in body
   urgency TEXT,                    -- from LLM output
   item_count INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL
 );
+CREATE INDEX idx_summaries_window ON summaries(window_start, window_end);
+CREATE INDEX idx_summaries_created_at ON summaries(created_at DESC);
 ```
 
 **entities**
@@ -353,8 +365,8 @@ CREATE TABLE entities (
   type TEXT NOT NULL,              -- token | person | project | company | event
   status TEXT NOT NULL DEFAULT 'active',  -- active | archived (two-tier memory: demote instead of delete)
   relevance REAL DEFAULT 0,
-  first_seen INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL,
+  first_seen BIGINT NOT NULL,
+  last_seen BIGINT NOT NULL,
   UNIQUE(name, type)              -- allows "Mercury" as token AND company
 );
 ```
@@ -375,12 +387,16 @@ CREATE TABLE entity_mentions (
   id TEXT PRIMARY KEY,
   entity_id TEXT NOT NULL REFERENCES entities(id),
   source TEXT NOT NULL,
-  summary_id TEXT REFERENCES summaries(id),
+  summary_id TEXT REFERENCES summaries(id) ON DELETE CASCADE,
   sentiment REAL,
   mention_count INTEGER DEFAULT 1,
-  created_at INTEGER NOT NULL
+  language TEXT,                   -- ISO 639-3 code for regional divergence analysis
+  created_at BIGINT NOT NULL
 );
 CREATE INDEX idx_mentions_entity_ts ON entity_mentions(created_at, entity_id);
+CREATE INDEX idx_entity_mentions_entity_id ON entity_mentions(entity_id);
+CREATE INDEX idx_entity_mentions_summary_id ON entity_mentions(summary_id);
+CREATE INDEX idx_mentions_language ON entity_mentions(language) WHERE language IS NOT NULL;
 ```
 
 **reports**
@@ -393,12 +409,15 @@ CREATE TABLE reports (
   tldr TEXT,                       -- extracted for search/display
   sentiment REAL,                  -- extracted for queryability
   delivery_status TEXT DEFAULT 'pending',  -- pending | delivered | failed
-  delivered_at INTEGER,
-  created_at INTEGER NOT NULL
+  delivered_at BIGINT,
+  created_at BIGINT NOT NULL
 );
 CREATE INDEX idx_reports_date ON reports(date);
--- Daily reports: one per day (enforced in code via INSERT ... ON CONFLICT DO NOTHING with date+type check)
--- Flash/pulse reports: multiple per day allowed
+CREATE INDEX idx_reports_type_created ON reports(type, created_at);
+CREATE UNIQUE INDEX idx_reports_flash_per_day ON reports(date) WHERE type = 'flash';
+CREATE UNIQUE INDEX idx_reports_daily_per_day ON reports(date) WHERE type = 'daily';
+-- Daily and flash reports: one per day (enforced via unique partial indexes)
+-- Pulse reports: multiple per day allowed
 ```
 
 **users**
@@ -408,8 +427,8 @@ CREATE TABLE users (
   username TEXT NOT NULL,
   avatar TEXT,
   role TEXT NOT NULL DEFAULT 'viewer',  -- admin | viewer | blocked
-  created_at INTEGER NOT NULL,
-  last_login_at INTEGER
+  created_at BIGINT NOT NULL,
+  last_login_at BIGINT
 );
 ```
 
@@ -420,9 +439,9 @@ Note: `users.discord_id` uses Discord snowflake as PK (not ULID) — it's an ext
 CREATE TABLE sessions (
   id TEXT PRIMARY KEY,                  -- ULID
   discord_id TEXT NOT NULL REFERENCES users(discord_id) ON DELETE CASCADE,
-  expires_at INTEGER NOT NULL,
-  last_refreshed_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
+  expires_at BIGINT NOT NULL,
+  last_refreshed_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
   ip_address TEXT,
   user_agent TEXT
 );
@@ -448,20 +467,21 @@ CREATE TABLE llm_usage (
   input_tokens INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL,
   cost_usd REAL NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL
 );
+CREATE INDEX idx_llm_usage_created_at ON llm_usage(created_at);
 ```
 
 **health_events**
 ```sql
 CREATE TABLE health_events (
   id TEXT PRIMARY KEY,
-  category TEXT NOT NULL,           -- source | llm | scheduler | db | pipeline | cost
+  category TEXT NOT NULL,           -- source_silence | source_disabled | source_halted | llm_failures | missed_pulse | missed_daily | cost_spike | db_connectivity | db_pool
   severity TEXT NOT NULL,           -- warn | critical
   message TEXT NOT NULL,
   metadata JSONB DEFAULT '{}',
   acknowledged BOOLEAN DEFAULT false,
-  created_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL
 );
 CREATE INDEX idx_health_events_unacked ON health_events (acknowledged, created_at DESC) WHERE acknowledged = false;
 ```
@@ -475,7 +495,7 @@ CREATE TABLE source_rate_history (
   day_of_week INTEGER NOT NULL,    -- 0-6
   avg_rate REAL NOT NULL,          -- messages per hour
   sample_count INTEGER DEFAULT 0,
-  updated_at INTEGER NOT NULL,
+  updated_at BIGINT NOT NULL,
   PRIMARY KEY (source, source_id, hour_of_day, day_of_week)
 );
 ```
@@ -492,7 +512,7 @@ CREATE TABLE narratives (
   avg_sentiment REAL,
   signal_strength TEXT NOT NULL,    -- new | emerging | strong | stable | fading
   summary_ids TEXT[] NOT NULL,      -- array of summary IDs in this cluster
-  created_at INTEGER NOT NULL
+  created_at BIGINT NOT NULL
 );
 CREATE INDEX idx_narratives_date ON narratives(date DESC);
 ```
@@ -508,16 +528,31 @@ CREATE TABLE embeddings (
   model TEXT NOT NULL,                  -- 'text-embedding-004' (for migration tracking)
   dimensions INTEGER NOT NULL,          -- 768
   vector BYTEA NOT NULL,               -- Float32Array as raw bytes (768 * 4 = 3072 bytes)
-  created_at INTEGER NOT NULL,
-  UNIQUE(target_type, target_id)
+  created_at BIGINT NOT NULL,
+  UNIQUE(target_type, target_id)       -- also serves as the index (replaces dropped idx_embeddings_target)
 );
-CREATE INDEX idx_embeddings_target ON embeddings(target_type, target_id);
 CREATE INDEX idx_embeddings_type ON embeddings(target_type, created_at);
 ```
 
+**entity_sentiment_daily** (sentiment momentum tracking)
+```sql
+CREATE TABLE entity_sentiment_daily (
+  entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,               -- YYYY-MM-DD in configured timezone
+  avg_sentiment REAL NOT NULL,
+  mention_count INTEGER NOT NULL DEFAULT 0,
+  momentum REAL,                    -- day-over-day sentiment delta
+  PRIMARY KEY (entity_id, date)
+);
+CREATE INDEX idx_sentiment_daily_date ON entity_sentiment_daily(date);
+CREATE INDEX idx_sentiment_daily_entity ON entity_sentiment_daily(entity_id, date DESC);
+```
+
+Sentiment momentum is computed timezone-aware and DST-safe: date boundaries are resolved against the configured timezone (default `Asia/Jakarta`) using midday reference points to avoid DST edge cases. Aggregation uses CTE-batched queries that collect entity mentions within each timezone-local day, compute `avg_sentiment` and `mention_count`, then derive `momentum` as the delta from the prior day. Trends are classified as `accelerating`, `declining`, `stable`, or `reversing` based on momentum direction and magnitude.
+
 ### Schema Versioning
 
-A `schema_version` table tracks the current version. `migrations.ts` checks on startup, runs numbered migration functions in a transaction, bumps version. No external migration library needed.
+A `schema_version` table tracks the current version. `migrations.ts` checks on startup, runs 13 numbered migration functions in a transaction (with advisory lock to prevent concurrent migrations), bumps version. No external migration library needed. Key migrations beyond initial schema: UNIQUE content hash index (M2), CASCADE on entity_mentions FK (M3), missing indexes for time-window queries (M4, M12), CHECK constraints on enum columns (M5), items `failed` status (M8), retry_count column (M9), entity_sentiment_daily table (M10), entity_mentions language column (M11), and BIGINT conversion for all epoch-ms columns (M13).
 
 ```sql
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -670,6 +705,8 @@ Used by RSS fetcher, webhook delivery, and news extractor:
 
 All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Authorization: Bearer <api_key>`).
 
+**Serialization**: a shallow `toCamelCase` layer converts all `snake_case` DB column names to `camelCase` before sending JSON responses (e.g., `source_id` becomes `sourceId`, `created_at` becomes `createdAt`). Applied to reports, sources, users, config, search results, and feed responses. Prototype keys (`__proto__`, `constructor`, `prototype`) are stripped for safety.
+
 **Auth (public — no auth required):**
 
 | Method | Path | Response |
@@ -686,7 +723,7 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 |--------|------|----------|
 | `GET` | `/api/v1/users` | `{ users: [{ discordId, username, avatar, role, createdAt, lastLoginAt }] }` |
 | `POST` | `/api/v1/users` | `[PLANNED]` Body: `{ discordId, role }`. Invite user. |
-| `PATCH` | `/api/v1/users/:discordId` | `[PLANNED]` Body: `{ role }`. Change role. |
+| `PATCH` | `/api/v1/users/:discordId` | Body: `{ role: 'admin' | 'viewer' | 'blocked' }`. Upserts user role. Discord ID validated as 17-20 digit snowflake. |
 | `DELETE` | `/api/v1/users/:discordId` | `[PLANNED]` Remove user (revokes all sessions). |
 
 **Reports:**
@@ -703,7 +740,7 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 |--------|------|----------|
 | `GET` | `/api/v1/sources` | `{ sources: [{ source, sourceId, label, enabled, pollInterval, lastFetchedAt, errorCount, lastError, status }] }` — JOINs `sources` + `source_state` |
 | `POST` | `/api/v1/sources` | Body: `{ source, sourceId, label }`. Fastify JSON Schema validation: `source` enum `['discord','twitter','rss','news']`, `sourceId` maxLength 255, `label` maxLength 255, `additionalProperties: false`. |
-| `PATCH` | `/api/v1/sources/:source/:sourceId` | `[PLANNED]` Body: `{ enabled?, label?, pollInterval? }` |
+| `PATCH` | `/api/v1/sources/:source/:sourceId` | Body: `{ enabled: boolean }`. Toggles source on/off. Returns `{ source, sourceId, status }`. Blocks re-enabling halted sources (409 with `lastError`). |
 | `DELETE` | `/api/v1/sources/:source/:sourceId` | `[PLANNED]` Removes source config (keeps historical items) |
 | `POST` | `/api/v1/sources/:source/:sourceId/test` | `[PLANNED]` Test connection. Returns `{ ok: true }` or `{ ok: false, error: "..." }` |
 | `GET` | `/api/v1/sources/discover/discord` | `[PLANNED]` Returns `{ guilds: [{ id, name, icon, channels: [{ id, name }] }] }` from connected tokens |
@@ -715,8 +752,9 @@ All endpoints: `/api/v1/*`. Most require authentication (session cookie or `Auth
 |--------|------|----------|
 | `GET` | `/api/v1/config` | `{ webhookUrl, digestTime, timezone, publicUrl }` |
 | `PATCH` | `/api/v1/config` | Body: partial of above |
-| `GET` | `/api/v1/status` | `[PLANNED]` `{ stages: { ingest, summarize, synthesize, delivery }, llmCostToday, allSourcesDisabled: bool }` |
+| `GET` | `/api/v1/status` | `{ itemsReady, itemsProcessing, summariesToday, costToday }` — timezone-aware daily aggregation |
 | `PATCH` | `/api/v1/health/:id` | `[PLANNED]` Acknowledge a health event |
+| `POST` | `/api/v1/config/test-webhook` | Body: `{ url: string }`. SSRF-validates the URL, sends a test embed to the Discord webhook. Returns `{ ok: true }` or 400/502. |
 | `POST` | `/api/v1/auth/rotate` | `[PLANNED]` `{ apiKey: "new-key-displayed-once" }` |
 
 **Search (after full-text search, build step 8.5):**
@@ -775,7 +813,7 @@ Sonnet calls tools iteratively until it has enough context, then generates a gro
 |--------|------|----------|
 | `POST` | `/api/v1/sources/:source/:sourceId/reset` | `{ ok: true }` — reset `error_count` to 0 and status to `active` |
 
-33 endpoints total.
+37 endpoints total (4 newly implemented in cycles 75-89: source toggle, user role update, pipeline status, webhook test).
 
 ### Webhook Content
 
@@ -798,7 +836,7 @@ Ships with MVP, not optional.
 - **LLM cost tracking** — `llm_usage` table, daily total on `/api/v1/status`
 - **Pipeline status** — last successful run per stage, visible on `/settings`
 - **Failed deliveries** — `reports.delivery_status`, visible on `/settings`
-- **Health events** — `health_events` table, 7 automated checks every 5min, critical alerts to `ALERT_WEBHOOK_URL`
+- **Health events** — `health_events` table, 8 automated checks every 5min (including halted source detection), critical alerts to `ALERT_WEBHOOK_URL`. DB-down bypass: when the database is unreachable, critical alerts are sent directly to the alert webhook without writing to `health_events`
 - **Process watchdog** — heartbeat file at `/tmp/podders-heartbeat` every 60s, systemd/cron restarts if >300s stale
 
 ## 8. Deployment

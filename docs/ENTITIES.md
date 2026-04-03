@@ -14,8 +14,11 @@ for each extracted entity (name, aliases, type):
     entity_id = SELECT entity_id FROM entity_aliases WHERE alias = canonical
 
     if entity_id is NULL:
-        -- Check if an archived entity exists with this name+type
-        entity_id = SELECT id FROM entities WHERE name = name AND type = type AND status = 'archived'
+        -- Check if an archived entity has a matching alias (EL-015 fix)
+        entity_id = SELECT e.id FROM entities e
+            JOIN entity_aliases ea ON ea.entity_id = e.id
+            WHERE ea.alias = canonical AND e.status = 'archived'
+            LIMIT 1
         if entity_id is NOT NULL:
             -- Reactivate archived entity with history intact
             UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = entity_id
@@ -39,6 +42,8 @@ for each extracted entity (name, aliases, type):
 
 All aliases are **trimmed and lowercased** before storage (`normalizeAlias` applies `.trim().toLowerCase().replace(/^\$/, '')`). The `$` prefix (common in crypto tickers like `$ETH`) is stripped so that `$ETH`, `ETH`, and `eth` all resolve to the same alias key.
 
+Reactivation via alias match (EL-015 fix): the archived entity check now joins `entity_aliases` instead of matching on `name + type` alone. This catches cases where the LLM returns a different surface form (e.g., "ETH" instead of "Ethereum") -- if any alias of the archived entity matches the normalized canonical name, the entity is reactivated at `relevance = 0.5` rather than creating a duplicate.
+
 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING id` is the concurrency pattern for entities. The upsert atomically returns the row ID whether inserted or already existing -- no race window between a separate INSERT and SELECT (SD-003 fix). For aliases, `INSERT ... ON CONFLICT DO NOTHING` is still used: two Stage 1 batches processing simultaneously may both try to insert the same alias; the first writer wins, the second silently skips.
 
 ## CoinGecko Seeding
@@ -60,6 +65,7 @@ For each coin in the response:
 1. Create an entity with `name = coin.name`, `type = 'token'`, `relevance = 0`.
 2. Insert aliases: `lowercase(coin.name)`, `lowercase(coin.symbol)`, `lowercase(coin.id)`.
 3. Skip duplicates via `INSERT ... ON CONFLICT DO NOTHING` (symbol collisions are common -- multiple tokens share `"uni"`, `"sol"`, etc.). First writer wins.
+4. **Non-top-100 tokens** (EL-011 fix): tokens outside the CoinGecko top-100 by market cap insert their symbol alias with `context_key = 'coingecko:<coin.id>'` instead of a bare alias. This prevents obscure tokens from claiming common symbols (e.g., a micro-cap "SOL" token stealing the `sol` alias from Solana). Top-100 tokens still insert bare symbol aliases as before. The `context_key` column on `entity_aliases` scopes the alias so it only resolves when the same context is present -- otherwise Tier 2/3 disambiguation handles it.
 
 ### Refresh Cadence
 
@@ -157,17 +163,24 @@ Entities are never hard-deleted. Instead, they demote to `status = 'archived'` a
 
 ### Archival Rule
 
-An entity is archived when **both** conditions are true:
+An entity is archived when **all three** conditions are true:
 
 - `relevance < 0.01`
 - `last_seen < now - 90 days`
+- No mentions in `entity_mentions` within the last 30 days (EL-002 fix)
 
 ```sql
 UPDATE entities SET status = 'archived'
-WHERE relevance < 0.01 AND last_seen < NOW() - INTERVAL '90 days' AND status = 'active';
+WHERE relevance < 0.01
+  AND last_seen < NOW() - INTERVAL '90 days'
+  AND status = 'active'
+  AND id NOT IN (
+    SELECT DISTINCT entity_id FROM entity_mentions
+    WHERE created_at > NOW() - INTERVAL '30 days'
+  );
 ```
 
-The dual condition prevents archiving a low-relevance entity that was just re-discovered (new `last_seen`) or a stale entity that still has residual relevance from high historical activity.
+The triple condition prevents archiving a low-relevance entity that was just re-discovered (new `last_seen`), a stale entity that still has residual relevance from high historical activity, or an entity that has recent mentions even if `last_seen` was not updated due to a processing gap (EL-002 fix). The mention check acts as a safety net: if an entity was mentioned recently but its `last_seen` timestamp was not refreshed (e.g., due to a failed Stage 1 batch), the entity is preserved.
 
 ### What's Preserved When Archived
 
@@ -216,15 +229,17 @@ Handles ~95% of entities instantly.
 
 Triggered when an entity has **no alias match at all** (not when multiple candidates exist). If other entities from the same batch already resolved at Tier 1, Tier 2 uses those resolved entities to search the co-occurrence graph for the unknown name.
 
-The algorithm queries `entity_aliases` joined with `entity_mentions` to find all aliases that have historically appeared alongside the already-resolved entities (i.e., shared a `summary_id`). This builds a map of alias-to-entity-ID pairs. Each unresolved entity's lowercased name is then looked up in that map with a single `Map.get()` call -- no scoring, no threshold.
+The algorithm queries `entity_aliases` joined with `entity_mentions` to find all aliases that have historically appeared alongside the already-resolved entities (i.e., shared a `summary_id`). This builds a map using a **composite key of `alias + ':' + entity type`** (EL-010 fix) so that the same alias appearing for different entity types does not collide. Each unresolved entity's lowercased name combined with its type is then looked up in that map with a single `Map.get()` call -- no scoring, no threshold.
 
 ```typescript
 if (unresolvedEntities.length > 0 && resolvedIds.length > 0) {
   // Find all aliases that co-occur with already-resolved entities
+  // Include entity type for type-aware composite key (EL-010 fix)
   const coOccurring = await client.query(`
-    SELECT DISTINCT ea.alias, ea.entity_id
+    SELECT DISTINCT ea.alias, ea.entity_id, e.type
     FROM entity_aliases ea
     JOIN entity_mentions em ON em.entity_id = ea.entity_id
+    JOIN entities e ON e.id = ea.entity_id
     WHERE em.summary_id IN (
       SELECT summary_id FROM entity_mentions WHERE entity_id = ANY($1)
     )
@@ -232,12 +247,14 @@ if (unresolvedEntities.length > 0 && resolvedIds.length > 0) {
 
   const coOccurMap = new Map<string, string>();
   for (const row of coOccurring.rows) {
-    coOccurMap.set(row.alias, row.entity_id);
+    // Composite key: alias + type prevents cross-type misresolution
+    coOccurMap.set(`${row.alias}:${row.type}`, row.entity_id);
   }
 
   for (const entity of unresolvedEntities) {
     const canonical = entity.name.toLowerCase();
-    const matched = coOccurMap.get(canonical);
+    // Try type-specific match first, then fall back to any-type match
+    const matched = coOccurMap.get(`${canonical}:${entity.type}`);
 
     if (matched) {
       resolvedIds.push(matched); // grows the resolved set for subsequent lookups
@@ -281,6 +298,67 @@ Each disambiguation result is saved as a context-aware alias (`entity_aliases` w
 - **Alias hijacking**: A new entity could claim an alias that belongs to an existing entity. `INSERT ... ON CONFLICT DO NOTHING` prevents this -- existing aliases are never overwritten. To reassign an alias, delete it first, then re-insert.
 
 - **Self-improvement decay**: Context aliases accumulate over time. No cleanup needed -- alias lookups are indexed and the table stays small relative to items/mentions.
+
+## Sentiment Momentum
+
+Entity sentiment is tracked daily and used to classify momentum trends. This feeds into Stage 3 synthesis and the market pulse.
+
+### Daily Rollup
+
+A daily cron (runs after the decay cron at **00:15 UTC**) aggregates sentiment from `entity_mentions` into the `entity_sentiment_daily` table:
+
+```sql
+INSERT INTO entity_sentiment_daily (entity_id, date, avg_sentiment, mention_count, source_breakdown)
+SELECT
+    em.entity_id,
+    DATE(em.created_at) AS date,
+    AVG(em.sentiment) AS avg_sentiment,
+    COUNT(*) AS mention_count,
+    jsonb_object_agg(em.source_type, source_counts.cnt) AS source_breakdown
+FROM entity_mentions em
+JOIN (
+    SELECT entity_id, source_type, COUNT(*) AS cnt
+    FROM entity_mentions
+    WHERE created_at >= CURRENT_DATE - INTERVAL '1 day' AND created_at < CURRENT_DATE
+    GROUP BY entity_id, source_type
+) source_counts USING (entity_id, source_type)
+WHERE em.created_at >= CURRENT_DATE - INTERVAL '1 day' AND em.created_at < CURRENT_DATE
+GROUP BY em.entity_id, DATE(em.created_at)
+ON CONFLICT (entity_id, date) DO UPDATE SET
+    avg_sentiment = EXCLUDED.avg_sentiment,
+    mention_count = EXCLUDED.mention_count,
+    source_breakdown = EXCLUDED.source_breakdown;
+```
+
+### Momentum Calculation
+
+Momentum compares the trailing 3-day average sentiment against the trailing 14-day average:
+
+```
+momentum = avg_sentiment_3d - avg_sentiment_14d
+```
+
+### Trend Classification
+
+| Momentum Range | Classification | Interpretation |
+|----------------|---------------|----------------|
+| > 0.15 | `bullish_surge` | Rapid positive shift |
+| 0.05 to 0.15 | `bullish` | Steady positive trend |
+| -0.05 to 0.05 | `neutral` | No clear direction |
+| -0.15 to -0.05 | `bearish` | Steady negative trend |
+| < -0.15 | `bearish_crash` | Rapid negative shift |
+
+Trend classifications are available via `GET /api/v1/entities/:id/sentiment` and included in Stage 3 synthesis context for entities with `relevance > 1.0`.
+
+### Retention
+
+The `entity_sentiment_daily` table is pruned at **365 days** (EL-014 fix). The retention cron runs daily alongside the decay cron:
+
+```sql
+DELETE FROM entity_sentiment_daily WHERE date < CURRENT_DATE - INTERVAL '365 days';
+```
+
+This keeps a full year of sentiment history for trend analysis while preventing unbounded table growth. Older sentiment data is not needed -- the 14-day momentum window and monthly reports use at most 30 days of lookback.
 
 ## Merge Procedure
 

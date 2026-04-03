@@ -86,6 +86,25 @@ entity names containing XML fragments from breaking out of the prompt structure.
 non-standard ports, and `file://` URIs, preventing server-side request forgery via
 user-configured feed URLs.
 
+**SSRF pinning on test-webhook**: the test-webhook endpoint resolves the webhook URL to an
+IP address and pins all subsequent requests to that resolved IP, preventing DNS rebinding
+attacks where a hostname resolves to a public IP during validation but to a private IP
+during the actual request (SV-004).
+
+**Prototype pollution guard**: the `toCamelCase` utility explicitly skips `__proto__`,
+`constructor`, and `prototype` keys when converting object property names. This prevents
+attackers from injecting prototype pollution payloads through API inputs or ingested data
+that passes through camelCase conversion (SV-001).
+
+**discordId validation**: the `PATCH /users` endpoint validates Discord IDs against the
+Snowflake pattern `^\d{17,20}$`, rejecting malformed or injected values before they reach
+the database (SV-005).
+
+**Double sanitization fix**: the pre-summarize stage no longer double-escapes angle brackets.
+Previously, content that had already been sanitized (with `&lt;`/`&gt;`) would be sanitized
+again, producing `&amp;lt;`/`&amp;gt;` in LLM input. This caused garbled output in summaries
+of content containing code snippets or HTML references (LM-012).
+
 ---
 
 ## 1b. InstructDetector Scan (Layer 2) `[IMPLEMENTED]`
@@ -386,6 +405,20 @@ residual risk as #7).
 | Fresh-prompt retry | #6 | Done (PIPELINE.md) | Shipped |
 | Flash corroboration + cooldown | #5 | Done (PIPELINE.md) | Shipped |
 | InstructDetector scan (Layer 2) | #1, #2 | Done | Shipped |
+| CSPRNG session IDs (AU-025) | Session prediction | Done | Shipped |
+| OAuth state cap 10K (AU-020) | Memory exhaustion | Done | Shipped |
+| UA normalization fix (AU-024) | Session tracking | Done | Shipped |
+| SSRF pinning on test-webhook (SV-004) | DNS rebinding | Done | Shipped |
+| Prototype pollution guard (SV-001) | Prototype pollution | Done | Shipped |
+| discordId Snowflake validation (SV-005) | Input injection | Done | Shipped |
+| Discord CDN allowlist (DC-003) | URL injection | Done | Shipped |
+| Discord circuit breaker (DC-006) | Token error cascade | Done | Shipped |
+| NaN timestamp defense (DC-005) | Pipeline corruption | Done | Shipped |
+| RSS 5MB body limit (RS-010) | Memory exhaustion | Done | Shipped |
+| RSS 50-item cap (RS-011) | Cost DoS | Done | Shipped |
+| RSS URL validation at creation (RS-012) | SSRF | Done | Shipped |
+| Pool error handler (CF-001) | Process crash | Done | Shipped |
+| Double sanitization fix (LM-012) | Garbled LLM output | Done | Shipped |
 | Per-author rate limiting | #4, #8 | 0.5 day | P0 |
 | Content policy checks | #1, #5 | 0.5 day | P0 |
 | Cost circuit breaker | Cost DoS | 0.5 day | P0 |
@@ -432,7 +465,7 @@ call on user-supplied conversation history.
 
 ### Discord OAuth2 Flow
 
-- **State parameter**: 32 random bytes stored in a short-lived httpOnly cookie (10 min maxAge). Validated on callback, cleared after use. Prevents CSRF on the OAuth callback endpoint. State values are tracked server-side and rejected on replay to prevent OAuth state replay attacks.
+- **State parameter**: 32 random bytes stored in a short-lived httpOnly cookie (10 min maxAge). Validated on callback, cleared after use. Prevents CSRF on the OAuth callback endpoint. State values are tracked server-side and rejected on replay to prevent OAuth state replay attacks. Server-side state store is capped at 10,000 entries to prevent memory exhaustion from state accumulation (AU-020).
 - **Discord access tokens**: used once (to fetch user info), never stored. No refresh tokens requested — the `offline_access` scope is not included.
 
 ### Session Security
@@ -441,7 +474,7 @@ call on user-supplied conversation history.
 - **DB-backed sessions**: sessions are stored in the `sessions` table and are revocable — blocking a user destroys all their sessions immediately via `destroyAllSessionsForUser()`.
 - **Max 5 sessions per user**: the oldest session is deleted when a 6th is created.
 - **30-day expiry with sliding refresh**: each request extends the session by 30 days from now.
-- **Opaque session IDs**: session IDs are ULIDs. No secrets are stored in the `sessions` table.
+- **Opaque session IDs**: session IDs are generated via `crypto.randomBytes(32)` (256-bit cryptographic randomness). No secrets are stored in the `sessions` table. (AU-025 — upgraded from ULID to CSPRNG-generated IDs for stronger unpredictability.)
 - **`SESSION_SECRET`**: auto-generated on first run, stored in `app_config` (follows existing `API_KEY` pattern).
 
 ### Authorization Model
@@ -466,7 +499,81 @@ call on user-supplied conversation history.
 
 ---
 
-## 11. Key Rotation
+## 11. Discord Adapter Security
+
+### Discord CDN Validation (DC-003)
+
+Attachment URLs from Discord messages are validated against an allowlist of known Discord
+CDN hostnames (`cdn.discordapp.com`, `media.discordapp.net`) before being stored or
+displayed. This prevents malicious users from injecting arbitrary URLs into the attachment
+fields of Discord messages, which would otherwise be rendered as images in the raw feed
+dashboard view.
+
+### Discord Circuit Breaker (DC-006)
+
+Each Discord token is monitored for consecutive errors. After 20 consecutive failures
+(WebSocket errors, auth failures, rate limit exhaustion), the token is automatically
+disabled and removed from the active rotation. This prevents a single compromised or
+revoked token from generating unbounded error logs, consuming reconnect resources, or
+triggering rate limits that affect healthy tokens sharing the same IP.
+
+### NaN Timestamp Defense (DC-005)
+
+Malformed or missing timestamps in Discord messages (which would parse to `NaN` or
+`Invalid Date`) fall back to `Date.now()` instead of propagating `NaN` through the
+pipeline. NaN timestamps previously caused silent failures in time-windowed queries,
+dedup logic, and scheduler calculations. The fallback is conservative — a slightly
+wrong timestamp is strictly better than a NaN that corrupts downstream arithmetic.
+
+---
+
+## 12. RSS Ingestion Guardrails
+
+### Body Size Limit (RS-010)
+
+RSS feed responses are capped at 5MB. Feeds exceeding this limit are rejected before
+parsing, preventing memory exhaustion from maliciously large or malformed feeds. The
+limit is generous enough for legitimate feeds (typical RSS feeds are 50-500KB) but
+blocks pathological cases.
+
+### Item Count Cap (RS-011)
+
+RSS feed parsing is capped at 50 items per poll. Items beyond the 50th are discarded.
+This prevents a single misconfigured or adversarial feed from flooding the normalize
+pipeline with thousands of items in a single poll cycle, which would cascade into
+excessive chunking and LLM costs.
+
+### URL Validation at Creation (RS-012)
+
+RSS feed URLs are validated at source creation time (not just at fetch time). The
+validation rejects non-HTTPS schemes, private IPs, non-standard ports, and malformed
+URLs before the source is persisted. This is a defense-in-depth measure — `fetchValidated`
+already validates at fetch time, but rejecting bad URLs at creation prevents them from
+entering the scheduler loop at all.
+
+---
+
+## 13. Infrastructure Resilience
+
+### Pool Crash Prevention (CF-001)
+
+The Postgres connection pool now has a `pool.on('error')` handler that logs the error
+and prevents it from becoming an unhandled exception. Without this handler, a connection-
+level error (e.g., Postgres restart, network partition) would emit an `'error'` event
+on the pool. Node.js treats unhandled `'error'` events as fatal, crashing the process.
+The handler absorbs the error, logs it at FATAL level, and allows the pool's built-in
+reconnection logic to recover.
+
+### User-Agent Normalization Fix (AU-024)
+
+Fixed a double-normalization bug in the User-Agent parsing logic where the UA string
+was being lowercased twice, causing certain browser family lookups to fail. The fix
+ensures UA normalization is applied exactly once, producing consistent browser
+fingerprints for session tracking and abuse detection.
+
+---
+
+## 14. Key Rotation
 
 How each secret behaves during rotation.
 
