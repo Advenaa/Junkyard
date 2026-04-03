@@ -105,5 +105,5 @@ export function createScheduler(deps: SchedulerDeps) {
     log.info('scheduler stopped');
   }
 
-  return { start, stop };
+  return { start, stop, /** @internal — exposed for unit tests */ withMutex };
 }

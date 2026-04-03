@@ -1,0 +1,241 @@
+import { describe, it, mock } from 'node:test';
+import assert from 'node:assert/strict';
+import { formatDate, parseDateFromFilename } from '../../src/ops/backup.js';
+import { createRetention } from '../../src/ops/retention.js';
+import type { RetentionResult } from '../../src/ops/retention.js';
+
+// ---------------------------------------------------------------------------
+// Backup helpers
+// ---------------------------------------------------------------------------
+
+describe('formatDate', () => {
+  it('formats a date as YYYYMMDD in UTC', () => {
+    const date = new Date(Date.UTC(2024, 0, 15)); // Jan 15 2024
+    assert.equal(formatDate(date), '20240115');
+  });
+
+  it('zero-pads single-digit month and day', () => {
+    const date = new Date(Date.UTC(2024, 2, 3)); // Mar 3 2024
+    assert.equal(formatDate(date), '20240303');
+  });
+
+  it('handles end of year', () => {
+    const date = new Date(Date.UTC(2024, 11, 31)); // Dec 31 2024
+    assert.equal(formatDate(date), '20241231');
+  });
+
+  it('handles start of year', () => {
+    const date = new Date(Date.UTC(2025, 0, 1)); // Jan 1 2025
+    assert.equal(formatDate(date), '20250101');
+  });
+
+  it('handles double-digit months', () => {
+    const date = new Date(Date.UTC(2024, 10, 25)); // Nov 25 2024
+    assert.equal(formatDate(date), '20241125');
+  });
+});
+
+describe('parseDateFromFilename', () => {
+  it('parses a valid backup filename', () => {
+    const result = parseDateFromFilename('podders_20240115.sql.gz');
+    assert.ok(result);
+    assert.equal(result.getUTCFullYear(), 2024);
+    assert.equal(result.getUTCMonth(), 0); // January
+    assert.equal(result.getUTCDate(), 15);
+  });
+
+  it('parses December 31st correctly', () => {
+    const result = parseDateFromFilename('podders_20241231.sql.gz');
+    assert.ok(result);
+    assert.equal(result.getUTCFullYear(), 2024);
+    assert.equal(result.getUTCMonth(), 11); // December
+    assert.equal(result.getUTCDate(), 31);
+  });
+
+  it('returns null for non-matching filename', () => {
+    assert.equal(parseDateFromFilename('backup_20240115.sql.gz'), null);
+  });
+
+  it('returns null for missing .sql.gz extension', () => {
+    assert.equal(parseDateFromFilename('podders_20240115.tar.gz'), null);
+  });
+
+  it('returns null for empty string', () => {
+    assert.equal(parseDateFromFilename(''), null);
+  });
+
+  it('returns null for wrong date length', () => {
+    assert.equal(parseDateFromFilename('podders_2024011.sql.gz'), null);
+  });
+
+  it('returns null for filename with path prefix', () => {
+    assert.equal(parseDateFromFilename('/data/podders_20240115.sql.gz'), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Retention
+// ---------------------------------------------------------------------------
+
+function createMockPool(rowCounts: number[]) {
+  let callIndex = 0;
+  const calls: Array<{ text: string; params?: unknown[] }> = [];
+
+  const pool = {
+    query(text: string, params?: unknown[]) {
+      calls.push({ text, params });
+      const rowCount = rowCounts[callIndex] ?? 0;
+      callIndex++;
+      return Promise.resolve({ rowCount, rows: [] });
+    },
+  };
+
+  return { pool, calls };
+}
+
+function createMockLogger() {
+  return {
+    info: mock.fn(),
+    error: mock.fn(),
+    warn: mock.fn(),
+    debug: mock.fn(),
+    fatal: mock.fn(),
+    child: mock.fn(),
+  };
+}
+
+describe('retention run()', () => {
+  it('deletes old items, mentions, summaries, orphaned embeddings, and expired sessions', async () => {
+    //                items  mentions  summaries  embItems  embSummaries  sessions
+    const rowCounts = [10,   5,        3,         2,        1,            4];
+    const { pool, calls } = createMockPool(rowCounts);
+    const log = createMockLogger();
+
+    const retention = createRetention(pool as any, log as any);
+    const result = await retention.run();
+
+    // Should make exactly 6 queries
+    assert.equal(calls.length, 6);
+
+    // Verify query order and SQL content
+    assert.ok(calls[0].text.includes('DELETE FROM items'));
+    assert.ok(calls[0].text.includes("status = 'processed'"));
+
+    assert.ok(calls[1].text.includes('DELETE FROM entity_mentions'));
+
+    assert.ok(calls[2].text.includes('DELETE FROM summaries'));
+
+    assert.ok(calls[3].text.includes('DELETE FROM embeddings'));
+    assert.ok(calls[4].text.includes('DELETE FROM embeddings'));
+
+    assert.ok(calls[5].text.includes('DELETE FROM sessions'));
+  });
+
+  it('uses NOT EXISTS (not NOT IN) for orphaned embeddings', async () => {
+    const rowCounts = [0, 0, 0, 0, 0, 0];
+    const { pool, calls } = createMockPool(rowCounts);
+    const log = createMockLogger();
+
+    const retention = createRetention(pool as any, log as any);
+    await retention.run();
+
+    // Embedding queries are calls[3] and calls[4]
+    const embItemsQuery = calls[3].text;
+    const embSummariesQuery = calls[4].text;
+
+    assert.ok(embItemsQuery.includes('NOT EXISTS'), 'item embeddings query should use NOT EXISTS');
+    assert.ok(!embItemsQuery.includes('NOT IN'), 'item embeddings query should not use NOT IN');
+
+    assert.ok(embSummariesQuery.includes('NOT EXISTS'), 'summary embeddings query should use NOT EXISTS');
+    assert.ok(!embSummariesQuery.includes('NOT IN'), 'summary embeddings query should not use NOT IN');
+  });
+
+  it('returns correct counts from rowCount values', async () => {
+    const rowCounts = [10, 5, 3, 2, 1, 4];
+    const { pool } = createMockPool(rowCounts);
+    const log = createMockLogger();
+
+    const retention = createRetention(pool as any, log as any);
+    const result = await retention.run();
+
+    const expected: RetentionResult = {
+      itemsDeleted: 10,
+      summariesDeleted: 3,
+      mentionsDeleted: 5,
+      embeddingsDeleted: 3, // 2 + 1
+      sessionsDeleted: 4,
+    };
+
+    assert.deepStrictEqual(result, expected);
+  });
+
+  it('returns zeros when nothing is deleted', async () => {
+    const rowCounts = [0, 0, 0, 0, 0, 0];
+    const { pool } = createMockPool(rowCounts);
+    const log = createMockLogger();
+
+    const retention = createRetention(pool as any, log as any);
+    const result = await retention.run();
+
+    assert.equal(result.itemsDeleted, 0);
+    assert.equal(result.summariesDeleted, 0);
+    assert.equal(result.mentionsDeleted, 0);
+    assert.equal(result.embeddingsDeleted, 0);
+    assert.equal(result.sessionsDeleted, 0);
+  });
+
+  it('deletes expired sessions using current time', async () => {
+    const rowCounts = [0, 0, 0, 0, 0, 7];
+    const { pool, calls } = createMockPool(rowCounts);
+    const log = createMockLogger();
+
+    const before = Date.now();
+    const retention = createRetention(pool as any, log as any);
+    await retention.run();
+    const after = Date.now();
+
+    // Sessions query is the last one (index 5)
+    const sessionsQuery = calls[5];
+    assert.ok(sessionsQuery.text.includes('DELETE FROM sessions'));
+    assert.ok(sessionsQuery.text.includes('expires_at'));
+
+    // The timestamp param should be approximately now
+    const ts = sessionsQuery.params![0] as number;
+    assert.ok(ts >= before, 'sessions timestamp should be >= test start time');
+    assert.ok(ts <= after, 'sessions timestamp should be <= test end time');
+  });
+
+  it('uses 30-day cutoff for items and 90-day cutoff for mentions/summaries', async () => {
+    const rowCounts = [0, 0, 0, 0, 0, 0];
+    const { pool, calls } = createMockPool(rowCounts);
+    const log = createMockLogger();
+
+    const before = Date.now();
+    const retention = createRetention(pool as any, log as any);
+    await retention.run();
+
+    const thirtyDays = 30 * 24 * 60 * 60 * 1000;
+    const ninetyDays = 90 * 24 * 60 * 60 * 1000;
+
+    // Items use 30-day cutoff
+    const itemsTs = calls[0].params![0] as number;
+    assert.ok(
+      Math.abs(itemsTs - (before - thirtyDays)) < 100,
+      'items cutoff should be ~30 days ago',
+    );
+
+    // Mentions use 90-day cutoff
+    const mentionsTs = calls[1].params![0] as number;
+    assert.ok(
+      Math.abs(mentionsTs - (before - ninetyDays)) < 100,
+      'mentions cutoff should be ~90 days ago',
+    );
+
+    // Summaries use 90-day cutoff
+    const summariesTs = calls[2].params![0] as number;
+    assert.ok(
+      Math.abs(summariesTs - (before - ninetyDays)) < 100,
+      'summaries cutoff should be ~90 days ago',
+    );
+  });
+});

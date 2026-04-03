@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import type { Config } from '../config.js';
 import type { Logger } from '../logger.js';
 
-function formatDate(date: Date): string {
+export function formatDate(date: Date): string {
   const y = date.getUTCFullYear();
   const m = String(date.getUTCMonth() + 1).padStart(2, '0');
   const d = String(date.getUTCDate()).padStart(2, '0');
   return `${y}${m}${d}`;
 }
 
-function parseDateFromFilename(filename: string): Date | null {
+export function parseDateFromFilename(filename: string): Date | null {
   const match = /^podders_(\d{4})(\d{2})(\d{2})\.sql\.gz$/.exec(filename);
   if (!match) return null;
   const [, year, month, day] = match;
