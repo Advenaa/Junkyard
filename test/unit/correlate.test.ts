@@ -437,3 +437,103 @@ describe('createCorrelator.run() — multiple entities', () => {
     assert.strictEqual(result.shouldFlash, true);
   });
 });
+
+// ===========================================================================
+// Trust weight clamping (CR-010 regression)
+// ===========================================================================
+
+describe('createCorrelator.run() — trust weight clamping', () => {
+  it('clamps trust weight > 1 to 1.0', async () => {
+    const pool = buildBatchPool({
+      correlationRows: [{
+        entity_id: 'ent-1',
+        entity_name: 'Bitcoin',
+        mentions: [
+          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+        ],
+      }],
+      trustWeights: { discord: 1.5, twitter: 0.6 },
+      urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
+    });
+
+    const correlator = createCorrelator(pool as never, silentLog);
+    const result = await correlator.run();
+
+    const discordSource = result.correlated[0].sources.find(s => s.source === 'discord');
+    assert.strictEqual(discordSource?.trustWeight, 1.0);
+    // weightedSum uses clamped value: 1.0 + 0.6
+    assert.strictEqual(result.correlated[0].weightedSum, 1.6);
+  });
+
+  it('clamps negative trust weight to 0', async () => {
+    const pool = buildBatchPool({
+      correlationRows: [{
+        entity_id: 'ent-1',
+        entity_name: 'Bitcoin',
+        mentions: [
+          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+        ],
+      }],
+      trustWeights: { discord: -0.3, twitter: 0.6 },
+      urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
+    });
+
+    const correlator = createCorrelator(pool as never, silentLog);
+    const result = await correlator.run();
+
+    const discordSource = result.correlated[0].sources.find(s => s.source === 'discord');
+    assert.strictEqual(discordSource?.trustWeight, 0);
+    // weightedSum uses clamped value: 0 + 0.6
+    assert.strictEqual(result.correlated[0].weightedSum, 0.6);
+  });
+});
+
+// ===========================================================================
+// Batch query verification
+// ===========================================================================
+
+describe('createCorrelator.run() — batch queries', () => {
+  it('makes exactly 3 queries: correlation + trust batch + urgency batch', async () => {
+    const pool = buildBatchPool({
+      correlationRows: [{
+        entity_id: 'ent-1',
+        entity_name: 'Bitcoin',
+        mentions: [
+          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+        ],
+      }],
+      trustWeights: { discord: 0.8, twitter: 0.6 },
+      urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
+    });
+
+    const correlator = createCorrelator(pool as never, silentLog);
+    await correlator.run();
+
+    assert.strictEqual(pool.calls.length, 3);
+    // First call: CORRELATION_SQL
+    assert.ok(pool.calls[0].text.includes('entity_mentions'), 'first query should be CORRELATION_SQL');
+    // Second call: batch trust weight lookup
+    assert.ok(pool.calls[1].text.includes('FROM sources WHERE source = ANY($1)'),
+      'second query should batch-fetch trust weights');
+    // Third call: batch urgency lookup
+    assert.ok(pool.calls[2].text.includes('FROM summaries WHERE id = ANY($1)'),
+      'third query should batch-fetch urgencies');
+  });
+});
+
+// ===========================================================================
+// Optional cutoff parameter (CR-001 regression)
+// ===========================================================================
+
+describe('createCorrelator.run() — custom cutoff', () => {
+  it('uses provided cutoff instead of 24h default', async () => {
+    const customCutoff = Date.now() - 12 * 60 * 60 * 1000; // 12h ago
+    const pool = mockPool([{ rows: [] }]);
+    const correlator = createCorrelator(pool as never, silentLog);
+    await correlator.run(customCutoff);
+    assert.strictEqual(pool.calls[0].values[0], customCutoff);
+  });
+});

@@ -650,3 +650,86 @@ describe('call — typed error passthrough', () => {
     );
   });
 });
+
+// ── LM-008: Timeout error retry ──────────────────────────────────────
+
+describe('call — timeout errors', () => {
+  it('retries on ETIMEDOUT error', async () => {
+    let callCount = 0;
+    const llm = makeLLM(async () => {
+      callCount++;
+      if (callCount === 1) {
+        const err = new Error('connect ETIMEDOUT');
+        (err as any).code = 'ETIMEDOUT';
+        throw err;
+      }
+      return makeResponse('ok');
+    });
+    const result = await llm.call(defaultParams());
+    assert.equal(callCount, 2);
+    assert.equal(result.content, 'ok');
+  });
+
+  it('retries on AbortError (timeout)', async () => {
+    let callCount = 0;
+    const llm = makeLLM(async () => {
+      callCount++;
+      if (callCount === 1) {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return makeResponse('ok');
+    });
+    const result = await llm.call(defaultParams());
+    assert.equal(callCount, 2);
+    assert.equal(result.content, 'ok');
+  });
+
+  it('retries on timeout message in error', async () => {
+    let callCount = 0;
+    const llm = makeLLM(async () => {
+      callCount++;
+      if (callCount === 1) throw new Error('Request timeout after 30000ms');
+      return makeResponse('ok');
+    });
+    const result = await llm.call(defaultParams());
+    assert.equal(callCount, 2);
+  });
+
+  it('exhausts retries on persistent timeout', async () => {
+    const llm = makeLLM(async () => {
+      const err = new Error('timeout');
+      err.name = 'AbortError';
+      throw err;
+    });
+    await assert.rejects(() => llm.call(defaultParams()), /timeout/i);
+  });
+});
+
+// ── LM-004: Cost validation ──────────────────────────────────────────
+
+describe('call — cost handling', () => {
+  it('handles missing cost in response without crashing', async () => {
+    const llm = makeLLM(async () => ({
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text: 'ok' }],
+      api: 'anthropic-messages' as const,
+      provider: 'anthropic',
+      model: 'claude-haiku',
+      usage: {
+        input: 10,
+        output: 5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 15,
+        // No cost field
+      },
+      stopReason: 'stop' as const,
+      timestamp: Date.now(),
+    }));
+    const result = await llm.call(defaultParams());
+    assert.equal(result.content, 'ok');
+    assert.equal(result.cost, 0);
+  });
+});

@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import dns from 'node:dns';
 import {
   truncate,
   buildTitle,
@@ -8,6 +9,7 @@ import {
   embedCharCount,
   enforceEmbedLimit,
   colorForType,
+  createDelivery,
 } from '../../src/deliver/webhook.js';
 
 describe('truncate', () => {
@@ -276,5 +278,142 @@ describe('buildEmbed — full integration', () => {
     const embed = buildEmbed(report, parsed, config);
     const total = embedCharCount(embed);
     assert.ok(total <= 6000, `Total embed chars ${total} exceeds 6000`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliver — idempotency guard (DL-001 regression)
+// ---------------------------------------------------------------------------
+
+const VALID_REPORT_BODY = JSON.stringify({
+  tldr: 'Market moved up',
+  keyEvents: ['BTC pumped'],
+  entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+  sections: [],
+  newProjects: [],
+});
+
+const FAKE_REPORT = {
+  id: 'rpt-idem-001',
+  type: 'daily' as const,
+  body: VALID_REPORT_BODY,
+  date: '2026-04-01',
+};
+
+/** Silent logger that swallows everything. */
+const silentLog = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  debug: () => {},
+  child: () => silentLog,
+};
+
+/**
+ * Build a mock Pool whose .query() returns responses in order.
+ * Callers push expected responses; the pool pops them sequentially.
+ */
+function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []) {
+  let callIndex = 0;
+  const calls: Array<{ text: string; values: unknown[] }> = [];
+  return {
+    calls,
+    query: async (text: string, values?: unknown[]) => {
+      calls.push({ text, values: values ?? [] });
+      const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
+      callIndex++;
+      return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
+    },
+  };
+}
+
+describe('deliver — idempotency guard', () => {
+  it('skips delivery when report already delivered', async (t) => {
+    // Pool responses:
+    // 1. getAppConfig('webhook_url') → returns a valid webhook URL
+    // 2. SELECT delivery_status → 'delivered'
+    const pool = mockPool([
+      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
+      { rows: [{ delivery_status: 'delivered' }] },
+    ]);
+
+    // Mock DNS so validateUrl passes
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    // Mock fetch — should NOT be called
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      return new Response(null, { status: 200 });
+    });
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+    const result = await deliver(FAKE_REPORT);
+
+    // Idempotent success — returns true without making HTTP POST
+    assert.strictEqual(result, true);
+    assert.strictEqual(fetchMock.mock.callCount(), 0);
+
+    // Verify the delivery_status SELECT was made
+    const statusQuery = pool.calls.find((c) => c.text.includes('SELECT delivery_status'));
+    assert.ok(statusQuery, 'Expected a SELECT delivery_status query');
+    assert.deepStrictEqual(statusQuery.values, [FAKE_REPORT.id]);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('proceeds with delivery when status is pending', async (t) => {
+    // Pool responses:
+    // 1. getAppConfig('webhook_url') → returns a valid webhook URL
+    // 2. SELECT delivery_status → 'pending'
+    // 3. UPDATE reports SET delivery_status = 'delivered'
+    const pool = mockPool([
+      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
+      { rows: [{ delivery_status: 'pending' }] },
+      { rowCount: 1 },
+    ]);
+
+    // Mock DNS so validateUrl passes
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    // Mock fetch — should be called with Discord webhook POST
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      return new Response(null, { status: 200 });
+    });
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+    const result = await deliver(FAKE_REPORT);
+
+    // Delivery succeeded
+    assert.strictEqual(result, true);
+
+    // Verify the HTTP POST was made
+    assert.strictEqual(fetchMock.mock.callCount(), 1);
+    const [url, opts] = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
+    assert.strictEqual(opts.method, 'POST');
+    assert.ok(url.includes('104.16.60.37'), 'Expected pinned IP in URL');
+
+    // Verify body contains embeds
+    const body = JSON.parse(opts.body as string);
+    assert.ok(Array.isArray(body.embeds), 'Expected embeds array in body');
+    assert.strictEqual(body.embeds.length, 1);
+
+    // Verify delivery_status was updated to 'delivered'
+    const updateQuery = pool.calls.find((c) => c.text.includes('UPDATE reports SET delivery_status'));
+    assert.ok(updateQuery, 'Expected an UPDATE delivery_status query');
+    assert.strictEqual(updateQuery.values[0], 'delivered');
+    assert.strictEqual(updateQuery.values[2], FAKE_REPORT.id);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
   });
 });

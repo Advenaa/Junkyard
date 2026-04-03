@@ -25,7 +25,7 @@ const URGENCY_KEYWORDS = [
   'halt', 'circuit breaker', 'emergency', 'bank run',
 ];
 
-function shouldSkip(item: { source: string; content: string }): boolean {
+export function shouldSkip(item: { source: string; content: string }): boolean {
   if (item.source === 'discord' || item.source === 'twitter') return true;
   if (item.content.length <= 4000) return true;
 
@@ -77,7 +77,7 @@ function formatBatchContent(
     .join('\n\n');
 }
 
-function parseLabeledOutput(
+export function parseLabeledOutput(
   output: string,
   batchSize: number,
 ): (string | null)[] {

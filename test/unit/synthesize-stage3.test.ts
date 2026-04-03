@@ -745,3 +745,142 @@ describe('synthesize: report insertion', () => {
     assert.match(reportId, /^[0-9A-Z]{26}$/, 'Report ID should be a valid ULID');
   });
 });
+
+// ===========================================================================
+// SP-006 regression: XML escaping in prompts
+// ===========================================================================
+
+describe('synthesize: XML escaping in prompts', () => {
+  it('escapes entity names with XML special characters in daily prompt', async () => {
+    const xssEntityName = '<script>alert(1)</script>';
+    const row = makeSummaryRow({
+      body: makeSummaryBody({
+        entities: [{ name: xssEntityName, type: 'token', sentiment: 0.5, mentionCount: 3 }],
+      }),
+    });
+
+    // Pool responses for daily with correlated entities from correlator:
+    // 0: getAppConfig(timezone)
+    // 1: dailyReportExists
+    // 2: getSummariesByTimeWindow
+    // 3: getYesterdayTldr
+    // 4: correlator CORRELATION_SQL — returns a row with the XSS entity name
+    // 5: correlator trust weights batch
+    // 6: correlator urgency batch
+    // 7: insertReport
+    const poolResponses = [
+      { rows: [{ value: 'UTC' }] },                           // getAppConfig
+      { rows: [{ exists: false }] },                           // dailyReportExists
+      { rows: [row] },                                         // getSummariesByTimeWindow
+      { rows: [] },                                            // getYesterdayTldr
+      { rows: [{                                                // correlator: entity mentions
+        entity_id: 'ent-xss',
+        entity_name: xssEntityName,
+        mentions: [
+          { source: 'discord', summary_id: 'summary-1', sentiment: 0.5 },
+          { source: 'twitter', summary_id: 'summary-2', sentiment: 0.3 },
+        ],
+      }] },
+      { rows: [                                                 // correlator: trust weights
+        { source: 'discord', trust_weight: 0.8 },
+        { source: 'twitter', trust_weight: 0.7 },
+      ] },
+      { rows: [                                                 // correlator: urgencies
+        { id: 'summary-1', urgency: 'elevated' },
+        { id: 'summary-2', urgency: 'routine' },
+      ] },
+      { rows: [{                                                // insertReport RETURNING *
+        id: 'report-xml-1', date: '2024-01-01', type: 'daily',
+        body: makeReportJson(), tldr: 'Test report.',
+        sentiment: 0.5, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+      }] },
+    ];
+
+    let llmUserMessage = '';
+    const llm = {
+      call: async (params: { messages: { role: string; content: string }[] }) => {
+        llmUserMessage = params.messages[0].content;
+        return { content: makeReportJson() };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    };
+
+    const pool = mockPool(poolResponses);
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    await synth.runDaily();
+
+    // The correlated_entities section must contain the escaped entity name
+    const correlatedSection = llmUserMessage.match(
+      /<correlated_entities>([\s\S]*?)<\/correlated_entities>/,
+    );
+    assert.ok(correlatedSection, 'LLM prompt should contain correlated_entities section');
+    assert.ok(
+      correlatedSection![1].includes('&lt;script&gt;alert(1)&lt;/script&gt;'),
+      'Entity name in correlated_entities should be XML-escaped',
+    );
+    assert.ok(
+      !correlatedSection![1].includes('<script>'),
+      'Raw <script> tag should not appear in correlated_entities section',
+    );
+  });
+
+  it('escapes entity names in flash prompt', async () => {
+    const dangerousName = 'Token<br>&"injection"';
+    const entity = {
+      entityName: dangerousName,
+      sources: [{ source: 'discord', sourceId: 'src-1', trustWeight: 1 }],
+      weightedSum: 6.0,
+      urgency: 'breaking',
+    };
+    const row = makeSummaryRow({
+      body: makeSummaryBody({
+        entities: [{ name: dangerousName, type: 'token', sentiment: -0.5, mentionCount: 4 }],
+      }),
+    });
+
+    let llmUserMessage = '';
+    const llm = {
+      call: async (params: { messages: { role: string; content: string }[] }) => {
+        llmUserMessage = params.messages[0].content;
+        return { content: makeReportJson() };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    };
+
+    const pool = mockPool([
+      { rows: [row] },                              // getSummariesByTimeWindow
+      { rows: [] },                                  // flash duplicate check
+      { rows: [{ value: 'UTC' }] },                 // getAppConfig(timezone)
+      { rows: [{                                      // insertReport RETURNING *
+        id: 'report-xml-2', date: '2024-01-01', type: 'flash',
+        body: makeReportJson(), tldr: 'Test flash.',
+        sentiment: -0.3, delivery_status: 'pending', delivered_at: null, created_at: Date.now(),
+      }] },
+    ]);
+
+    const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
+    await synth.runFlash([entity]);
+
+    // The breaking_entities section must contain escaped entity names
+    const breakingSection = llmUserMessage.match(
+      /<breaking_entities>([\s\S]*?)<\/breaking_entities>/,
+    );
+    assert.ok(breakingSection, 'LLM prompt should contain breaking_entities section');
+    assert.ok(
+      !breakingSection![1].includes('<br>'),
+      'Raw <br> should not appear in breaking_entities section',
+    );
+    assert.ok(
+      breakingSection![1].includes('&lt;br&gt;'),
+      'Angle brackets in entity name should be escaped in breaking_entities',
+    );
+    assert.ok(
+      breakingSection![1].includes('&amp;'),
+      'Ampersand in entity name should be escaped in breaking_entities',
+    );
+    assert.ok(
+      breakingSection![1].includes('&quot;injection&quot;'),
+      'Double quotes in entity name should be escaped in breaking_entities',
+    );
+  });
+});
