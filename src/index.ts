@@ -24,6 +24,8 @@ import { createTwitterAdapter } from './ingest/twitter.js';
 import { pollFeed } from './ingest/rss.js';
 import { createScheduler } from './scheduler.js';
 import { createHealthMonitor } from './health.js';
+import { createBackup } from './ops/backup.js';
+import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
 import { getSources, resetCrashed } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
@@ -71,6 +73,8 @@ program
     const decayManager = createDecayManager(pool, log);
     const delivery = createDelivery(pool, log, config);
     const healthMonitor = createHealthMonitor(pool, log, config);
+    const backup = createBackup(config, log);
+    const retention = createRetention(pool, log);
 
     // ── 3. Ingest adapters ────────────────────────────────────────────
     const discordAdapter = createDiscordAdapter(config, pool, log, async (item: RawItem) => {
@@ -220,6 +224,13 @@ program
           );
         }
       }
+
+      // Embed new summaries immediately so chat semantic search stays fresh
+      try {
+        await embedPipeline.run();
+      } catch (err: unknown) {
+        log.error({ err }, 'embed pipeline (post-poll) failed');
+      }
     }
 
     async function onPulse(): Promise<void> {
@@ -251,6 +262,10 @@ program
           await delivery.deliver(reportRow);
         } catch (err: unknown) { log.error({ err }, 'daily delivery failed'); }
       }
+      // Run backup after daily synthesis
+      try { await backup.run(); } catch (err: unknown) { log.error({ err }, 'backup failed'); }
+      // Run retention cleanup
+      try { await retention.run(); } catch (err: unknown) { log.error({ err }, 'retention failed'); }
     }
 
     async function onHealthCheck(): Promise<void> {

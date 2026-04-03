@@ -144,6 +144,10 @@ export function createChatHandler(
     conversationId: string,
     userId: string,
   ): Promise<ChatResult> {
+    if (query.length > 4000) {
+      return { response: 'Query is too long. Please keep it under 4000 characters.', toolsUsed: [] };
+    }
+
     const toolsUsed: string[] = [];
     let processedQuery = query;
 

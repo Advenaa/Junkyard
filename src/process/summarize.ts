@@ -171,6 +171,23 @@ export function verifyEntities(
   return { ...parsed, entities: verified };
 }
 
+// ── Call budget ──────────────────────────────────────────────────────
+
+interface CallBudget {
+  count: number;
+  readonly max: number;
+}
+
+/** Increment budget and return true if exhausted. */
+function budgetExhausted(budget: CallBudget, log: Logger): boolean {
+  budget.count++;
+  if (budget.count > budget.max) {
+    log.warn({ count: budget.count, max: budget.max }, 'Batch LLM call budget exhausted');
+    return true;
+  }
+  return false;
+}
+
 // ── Factory ───────────────────────────────────────────────────────────
 
 export function createSummarizer(
@@ -189,6 +206,7 @@ export function createSummarizer(
     content: string,
     systemPrompt: string,
     wrappedContent: string,
+    callBudget: CallBudget,
   ): Promise<ChunkSummary | null> {
     const jsonStr = stripCodeFences(content);
 
@@ -212,6 +230,7 @@ export function createSummarizer(
 
     const augmentedSystem = `${systemPrompt}\n\nYour previous response had validation errors: ${errorPaths}. Please fix these fields.`;
 
+    if (budgetExhausted(callBudget, log)) return null;
     const retryResult = await llm.call({
       model: config.models.haiku,
       system: augmentedSystem,
@@ -242,9 +261,11 @@ export function createSummarizer(
   async function callAndParse(
     systemPrompt: string,
     userContent: string,
+    callBudget: CallBudget,
   ): Promise<ChunkSummary | null> {
     const wrapped = llm.wrapWithNonce(userContent);
 
+    if (budgetExhausted(callBudget, log)) return null;
     const result = await llm.call({
       model: config.models.haiku,
       system: systemPrompt,
@@ -253,7 +274,7 @@ export function createSummarizer(
       stage: 'summarize',
     });
 
-    const parsed = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped);
+    const parsed = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped, callBudget);
     if (parsed !== null) {
       return parsed;
     }
@@ -261,6 +282,7 @@ export function createSummarizer(
     // JSON parse failure — retry once with fresh prompt (L7: no failed output in retry)
     log.warn('Parse failed, retrying with fresh prompt');
     const freshWrapped = llm.wrapWithNonce(userContent);
+    if (budgetExhausted(callBudget, log)) return null;
     const retryResult = await llm.call({
       model: config.models.haiku,
       system: systemPrompt,
@@ -269,7 +291,7 @@ export function createSummarizer(
       stage: 'summarize',
     });
 
-    return parseWithZodRetry(retryResult.content, systemPrompt, freshWrapped.wrapped);
+    return parseWithZodRetry(retryResult.content, systemPrompt, freshWrapped.wrapped, callBudget);
   }
 
   /**
@@ -282,6 +304,7 @@ export function createSummarizer(
     rawText: string,
     source: string,
     sourceId: string,
+    callBudget: CallBudget,
   ): Promise<ChunkSummary> {
     if (parsed.confidence >= 5 || parsed.urgency === 'routine') {
       return parsed;
@@ -294,6 +317,7 @@ export function createSummarizer(
 
     try {
       const wrapped = llm.wrapWithNonce(userContent);
+      if (budgetExhausted(callBudget, log)) return parsed;
       const result = await llm.call({
         model: config.models.sonnet,
         system: systemPrompt,
@@ -302,7 +326,7 @@ export function createSummarizer(
         stage: 'escalate',
       });
 
-      const escalated = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped);
+      const escalated = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped, callBudget);
       if (escalated !== null) {
         return verifyEntities(escalated, rawText, log, source, sourceId);
       }
@@ -323,13 +347,14 @@ export function createSummarizer(
     windowStart: number,
     windowEnd: number,
     depth: number,
+    callBudget: CallBudget,
   ): Promise<ChunkSummary[]> {
     const systemPrompt = buildChunkSystemPrompt(source, sourceId, windowStart, windowEnd, chunk);
     const userContent = buildUserContent(chunk);
     const rawText = chunk.map((item) => item.content).join(' ');
 
     try {
-      let parsed = await callAndParse(systemPrompt, userContent);
+      let parsed = await callAndParse(systemPrompt, userContent, callBudget);
 
       if (parsed === null) {
         log.error({ source, sourceId }, 'Failed to parse LLM output after all retries');
@@ -340,7 +365,7 @@ export function createSummarizer(
       parsed = verifyEntities(parsed, rawText, log, source, sourceId);
 
       // Confidence escalation
-      parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, source, sourceId);
+      parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, source, sourceId, callBudget);
 
       return [parsed];
     } catch (err: unknown) {
@@ -363,7 +388,7 @@ export function createSummarizer(
         const results: ChunkSummary[] = [];
         for (const half of [chunk.slice(0, mid), chunk.slice(mid)]) {
           try {
-            const halfResults = await processChunk(half, source, sourceId, windowStart, windowEnd, depth + 1);
+            const halfResults = await processChunk(half, source, sourceId, windowStart, windowEnd, depth + 1, callBudget);
             results.push(...halfResults);
           } catch (splitErr: unknown) {
             log.error({ err: splitErr, source, sourceId, depth }, 'Failed to process split chunk');
@@ -403,6 +428,7 @@ export function createSummarizer(
     const chunks = chunkByTokens(items, CHUNK_TOKEN_BUDGET);
 
     // d-g. Process chunks with bounded concurrency (max 3 parallel)
+    const callBudget: CallBudget = { count: 0, max: 50 };
     const CHUNK_CONCURRENCY = 3;
     const succeededIds: string[] = [];
     const failedIds: string[] = [];
@@ -419,7 +445,7 @@ export function createSummarizer(
     async function handleChunk(chunk: ClaimedItem[]): Promise<ChunkResult> {
       const chunkItemIds = chunk.map((item) => item.id);
 
-      const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0);
+      const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0, callBudget);
 
       if (parsedResults.length === 0) {
         return { succeeded: [], failed: chunkItemIds, summaryCount: 0, hasBreaking: false };

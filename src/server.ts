@@ -204,18 +204,22 @@ export async function createServer(
   app.post('/api/v1/chat', {
     preHandler: [authPreHandler],
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    schema: {
+      body: {
+        type: 'object',
+        required: ['query'],
+        properties: {
+          query: { type: 'string', minLength: 1, maxLength: 4000 },
+          conversationId: { type: 'string', maxLength: 100 },
+        },
+        additionalProperties: false,
+      },
+    },
   }, async (request, reply) => {
     if (!chatHandler) {
       return reply.code(501).send({ error: 'Chat not available' });
     }
-    const body = request.body;
-    if (!body || typeof body !== 'object') {
-      return reply.code(400).send({ error: 'Invalid request body' });
-    }
-    const { query, conversationId } = body as { query: string; conversationId?: string };
-    if (!query || typeof query !== 'string') {
-      return reply.code(400).send({ error: 'query is required' });
-    }
+    const { query, conversationId } = request.body as { query: string; conversationId?: string };
     const userId = request.user!.discordId;
     const result = await chatHandler.handle(query, conversationId ?? userId, userId);
     return result;
