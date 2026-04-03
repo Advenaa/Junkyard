@@ -298,8 +298,8 @@ describe('synthesize: runFlash', () => {
     const row = makeSummaryRow();
     const pool = mockPool([
       { rows: [row] },                              // getSummariesByTimeWindow
-      { rows: [{ value: 'UTC' }] },                 // getAppConfig(timezone) for duplicate check
-      { rows: [] },                                  // flash duplicate check query
+      { rows: [] },                                  // flash duplicate check (created_at > fourHoursAgo)
+      { rows: [{ value: 'UTC' }] },                 // getAppConfig(timezone) for dateString
       { rows: [{                                      // insertReport RETURNING *
         id: 'report-2', date: '2024-01-01', type: 'flash',
         body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
@@ -326,8 +326,8 @@ describe('synthesize: runFlash', () => {
     const row = makeSummaryRow();
     const pool = mockPool([
       { rows: [row] },
-      { rows: [{ value: 'UTC' }] },
       { rows: [] },
+      { rows: [{ value: 'UTC' }] },
       { rows: [{
         id: 'report-3', date: '2024-01-01', type: 'flash',
         body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
@@ -339,7 +339,7 @@ describe('synthesize: runFlash', () => {
     assert.notStrictEqual(result, null);
   });
 
-  it('skips when flash report already exists for today', async () => {
+  it('skips when flash report already exists in last 4h', async () => {
     const entity = {
       entityName: 'Bitcoin',
       sources: [{ source: 'discord', sourceId: 'src-1', trustWeight: 1 }],
@@ -349,8 +349,7 @@ describe('synthesize: runFlash', () => {
     const row = makeSummaryRow();
     const pool = mockPool([
       { rows: [row] },                              // getSummariesByTimeWindow
-      { rows: [{ value: 'UTC' }] },                 // getAppConfig(timezone)
-      { rows: [{ id: 'existing-flash' }] },          // flash duplicate check → exists
+      { rows: [{ id: 'existing-flash' }] },          // flash duplicate check (created_at > fourHoursAgo) → exists
     ]);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);
     const result = await synth.runFlash([entity]);
@@ -376,8 +375,8 @@ describe('synthesize: runFlash', () => {
     const row = makeSummaryRow();
     const pool = mockPool([
       { rows: [row] },
-      { rows: [{ value: 'UTC' }] },
       { rows: [] },
+      { rows: [{ value: 'UTC' }] },
       { rows: [{
         id: 'report-4', date: '2024-01-01', type: 'flash',
         body: makeReportJson(), tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
@@ -661,8 +660,8 @@ describe('synthesize: prompt construction', () => {
     };
     const pool = mockPool([
       { rows: [row] },
-      { rows: [{ value: 'UTC' }] },
       { rows: [] },
+      { rows: [{ value: 'UTC' }] },
       {},
     ]);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), llm as never);
@@ -722,8 +721,8 @@ describe('synthesize: report insertion', () => {
     const row = makeSummaryRow();
     const pool = mockPool([
       { rows: [row] },
-      { rows: [{ value: 'UTC' }] },
       { rows: [] },
+      { rows: [{ value: 'UTC' }] },
       {},
     ]);
     const synth = createSynthesizer(pool as never, silentLog, fakeConfig(), mockLlm() as never);

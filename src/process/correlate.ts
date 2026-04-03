@@ -94,10 +94,10 @@ export function createCorrelator(pool: Pool, log: Logger) {
     return rows[0].urgency;
   }
 
-  async function run(): Promise<{ correlated: CorrelatedEntity[]; shouldFlash: boolean }> {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  async function run(cutoff?: number): Promise<{ correlated: CorrelatedEntity[]; shouldFlash: boolean }> {
+    const effectiveCutoff = cutoff ?? (Date.now() - 24 * 60 * 60 * 1000);
 
-    const { rows } = await pool.query<MentionRow>(CORRELATION_SQL, [cutoff]);
+    const { rows } = await pool.query<MentionRow>(CORRELATION_SQL, [effectiveCutoff]);
 
     if (rows.length === 0) {
       log.info('No cross-source correlations found in last 24h');

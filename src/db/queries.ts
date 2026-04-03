@@ -228,7 +228,7 @@ export async function getSummariesByTimeWindow(
   end: number,
 ): Promise<SummaryRow[]> {
   const { rows } = await pool.query<SummaryRow>(
-    `SELECT * FROM summaries WHERE created_at >= $1 AND created_at <= $2 ORDER BY created_at`,
+    `SELECT * FROM summaries WHERE created_at >= $1 AND created_at <= $2 ORDER BY created_at DESC LIMIT 200`,
     [start, end],
   );
   return rows;

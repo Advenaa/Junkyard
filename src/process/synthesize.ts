@@ -72,35 +72,28 @@ Rules:
 // ── Timezone helpers ──────────────────────────────────────────────────
 
 /**
- * Compute the current UTC offset in hours for a given IANA timezone.
- * Handles DST transitions dynamically — no static offset map needed.
- */
-function getTimezoneOffsetHours(timezone: string): number {
-  const now = new Date();
-  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
-  const localStr = now.toLocaleString('en-US', { timeZone: timezone });
-  return (new Date(localStr).getTime() - new Date(utcStr).getTime()) / (60 * 60 * 1000);
-}
-
-/**
  * Compute midnight-to-midnight window (epoch ms) for today in the given timezone.
+ * Uses Intl.DateTimeFormat for DST-safe offset computation (matches pulse module approach).
  */
 function getTodayWindow(timezone: string): { start: number; end: number; dateString: string } {
-  const offsetMs = getTimezoneOffsetHours(timezone) * 60 * 60 * 1000;
-  const nowUtc = Date.now();
+  const now = new Date();
+  // Extract local date parts using Intl (DST-safe)
+  const dtf = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: timezone,
+  });
+  const dateString = dtf.format(now); // YYYY-MM-DD
 
-  // Construct local midnight using UTC date methods to handle fractional offsets correctly
-  const localDate = new Date(nowUtc + offsetMs);
-  const localMidnightUtc = Date.UTC(localDate.getUTCFullYear(), localDate.getUTCMonth(), localDate.getUTCDate());
-  // Convert back to UTC epoch
-  const start = localMidnightUtc - offsetMs;
+  // Compute offset by comparing UTC and local representations
+  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const localStr = now.toLocaleString('en-US', { timeZone: timezone });
+  const offsetMs = new Date(localStr).getTime() - new Date(utcStr).getTime();
+
+  // Midnight in target timezone
+  const [year, month, day] = dateString.split('-').map(Number);
+  const midnightUtc = Date.UTC(year, month - 1, day);
+  const start = midnightUtc - offsetMs;
   const end = start + 24 * 60 * 60 * 1000;
-
-  // Format date string as YYYY-MM-DD in local time
-  const year = localDate.getUTCFullYear();
-  const month = String(localDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(localDate.getUTCDate()).padStart(2, '0');
-  const dateString = `${year}-${month}-${day}`;
 
   return { start, end, dateString };
 }
@@ -332,7 +325,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
 
     // Run cross-source correlation for the same window
     const correlator = createCorrelator(pool, log);
-    const { correlated } = await correlator.run();
+    const { correlated } = await correlator.run(start);
 
     log.info({ correlatedEntities: correlated.length }, 'Correlated entities for daily synthesis');
 
@@ -440,16 +433,13 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       return null;
     }
 
-    // Duplicate guard: skip if a flash report already exists for today
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    const { dateString } = getTodayWindow(timezone);
-
+    // Duplicate guard: skip if a flash report was already created in the last 4h
     const { rows: existingFlash } = await pool.query<{ id: string }>(
-      `SELECT id FROM reports WHERE type = 'flash' AND date = $1 LIMIT 1`,
-      [dateString],
+      `SELECT id FROM reports WHERE type = 'flash' AND created_at > $1 LIMIT 1`,
+      [fourHoursAgo],
     );
     if (existingFlash.length > 0) {
-      log.info({ existingId: existingFlash[0].id, date: dateString }, 'Flash report already exists for today, skipping');
+      log.info({ existingId: existingFlash[0].id }, 'Flash report already exists in last 4h, skipping');
       return null;
     }
 
@@ -496,6 +486,8 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     // Insert into DB
     const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const { dateString } = getTodayWindow(timezone);
 
     let reportRow: ReportRow;
     try {

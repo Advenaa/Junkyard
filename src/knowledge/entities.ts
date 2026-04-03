@@ -218,23 +218,15 @@ export function createEntityManager(
             const newId = ulid();
             const canonical = normalizeAlias(item.name);
 
-            await client.query(
+            const upsertResult = await client.query<{ id: string }>(
               `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
                VALUES ($1, $2, $3, 'active', 0, $4, $4)
-               ON CONFLICT(name, type) DO NOTHING`,
+               ON CONFLICT(name, type) DO UPDATE SET last_seen = $4
+               RETURNING id`,
               [newId, canonical, item.type, now],
             );
 
-            const fetchResult = await client.query<{ id: string }>(
-              'SELECT id FROM entities WHERE name = $1 AND type = $2',
-              [canonical, item.type],
-            );
-
-            if (fetchResult.rows.length === 0) {
-              log.warn({ name: canonical, type: item.type }, 'Entity not found after upsert, skipping');
-              continue;
-            }
-            const entityId = fetchResult.rows[0].id;
+            const entityId = upsertResult.rows[0].id;
             resolvedIds.push(entityId);
             entityIdMap.set(matchedEntity, entityId);
 
@@ -259,23 +251,15 @@ export function createEntityManager(
             const canonical = normalizeAlias(entity.name);
             const newId = ulid();
 
-            await client.query(
+            const upsertResult = await client.query<{ id: string }>(
               `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
                VALUES ($1, $2, $3, 'active', 0, $4, $4)
-               ON CONFLICT(name, type) DO NOTHING`,
+               ON CONFLICT(name, type) DO UPDATE SET last_seen = $4
+               RETURNING id`,
               [newId, canonical, entity.type, now],
             );
 
-            const fetchResult = await client.query<{ id: string }>(
-              'SELECT id FROM entities WHERE name = $1 AND type = $2',
-              [canonical, entity.type],
-            );
-
-            if (fetchResult.rows.length === 0) {
-              log.warn({ name: canonical, type: entity.type }, 'Entity not found after upsert, skipping');
-              continue;
-            }
-            const entityId = fetchResult.rows[0].id;
+            const entityId = upsertResult.rows[0].id;
             entityIdMap.set(entity, entityId);
 
             await client.query(
@@ -296,23 +280,15 @@ export function createEntityManager(
             const canonical = normalizeAlias(entity.name);
             const newId = ulid();
 
-            await client.query(
+            const upsertResult = await client.query<{ id: string }>(
               `INSERT INTO entities (id, name, type, status, relevance, first_seen, last_seen)
                VALUES ($1, $2, $3, 'active', 0, $4, $4)
-               ON CONFLICT(name, type) DO NOTHING`,
+               ON CONFLICT(name, type) DO UPDATE SET last_seen = $4
+               RETURNING id`,
               [newId, canonical, entity.type, now],
             );
 
-            const fetchResult = await client.query<{ id: string }>(
-              'SELECT id FROM entities WHERE name = $1 AND type = $2',
-              [canonical, entity.type],
-            );
-
-            if (fetchResult.rows.length === 0) {
-              log.warn({ name: canonical, type: entity.type }, 'Entity not found after upsert, skipping');
-              continue;
-            }
-            const entityId = fetchResult.rows[0].id;
+            const entityId = upsertResult.rows[0].id;
             entityIdMap.set(entity, entityId);
 
             await client.query(
