@@ -282,13 +282,18 @@ program
     async function onHealthCheck(): Promise<void> {
       await healthMonitor.check();
 
-      // Daily report catch-up: if past digest time and no report exists, retry synthesis
+      // Daily report catch-up: if 5+ minutes past digest time and no report exists, retry synthesis.
+      // The 5-minute buffer avoids racing with onDaily which fires at exactly digest time.
       try {
         const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
         const digestTime = (await getAppConfig(pool, 'digest_time')) ?? '09:00';
+        const [dh, dm] = digestTime.split(':').map(Number);
+        const bufferMinutes = 5;
+        const totalMinutes = dh * 60 + dm + bufferMinutes;
+        const catchUpTime = `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
         const nowLocal = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false, hour: '2-digit', minute: '2-digit' });
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
-        if (nowLocal >= digestTime) {
+        if (nowLocal >= catchUpTime) {
           const { rows } = await pool.query<{ exists: boolean }>(
             `SELECT EXISTS(SELECT 1 FROM reports WHERE date = $1 AND type = 'daily') AS exists`,
             [todayStr],
