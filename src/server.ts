@@ -130,7 +130,7 @@ export async function createServer(
   });
 
   app.post('/api/v1/sources', {
-    preHandler: [authPreHandler],
+    preHandler: [authPreHandler, requireAdmin],
     schema: {
       body: {
         type: 'object',

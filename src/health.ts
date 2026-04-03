@@ -4,6 +4,7 @@ import type { Logger } from './logger.js';
 import type { Config } from './config.js';
 import { ulid } from 'ulid';
 import { validateUrl } from './url-validator.js';
+import { getAppConfig } from './db/queries.js';
 
 export interface HealthCheckResult {
   name: string;
@@ -186,7 +187,9 @@ export function createHealthMonitor(
 
   async function checkCostSpike(): Promise<HealthCheckResult> {
     const now = Date.now();
-    const todayStart = now - (now % (24 * 60 * 60 * 1000));
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const todayStr = new Date(now).toLocaleDateString('en-CA', { timeZone: timezone });
+    const todayStart = new Date(`${todayStr}T00:00:00`).getTime();
     const sevenDaysAgo = todayStart - 7 * 24 * 60 * 60 * 1000;
 
     const { rows } = await pool.query<{

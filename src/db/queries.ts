@@ -425,10 +425,70 @@ export async function getSentimentMomentum(
   return rows;
 }
 
+// ── Regional Divergence ───────────────────────────────────────────────
+
+export interface RegionalDivergenceRow {
+  entity_id: string;
+  entity_name: string;
+  eng_sentiment: number;
+  eng_mentions: number;
+  ind_sentiment: number;
+  ind_mentions: number;
+  divergence: number;
+}
+
+export async function getRegionalDivergence(
+  pool: Pool,
+  startTime: number,
+  endTime: number,
+  minMentions: number = 3,
+): Promise<RegionalDivergenceRow[]> {
+  const { rows } = await pool.query<RegionalDivergenceRow>(
+    `WITH per_lang AS (
+       SELECT
+         em.entity_id,
+         e.name AS entity_name,
+         em.language,
+         AVG(em.sentiment) AS avg_sentiment,
+         COUNT(*)::integer AS mention_count
+       FROM entity_mentions em
+       JOIN entities e ON e.id = em.entity_id
+       WHERE em.created_at >= $1
+         AND em.created_at <= $2
+         AND em.language IN ('eng', 'ind')
+         AND em.sentiment IS NOT NULL
+       GROUP BY em.entity_id, e.name, em.language
+       HAVING COUNT(*) >= $3
+     )
+     SELECT
+       eng.entity_id,
+       eng.entity_name,
+       eng.avg_sentiment AS eng_sentiment,
+       eng.mention_count AS eng_mentions,
+       ind.avg_sentiment AS ind_sentiment,
+       ind.mention_count AS ind_mentions,
+       ABS(eng.avg_sentiment - ind.avg_sentiment) AS divergence
+     FROM per_lang eng
+     JOIN per_lang ind
+       ON eng.entity_id = ind.entity_id
+       AND eng.language = 'eng'
+       AND ind.language = 'ind'
+     WHERE ABS(eng.avg_sentiment - ind.avg_sentiment) > 0.3
+     ORDER BY divergence DESC`,
+    [startTime, endTime, minMentions],
+  );
+  return rows;
+}
+
+// ── Daily Sentiment Computation ───────────────────────────────────────
+
 export async function computeDailySentiment(
   pool: Pool,
   date: string,
 ): Promise<{ entity_id: string; avg_sentiment: number; mention_count: number }[]> {
+  const dayStart = new Date(`${date}T00:00:00Z`).getTime();
+  const dayEnd = dayStart + 86_400_000; // +24h in ms
+
   const { rows } = await pool.query<{
     entity_id: string;
     avg_sentiment: number;
@@ -439,9 +499,9 @@ export async function computeDailySentiment(
        AVG(sentiment) AS avg_sentiment,
        COUNT(*)::integer AS mention_count
      FROM entity_mentions
-     WHERE to_char(to_timestamp(created_at), 'YYYY-MM-DD') = $1
+     WHERE created_at >= $1 AND created_at < $2
      GROUP BY entity_id`,
-    [date],
+    [dayStart, dayEnd],
   );
   return rows;
 }

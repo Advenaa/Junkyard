@@ -29,7 +29,10 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
-function bytesToVector(buf: Buffer): Float32Array {
+function bytesToVector(buf: Buffer): Float32Array | null {
+  if (buf.byteLength === 0 || buf.byteLength % 4 !== 0) {
+    return null;
+  }
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   return new Float32Array(ab);
 }
@@ -85,8 +88,18 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
     const map = maps[type];
     map.clear();
 
+    let skipped = 0;
     for (const row of result.rows) {
-      map.set(row.target_id, bytesToVector(row.vector));
+      const vec = bytesToVector(row.vector);
+      if (!vec) {
+        skipped++;
+        continue;
+      }
+      map.set(row.target_id, vec);
+    }
+
+    if (skipped > 0) {
+      log.warn({ type, skipped }, 'vector-cache: skipped corrupt vectors (invalid byte length)');
     }
 
     return map.size;

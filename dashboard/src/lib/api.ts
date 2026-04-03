@@ -8,7 +8,7 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
   });
   if (res.status === 401 && window.location.pathname !== '/login') {
     window.location.href = '/login';
-    throw new Error('Session expired');
+    return new Promise(() => {}) as Promise<T>;
   }
   if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
   return res.json() as Promise<T>;

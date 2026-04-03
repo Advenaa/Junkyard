@@ -81,9 +81,26 @@ function buildUrl(sourceId: string, cursor?: string): string {
 
 const DEFAULT_RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
-export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
-  let halted = false;
+export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
   const sourceRateLimits = new Map<string, number>();
+
+  /** Persist halted status in source_state so it survives process restarts. */
+  async function haltAllTwitterSources(): Promise<void> {
+    await pool.query(
+      `UPDATE source_state SET status = 'halted', last_error = $1
+       WHERE source = 'twitter'`,
+      ['HALTED:401_invalid_api_key'],
+    );
+  }
+
+  /** Check whether this twitter source is halted in source_state. */
+  async function isSourceHalted(sourceId: string): Promise<boolean> {
+    const { rows } = await pool.query<{ status: string }>(
+      'SELECT status FROM source_state WHERE source = $1 AND source_id = $2',
+      ['twitter', sourceId],
+    );
+    return rows[0]?.status === 'halted';
+  }
 
   async function fetchPage(
     sourceId: string,
@@ -104,10 +121,8 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
     }
 
     if (response.status === 401) {
-      if (!halted) {
-        log.fatal({ sourceId, status: 401 }, 'Twitter API key invalid — halting all Twitter polling');
-        halted = true;
-      }
+      log.fatal({ sourceId, status: 401 }, 'Twitter API key invalid — halting all Twitter polling');
+      await haltAllTwitterSources();
       return null;
     }
 
@@ -166,7 +181,8 @@ export function createTwitterAdapter(config: Config, _pool: Pool, log: Logger) {
       return empty;
     }
 
-    if (halted) {
+    if (await isSourceHalted(sourceId)) {
+      log.debug({ sourceId }, 'Twitter poll skipped — source halted (401)');
       return empty;
     }
 

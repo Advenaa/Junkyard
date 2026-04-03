@@ -91,6 +91,10 @@ export function createBackup(config: Config, log: Logger) {
 
       await rename(tmpPath, filePath);
       const fileInfo = await stat(filePath);
+      if (fileInfo.size < 1024) {
+        await unlink(filePath).catch(() => {});
+        throw new Error(`backup file suspiciously small: ${fileInfo.size} bytes`);
+      }
       log.info(
         { filePath, sizeBytes: fileInfo.size },
         'backup: completed successfully',

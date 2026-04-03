@@ -35,7 +35,10 @@ export function registerOAuthRoutes(
 ): void {
 
   // Track consumed OAuth states to prevent replay (AU-007)
+  // NOTE: In-memory set is safe for single-process deployment (pm2/systemd, NOT cluster mode).
+  // If deploying multi-process, move state tracking to Postgres.
   const consumedStates = new Set<string>();
+  const CONSUMED_STATES_MAX = 10_000;
 
   // --- GET /api/v1/auth/discord ---
   app.get('/api/v1/auth/discord', async (request, reply) => {
@@ -43,6 +46,14 @@ export function registerOAuthRoutes(
       return reply
         .status(503)
         .send({ error: 'Discord OAuth is not configured' });
+    }
+
+    // Cap consumed states to prevent memory leak (AU-020 / AU-023)
+    if (consumedStates.size >= CONSUMED_STATES_MAX) {
+      log.warn({ size: consumedStates.size }, 'OAuth consumed states at capacity — rejecting new initiation');
+      return reply
+        .status(503)
+        .send({ error: 'Too many pending OAuth sessions. Please try again later.' });
     }
 
     const state = crypto.randomBytes(32).toString('hex');

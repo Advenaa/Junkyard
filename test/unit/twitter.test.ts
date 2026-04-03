@@ -398,11 +398,28 @@ describe('Twitter adapter', () => {
   // poll handles 401 (API key revoked)
   // -------------------------------------------------------------------------
   describe('poll handles 401 (API key revoked)', () => {
+    /** Mock pool that tracks halted state via source_state writes */
+    function makeHaltAwarePool() {
+      let halted = false;
+      return {
+        query: async (sql: string) => {
+          if (typeof sql === 'string' && sql.includes("status = 'halted'")) {
+            halted = true;
+            return { rows: [], rowCount: 1 };
+          }
+          if (typeof sql === 'string' && sql.includes('SELECT status')) {
+            return { rows: halted ? [{ status: 'halted' }] : [] };
+          }
+          return { rows: [] };
+        },
+      } as any;
+    }
+
     it('does not crash on 401 and returns empty', async () => {
       globalThis.fetch = () => mockFetchResponse({}, 401);
 
       const log = makeLogger();
-      const adapter = createTwitterAdapter(makeConfig(), mockPool, log);
+      const adapter = createTwitterAdapter(makeConfig(), makeHaltAwarePool(), log);
       const { items, lastId } = await adapter.poll('@testuser', null);
 
       assert.equal(items.length, 0);
@@ -418,13 +435,13 @@ describe('Twitter adapter', () => {
       };
 
       const log = makeLogger();
-      const adapter = createTwitterAdapter(makeConfig(), mockPool, log);
+      const adapter = createTwitterAdapter(makeConfig(), makeHaltAwarePool(), log);
 
       // First call triggers the halt
       await adapter.poll('@testuser', null);
       assert.equal(fetchCalls, 1);
 
-      // Second call should be halted without hitting fetch
+      // Second call should be halted without hitting fetch (DB-backed halt)
       const result = await adapter.poll('@different_user', null);
       assert.equal(fetchCalls, 1, 'should not make another fetch call after halt');
       assert.equal(result.items.length, 0);
@@ -435,7 +452,7 @@ describe('Twitter adapter', () => {
       globalThis.fetch = () => mockFetchResponse({}, 401);
 
       const log = makeLogger();
-      const adapter = createTwitterAdapter(makeConfig(), mockPool, log);
+      const adapter = createTwitterAdapter(makeConfig(), makeHaltAwarePool(), log);
 
       await adapter.poll('@testuser', null);
       await adapter.poll('@testuser', null);

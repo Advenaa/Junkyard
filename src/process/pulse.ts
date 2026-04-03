@@ -40,11 +40,7 @@ Rules:
 - If sentiment drifted significantly on an entity, call it out explicitly.
 - Reference the prior pulse context to show continuity ("Previously X, now Y").
 - If nothing notable happened, keep the TL;DR to one sentence and use minimal sections.
-- All output in English.
-
-When <sentiment_momentum> data is provided:
-- Highlight entities with |momentum| > 0.3 in the TL;DR or key events.
-- Use labels: "sentiment accelerating", "sentiment declining", "sentiment reversing", "sentiment stable".`;
+- All output in English.`;
 
 // ── Types ────────────────────────────────────────────────────────────
 

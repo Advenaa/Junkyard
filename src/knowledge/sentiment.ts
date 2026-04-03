@@ -24,6 +24,11 @@ interface WindowAvgRow {
   avg_sentiment: number | null;
 }
 
+interface WindowSumRow {
+  sum_sentiment: number | null;
+  day_count: string; // COUNT returns bigint string in pg
+}
+
 interface MomentumRow {
   entity_id: string;
   entity_name: string;
@@ -106,8 +111,9 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
 
         // Recent window: last 3 days including today (dateString - 2 .. dateString)
         const recentStart = shiftDate(dateString, -2);
-        const { rows: recentRows } = await client.query<WindowAvgRow>(
-          `SELECT AVG(avg_sentiment) AS avg_sentiment
+        const { rows: recentRows } = await client.query<WindowSumRow>(
+          `SELECT SUM(avg_sentiment) AS sum_sentiment,
+                  COUNT(*)           AS day_count
            FROM entity_sentiment_daily
            WHERE entity_id = $1
              AND date >= $2
@@ -130,10 +136,11 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
         // Include today's value in the recent average calculation.
         // The recent window query above only covers already-persisted rows,
         // so we blend in today's fresh avg_sentiment manually.
-        const recentDbAvg = recentRows[0]?.avg_sentiment;
+        const recentSum = recentRows[0]?.sum_sentiment;
+        const recentCount = parseInt(recentRows[0]?.day_count ?? '0', 10);
         const recentAvg =
-          recentDbAvg !== null && recentDbAvg !== undefined
-            ? (recentDbAvg + agg.avg_sentiment) / 2
+          recentCount > 0 && recentSum !== null && recentSum !== undefined
+            ? (recentSum + agg.avg_sentiment) / (recentCount + 1)
             : agg.avg_sentiment;
 
         const priorAvg = priorRows[0]?.avg_sentiment;

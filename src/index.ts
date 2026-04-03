@@ -28,6 +28,7 @@ import { createBackup } from './ops/backup.js';
 import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
 import { createSentimentTracker } from './knowledge/sentiment.js';
+import { createDivergenceTracker } from './knowledge/divergence.js';
 import { getSources, resetCrashed, getAppConfig } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
@@ -76,7 +77,8 @@ program
     const summarizer = createSummarizer(pool, log, config, llm, entityManager);
     const correlator = createCorrelator(pool, log);
     const sentimentTracker = createSentimentTracker(pool, log);
-    const synthesizer = createSynthesizer(pool, log, config, llm, correlator, sentimentTracker);
+    const divergenceTracker = createDivergenceTracker(pool, log);
+    const synthesizer = createSynthesizer(pool, log, config, llm, correlator, sentimentTracker, divergenceTracker);
     const pulse = createPulse(pool, log, config, llm);
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
@@ -116,8 +118,8 @@ program
 
           const state = stateRows[0];
 
-          // Skip disabled sources
-          if (state?.status === 'disabled') return;
+          // Skip disabled or halted sources
+          if (state?.status === 'disabled' || state?.status === 'halted') return;
 
           // Check if enough time has elapsed since last poll
           const lastFetched = state?.last_fetched_at ?? 0;
