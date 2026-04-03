@@ -80,7 +80,7 @@ describe('Momentum calculation (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT on entity_sentiment_daily');
@@ -118,7 +118,7 @@ describe('Momentum calculation (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT');
@@ -151,7 +151,7 @@ describe('Momentum calculation (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT');
@@ -256,14 +256,15 @@ describe('Daily rollup SQL (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const aggCall = calls.find((c) => c.sql.includes('FROM entity_mentions'));
     assert.ok(aggCall, 'Should query entity_mentions for aggregation');
 
-    const expectedStart = new Date('2025-04-01T00:00:00Z').getTime();
+    // Jakarta midnight (UTC+7): 2025-04-01T00:00:00+07:00 = 2025-03-31T17:00:00Z
+    const expectedStart = new Date('2025-03-31T17:00:00Z').getTime();
     const expectedEnd = expectedStart + 86_400_000;
-    assert.equal(aggCall.params[0], expectedStart, 'Should pass epoch-ms start bound');
+    assert.equal(aggCall.params[0], expectedStart, 'Should pass epoch-ms start bound (Jakarta midnight)');
     assert.equal(aggCall.params[1], expectedEnd, 'Should pass epoch-ms end bound');
   });
 
@@ -279,7 +280,7 @@ describe('Daily rollup SQL (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const aggCall = calls.find((c) => c.sql.includes('FROM entity_mentions'));
     assert.ok(aggCall, 'Should query entity_mentions');
@@ -321,7 +322,7 @@ describe('Daily rollup SQL (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCalls = calls.filter((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.equal(upsertCalls.length, 1, 'Should issue a single bulk UPSERT for all entities');
@@ -364,7 +365,7 @@ describe('Daily rollup SQL (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should find UPSERT query');
@@ -390,7 +391,7 @@ describe('Daily rollup SQL (runDaily)', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCalls = calls.filter((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.equal(upsertCalls.length, 0, 'Should not UPSERT when no mentions exist');
@@ -602,7 +603,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT');
@@ -647,7 +648,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT');
@@ -685,7 +686,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT');
@@ -723,7 +724,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
     });
 
     const tracker = createSentimentTracker(pool as any, noopLog);
-    await tracker.runDaily('2025-04-01');
+    await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     // Verify the recent window query uses SUM, not AVG
     const recentWindowCall = calls.find(

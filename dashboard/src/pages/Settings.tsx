@@ -165,9 +165,15 @@ function DeliveryTab() {
   const [testResult, setTestResult] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<Config>('/config').then((res) => {
-      setConfig(res);
-      setWebhookUrl(res.webhookUrl ?? '');
+    apiFetch<{ digest_time?: string; timezone?: string; webhook_url?: string }>('/config').then((res) => {
+      const mapped: Config = {
+        webhookUrl: res.webhook_url ?? '',
+        digestTime: res.digest_time ?? '09:00',
+        timezone: res.timezone ?? 'Asia/Jakarta',
+        publicUrl: null,
+      };
+      setConfig(mapped);
+      setWebhookUrl(res.webhook_url ?? '');
     });
   }, []);
 
@@ -182,7 +188,7 @@ function DeliveryTab() {
     try {
       await apiFetch('/config', {
         method: 'PATCH',
-        body: JSON.stringify({ webhookUrl }),
+        body: JSON.stringify({ webhook_url: webhookUrl }),
       });
       setConfig((prev) => (prev ? { ...prev, webhookUrl } : prev));
     } catch {
@@ -208,7 +214,7 @@ function DeliveryTab() {
     try {
       await apiFetch('/config/test-webhook', {
         method: 'POST',
-        body: JSON.stringify({ webhookUrl }),
+        body: JSON.stringify({ url: webhookUrl }),
       });
       setTestResult('Test payload sent successfully.');
     } catch {

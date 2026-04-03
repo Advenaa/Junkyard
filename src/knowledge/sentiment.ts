@@ -43,9 +43,18 @@ function shiftDate(dateString: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Convert a YYYY-MM-DD date string to epoch-ms bounds [startMs, endMs). */
-function dateToEpochMsBounds(dateString: string): { startMs: number; endMs: number } {
-  const startMs = new Date(dateString + 'T00:00:00Z').getTime();
+/** Convert a YYYY-MM-DD date string to epoch-ms bounds [startMs, endMs) in the given timezone. */
+function dateToEpochMsBounds(dateString: string, timezone: string): { startMs: number; endMs: number } {
+  // Compute UTC offset for the given timezone (DST-safe, matches synthesize.ts approach)
+  const now = new Date();
+  const utcStr = now.toLocaleString('en-US', { timeZone: 'UTC' });
+  const localStr = now.toLocaleString('en-US', { timeZone: timezone });
+  const offsetMs = new Date(localStr).getTime() - new Date(utcStr).getTime();
+
+  // Midnight in target timezone expressed as UTC epoch
+  const [year, month, day] = dateString.split('-').map(Number);
+  const midnightUtc = Date.UTC(year, month - 1, day);
+  const startMs = midnightUtc - offsetMs;
   const endMs = startMs + 86_400_000; // +24h
   return { startMs, endMs };
 }
@@ -76,7 +85,7 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
    * Run daily after Stage 1 completes.
    * Aggregates today's entity mentions into entity_sentiment_daily with momentum.
    */
-  async function runDaily(dateString: string): Promise<void> {
+  async function runDaily(dateString: string, timezone: string): Promise<void> {
     const client = await pool.connect();
     try {
       // SM-006: Idempotency guard — skip if we already ran for this date
@@ -90,7 +99,7 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
       }
 
       // SM-005: Use epoch-ms range bounds instead of to_char() for index usage
-      const { startMs, endMs } = dateToEpochMsBounds(dateString);
+      const { startMs, endMs } = dateToEpochMsBounds(dateString, timezone);
 
       // 1. Aggregate today's mentions per entity
       const { rows: todayAggs } = await client.query<DailyAggRow>(

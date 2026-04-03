@@ -100,14 +100,29 @@ export async function createServer(
 
   // --- Reports ---
   app.get('/api/v1/reports', { preHandler: [authPreHandler] }, async (request) => {
-    const { limit: rawLimit, offset: rawOffset } = request.query as { limit?: string; offset?: string };
+    const { limit: rawLimit, offset: rawOffset, type } = request.query as { limit?: string; offset?: string; type?: string };
     const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
     const offset = Math.max(parseInt(rawOffset ?? '0', 10) || 0, 0);
+    const params: unknown[] = [limit, offset];
+    let whereClause = '';
+    if (type) {
+      params.push(type);
+      whereClause = `WHERE type = $${params.length}`;
+    }
     const { rows: reports } = await pool.query<ReportRow>(
-      `SELECT * FROM reports ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
-      [limit, offset],
+      `SELECT * FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      params,
     );
-    const { rows: countRows } = await pool.query<{ count: string }>(`SELECT COUNT(*) AS count FROM reports`);
+    const countParams: unknown[] = [];
+    let countWhere = '';
+    if (type) {
+      countParams.push(type);
+      countWhere = `WHERE type = $1`;
+    }
+    const { rows: countRows } = await pool.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM reports ${countWhere}`,
+      countParams,
+    );
     return { reports, total: parseInt(countRows[0].count, 10) };
   });
 
@@ -120,7 +135,7 @@ export async function createServer(
     if (rows.length === 0) {
       return reply.code(404).send({ error: 'Report not found' });
     }
-    return rows[0];
+    return reply.send({ report: rows[0] });
   });
 
   // --- Sources ---
@@ -256,6 +271,144 @@ export async function createServer(
       `SELECT * FROM users ORDER BY created_at DESC`,
     );
     return { users };
+  });
+
+  // --- PATCH /sources/:source/:sourceId (CD-002) ---
+  app.patch('/api/v1/sources/:source/:sourceId', {
+    preHandler: [authPreHandler, requireAdmin],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['enabled'],
+        properties: {
+          enabled: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+      params: {
+        type: 'object',
+        required: ['source', 'sourceId'],
+        properties: {
+          source: { type: 'string' },
+          sourceId: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { source, sourceId } = request.params as { source: string; sourceId: string };
+    const { enabled } = request.body as { enabled: boolean };
+    const newStatus = enabled ? 'active' : 'disabled';
+    const { rowCount } = await pool.query(
+      `UPDATE source_state SET status = $1 WHERE source = $2 AND source_id = $3`,
+      [newStatus, source, sourceId],
+    );
+    if (rowCount === 0) {
+      return reply.code(404).send({ error: 'Source not found' });
+    }
+    return { source, sourceId, status: newStatus };
+  });
+
+  // --- PATCH /users/:discordId (CD-003) ---
+  app.patch('/api/v1/users/:discordId', {
+    preHandler: [authPreHandler, requireAdmin],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['role'],
+        properties: {
+          role: { type: 'string', enum: ['admin', 'viewer', 'blocked'] },
+        },
+        additionalProperties: false,
+      },
+      params: {
+        type: 'object',
+        required: ['discordId'],
+        properties: {
+          discordId: { type: 'string' },
+        },
+      },
+    },
+  }, async (request) => {
+    const { discordId } = request.params as { discordId: string };
+    const { role } = request.body as { role: string };
+    await pool.query(
+      `INSERT INTO users (discord_id, role) VALUES ($1, $2) ON CONFLICT (discord_id) DO UPDATE SET role = $2`,
+      [discordId, role],
+    );
+    return { discordId, role };
+  });
+
+  // --- GET /api/v1/status (CD-004) ---
+  app.get('/api/v1/status', { preHandler: [authPreHandler] }, async () => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const { rows } = await pool.query<{
+      items_ready: string;
+      items_processing: string;
+      summaries_today: string;
+      cost_today: string;
+    }>(
+      `SELECT
+        (SELECT count(*) FROM items WHERE status = 'ready') AS items_ready,
+        (SELECT count(*) FROM items WHERE status = 'processing') AS items_processing,
+        (SELECT count(*) FROM summaries WHERE created_at > $1) AS summaries_today,
+        (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage WHERE created_at > $1) AS cost_today`,
+      [startOfToday],
+    );
+    const row = rows[0];
+    return {
+      items_ready: parseInt(row.items_ready, 10),
+      items_processing: parseInt(row.items_processing, 10),
+      summaries_today: parseInt(row.summaries_today, 10),
+      cost_today: parseFloat(row.cost_today),
+    };
+  });
+
+  // --- POST /api/v1/config/test-webhook (CD-005) ---
+  app.post('/api/v1/config/test-webhook', {
+    preHandler: [authPreHandler, requireAdmin],
+    schema: {
+      body: {
+        type: 'object',
+        required: ['url'],
+        properties: {
+          url: { type: 'string', minLength: 1, maxLength: 2048 },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (request, reply) => {
+    const { url } = request.body as { url: string };
+    const validation = await validateUrl(url);
+    if (!validation.valid) {
+      return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason}` });
+    }
+    try {
+      const payload = JSON.stringify({
+        embeds: [{
+          title: 'Podders Test Webhook',
+          description: 'If you can see this, your webhook is configured correctly.',
+          color: 0x5B8DEF,
+          timestamp: new Date().toISOString(),
+          footer: { text: 'podders — test delivery' },
+        }],
+        allowed_mentions: { parse: [] },
+      });
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        return reply.code(400).send({ error: `Webhook returned ${response.status}`, detail: text });
+      }
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      return reply.code(400).send({ error: `Webhook delivery failed: ${message}` });
+    }
   });
 
   // --- Static files (dashboard SPA) ---

@@ -315,7 +315,7 @@ import type { DivergenceEntry } from '../knowledge/divergence.js';
 export type { MomentumEntry, DivergenceEntry };
 
 export interface SentimentTracker {
-  runDaily(dateString: string): Promise<void>;
+  runDaily(dateString: string, timezone: string): Promise<void>;
   getMomentumContext(entityIds: string[]): Promise<MomentumEntry[]>;
 }
 

@@ -383,6 +383,62 @@ const migrations: Migration[] = [
     await client.query(`DROP INDEX IF EXISTS idx_items_claim`);
     await client.query(`CREATE INDEX idx_items_claim ON items(status, source, source_id, timestamp)`);
   },
+
+  // Migration 13: Widen all epoch-ms columns from INTEGER to BIGINT (AE-002)
+  // Date.now() returns ~1.7 trillion which overflows PostgreSQL INTEGER (max ~2.1 billion).
+  // ALTER TYPE INTEGER → BIGINT is non-destructive; existing rows are preserved.
+  async (client) => {
+    // sources
+    await client.query(`ALTER TABLE sources ALTER COLUMN added_at TYPE BIGINT`);
+
+    // source_state
+    await client.query(`ALTER TABLE source_state ALTER COLUMN last_fetched_at TYPE BIGINT`);
+    await client.query(`ALTER TABLE source_state ALTER COLUMN next_retry_at TYPE BIGINT`);
+
+    // source_rate_history
+    await client.query(`ALTER TABLE source_rate_history ALTER COLUMN updated_at TYPE BIGINT`);
+
+    // items
+    await client.query(`ALTER TABLE items ALTER COLUMN timestamp TYPE BIGINT`);
+    await client.query(`ALTER TABLE items ALTER COLUMN created_at TYPE BIGINT`);
+
+    // summaries
+    await client.query(`ALTER TABLE summaries ALTER COLUMN window_start TYPE BIGINT`);
+    await client.query(`ALTER TABLE summaries ALTER COLUMN window_end TYPE BIGINT`);
+    await client.query(`ALTER TABLE summaries ALTER COLUMN created_at TYPE BIGINT`);
+
+    // entities
+    await client.query(`ALTER TABLE entities ALTER COLUMN first_seen TYPE BIGINT`);
+    await client.query(`ALTER TABLE entities ALTER COLUMN last_seen TYPE BIGINT`);
+
+    // entity_mentions
+    await client.query(`ALTER TABLE entity_mentions ALTER COLUMN created_at TYPE BIGINT`);
+
+    // reports
+    await client.query(`ALTER TABLE reports ALTER COLUMN delivered_at TYPE BIGINT`);
+    await client.query(`ALTER TABLE reports ALTER COLUMN created_at TYPE BIGINT`);
+
+    // users
+    await client.query(`ALTER TABLE users ALTER COLUMN created_at TYPE BIGINT`);
+    await client.query(`ALTER TABLE users ALTER COLUMN last_login_at TYPE BIGINT`);
+
+    // sessions
+    await client.query(`ALTER TABLE sessions ALTER COLUMN expires_at TYPE BIGINT`);
+    await client.query(`ALTER TABLE sessions ALTER COLUMN last_refreshed_at TYPE BIGINT`);
+    await client.query(`ALTER TABLE sessions ALTER COLUMN created_at TYPE BIGINT`);
+
+    // llm_usage
+    await client.query(`ALTER TABLE llm_usage ALTER COLUMN created_at TYPE BIGINT`);
+
+    // health_events
+    await client.query(`ALTER TABLE health_events ALTER COLUMN created_at TYPE BIGINT`);
+
+    // narratives
+    await client.query(`ALTER TABLE narratives ALTER COLUMN created_at TYPE BIGINT`);
+
+    // embeddings
+    await client.query(`ALTER TABLE embeddings ALTER COLUMN created_at TYPE BIGINT`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

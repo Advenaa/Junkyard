@@ -274,7 +274,7 @@ program
       try {
         const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
-        await sentimentTracker.runDaily(todayStr);
+        await sentimentTracker.runDaily(todayStr, timezone);
       } catch (err: unknown) { log.error({ err }, 'sentiment rollup failed'); }
       try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
       try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }

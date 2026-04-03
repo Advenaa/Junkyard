@@ -61,13 +61,16 @@ describe('HM-001: cost spike timezone fix', () => {
     );
   });
 
-  it('uses timezone-aware API (toLocaleDateString with timeZone option)', () => {
+  it('uses timezone-aware day boundary (SQL AT TIME ZONE or JS toLocaleDateString)', () => {
     const fnStart = source.indexOf('async function checkCostSpike');
     const fnBody = source.slice(fnStart, source.indexOf('\n  async function', fnStart + 1));
 
+    const usesAtTimeZone = fnBody.includes('AT TIME ZONE');
+    const usesToLocaleDateString = fnBody.includes('toLocaleDateString') && fnBody.includes('timeZone');
+
     assert.ok(
-      fnBody.includes('toLocaleDateString') && fnBody.includes('timeZone'),
-      'checkCostSpike must use toLocaleDateString with timeZone for timezone-aware day boundary',
+      usesAtTimeZone || usesToLocaleDateString,
+      'checkCostSpike must use AT TIME ZONE or toLocaleDateString for timezone-aware day boundary',
     );
   });
 

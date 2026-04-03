@@ -187,11 +187,7 @@ export function createHealthMonitor(
   }
 
   async function checkCostSpike(): Promise<HealthCheckResult> {
-    const now = Date.now();
     const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    const todayStr = new Date(now).toLocaleDateString('en-CA', { timeZone: timezone });
-    const todayStart = new Date(`${todayStr}T00:00:00`).getTime();
-    const sevenDaysAgo = todayStart - 7 * 24 * 60 * 60 * 1000;
 
     const { rows } = await pool.query<{
       today_cost: string | null;
@@ -199,12 +195,14 @@ export function createHealthMonitor(
     }>(`
       SELECT
         (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage
-         WHERE created_at >= $1) AS today_cost,
+         WHERE created_at >= EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000
+        ) AS today_cost,
         (SELECT COALESCE(SUM(cost_usd), 0) / 7.0
            FROM llm_usage
-           WHERE created_at >= $2 AND created_at < $1
+           WHERE created_at >= EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1) - INTERVAL '7 days') * 1000
+             AND created_at < EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000
         ) AS avg_cost
-    `, [todayStart, sevenDaysAgo]);
+    `, [timezone]);
 
     const todayCost = parseFloat(rows[0].today_cost ?? '0');
     const avgCost = parseFloat(rows[0].avg_cost ?? '0');
@@ -339,9 +337,23 @@ export function createHealthMonitor(
 
   async function check(): Promise<void> {
     const results = await runChecks();
+    const dbDown = results.some(r => r.name === 'db_connectivity' && r.status === 'critical');
 
     for (const result of results) {
       if (result.status === 'ok') continue;
+
+      if (dbDown) {
+        // Can't write to DB, but still alert for critical
+        if (result.status === 'critical' && config.alertWebhookUrl) {
+          await sendAlertWebhook({
+            category: result.name,
+            severity: result.status,
+            message: result.message ?? `${result.name} check failed`,
+            metadata: { checkName: result.name, status: result.status },
+          }).catch(err => log.error({ err }, 'alert webhook failed'));
+        }
+        continue;
+      }
 
       await insertEvent({
         category: result.name,
