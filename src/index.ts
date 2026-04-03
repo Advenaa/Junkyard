@@ -27,6 +27,7 @@ import { createHealthMonitor } from './health.js';
 import { createBackup } from './ops/backup.js';
 import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
+import { createSentimentTracker } from './knowledge/sentiment.js';
 import { getSources, resetCrashed, getAppConfig } from './db/queries.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
@@ -74,7 +75,8 @@ program
     const entityManager = createEntityManager(pool, log, config, llm);
     const summarizer = createSummarizer(pool, log, config, llm, entityManager);
     const correlator = createCorrelator(pool, log);
-    const synthesizer = createSynthesizer(pool, log, config, llm, correlator);
+    const sentimentTracker = createSentimentTracker(pool, log);
+    const synthesizer = createSynthesizer(pool, log, config, llm, correlator, sentimentTracker);
     const pulse = createPulse(pool, log, config, llm);
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
@@ -266,6 +268,12 @@ program
       let reportRow = null;
       try { await embedPipeline.run(); } catch (err: unknown) { log.error({ err }, 'embed pipeline failed'); }
       try { await narrativeDetector.detectNarratives(); } catch (err: unknown) { log.error({ err }, 'narrative detection failed'); }
+      // Sentiment rollup: compute daily momentum before synthesis uses it
+      try {
+        const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+        await sentimentTracker.runDaily(todayStr);
+      } catch (err: unknown) { log.error({ err }, 'sentiment rollup failed'); }
       try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
       try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
       // delivery only if report succeeded

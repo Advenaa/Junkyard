@@ -345,6 +345,22 @@ const migrations: Migration[] = [
       `ALTER TABLE items ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
     );
   },
+
+  // Migration 10: Create entity_sentiment_daily table for sentiment momentum (Feature 2.1)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE entity_sentiment_daily (
+        entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        date TEXT NOT NULL,
+        avg_sentiment REAL NOT NULL,
+        mention_count INTEGER NOT NULL DEFAULT 0,
+        momentum REAL,
+        PRIMARY KEY (entity_id, date)
+      )
+    `);
+    await client.query(`CREATE INDEX idx_sentiment_daily_date ON entity_sentiment_daily(date)`);
+    await client.query(`CREATE INDEX idx_sentiment_daily_entity ON entity_sentiment_daily(entity_id, date DESC)`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

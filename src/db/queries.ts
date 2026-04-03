@@ -96,6 +96,14 @@ export interface EmbeddingRow {
   created_at: number;
 }
 
+export interface SentimentDailyRow {
+  entity_id: string;
+  date: string;
+  avg_sentiment: number;
+  mention_count: number;
+  momentum: number | null;
+}
+
 // ── Items ───────────────────────────────────────────────────────────────
 
 export async function insertItem(
@@ -378,4 +386,62 @@ export async function insertEmbedding(
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [e.id, e.targetType, e.targetId, e.model, e.dimensions, e.vector, e.createdAt],
   );
+}
+
+// ── Sentiment Daily ────────────────────────────────────────────────────
+
+export async function upsertSentimentDaily(
+  pool: Pool,
+  entityId: string,
+  date: string,
+  avgSentiment: number,
+  mentionCount: number,
+  momentum: number | null,
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO entity_sentiment_daily (entity_id, date, avg_sentiment, mention_count, momentum)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (entity_id, date) DO UPDATE SET
+       avg_sentiment = EXCLUDED.avg_sentiment,
+       mention_count = EXCLUDED.mention_count,
+       momentum = EXCLUDED.momentum`,
+    [entityId, date, avgSentiment, mentionCount, momentum],
+  );
+}
+
+export async function getSentimentMomentum(
+  pool: Pool,
+  entityIds: string[],
+  days: number,
+): Promise<SentimentDailyRow[]> {
+  const { rows } = await pool.query<SentimentDailyRow>(
+    `SELECT entity_id, date, avg_sentiment, mention_count, momentum
+     FROM entity_sentiment_daily
+     WHERE entity_id = ANY($1)
+       AND date >= (CURRENT_DATE - ($2 || ' days')::interval)::text
+     ORDER BY entity_id, date DESC`,
+    [entityIds, days],
+  );
+  return rows;
+}
+
+export async function computeDailySentiment(
+  pool: Pool,
+  date: string,
+): Promise<{ entity_id: string; avg_sentiment: number; mention_count: number }[]> {
+  const { rows } = await pool.query<{
+    entity_id: string;
+    avg_sentiment: number;
+    mention_count: number;
+  }>(
+    `SELECT
+       entity_id,
+       AVG(sentiment) AS avg_sentiment,
+       COUNT(*)::integer AS mention_count
+     FROM entity_mentions
+     WHERE to_char(to_timestamp(created_at), 'YYYY-MM-DD') = $1
+     GROUP BY entity_id`,
+    [date],
+  );
+  return rows;
 }

@@ -30,7 +30,7 @@ Return ONLY valid JSON matching this schema:
 {
   "tldr": "1-2 sentence update (max 280 chars for mobile)",
   "keyEvents": ["what happened in the last 3 hours, max 5"],
-  "entitySentiment": [{"name": "Entity", "sentiment": -1 to 1, "reason": "brief reason"}],
+  "entitySentiment": [{"name": "Entity", "sentiment": -1 to 1, "reason": "brief reason (include momentum label if available)"}],
   "sections": [{"title": "Theme", "body": "analysis"}],
   "newProjects": []
 }
@@ -40,7 +40,11 @@ Rules:
 - If sentiment drifted significantly on an entity, call it out explicitly.
 - Reference the prior pulse context to show continuity ("Previously X, now Y").
 - If nothing notable happened, keep the TL;DR to one sentence and use minimal sections.
-- All output in English.`;
+- All output in English.
+
+When <sentiment_momentum> data is provided:
+- Highlight entities with |momentum| > 0.3 in the TL;DR or key events.
+- Use labels: "sentiment accelerating", "sentiment declining", "sentiment reversing", "sentiment stable".`;
 
 // ── Types ────────────────────────────────────────────────────────────
 
