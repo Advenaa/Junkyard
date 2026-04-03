@@ -21,6 +21,8 @@ interface EmbedTarget {
 // ── Pipeline ──────────────────────────────────────────────────────────
 
 export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder, cache: VectorCache) {
+  let running = false;
+
   async function fetchUnembedded(
     targetType: string,
     tableName: string,
@@ -105,34 +107,43 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
   }
 
   async function run(): Promise<number> {
-    if (!embedder.isAvailable()) return 0;
-
-    // Note: items are NOT embedded — only summaries and reports are searchable via vector cache.
-    // Embedding raw items would waste Gemini quota without adding search value.
-    const [summaryRows, reportRows] = await Promise.all([
-      fetchUnembedded('summary', 'summaries', 'body'),
-      fetchUnembedded('report', 'reports', 'body'),
-    ]);
-
-    const targets: EmbedTarget[] = [
-      ...summaryRows.map(r => ({ id: r.id, text: r.text, type: 'summary' as const })),
-      ...reportRows.map(r => ({ id: r.id, text: r.text, type: 'report' as const })),
-    ];
-
-    if (targets.length === 0) {
-      log.debug('embed-pipeline: nothing to embed');
+    if (running) {
+      log.debug('embed-pipeline: already running, skipping');
       return 0;
     }
+    running = true;
+    try {
+      if (!embedder.isAvailable()) return 0;
 
-    log.info(
-      { summaries: summaryRows.length, reports: reportRows.length },
-      'embed-pipeline: embedding batch',
-    );
+      // Note: items are NOT embedded — only summaries and reports are searchable via vector cache.
+      // Embedding raw items would waste Gemini quota without adding search value.
+      const [summaryRows, reportRows] = await Promise.all([
+        fetchUnembedded('summary', 'summaries', 'body'),
+        fetchUnembedded('report', 'reports', 'body'),
+      ]);
 
-    const count = await embedTargets(targets);
+      const targets: EmbedTarget[] = [
+        ...summaryRows.map(r => ({ id: r.id, text: r.text, type: 'summary' as const })),
+        ...reportRows.map(r => ({ id: r.id, text: r.text, type: 'report' as const })),
+      ];
 
-    log.info({ count }, 'embed-pipeline: batch complete');
-    return count;
+      if (targets.length === 0) {
+        log.debug('embed-pipeline: nothing to embed');
+        return 0;
+      }
+
+      log.info(
+        { summaries: summaryRows.length, reports: reportRows.length },
+        'embed-pipeline: embedding batch',
+      );
+
+      const count = await embedTargets(targets);
+
+      log.info({ count }, 'embed-pipeline: batch complete');
+      return count;
+    } finally {
+      running = false;
+    }
   }
 
   return { run };

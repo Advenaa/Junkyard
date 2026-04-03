@@ -135,6 +135,17 @@ function silhouetteScore(
   return counted === 0 ? 0 : totalSilhouette / counted;
 }
 
+/** Validate a timezone string. Returns the timezone if valid, fallback otherwise. */
+function validateTimezone(tz: string, fallback: string, log: Logger): string {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return tz;
+  } catch {
+    log.warn({ timezone: tz }, `Invalid timezone "${tz}", falling back to ${fallback}`);
+    return fallback;
+  }
+}
+
 /** Get the epoch timestamp for midnight of a given YYYY-MM-DD date in a timezone. */
 export function midnightEpoch(dateStr: string, tz: string): number {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -197,6 +208,7 @@ export function createNarrativeDetector(
     } catch {
       log.warn('Could not read timezone from app_config, defaulting to Asia/Jakarta');
     }
+    timezone = validateTimezone(timezone, 'Asia/Jakarta', log);
 
     const now = new Date();
     const todayStr = now.toLocaleDateString('en-CA', { timeZone: timezone });

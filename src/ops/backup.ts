@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, unlink, stat } from 'node:fs/promises';
+import { mkdir, readdir, rename, unlink, stat } from 'node:fs/promises';
 import { createGzip } from 'node:zlib';
 import { join } from 'node:path';
 import type { Config } from '../config.js';
@@ -25,9 +25,18 @@ export function createBackup(config: Config, log: Logger) {
     try {
       await mkdir(config.dataDir, { recursive: true });
 
+      // Clean up any stale .tmp files from interrupted backups
+      const staleFiles = await readdir(config.dataDir);
+      for (const f of staleFiles) {
+        if (f.endsWith('.tmp')) {
+          await unlink(join(config.dataDir, f)).catch(() => {});
+        }
+      }
+
       const dateStr = formatDate(new Date());
       const filename = `podders_${dateStr}.sql.gz`;
       const filePath = join(config.dataDir, filename);
+      const tmpPath = filePath + '.tmp';
 
       await new Promise<void>((resolve, reject) => {
         // Parse connection string so credentials never appear as CLI args
@@ -57,7 +66,7 @@ export function createBackup(config: Config, log: Logger) {
         }, 300_000);
 
         const gzip = createGzip();
-        const output = createWriteStream(filePath);
+        const output = createWriteStream(tmpPath);
 
         let stderr = '';
         pgDump.stderr.on('data', (chunk: Buffer) => {
@@ -80,6 +89,7 @@ export function createBackup(config: Config, log: Logger) {
         gzip.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
       });
 
+      await rename(tmpPath, filePath);
       const fileInfo = await stat(filePath);
       log.info(
         { filePath, sizeBytes: fileInfo.size },

@@ -100,6 +100,17 @@ function computeAvgSentiment(report: MarketReport): number | null {
   return Math.round((sum / report.entitySentiment.length) * 100) / 100;
 }
 
+/** Validate a timezone string. Returns the timezone if valid, fallback otherwise. */
+function validateTimezone(tz: string, fallback: string, log: Logger): string {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return tz;
+  } catch {
+    log.warn({ timezone: tz }, `Invalid timezone "${tz}", falling back to ${fallback}`);
+    return fallback;
+  }
+}
+
 /**
  * Compute the current UTC offset in hours for a given IANA timezone.
  * Handles DST transitions dynamically — no static offset map needed.
@@ -234,15 +245,22 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
     log.info({ windowStart, windowEnd: now }, 'Running 3-hour pulse');
 
     // Load summaries from the last 3 hours
-    const rows = await getSummariesByTimeWindow(pool, windowStart, now);
+    let summaryRows = await getSummariesByTimeWindow(pool, windowStart, now);
 
     // Quality gate: skip if no summaries
-    if (rows.length === 0) {
+    if (summaryRows.length === 0) {
       log.info('No summaries in the last 3 hours, skipping pulse');
       return null;
     }
 
-    log.info({ summaryCount: rows.length }, 'Loaded summaries for pulse');
+    // Cap summaries to prevent unbounded LLM cost during high activity
+    const MAX_PULSE_SUMMARIES = 50;
+    if (summaryRows.length > MAX_PULSE_SUMMARIES) {
+      log.info({ total: summaryRows.length, capped: MAX_PULSE_SUMMARIES }, 'Capping pulse summaries');
+      summaryRows = summaryRows.slice(-MAX_PULSE_SUMMARIES); // keep newest
+    }
+
+    log.info({ summaryCount: summaryRows.length }, 'Loaded summaries for pulse');
 
     // Parse summaries and collect entity sentiments
     const parsedSummaries: {
@@ -255,7 +273,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
     let hasBreaking = false;
     let hasElevated = false;
 
-    for (const row of rows) {
+    for (const row of summaryRows) {
       const parsed = parseSummaryBody(row.body);
       if (!parsed) {
         log.warn({ summaryId: row.id }, 'Failed to parse summary body, skipping');
@@ -371,7 +389,8 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM) {
 
     // Insert report
     const reportId = ulid();
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const rawTz = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const timezone = validateTimezone(rawTz, 'Asia/Jakarta', log);
     const dateString = getDateString(timezone);
     const avgSentiment = computeAvgSentiment(report);
 

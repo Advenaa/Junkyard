@@ -153,9 +153,16 @@ export function createChatHandler(
     toolMap.set(tool.name, tool);
   }
 
-  // Periodic cleanup of idle conversations
+  // Periodic cleanup of idle conversations and stale token entries
   const cleanupInterval = setInterval(() => {
     conversations.cleanup();
+
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [uid, entry] of userTokens) {
+      if (entry.day !== today) {
+        userTokens.delete(uid);
+      }
+    }
   }, 600_000); // every 10 minutes
 
   // Allow cleanup interval to not block process exit

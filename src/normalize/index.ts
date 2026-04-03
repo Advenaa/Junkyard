@@ -44,6 +44,14 @@ export function createNormalizer(
       item.content = item.content.slice(0, end);
     }
 
+    // ── Gate 0.5 — Minimum content check ─────────────────────────────
+    const trimmed = item.content.trim();
+    if (trimmed.length < 5) {
+      log.debug({ id: item.id, contentLength: trimmed.length }, 'Content too short, dropping');
+      return 'dropped';
+    }
+    item.content = trimmed;
+
     // ── Gate 1.5 — Sanitize + Injection scan ────────────────────────
     item.content = sanitizeContent(item.content);
 

@@ -202,6 +202,7 @@ async function withConcurrencyLimit<T>(
 class TokenConnection {
   private ws: WebSocket | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatJitterTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatAcked = true;
   private reconnectAttempt = 0;
   private destroyed = false;
@@ -472,7 +473,8 @@ class TokenConnection {
 
     // First beat after jitter
     const jitter = Math.floor(intervalMs * Math.random());
-    setTimeout(() => {
+    this.heartbeatJitterTimer = setTimeout(() => {
+      this.heartbeatJitterTimer = null;
       if (this.destroyed) return;
       this.sendHeartbeat();
 
@@ -494,6 +496,10 @@ class TokenConnection {
   }
 
   private clearHeartbeat(): void {
+    if (this.heartbeatJitterTimer) {
+      clearTimeout(this.heartbeatJitterTimer);
+      this.heartbeatJitterTimer = null;
+    }
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;

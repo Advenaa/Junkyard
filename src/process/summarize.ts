@@ -377,7 +377,17 @@ export function createSummarizer(
           return [];
         }
         if (chunk.length <= 1) {
-          log.error({ source, sourceId }, 'Cannot split single-item chunk further');
+          log.error(
+            { itemId: chunk[0]?.id, source, sourceId },
+            'Single item exceeds context length even after splitting — marking as failed',
+          );
+          // Mark this item as 'failed' so it doesn't loop forever
+          if (chunk[0]?.id) {
+            await pool.query(
+              `UPDATE items SET status = 'failed' WHERE id = $1`,
+              [chunk[0].id],
+            );
+          }
           return [];
         }
 
