@@ -47,10 +47,10 @@ function logSessionId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) + '...' : id;
 }
 
-const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-let lastCleanupAt = 0;
-
 export function createSessionManager(pool: Pool, log: Logger): SessionManager {
+  const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+  let lastCleanupAt = 0;
+
   return {
     async create(
       discordId: string,

@@ -99,6 +99,23 @@ export function createHealthMonitor(
     return { name: 'source_disabled', status: 'ok' };
   }
 
+  async function checkSourceHalted(): Promise<HealthCheckResult> {
+    const { rows } = await pool.query<{ source: string; source_id: string }>(`
+      SELECT s.source, s.source_id FROM sources s
+      JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
+      WHERE ss.status = 'halted'
+    `);
+    if (rows.length > 0) {
+      const labels = rows.map(r => `${r.source}:${r.source_id}`).join(', ');
+      return {
+        name: 'source_halted',
+        status: 'critical',
+        message: `Halted sources (likely auth failure): ${labels}`,
+      };
+    }
+    return { name: 'source_halted', status: 'ok' };
+  }
+
   async function checkLlmFailures(): Promise<HealthCheckResult> {
     const oneHourAgo = Date.now() - 60 * 60 * 1000;
 
@@ -312,6 +329,7 @@ export function createHealthMonitor(
     const dbDependentChecks = [
       checkSourceSilence(),
       checkSourceDisabled(),
+      checkSourceHalted(),
       checkLlmFailures(),
       checkMissedPulse(),
       checkMissedDaily(),
@@ -319,7 +337,7 @@ export function createHealthMonitor(
     ];
 
     const settled = await Promise.allSettled(dbDependentChecks);
-    const names = ['source_silence', 'source_disabled', 'llm_failures', 'missed_pulse', 'missed_daily', 'cost_spike'];
+    const names = ['source_silence', 'source_disabled', 'source_halted', 'llm_failures', 'missed_pulse', 'missed_daily', 'cost_spike'];
 
     const results: HealthCheckResult[] = [dbResult, checkDbPoolExhaustion()];
     for (let i = 0; i < settled.length; i++) {

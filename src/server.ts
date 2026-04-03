@@ -231,14 +231,47 @@ export async function createServer(
   });
 
   // --- Raw feed ---
-  app.get('/api/v1/feed/:sourceId', { preHandler: [authPreHandler] }, async (request) => {
+  app.get('/api/v1/feed/:sourceId', {
+    preHandler: [authPreHandler],
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 200 },
+          offset: { type: 'integer', minimum: 0 },
+          after: { type: 'integer', minimum: 0 },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (request) => {
     const { sourceId } = request.params as { sourceId: string };
-    const { limit: rawLimit } = request.query as { limit?: string };
-    const limit = Math.min(Math.max(parseInt(rawLimit ?? '50', 10) || 50, 1), 200);
-    const { rows: items } = await pool.query<ItemRow>(
-      `SELECT * FROM items WHERE source_id = $1 ORDER BY timestamp DESC LIMIT $2`,
-      [sourceId, limit],
-    );
+    const { limit: rawLimit, offset, after } = request.query as {
+      limit?: number;
+      offset?: number;
+      after?: number;
+    };
+    const limit = Math.min(Math.max(rawLimit ?? 50, 1), 200);
+
+    let sql = `SELECT * FROM items WHERE source_id = $1`;
+    const params: (string | number)[] = [sourceId];
+
+    if (after != null) {
+      params.push(after);
+      sql += ` AND timestamp > $${params.length}`;
+    }
+
+    sql += ` ORDER BY timestamp DESC`;
+
+    params.push(limit);
+    sql += ` LIMIT $${params.length}`;
+
+    if (offset != null) {
+      params.push(offset);
+      sql += ` OFFSET $${params.length}`;
+    }
+
+    const { rows: items } = await pool.query<ItemRow>(sql, params);
     return { items };
   });
 

@@ -99,7 +99,6 @@ program
 
     async function onSourcePollTick(): Promise<void> {
       const sources = await getSources(pool);
-      const now = Date.now();
 
       // Load source_state for each source to decide if it's time to poll
       // Process sources with limited concurrency (max 5 parallel)
@@ -107,6 +106,7 @@ program
       for (let i = 0; i < sources.length; i += POLL_CONCURRENCY) {
         const batch = sources.slice(i, i + POLL_CONCURRENCY);
         const pollPromises = batch.map(async (src) => {
+          const now = Date.now(); // Fresh per-source to avoid stale timestamps across batches
           const { rows: stateRows } = await pool.query<{
             last_fetched_at: number | null;
             last_id: string | null;
@@ -333,19 +333,22 @@ program
       onCrashRecovery: async () => resetCrashed(pool),
     });
 
-    // ── 6. Start server ───────────────────────────────────────────────
+    // ── 6. Crash recovery (before server accepts requests) ─────────────
+    await resetCrashed(pool);
+
+    // ── 7. Start server ───────────────────────────────────────────────
     const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);
     const app = await createServer(config, pool, log, healthMonitor, chatHandler);
     await startServer(app, config.port, log);
 
-    // ── 7. Start background services ──────────────────────────────────
+    // ── 8. Start background services ──────────────────────────────────
     await vectorCache.load();
     await scheduler.start();
     await discordAdapter.connect();
 
     log.info('podders v2 started');
 
-    // ── 8. Graceful shutdown ──────────────────────────────────────────
+    // ── 9. Graceful shutdown ──────────────────────────────────────────
     let shuttingDown = false;
 
     const shutdown = async (reason?: string) => {
