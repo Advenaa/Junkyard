@@ -11,17 +11,28 @@
     "dev": "tsx watch src/index.ts -- run",
     "start": "node dist/index.js run",
     "test": "node --import tsx/esm --test test/unit/*.test.ts",
-    "migrate": "node dist/index.js migrate"
+    "test:dashboard": "cd dashboard && npx vitest run",
+    "migrate": "node dist/index.js migrate",
+    "lint": "eslint src/ dashboard/src/ test/",
+    "lint:fix": "eslint --fix src/ dashboard/src/ test/",
+    "format": "prettier --write src/ dashboard/src/ test/",
+    "format:check": "prettier --check src/ dashboard/src/ test/"
   },
   "private": true,
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@types/node": "^25.5.0",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.20.0",
     "@types/ws": "^8.18.1",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.0.1",
     "pino-pretty": "^13.1.3",
+    "prettier": "^3.8.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "typescript-eslint": "^8.58.0"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

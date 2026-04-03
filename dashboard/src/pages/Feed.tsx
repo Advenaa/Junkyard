@@ -29,7 +29,7 @@ interface FeedItem {
   engagement: Record<string, number> | null;
 }
 
-function normalizeFeedItem(raw: FeedItemRaw): FeedItem {
+export function normalizeFeedItem(raw: FeedItemRaw): FeedItem {
   let attachments: string[] = [];
   if (Array.isArray(raw.attachments)) {
     attachments = raw.attachments;
@@ -39,7 +39,7 @@ function normalizeFeedItem(raw: FeedItemRaw): FeedItem {
   return { ...raw, attachments };
 }
 
-function formatTime(ts: string): string {
+export function formatTime(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';

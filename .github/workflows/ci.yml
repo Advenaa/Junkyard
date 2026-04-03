@@ -46,10 +46,65 @@ jobs:
       - name: Build (TypeScript + Vite dashboard)
         run: npm run build
 
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true  # Non-blocking until codebase passes lint clean
+
+      - name: Format check
+        run: npm run format:check
+
       - name: Run unit tests
         run: npm test
         env:
           DATABASE_URL: postgresql://podders:podders@localhost:5432/podders_test
+
+      - name: Run dashboard tests
+        run: npm run test:dashboard
+
+  # Integration tests require real API keys configured as GitHub secrets:
+  # ANTHROPIC_API_KEY, GEMINI_API_KEY, TWITTERAPI_KEY
+  integration:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true  # API keys may not be configured yet
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: podders
+          POSTGRES_PASSWORD: podders
+          POSTGRES_DB: podders_integration
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U podders"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci && cd dashboard && npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://podders:podders@localhost:5432/podders_integration
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TWITTERAPI_KEY: ${{ secrets.TWITTERAPI_KEY }}
 
   deploy:
     needs: build-and-test
