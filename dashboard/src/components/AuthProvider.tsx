@@ -17,7 +17,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    apiFetch<User>('/auth/me').then(setUser).catch(() => setUser(null)).finally(() => setLoading(false));
+    const check = () => {
+      apiFetch<User>('/auth/me')
+        .then(setUser)
+        .catch(() => setUser(null))
+        .finally(() => setLoading(false));
+    };
+    check();
+
+    const onFocus = () => {
+      // Re-validate session when user returns to tab
+      apiFetch<User>('/auth/me').then(setUser).catch(() => setUser(null));
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
   }, []);
 
   const logout = async () => {

@@ -23,6 +23,7 @@ export function ReportList() {
   const [filter, setFilter] = useState<FilterType>('all');
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
@@ -44,7 +45,10 @@ export function ReportList() {
 
   useEffect(() => {
     setLoading(true);
-    fetchReports(0, false).finally(() => setLoading(false));
+    setError(null);
+    fetchReports(0, false)
+      .catch(() => setError('Failed to load reports. Please try again.'))
+      .finally(() => setLoading(false));
   }, [fetchReports]);
 
   const loadMore = async () => {
@@ -73,6 +77,14 @@ export function ReportList() {
           </button>
         ))}
       </div>
+
+      {/* Error */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-red-400">
+          <p>{error}</p>
+          <button onClick={() => { setError(null); setLoading(true); fetchReports(0, false).catch(() => setError('Failed to load reports. Please try again.')).finally(() => setLoading(false)); }} className="mt-2 text-sm underline">Retry</button>
+        </div>
+      )}
 
       {/* Report Cards */}
       {loading ? (

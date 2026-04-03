@@ -420,16 +420,15 @@ function UsersTab() {
 export function Settings() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const [activeTab, setActiveTab] = useState<Tab>('sources');
-
   const tabs: { key: Tab; label: string; adminOnly?: boolean }[] = [
-    { key: 'sources', label: 'Sources' },
-    { key: 'delivery', label: 'Delivery' },
+    { key: 'sources', label: 'Sources', adminOnly: true },
+    { key: 'delivery', label: 'Delivery', adminOnly: true },
     { key: 'pipeline', label: 'Pipeline' },
     { key: 'users', label: 'Users', adminOnly: true },
   ];
 
   const visibleTabs = tabs.filter((t) => !t.adminOnly || isAdmin);
+  const [activeTab, setActiveTab] = useState<Tab>(visibleTabs[0]?.key ?? 'pipeline');
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -453,8 +452,8 @@ export function Settings() {
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'sources' && <SourcesTab />}
-      {activeTab === 'delivery' && <DeliveryTab />}
+      {activeTab === 'sources' && isAdmin && <SourcesTab />}
+      {activeTab === 'delivery' && isAdmin && <DeliveryTab />}
       {activeTab === 'pipeline' && <PipelineTab />}
       {activeTab === 'users' && isAdmin && <UsersTab />}
     </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../lib/api';
+import { isSafeUrl } from '../lib/url';
 import { EmptyState } from '../components/EmptyState';
 
 interface FeedSource {
@@ -30,12 +31,14 @@ function formatTime(ts: string): string {
 }
 
 const PAGE_SIZE = 50;
+const MAX_ITEMS = 500;
 
 export function Feed() {
   const [sources, setSources] = useState<FeedSource[]>([]);
   const [selectedSource, setSelectedSource] = useState<string>('');
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [live, setLive] = useState(true);
@@ -61,35 +64,42 @@ export function Feed() {
   const fetchItems = useCallback(
     async (offset: number, mode: 'replace' | 'append' | 'prepend') => {
       if (!selectedSource) return;
-      let url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=${offset}`;
-      if (mode === 'prepend') {
-        // For polling, only request items newer than the most recent item
-        const current = itemsRef.current;
-        const newestTs = current.length > 0 ? current[0].timestamp : null;
-        if (newestTs) {
-          url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=0&after=${encodeURIComponent(newestTs)}`;
+      try {
+        setError(null);
+        let url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=${offset}`;
+        if (mode === 'prepend') {
+          // For polling, only request items newer than the most recent item
+          const current = itemsRef.current;
+          const newestTs = current.length > 0 ? current[0].timestamp : null;
+          if (newestTs) {
+            url = `/feed/${selectedSource}?limit=${PAGE_SIZE}&offset=0&after=${encodeURIComponent(newestTs)}`;
+          }
+          const res = await apiFetch<{ items: FeedItem[] }>(url);
+          if (res.items.length > 0) {
+            setItems((prev) => {
+              const existingIds = new Set(prev.map((item) => item.id));
+              const newItems = res.items.filter((item) => !existingIds.has(item.id));
+              if (newItems.length === 0) return prev;
+              const combined = [...newItems, ...prev];
+              return combined.length > MAX_ITEMS ? combined.slice(0, MAX_ITEMS) : combined;
+            });
+          }
+          return;
         }
         const res = await apiFetch<{ items: FeedItem[] }>(url);
-        if (res.items.length > 0) {
+        if (mode === 'append') {
           setItems((prev) => {
-            const existingIds = new Set(prev.map((item) => item.id));
-            const newItems = res.items.filter((item) => !existingIds.has(item.id));
-            return newItems.length > 0 ? [...newItems, ...prev] : prev;
+            const existingIds = new Set(prev.map((i) => i.id));
+            const newItems = res.items.filter((i: FeedItem) => !existingIds.has(i.id));
+            return [...prev, ...newItems];
           });
+        } else {
+          setItems(res.items);
         }
-        return;
+        setHasMore(res.items.length === PAGE_SIZE);
+      } catch (err) {
+        setError('Failed to load feed. Please try again.');
       }
-      const res = await apiFetch<{ items: FeedItem[] }>(url);
-      if (mode === 'append') {
-        setItems((prev) => {
-          const existingIds = new Set(prev.map((i) => i.id));
-          const newItems = res.items.filter((i: FeedItem) => !existingIds.has(i.id));
-          return [...prev, ...newItems];
-        });
-      } else {
-        setItems(res.items);
-      }
-      setHasMore(res.items.length === PAGE_SIZE);
     },
     [selectedSource],
   );
@@ -109,8 +119,12 @@ export function Feed() {
     }
 
     if (live && selectedSource) {
-      intervalRef.current = setInterval(() => {
-        fetchItems(0, 'prepend');
+      intervalRef.current = setInterval(async () => {
+        try {
+          await fetchItems(0, 'prepend');
+        } catch {
+          // Silently skip polling errors — user will see data from last successful fetch
+        }
       }, 10_000);
     }
 
@@ -166,6 +180,14 @@ export function Feed() {
         </div>
       </div>
 
+      {/* Error */}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-red-400">
+          <p>{error}</p>
+          <button onClick={() => fetchItems(0, 'replace')} className="mt-2 text-sm underline">Retry</button>
+        </div>
+      )}
+
       {/* Messages */}
       {loading ? (
         <div className="text-text-secondary font-body py-8">Loading...</div>
@@ -199,7 +221,7 @@ export function Feed() {
               {/* Attachments / Images */}
               {item.attachments && item.attachments.length > 0 && (
                 <div className="flex gap-2 flex-wrap pt-1">
-                  {item.attachments.slice(0, 4).map((url, i) => (
+                  {item.attachments.slice(0, 4).filter(isSafeUrl).map((url, i) => (
                     <a
                       key={i}
                       href={url}
