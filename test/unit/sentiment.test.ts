@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSentimentTracker } from '../../src/knowledge/sentiment.js';
 import type { Trend, MomentumEntry } from '../../src/knowledge/sentiment.js';
+import { computeDailySentiment } from '../../src/db/queries.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────────
 
@@ -52,42 +53,12 @@ function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows:
 
 describe('Momentum calculation (runDaily)', () => {
   it('computes negative momentum when recent sentiment < prior average', async () => {
-    // Scenario: 3 recent days [0.5, 0.3, 0.1] avg=0.3, prior 7 days avg=0.6
-    // Today's avg_sentiment = 0.3 (from entity_mentions)
-    // Recent DB window avg = 0.3 (average of prior 2 days already stored)
-    // recentAvg = (0.3 + 0.3) / 2 = 0.3
+    // Scenario: today's avg = 0.3, 2 prior recent days stored with sum=0.6 (avg 0.3 each)
+    // recentAvg = (0.6 + 0.3) / (2 + 1) = 0.3
     // priorAvg = 0.6
     // momentum = 0.3 - 0.6 = -0.3
-    const { pool, calls } = makeMockPool((sql) => {
-      // Today's aggregation from entity_mentions
-      if (sql.includes('FROM entity_mentions')) {
-        return {
-          rows: [{ entity_id: 'ent-1', avg_sentiment: 0.3, mention_count: '10' }],
-        };
-      }
-      // BEGIN / COMMIT / ROLLBACK
-      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
-        return { rows: [] };
-      }
-      // Recent window (last 3 days of entity_sentiment_daily)
-      if (sql.includes('entity_sentiment_daily') && !sql.includes('INSERT')) {
-        // First call = recent window, second call = prior window
-        if (!sql.includes('INSERT')) {
-          // We track which window call this is via the params
-        }
-        return { rows: [{ avg_sentiment: 0.3 }] };
-      }
-      // UPSERT
-      if (sql.includes('INSERT INTO entity_sentiment_daily')) {
-        return { rows: [], rowCount: 1 };
-      }
-      return { rows: [] };
-    });
-
-    // Override to distinguish recent vs prior window queries
     let windowCallCount = 0;
-    const origQuery = (pool as any).connect;
-    const { pool: pool2, calls: calls2 } = makeMockPool((sql) => {
+    const { pool, calls } = makeMockPool((sql) => {
       if (sql.includes('FROM entity_mentions')) {
         return {
           rows: [{ entity_id: 'ent-1', avg_sentiment: 0.3, mention_count: '10' }],
@@ -96,12 +67,11 @@ describe('Momentum calculation (runDaily)', () => {
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (sql.includes('entity_sentiment_daily') && !sql.includes('INSERT')) {
-        windowCallCount++;
-        if (windowCallCount === 1) {
-          // Recent window: avg of stored recent days
-          return { rows: [{ avg_sentiment: 0.3 }] };
-        }
+      if (sql.includes('SUM(avg_sentiment)')) {
+        // Recent window: 2 stored days, sum_sentiment=0.6
+        return { rows: [{ sum_sentiment: 0.6, day_count: '2' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
         // Prior window: avg of prior 7 days
         return { rows: [{ avg_sentiment: 0.6 }] };
       }
@@ -111,11 +81,10 @@ describe('Momentum calculation (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool2 as any, noopLog);
+    const tracker = createSentimentTracker(pool as any, noopLog);
     await tracker.runDaily('2025-04-01');
 
-    // Find the UPSERT call
-    const upsertCall = calls2.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
+    const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should have called UPSERT on entity_sentiment_daily');
 
     // Params: [entity_id, date, avg_sentiment, mention_count, momentum]
@@ -128,7 +97,6 @@ describe('Momentum calculation (runDaily)', () => {
   });
 
   it('returns null momentum when no prior history exists', async () => {
-    let windowCallCount = 0;
     const { pool, calls } = makeMockPool((sql) => {
       if (sql.includes('FROM entity_mentions')) {
         return {
@@ -138,13 +106,12 @@ describe('Momentum calculation (runDaily)', () => {
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (sql.includes('entity_sentiment_daily') && !sql.includes('INSERT')) {
-        windowCallCount++;
-        if (windowCallCount === 1) {
-          // Recent window: no prior rows stored yet
-          return { rows: [{ avg_sentiment: null }] };
-        }
-        // Prior window: no history at all
+      if (sql.includes('SUM(avg_sentiment)')) {
+        // Recent window: no prior rows stored
+        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
+        // Prior window: no history
         return { rows: [{ avg_sentiment: null }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
@@ -164,7 +131,6 @@ describe('Momentum calculation (runDaily)', () => {
   });
 
   it('computes ~0 momentum when recent and prior averages are equal', async () => {
-    let windowCallCount = 0;
     const { pool, calls } = makeMockPool((sql) => {
       if (sql.includes('FROM entity_mentions')) {
         return {
@@ -174,12 +140,12 @@ describe('Momentum calculation (runDaily)', () => {
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (sql.includes('entity_sentiment_daily') && !sql.includes('INSERT')) {
-        windowCallCount++;
-        if (windowCallCount === 1) {
-          // Recent window avg matches today's value so blend = (0.5 + 0.5) / 2 = 0.5
-          return { rows: [{ avg_sentiment: 0.5 }] };
-        }
+      if (sql.includes('SUM(avg_sentiment)')) {
+        // Recent window: 2 stored days with avg 0.5 each => sum=1.0
+        // Blend: (1.0 + 0.5) / (2 + 1) = 0.5
+        return { rows: [{ sum_sentiment: 1.0, day_count: '2' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
         // Prior window avg = 0.5 too
         return { rows: [{ avg_sentiment: 0.5 }] };
       }
@@ -319,7 +285,6 @@ describe('Daily rollup SQL (runDaily)', () => {
   });
 
   it('calls UPSERT with correct parameters for each entity', async () => {
-    let windowCallCount = 0;
     const { pool, calls } = makeMockPool((sql) => {
       if (sql.includes('FROM entity_mentions')) {
         return {
@@ -332,9 +297,10 @@ describe('Daily rollup SQL (runDaily)', () => {
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (sql.includes('entity_sentiment_daily') && !sql.includes('INSERT')) {
-        windowCallCount++;
-        // Alternate: recent=null, prior=null for simplicity
+      if (sql.includes('SUM(avg_sentiment)')) {
+        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
         return { rows: [{ avg_sentiment: null }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
@@ -363,7 +329,6 @@ describe('Daily rollup SQL (runDaily)', () => {
   });
 
   it('UPSERT query uses ON CONFLICT for idempotent writes', async () => {
-    let windowCallCount = 0;
     const { pool, calls } = makeMockPool((sql) => {
       if (sql.includes('FROM entity_mentions')) {
         return {
@@ -373,7 +338,10 @@ describe('Daily rollup SQL (runDaily)', () => {
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
         return { rows: [] };
       }
-      if (sql.includes('entity_sentiment_daily') && !sql.includes('INSERT')) {
+      if (sql.includes('SUM(avg_sentiment)')) {
+        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
         return { rows: [{ avg_sentiment: null }] };
       }
       if (sql.includes('INSERT INTO entity_sentiment_daily')) {
@@ -584,5 +552,271 @@ describe('getMomentumContext', () => {
     const result = await tracker.getMomentumContext(['ent-old']);
 
     assert.deepEqual(result, []);
+  });
+});
+
+// ── 5. SM-001 regression: equal-weight blending (SUM/COUNT) ─────────────
+
+describe('SM-001: equal-weight 3-day blending', () => {
+  it('blends 2 prior days + today with equal weight: (0.5+0.3+0.8)/3 = 0.533', async () => {
+    // Prior 2 stored days: avg_sentiment 0.5 and 0.3 => sum=0.8, count=2
+    // Today's avg = 0.8
+    // recentAvg = (0.8 + 0.8) / (2 + 1) = 1.6 / 3 = 0.5333...
+    // Prior window avg = 0.0 (so momentum = recentAvg - 0 = 0.5333)
+    const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('FROM entity_mentions')) {
+        return {
+          rows: [{ entity_id: 'ent-x', avg_sentiment: 0.8, mention_count: '5' }],
+        };
+      }
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.includes('SUM(avg_sentiment)')) {
+        // 2 stored prior days: 0.5 + 0.3 = 0.8
+        return { rows: [{ sum_sentiment: 0.8, day_count: '2' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
+        // Prior window: not relevant for this test's assertion, use 0
+        return { rows: [{ avg_sentiment: 0.0 }] };
+      }
+      if (sql.includes('INSERT INTO entity_sentiment_daily')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const tracker = createSentimentTracker(pool as any, noopLog);
+    await tracker.runDaily('2025-04-01');
+
+    const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
+    assert.ok(upsertCall, 'Should have called UPSERT');
+
+    // momentum = recentAvg - priorAvg = 0.5333 - 0.0
+    const momentum = upsertCall.params[4] as number;
+    const expectedRecentAvg = (0.5 + 0.3 + 0.8) / 3; // 0.5333...
+    assert.ok(
+      Math.abs(momentum - expectedRecentAvg) < 0.001,
+      `Expected momentum ~${expectedRecentAvg.toFixed(4)}, got ${momentum} ` +
+      `(would be 0.6 under old AVG-based 50/50 weighting)`,
+    );
+
+    // Explicitly verify this is NOT the old broken value
+    assert.ok(
+      Math.abs(momentum - 0.6) > 0.01,
+      'Must not produce the old broken value of 0.6 (AVG gave today 50% weight)',
+    );
+  });
+
+  it('uses today directly when 0 prior days exist', async () => {
+    const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('FROM entity_mentions')) {
+        return {
+          rows: [{ entity_id: 'ent-y', avg_sentiment: 0.7, mention_count: '3' }],
+        };
+      }
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.includes('SUM(avg_sentiment)')) {
+        // No stored recent days
+        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
+        // Prior window has data so momentum is computable
+        return { rows: [{ avg_sentiment: 0.3 }] };
+      }
+      if (sql.includes('INSERT INTO entity_sentiment_daily')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const tracker = createSentimentTracker(pool as any, noopLog);
+    await tracker.runDaily('2025-04-01');
+
+    const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
+    assert.ok(upsertCall, 'Should have called UPSERT');
+
+    // recentAvg should be today's value directly: 0.7
+    // momentum = 0.7 - 0.3 = 0.4
+    const momentum = upsertCall.params[4] as number;
+    assert.ok(
+      Math.abs(momentum - 0.4) < 0.001,
+      `Expected momentum 0.4 (today 0.7 used directly - prior 0.3), got ${momentum}`,
+    );
+  });
+
+  it('blends 1 prior day + today with equal weight: (prior + today) / 2', async () => {
+    const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('FROM entity_mentions')) {
+        return {
+          rows: [{ entity_id: 'ent-z', avg_sentiment: 0.6, mention_count: '4' }],
+        };
+      }
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.includes('SUM(avg_sentiment)')) {
+        // 1 stored prior day with avg_sentiment = 0.4
+        return { rows: [{ sum_sentiment: 0.4, day_count: '1' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
+        return { rows: [{ avg_sentiment: 0.2 }] };
+      }
+      if (sql.includes('INSERT INTO entity_sentiment_daily')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const tracker = createSentimentTracker(pool as any, noopLog);
+    await tracker.runDaily('2025-04-01');
+
+    const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
+    assert.ok(upsertCall, 'Should have called UPSERT');
+
+    // recentAvg = (0.4 + 0.6) / (1 + 1) = 0.5
+    // momentum = 0.5 - 0.2 = 0.3
+    const momentum = upsertCall.params[4] as number;
+    assert.ok(
+      Math.abs(momentum - 0.3) < 0.001,
+      `Expected momentum 0.3, got ${momentum}`,
+    );
+  });
+
+  it('queries use SUM/COUNT, not AVG, for the recent window', async () => {
+    const { pool, calls } = makeMockPool((sql) => {
+      if (sql.includes('FROM entity_mentions')) {
+        return {
+          rows: [{ entity_id: 'ent-1', avg_sentiment: 0.5, mention_count: '2' }],
+        };
+      }
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [] };
+      }
+      if (sql.includes('SUM(avg_sentiment)')) {
+        return { rows: [{ sum_sentiment: null, day_count: '0' }] };
+      }
+      if (sql.includes('AVG(avg_sentiment)') && sql.includes('entity_sentiment_daily')) {
+        return { rows: [{ avg_sentiment: null }] };
+      }
+      if (sql.includes('INSERT INTO entity_sentiment_daily')) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [] };
+    });
+
+    const tracker = createSentimentTracker(pool as any, noopLog);
+    await tracker.runDaily('2025-04-01');
+
+    // Verify the recent window query uses SUM, not AVG
+    const recentWindowCall = calls.find(
+      (c) => c.sql.includes('SUM(avg_sentiment)') && c.sql.includes('COUNT(*)'),
+    );
+    assert.ok(
+      recentWindowCall,
+      'Recent window query must use SUM(avg_sentiment) and COUNT(*), not AVG',
+    );
+  });
+});
+
+// ── 6. CF-004 regression: computeDailySentiment epoch bounds ────────────
+
+describe('CF-004: computeDailySentiment epoch-ms bounds', () => {
+  it('converts date string to correct epoch-ms range bounds', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const mockPool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return { rows: [] };
+      },
+    };
+
+    await computeDailySentiment(mockPool as any, '2025-04-01');
+
+    assert.equal(calls.length, 1, 'Should issue exactly one query');
+    const [dayStart, dayEnd] = calls[0].params as [number, number];
+
+    // 2025-04-01T00:00:00Z in epoch-ms
+    const expectedStart = new Date('2025-04-01T00:00:00Z').getTime();
+    const expectedEnd = expectedStart + 86_400_000;
+
+    assert.equal(dayStart, expectedStart, `dayStart should be ${expectedStart}, got ${dayStart}`);
+    assert.equal(dayEnd, expectedEnd, `dayEnd should be ${expectedEnd}, got ${dayEnd}`);
+  });
+
+  it('bounds span exactly 24 hours (86400000 ms)', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const mockPool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return { rows: [] };
+      },
+    };
+
+    await computeDailySentiment(mockPool as any, '2025-04-01');
+
+    const [dayStart, dayEnd] = calls[0].params as [number, number];
+    assert.equal(
+      dayEnd - dayStart,
+      86_400_000,
+      `Bounds must span exactly 86400000 ms (24h), got ${dayEnd - dayStart}`,
+    );
+  });
+
+  it('uses >= for start and < for end (half-open interval)', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const mockPool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return { rows: [] };
+      },
+    };
+
+    await computeDailySentiment(mockPool as any, '2025-04-01');
+
+    const sql = calls[0].sql;
+    assert.ok(
+      sql.includes('created_at >= $1') && sql.includes('created_at < $2'),
+      'Query must use >= $1 AND < $2 for half-open interval (no off-by-one at midnight)',
+    );
+  });
+
+  it('passes epoch-ms numbers, not date strings, to the query', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const mockPool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return { rows: [] };
+      },
+    };
+
+    await computeDailySentiment(mockPool as any, '2025-12-31');
+
+    const [dayStart, dayEnd] = calls[0].params as [unknown, unknown];
+    assert.equal(typeof dayStart, 'number', 'dayStart must be a number (epoch-ms)');
+    assert.equal(typeof dayEnd, 'number', 'dayEnd must be a number (epoch-ms)');
+
+    // Verify they are plausible epoch-ms values (> year 2000 in ms)
+    assert.ok((dayStart as number) > 946684800000, 'dayStart should be a plausible epoch-ms value');
+  });
+
+  it('does not use to_timestamp() — epoch-ms compared directly', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const mockPool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params: params ?? [] });
+        return { rows: [] };
+      },
+    };
+
+    await computeDailySentiment(mockPool as any, '2025-04-01');
+
+    const sql = calls[0].sql;
+    assert.ok(
+      !sql.includes('to_timestamp'),
+      'Query must NOT use to_timestamp() — created_at is already epoch-ms, compare directly',
+    );
   });
 });

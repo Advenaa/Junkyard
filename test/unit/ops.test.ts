@@ -1,5 +1,6 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { formatDate, parseDateFromFilename } from '../../src/ops/backup.js';
 import { createRetention } from '../../src/ops/retention.js';
 import type { RetentionResult } from '../../src/ops/retention.js';
@@ -236,6 +237,59 @@ describe('retention run()', () => {
     assert.ok(
       Math.abs(summariesTs - (before - ninetyDays)) < 100,
       'summaries cutoff should be ~90 days ago',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BK-001: Structural regression — backup minimum size check
+// ---------------------------------------------------------------------------
+
+describe('BK-001: backup minimum size check (structural)', () => {
+  const src = readFileSync(
+    new URL('../../src/ops/backup.ts', import.meta.url),
+    'utf-8',
+  );
+
+  it('imports stat from node:fs/promises', () => {
+    assert.ok(
+      src.includes("stat") && src.includes("node:fs/promises"),
+      'backup.ts must import stat from node:fs/promises',
+    );
+  });
+
+  it('calls stat() after rename()', () => {
+    const renameIdx = src.indexOf('rename(tmpPath, filePath)');
+    const statIdx = src.indexOf('stat(filePath)');
+    assert.ok(renameIdx > -1, 'rename(tmpPath, filePath) must be present');
+    assert.ok(statIdx > -1, 'stat(filePath) must be present');
+    assert.ok(
+      statIdx > renameIdx,
+      'stat() must appear after rename() — check file after finalization',
+    );
+  });
+
+  it('checks file size against 1024 byte threshold', () => {
+    assert.ok(
+      src.includes('< 1024'),
+      'backup.ts must check fileInfo.size < 1024',
+    );
+  });
+
+  it('deletes undersized backup files', () => {
+    // After the size check, unlink must be called to remove the bad file
+    const sizeCheckIdx = src.indexOf('< 1024');
+    const unlinkAfterCheck = src.indexOf('unlink(filePath)', sizeCheckIdx);
+    assert.ok(
+      unlinkAfterCheck > sizeCheckIdx,
+      'unlink(filePath) must appear after the < 1024 size check',
+    );
+  });
+
+  it('throws an error for suspiciously small backups', () => {
+    assert.ok(
+      src.includes('suspiciously small'),
+      'backup.ts must throw an error mentioning "suspiciously small"',
     );
   });
 });

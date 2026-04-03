@@ -213,6 +213,136 @@ describe('VectorCache (unit, no pool)', () => {
     assert.equal(size.summaries + size.reports, 0);
   });
 
+  // ── VC-001: bytesToVector buffer alignment (via load) ───────────────
+
+  it('load: valid 12-byte buffer (3 floats) → vector loaded', async () => {
+    const floats = new Float32Array([1.0, 2.0, 3.0]);
+    const buf = Buffer.from(floats.buffer);
+    assert.equal(buf.byteLength, 12);
+
+    const warnings: unknown[] = [];
+    const log = {
+      ...noopLog,
+      warn(...args: unknown[]) { warnings.push(args); },
+    };
+
+    const mockPool = {
+      query: async () => ({
+        rows: [{ target_id: 'valid-12', vector: buf }],
+      }),
+    } as any;
+
+    const cache = createVectorCache(mockPool, log);
+    await cache.load();
+
+    assert.equal(cache.getSize().summaries, 1);
+    assert.equal(warnings.length, 0);
+  });
+
+  it('load: 5-byte buffer (not divisible by 4) → skipped with warning', async () => {
+    const buf = Buffer.alloc(5, 0xAB);
+    assert.equal(buf.byteLength, 5);
+
+    const warnings: unknown[] = [];
+    const log = {
+      ...noopLog,
+      warn(...args: unknown[]) { warnings.push(args); },
+    };
+
+    const mockPool = {
+      query: async () => ({
+        rows: [{ target_id: 'corrupt-5', vector: buf }],
+      }),
+    } as any;
+
+    const cache = createVectorCache(mockPool, log);
+    await cache.load();
+
+    assert.equal(cache.getSize().summaries, 0);
+    assert.ok(warnings.length > 0, 'expected a warning for misaligned buffer');
+  });
+
+  it('load: 0-byte buffer → skipped with warning', async () => {
+    const buf = Buffer.alloc(0);
+    assert.equal(buf.byteLength, 0);
+
+    const warnings: unknown[] = [];
+    const log = {
+      ...noopLog,
+      warn(...args: unknown[]) { warnings.push(args); },
+    };
+
+    const mockPool = {
+      query: async () => ({
+        rows: [{ target_id: 'empty-0', vector: buf }],
+      }),
+    } as any;
+
+    const cache = createVectorCache(mockPool, log);
+    await cache.load();
+
+    assert.equal(cache.getSize().summaries, 0);
+    assert.ok(warnings.length > 0, 'expected a warning for empty buffer');
+  });
+
+  it('load: 3072-byte buffer (768 floats, embedding dim) → vector loaded', async () => {
+    const floats = new Float32Array(768);
+    for (let i = 0; i < 768; i++) floats[i] = Math.random() * 2 - 1;
+    const buf = Buffer.from(floats.buffer);
+    assert.equal(buf.byteLength, 3072);
+
+    const warnings: unknown[] = [];
+    const log = {
+      ...noopLog,
+      warn(...args: unknown[]) { warnings.push(args); },
+    };
+
+    const mockPool = {
+      query: async () => ({
+        rows: [{ target_id: 'embed-768', vector: buf }],
+      }),
+    } as any;
+
+    const cache = createVectorCache(mockPool, log);
+    await cache.load();
+
+    assert.equal(cache.getSize().summaries, 1);
+    assert.equal(warnings.length, 0);
+  });
+
+  it('load: mix of valid and corrupt buffers → only valid loaded, warning emitted', async () => {
+    const good = Buffer.from(new Float32Array([1.0, 2.0, 3.0]).buffer);
+    const bad5 = Buffer.alloc(5);
+    const bad0 = Buffer.alloc(0);
+    const good768 = Buffer.from(new Float32Array(768).buffer);
+
+    const warnings: unknown[] = [];
+    const log = {
+      ...noopLog,
+      warn(...args: unknown[]) { warnings.push(args); },
+    };
+
+    const mockPool = {
+      query: async () => ({
+        rows: [
+          { target_id: 'ok-1', vector: good },
+          { target_id: 'bad-5', vector: bad5 },
+          { target_id: 'bad-0', vector: bad0 },
+          { target_id: 'ok-768', vector: good768 },
+        ],
+      }),
+    } as any;
+
+    const cache = createVectorCache(mockPool, log);
+    await cache.load();
+
+    // 2 valid vectors loaded per type (summary + report both query same mock)
+    assert.equal(cache.getSize().summaries, 2);
+    assert.equal(cache.getSize().reports, 2);
+    // warnings emitted for both types (2 corrupt rows x 2 types)
+    assert.ok(warnings.length >= 2, `expected at least 2 warnings, got ${warnings.length}`);
+  });
+
   it('eviction kicks in after MAX_VECTORS inserts', () => {
     // Use a small-scale test with the evict function directly
     // (inserting 20K vectors in a unit test is too slow)
