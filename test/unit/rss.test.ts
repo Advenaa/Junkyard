@@ -164,9 +164,9 @@ describe('pollFeed', () => {
   });
 
   it('filters items before lastId by timestamp', async () => {
-    const t1 = new Date('2026-04-03T10:00:00Z');
-    const t2 = new Date('2026-04-03T11:00:00Z');
-    const t3 = new Date('2026-04-03T12:00:00Z');
+    const t1 = new Date(Date.now() - 90 * 60 * 1000); // 90 min ago
+    const t2 = new Date(Date.now() - 60 * 60 * 1000); // 60 min ago
+    const t3 = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago
 
     const items = [
       makeFeedItem({
@@ -249,7 +249,7 @@ describe('pollFeed', () => {
   });
 
   it('uses synthetic guid when item has no guid', async () => {
-    const isoDate = '2026-04-03T10:00:00Z';
+    const isoDate = new Date(Date.now() - 30 * 60 * 1000).toISOString(); // 30 minutes ago — always within 2h cutoff
     const title = 'No GUID Article';
 
     const items = [
@@ -322,19 +322,19 @@ describe('pollFeed', () => {
       makeFeedItem({
         title: 'Third',
         guid: 'g3',
-        isoDate: '2026-04-03T12:00:00Z',
+        isoDate: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 min ago
         contentSnippet: 'Third item content padded to be long enough. '.repeat(12),
       }),
       makeFeedItem({
         title: 'First',
         guid: 'g1',
-        isoDate: '2026-04-03T10:00:00Z',
+        isoDate: new Date(Date.now() - 90 * 60 * 1000).toISOString(), // 90 min ago
         contentSnippet: 'First item content padded to be long enough. '.repeat(12),
       }),
       makeFeedItem({
         title: 'Second',
         guid: 'g2',
-        isoDate: '2026-04-03T11:00:00Z',
+        isoDate: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 60 min ago
         contentSnippet: 'Second item content padded to be long enough. '.repeat(12),
       }),
     ];
