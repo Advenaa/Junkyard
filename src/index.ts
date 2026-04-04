@@ -353,6 +353,13 @@ program
       } catch (err: unknown) {
         log.error({ err }, 'Stale processing recovery failed');
       }
+
+      // D-020: Retry recently failed deliveries
+      try {
+        await delivery.retryFailed();
+      } catch (err: unknown) {
+        log.error({ err }, 'delivery retry failed');
+      }
     }
 
     // ── 5. Create and start scheduler ─────────────────────────────────

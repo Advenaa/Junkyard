@@ -245,32 +245,28 @@ export function createHealthMonitor(
     return { name: 'cost_spike', status: 'ok' };
   }
 
-  async function isDuplicate(category: string): Promise<boolean> {
-    const { rows } = await pool.query<{ count: string }>(`
-      SELECT COUNT(*) AS count
-      FROM health_events
-      WHERE category = $1
-        AND acknowledged = false
-        AND created_at > $2
-    `, [category, Date.now() - 30 * 60 * 1000]);
-
-    return parseInt(rows[0].count, 10) > 0;
-  }
-
   async function insertEvent(event: HealthEvent): Promise<void> {
-    if (await isDuplicate(event.category)) {
+    const id = ulid();
+    const now = Date.now();
+    const cutoff = now - 30 * 60 * 1000;
+
+    // HM-021: Atomic dedup — INSERT only if no recent unacknowledged event exists
+    const { rowCount } = await pool.query(
+      `INSERT INTO health_events (id, category, severity, message, metadata, created_at)
+       SELECT $1, $2, $3, $4, $5, $6
+       WHERE NOT EXISTS (
+         SELECT 1 FROM health_events
+         WHERE category = $2
+           AND acknowledged = false
+           AND created_at > $7
+       )`,
+      [id, event.category, event.severity, event.message, JSON.stringify(event.metadata), now, cutoff],
+    );
+
+    if ((rowCount ?? 0) === 0) {
       log.debug({ category: event.category }, 'Skipping duplicate health event');
       return;
     }
-
-    const id = ulid();
-    const now = Date.now();
-
-    await pool.query(
-      `INSERT INTO health_events (id, category, severity, message, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [id, event.category, event.severity, event.message, JSON.stringify(event.metadata), now],
-    );
 
     if (event.severity === 'critical' && config.alertWebhookUrl) {
       await sendAlertWebhook(event);

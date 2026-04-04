@@ -195,6 +195,7 @@ export function createChatHandler(
 
     const toolsUsed: string[] = [];
     let processedQuery = query;
+    let queryWrapped = false; // CH-020: track whether processedQuery has nonce wrapping
 
     // Step 1: Indonesian detection and translation
     const detectedLang = franc(query, { minLength: 3 });
@@ -219,6 +220,7 @@ export function createChatHandler(
           // and could carry through prompt injection embedded in the original Indonesian query.
           const { wrapped } = llm.wrapWithNonce(translated);
           processedQuery = wrapped;
+          queryWrapped = true; // CH-020
         } else {
           log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, re-embedding original Indonesian query');
           // Re-embed the original Indonesian query so semantic search still works.
@@ -358,7 +360,9 @@ export function createChatHandler(
     }
 
     // Step 6: Save conversation history
-    conversations.add(conversationId, userId, 'user', processedQuery);
+    // CH-020: Ensure query is always nonce-wrapped before saving to conversation history
+    const historyQuery = queryWrapped ? processedQuery : llm.wrapWithNonce(processedQuery).wrapped;
+    conversations.add(conversationId, userId, 'user', historyQuery);
     conversations.add(conversationId, userId, 'assistant', finalResponse);
 
     return { response: finalResponse, toolsUsed };

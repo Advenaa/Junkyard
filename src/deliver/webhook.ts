@@ -367,5 +367,29 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     return false;
   }
 
-  return { deliver };
+  // D-020: Retry recently failed deliveries (last 1 hour, max 5 per run)
+  async function retryFailed(): Promise<number> {
+    const { rows } = await pool.query<{ id: string; type: string; body: string; date: string }>(
+      `SELECT id, type, body, date FROM reports
+       WHERE delivery_status = 'failed'
+         AND created_at > $1
+       ORDER BY created_at ASC
+       LIMIT 5`,
+      [Date.now() - 60 * 60 * 1000],
+    );
+
+    let retried = 0;
+    for (const row of rows) {
+      const success = await deliver(row);
+      if (success) retried++;
+    }
+
+    if (rows.length > 0) {
+      log.info({ attempted: rows.length, retried }, 'retried failed deliveries');
+    }
+
+    return retried;
+  }
+
+  return { deliver, retryFailed };
 }

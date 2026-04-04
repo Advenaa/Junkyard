@@ -44,64 +44,38 @@ describe('HE-010: response body consumed on non-ok webhook', () => {
   });
 });
 
-// ── HE-011 — isDuplicate matches on category only ────────────────────
+// ── HE-011 — Health event dedup matches on category only (HM-021: now atomic) ──
 
-describe('HE-011: isDuplicate matches on category only', () => {
-  // Extract the isDuplicate function body for targeted assertions
-  const isDupMatch = healthSrc.match(
-    /async function isDuplicate\b[\s\S]*?^  \}/m,
-  );
-  const isDupBody = isDupMatch ? isDupMatch[0] : '';
-
-  it('isDuplicate function exists', () => {
-    assert.ok(isDupBody.length > 0, 'isDuplicate function must exist in health.ts');
-  });
-
-  it('does NOT filter on message in the SQL query', () => {
+describe('HE-011: Health event dedup matches on category only (atomic via HM-021)', () => {
+  it('health event INSERT uses WHERE NOT EXISTS for atomic dedup', () => {
     assert.ok(
-      !isDupBody.includes('AND message ='),
-      'isDuplicate SQL must NOT contain "AND message =" — dedup is by category only',
-    );
-    assert.ok(
-      !isDupBody.includes('AND message='),
-      'isDuplicate SQL must NOT contain "AND message=" — dedup is by category only',
+      healthSrc.includes('WHERE NOT EXISTS'),
+      'insertEvent must use WHERE NOT EXISTS for atomic dedup (HM-021)',
     );
   });
 
-  it('filters on category = $1', () => {
+  it('dedup filters on category', () => {
     assert.ok(
-      /category\s*=\s*\$1/.test(isDupBody),
-      'isDuplicate SQL must filter on category = $1',
+      /category\s*=\s*\$2/.test(healthSrc),
+      'Dedup subquery must filter on category',
     );
   });
 
-  it('filters on acknowledged = false', () => {
+  it('dedup filters on acknowledged = false', () => {
     assert.ok(
-      /acknowledged\s*=\s*false/.test(isDupBody),
-      'isDuplicate SQL must filter on acknowledged = false',
+      /acknowledged\s*=\s*false/.test(healthSrc),
+      'Dedup subquery must filter on acknowledged = false',
     );
   });
 
-  it('function signature does not use message in the query', () => {
-    // The function should accept only category (no message param used in query)
-    const sigMatch = isDupBody.match(/async function isDuplicate\(([^)]*)\)/);
-    assert.ok(sigMatch, 'isDuplicate signature must be extractable');
-    const params = sigMatch![1];
-    // If message param exists, it must not appear as a bind parameter in the query
-    if (params.includes('message')) {
-      // message param exists but must not be used in the SQL bind array
-      const bindArray = isDupBody.match(/\],\s*\[([^\]]*)\]/);
-      if (bindArray) {
-        assert.ok(
-          !bindArray[1].includes('message'),
-          'isDuplicate must not pass message to the SQL query bind parameters',
-        );
-      }
-    }
-    // Primary check: signature should only take category
+  it('does NOT filter on message in the dedup SQL', () => {
+    // Extract the INSERT...WHERE NOT EXISTS block
+    const insertIdx = healthSrc.indexOf('INSERT INTO health_events');
+    const blockEnd = healthSrc.indexOf(')', healthSrc.indexOf('WHERE NOT EXISTS', insertIdx) + 50);
+    const dedupBlock = healthSrc.slice(insertIdx, blockEnd + 50);
     assert.ok(
-      /async function isDuplicate\(\s*category:\s*string\s*\)/.test(isDupBody),
-      'isDuplicate should accept only category parameter',
+      !dedupBlock.includes('AND message =') && !dedupBlock.includes('AND message='),
+      'Dedup SQL must NOT filter on message — dedup is by category only',
     );
   });
 });
