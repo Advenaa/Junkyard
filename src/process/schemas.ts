@@ -7,7 +7,7 @@ export const ChunkSummaryLLMSchema = z.object({
   entities: z
     .array(
       z.object({
-        name: z.string(),
+        name: z.string().min(1),
         aliases: z.array(z.string()).default([]),
         type: z
           .enum(['token', 'person', 'project', 'company', 'event'])
@@ -29,9 +29,9 @@ export const MarketReportLLMSchema = z.object({
   entitySentiment: z
     .array(
       z.object({
-        name: z.string(),
+        name: z.string().min(1),
         sentiment: z.number().min(-1).max(1),
-        reason: z.string(),
+        reason: z.string().min(1),
       }),
     )
     .max(15)
@@ -39,8 +39,8 @@ export const MarketReportLLMSchema = z.object({
   sections: z
     .array(
       z.object({
-        title: z.string(),
-        body: z.string(),
+        title: z.string().min(1),
+        body: z.string().min(1),
       }),
     )
     .max(4)
@@ -48,8 +48,8 @@ export const MarketReportLLMSchema = z.object({
   newProjects: z
     .array(
       z.object({
-        name: z.string(),
-        description: z.string(),
+        name: z.string().min(1),
+        description: z.string().min(1),
       }),
     )
     .max(5)

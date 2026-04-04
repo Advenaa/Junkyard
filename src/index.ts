@@ -286,7 +286,7 @@ program
         try {
           try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
         } finally {
-          await pool.query('SELECT pg_advisory_unlock(42424243)');
+          await pool.query('SELECT pg_advisory_unlock(42424243)').catch(() => {});
         }
       }
       try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
@@ -335,7 +335,7 @@ program
                 const reportRow = await synthesizer.runDaily();
                 if (reportRow) await delivery.deliver(reportRow);
               } finally {
-                await pool.query('SELECT pg_advisory_unlock(42424243)');
+                await pool.query('SELECT pg_advisory_unlock(42424243)').catch(() => {});
               }
             }
           }

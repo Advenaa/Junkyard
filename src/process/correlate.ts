@@ -55,7 +55,7 @@ const CORRELATION_SQL = `
            'source', em.source,
            'summary_id', em.summary_id,
            'sentiment', em.sentiment
-         )) AS mentions
+         ) ORDER BY em.created_at DESC) AS mentions
   FROM entity_mentions em
   JOIN entities e ON e.id = em.entity_id
   WHERE em.created_at >= $1
@@ -146,14 +146,28 @@ export function createCorrelator(pool: Pool, log: Logger) {
       let weightedSum = 0;
 
       for (const [source, { summaryIds }] of seenSources) {
-        const sourceId = sourceIdMap.get(summaryIds[0]) ?? source;
-        const trustKey = `${source}:${sourceId}`;
-        const trustWeight = trustMap.get(trustKey) ?? 0.5;
-        if (!trustMap.has(trustKey)) {
-          log.warn({ source, sourceId }, 'No trust_weight found for source:source_id, defaulting to 0.5');
+        // CO-011: Collect ALL unique source_ids from the group and pick the highest trust weight
+        const uniqueSourceIds = [...new Set(summaryIds.map(sid => sourceIdMap.get(sid) ?? source))];
+        let bestSourceId = uniqueSourceIds[0];
+        let bestTrustWeight = -1;
+        let anyFound = false;
+        for (const sid of uniqueSourceIds) {
+          const key = `${source}:${sid}`;
+          const tw = trustMap.get(key);
+          if (tw !== undefined) {
+            anyFound = true;
+            if (tw > bestTrustWeight) {
+              bestTrustWeight = tw;
+              bestSourceId = sid;
+            }
+          }
         }
-        sources.push({ source, sourceId, trustWeight });
-        weightedSum += trustWeight;
+        if (!anyFound) {
+          bestTrustWeight = 0.5;
+          log.warn({ source, sourceIds: uniqueSourceIds }, 'No trust_weight found for any source_id, defaulting to 0.5');
+        }
+        sources.push({ source, sourceId: bestSourceId, trustWeight: bestTrustWeight });
+        weightedSum += bestTrustWeight;
       }
 
       // Collect urgencies from all referenced summaries

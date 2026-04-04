@@ -54,9 +54,13 @@ export function createScheduler(deps: SchedulerDeps) {
     if (digestTime) {
       const match = digestTime.match(/^(\d{1,2}):(\d{2})$/);
       if (match) {
-        const minute = match[2];
-        const hour = match[1];
-        expression = `${minute} ${hour} * * *`;
+        const hour = Number(match[1]);
+        const minute = Number(match[2]);
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+          expression = `${match[2]} ${match[1]} * * *`;
+        } else {
+          log.warn({ digestTime }, 'digest_time out of range, using default 09:00');
+        }
       } else {
         log.warn({ digestTime }, 'invalid digest_time format, using default 09:00');
       }

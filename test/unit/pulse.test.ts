@@ -213,12 +213,12 @@ describe('runPulse — successful generation', () => {
       wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
     };
 
-    // 2 summaries, routine = 300 tokens
+    // 2 summaries, routine = 500 tokens (PL-004: raised from 300)
     const rows = [makeSummaryRow({ id: 's1' }), makeSummaryRow({ id: 's2' })];
     const pool = makePool({ summaries: rows });
     const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
     await runPulse();
-    assert.equal(capturedMaxTokens, 300);
+    assert.equal(capturedMaxTokens, 500);
   });
 });
 
@@ -246,9 +246,9 @@ describe('runPulse — activity scaling', () => {
     return capturedMaxTokens;
   }
 
-  it('uses 300 tokens for quiet periods (< 4 summaries, routine)', async () => {
+  it('uses 500 tokens for quiet periods (< 4 summaries, routine)', async () => {
     const tokens = await runWithSummaries(2);
-    assert.equal(tokens, 300);
+    assert.equal(tokens, 500);
   });
 
   it('uses 800 tokens for moderate activity (4-10 summaries)', async () => {

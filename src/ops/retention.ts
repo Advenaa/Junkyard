@@ -50,9 +50,12 @@ export function createRetention(pool: Pool, log: Logger) {
     const sentimentDailyDeleted = sentimentResult.rowCount ?? 0;
     log.info({ sentimentDailyDeleted }, 'retention: deleted entity_sentiment_daily older than 365 days');
 
+    const MAX_EMBEDDING_ITERATIONS = 100;
     let embeddingsDeleted = 0;
+    let cappedEmbeddingCleanup = false;
     for (const [targetType, sourceTable] of [['item', 'items'], ['summary', 'summaries']] as const) {
       let deleted: number;
+      let iterations = 0;
       do {
         const result = await pool.query(
           `DELETE FROM embeddings WHERE id IN (
@@ -65,9 +68,17 @@ export function createRetention(pool: Pool, log: Logger) {
         );
         deleted = result.rowCount ?? 0;
         embeddingsDeleted += deleted;
-      } while (deleted > 0);
+        iterations++;
+      } while (deleted > 0 && iterations < MAX_EMBEDDING_ITERATIONS);
+      if (deleted > 0) {
+        cappedEmbeddingCleanup = true;
+        log.warn(
+          { targetType, iterations },
+          'retention: orphaned embeddings cleanup hit iteration cap; remaining orphans will be cleaned next run',
+        );
+      }
     }
-    log.info({ embeddingsDeleted }, 'retention: deleted orphaned embeddings');
+    log.info({ embeddingsDeleted, cappedEmbeddingCleanup }, 'retention: deleted orphaned embeddings');
 
     const sessionsResult = await pool.query(
       `DELETE FROM sessions WHERE expires_at < $1`,

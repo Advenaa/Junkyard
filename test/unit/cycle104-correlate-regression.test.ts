@@ -38,17 +38,20 @@ describe('CO-001 — Trust weight queried per (source, source_id) pair', () => {
     );
   });
 
-  it('trust weight lookup uses source:sourceId composite key', () => {
-    // The lookup in the per-entity loop must build a composite key
-    assert.match(
-      correlateSrc,
-      /trustKey.*=.*`\$\{source\}:\$\{sourceId\}`/,
-      'Trust lookup must use composite source:sourceId key',
+  it('trust weight lookup iterates unique source_ids and picks highest (CO-011)', () => {
+    // CO-011: The lookup collects ALL unique source_ids and picks the highest trust weight
+    assert.ok(
+      correlateSrc.includes('uniqueSourceIds'),
+      'Trust lookup must iterate unique source_ids',
+    );
+    assert.ok(
+      correlateSrc.includes('bestTrustWeight'),
+      'Trust lookup must track the best trust weight',
     );
     assert.match(
       correlateSrc,
-      /trustMap\.get\(trustKey\)/,
-      'Trust lookup must call trustMap.get(trustKey)',
+      /trustMap\.get\(/,
+      'Trust lookup must call trustMap.get()',
     );
   });
 

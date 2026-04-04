@@ -403,7 +403,7 @@ export async function createServer(
         type: 'object',
         required: ['source', 'sourceId'],
         properties: {
-          source: { type: 'string' },
+          source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
           sourceId: { type: 'string' },
         },
       },
@@ -537,7 +537,7 @@ export async function createServer(
       });
       if (!response.ok) {
         const text = await response.text().catch(() => '');
-        return reply.code(400).send({ error: `Webhook returned ${response.status}`, detail: text });
+        return reply.code(400).send({ error: `Webhook returned ${response.status}`, detail: text.slice(0, 200) });
       }
       return { success: true };
     } catch (err: unknown) {

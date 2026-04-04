@@ -227,7 +227,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
   ): number {
     if (summaryCount > 10 || hasBreaking) return 1500;
     if (summaryCount >= 4 || hasElevated) return 800;
-    return 300;
+    return 500;
   }
 
   /**
