@@ -51,11 +51,11 @@ describe('EL-015: Tier 1 alias lookup selects status and reactivates archived en
     );
   });
 
-  it('UPDATEs archived entity to active with relevance 0.5', () => {
+  it('UPDATEs archived entity to active preserving prior relevance', () => {
     assert.match(
       src,
-      /UPDATE\s+entities\s+SET\s+status\s*=\s*'active'\s*,\s*relevance\s*=\s*0\.5/i,
-      'Tier 1 must UPDATE archived entities to active with relevance = 0.5',
+      /UPDATE\s+entities\s+SET\s+status\s*=\s*'active'\s*,\s*relevance\s*=\s*GREATEST\(relevance\s*,\s*0\.5\)/i,
+      'Tier 1 must UPDATE archived entities to active with relevance = GREATEST(relevance, 0.5)',
     );
   });
 

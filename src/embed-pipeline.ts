@@ -45,7 +45,7 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
       FROM ${tableName} t
       LEFT JOIN embeddings e ON e.target_type = $1 AND e.target_id = t.id
       WHERE e.id IS NULL
-      ORDER BY t.created_at DESC
+      ORDER BY t.created_at ASC
       LIMIT 100
     `;
     const result = await pool.query<{ id: string; text: string }>(query, [targetType]);

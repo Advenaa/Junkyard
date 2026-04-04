@@ -362,6 +362,26 @@ describe('Twitter adapter', () => {
   // poll respects 429 rate limiting
   // -------------------------------------------------------------------------
   describe('poll respects 429 rate limiting', () => {
+    /** Mock pool that tracks next_retry_at (rate limit backoff) per source. */
+    function makeRateLimitAwarePool() {
+      const retryAt = new Map<string, number>();
+      return {
+        query: async (sql: string, params?: unknown[]) => {
+          if (typeof sql === 'string' && sql.includes('UPDATE source_state SET next_retry_at')) {
+            const [deadline, sourceId] = params as [number, string];
+            retryAt.set(sourceId, deadline);
+            return { rows: [], rowCount: 1 };
+          }
+          if (typeof sql === 'string' && sql.includes('SELECT next_retry_at')) {
+            const sourceId = (params as string[])[1];
+            const val = retryAt.get(sourceId);
+            return { rows: val != null ? [{ next_retry_at: String(val) }] : [] };
+          }
+          return { rows: [] };
+        },
+      } as any;
+    }
+
     it('does not crash on 429 and returns empty', async () => {
       globalThis.fetch = () => mockFetchResponse(
         {},
@@ -370,7 +390,7 @@ describe('Twitter adapter', () => {
       );
 
       const log = makeLogger();
-      const adapter = createTwitterAdapter(makeConfig(), mockPool, log);
+      const adapter = createTwitterAdapter(makeConfig(), makeRateLimitAwarePool(), log);
       const { items, lastId } = await adapter.poll('@testuser', null);
 
       assert.equal(items.length, 0);
@@ -386,7 +406,7 @@ describe('Twitter adapter', () => {
       };
 
       const log = makeLogger();
-      const adapter = createTwitterAdapter(makeConfig(), mockPool, log);
+      const adapter = createTwitterAdapter(makeConfig(), makeRateLimitAwarePool(), log);
 
       // First call triggers the 429
       await adapter.poll('@testuser', null);
@@ -417,6 +437,9 @@ describe('Twitter adapter', () => {
           }
           if (typeof sql === 'string' && sql.includes('SELECT status')) {
             return { rows: halted ? [{ status: 'halted' }] : [] };
+          }
+          if (typeof sql === 'string' && sql.includes('next_retry_at')) {
+            return { rows: [] };
           }
           return { rows: [] };
         },

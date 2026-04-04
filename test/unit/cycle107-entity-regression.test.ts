@@ -55,11 +55,11 @@ describe('EL-004: Tier 2 co-occurrence resurrects archived entities', () => {
     );
   });
 
-  it('resurrection UPDATE sets status to active and relevance to 0.5', () => {
+  it('resurrection UPDATE sets status to active preserving prior relevance', () => {
     assert.match(
       src,
-      /UPDATE\s+entities\s+SET\s+status\s*=\s*'active',\s*relevance\s*=\s*0\.5\s+WHERE\s+id\s*=\s*\$1/,
-      'Resurrection UPDATE must set status = \'active\', relevance = 0.5',
+      /UPDATE\s+entities\s+SET\s+status\s*=\s*'active',\s*relevance\s*=\s*GREATEST\(relevance,\s*0\.5\)\s+WHERE\s+id\s*=\s*\$1/,
+      'Resurrection UPDATE must set status = \'active\', relevance = GREATEST(relevance, 0.5)',
     );
   });
 

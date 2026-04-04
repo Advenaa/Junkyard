@@ -387,15 +387,37 @@ export function createSummarizer(
           return [];
         }
         if (chunk.length <= 1) {
-          log.error(
-            { itemId: chunk[0]?.id, source, sourceId },
-            'Single item exceeds context length even after splitting — marking as failed',
-          );
+          // SM-001: Try truncating the oversized item before giving up
+          const TRUNCATION_CHAR_LIMIT = 24000; // ~6000 tokens at 4 chars/token
+          const item = chunk[0];
+          if (item && item.content.length > TRUNCATION_CHAR_LIMIT) {
+            log.warn(
+              { itemId: item.id, source, sourceId, originalLength: item.content.length },
+              'Single item exceeds context length — truncating to chunk budget and retrying',
+            );
+            const truncatedChunk: ClaimedItem[] = [{
+              ...item,
+              content: item.content.slice(0, TRUNCATION_CHAR_LIMIT),
+            }];
+            try {
+              return await processChunk(truncatedChunk, source, sourceId, windowStart, windowEnd, depth + 1, callBudget);
+            } catch (truncErr: unknown) {
+              log.error(
+                { itemId: item.id, source, sourceId, err: truncErr },
+                'Truncated item still exceeds context length — marking as failed',
+              );
+            }
+          } else {
+            log.error(
+              { itemId: item?.id, source, sourceId },
+              'Single item exceeds context length even after splitting — marking as failed',
+            );
+          }
           // Mark this item as 'failed' so it doesn't loop forever
-          if (chunk[0]?.id) {
+          if (item?.id) {
             await pool.query(
               `UPDATE items SET status = 'failed' WHERE id = $1`,
-              [chunk[0].id],
+              [item.id],
             );
           }
           return [];

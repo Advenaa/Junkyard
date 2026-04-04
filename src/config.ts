@@ -114,7 +114,18 @@ export function loadConfig(): Config {
       throw new Error(`PUBLIC_URL must be a valid URL, got: ${rawPublicUrl}`);
     }
   }
-  const alertWebhookUrl = process.env['ALERT_WEBHOOK_URL'] || null;
+  let alertWebhookUrl: string | null = null;
+  const rawAlertWebhookUrl = process.env['ALERT_WEBHOOK_URL'] || null;
+  if (rawAlertWebhookUrl) {
+    try {
+      const parsed = new URL(rawAlertWebhookUrl);
+      alertWebhookUrl = parsed.origin + parsed.pathname.replace(/\/+$/, '');
+    } catch {
+      console.warn(
+        `WARNING: ALERT_WEBHOOK_URL is not a valid URL ("${rawAlertWebhookUrl}") — alerts disabled`
+      );
+    }
+  }
 
   const models = {
     haiku: process.env['MODEL_HAIKU'] || 'claude-haiku-4-5-20251001',

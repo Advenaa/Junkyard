@@ -197,7 +197,7 @@ export function createPreSummarizer(
 
         if (updateIds.length > 0) {
           await pool.query(
-            `UPDATE items SET content = data.content, content_anchor = data.anchor, status = 'ready'
+            `UPDATE items SET content = data.content, content_anchor = data.anchor, status = 'ready', retry_count = 0
              FROM (SELECT unnest($1::text[]) AS id, unnest($2::text[]) AS content, unnest($3::text[]) AS anchor) AS data
              WHERE items.id = data.id`,
             [updateIds, updateContents, updateAnchors],

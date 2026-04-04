@@ -91,8 +91,13 @@ export function createEntityManager(
           const row = aliasResult.rows[0];
           if (row.status === 'archived') {
             await client.query(
-              `UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = $1`,
+              `UPDATE entities SET status = 'active', relevance = GREATEST(relevance, 0.5) WHERE id = $1`,
               [row.entity_id],
+            );
+            await client.query(
+              `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at, language)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              [ulid(), row.entity_id, source, summaryId, null, 1, now, language ?? null],
             );
             log.info({ entityId: row.entity_id, alias: canonical }, 'reactivated archived entity via alias match');
           }
@@ -138,8 +143,13 @@ export function createEntityManager(
           if (match) {
             if (match.status === 'archived') {
               await client.query(
-                `UPDATE entities SET status = 'active', relevance = 0.5 WHERE id = $1`,
+                `UPDATE entities SET status = 'active', relevance = GREATEST(relevance, 0.5) WHERE id = $1`,
                 [match.entityId],
+              );
+              await client.query(
+                `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at, language)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+                [ulid(), match.entityId, source, summaryId, null, 1, now, language ?? null],
               );
               log.info({ entityId: match.entityId, alias: canonical }, 'reactivated archived entity via Tier 2 co-occurrence');
             }

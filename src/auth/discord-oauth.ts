@@ -252,9 +252,19 @@ export function registerOAuthRoutes(
       return reply.status(401).send({ error: 'Unauthorized' });
     }
 
+    let avatar: string | null = null;
+    if (request.user.discordId !== 'api-key') {
+      const result = await pool.query<{ avatar: string | null }>(
+        'SELECT avatar FROM users WHERE discord_id = $1',
+        [request.user.discordId],
+      );
+      avatar = result.rows[0]?.avatar ?? null;
+    }
+
     return {
       discordId: request.user.discordId,
       username: request.user.username,
+      avatar,
       role: request.user.role,
     };
   });

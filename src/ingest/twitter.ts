@@ -101,7 +101,6 @@ function buildUrl(sourceId: string, cursor?: string): string {
 const DEFAULT_RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
 export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
-  const sourceRateLimits = new Map<string, number>();
   const consecutiveFailures = new Map<string, number>();
 
   /** Persist halted status in source_state so it survives process restarts. */
@@ -120,6 +119,25 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
       ['twitter', sourceId],
     );
     return rows[0]?.status === 'halted';
+  }
+
+  /** Persist rate limit backoff deadline to DB so it survives restarts. */
+  async function setRateLimitedUntil(sourceId: string, deadline: number): Promise<void> {
+    await pool.query(
+      `UPDATE source_state SET next_retry_at = $1
+       WHERE source = 'twitter' AND source_id = $2`,
+      [deadline, sourceId],
+    );
+  }
+
+  /** Read rate limit backoff deadline from DB. Returns 0 if none set. */
+  async function getRateLimitedUntil(sourceId: string): Promise<number> {
+    const { rows } = await pool.query<{ next_retry_at: string | null }>(
+      'SELECT next_retry_at FROM source_state WHERE source = $1 AND source_id = $2',
+      ['twitter', sourceId],
+    );
+    const val = rows[0]?.next_retry_at;
+    return val != null ? Number(val) : 0;
   }
 
   async function fetchPage(
@@ -154,7 +172,8 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
       const backoffMs = Number.isFinite(delayMs) && delayMs > 0
         ? delayMs
         : DEFAULT_RATE_LIMIT_MS;
-      sourceRateLimits.set(sourceId, Date.now() + backoffMs);
+      const deadline = Date.now() + backoffMs;
+      await setRateLimitedUntil(sourceId, deadline);
       log.warn(
         { sourceId, status: 429, backoffMs },
         'Twitter API rate limited — backing off',
@@ -211,7 +230,7 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
       return empty;
     }
 
-    const rateLimitedUntil = sourceRateLimits.get(sourceId) ?? 0;
+    const rateLimitedUntil = await getRateLimitedUntil(sourceId);
     if (Date.now() < rateLimitedUntil) {
       log.debug({ sourceId, rateLimitedUntil }, 'Twitter poll skipped — rate limit backoff active');
       return empty;

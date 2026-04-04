@@ -92,20 +92,42 @@ interface Seeder {
 
 export function createSeeder(pool: Pool, log: Logger): Seeder {
   async function seedCoinGecko(): Promise<number> {
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/coins/list',
-      { signal: AbortSignal.timeout(15_000) },
-    );
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 2_000;
+    let coins: CoinGeckoEntry[] | undefined;
 
-    if (!response.ok) {
-      log.error(
-        { status: response.status },
-        `CoinGecko API returned ${response.status}`,
-      );
-      return 0;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(
+          'https://api.coingecko.com/api/v3/coins/list',
+          { signal: AbortSignal.timeout(30_000) },
+        );
+
+        if (!response.ok) {
+          throw new Error(`CoinGecko API returned ${response.status}`);
+        }
+
+        coins = (await response.json()) as CoinGeckoEntry[];
+        break;
+      } catch (err: unknown) {
+        const isLastAttempt = attempt === MAX_RETRIES;
+        if (isLastAttempt) {
+          log.warn(
+            { err, attempts: MAX_RETRIES },
+            'CoinGecko seeding failed after all retries — entity resolution for crypto tokens will fall back to LLM disambiguation',
+          );
+          return 0;
+        }
+        const delayMs = BASE_DELAY_MS * 2 ** (attempt - 1);
+        log.info(
+          { err, attempt, nextRetryMs: delayMs },
+          `CoinGecko fetch failed (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delayMs}ms`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
 
-    const coins = (await response.json()) as CoinGeckoEntry[];
+    if (!coins) return 0;
     const now = Date.now();
     let seeded = 0;
 

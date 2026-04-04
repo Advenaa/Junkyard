@@ -12,7 +12,7 @@ interface Source {
   label: string;
   enabled: boolean;
   pollInterval: number;
-  lastFetchedAt: string | null;
+  lastFetchedAt: number | null;
   errorCount: number;
   lastError: string | null;
   status: string;
@@ -42,9 +42,9 @@ interface UserRecord {
   lastLoginAt: number | null;
 }
 
-function formatRelativeTime(dateStr: string | null): string {
-  if (!dateStr) return 'Never';
-  const diff = Date.now() - new Date(dateStr).getTime();
+function formatRelativeTime(dateValue: number | null): string {
+  if (dateValue == null) return 'Never';
+  const diff = Date.now() - dateValue;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;
@@ -412,9 +412,7 @@ function UsersTab() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-text-secondary font-mono text-xs">
-                  {u.lastLoginAt
-                    ? formatRelativeTime(new Date(u.lastLoginAt).toISOString())
-                    : 'Never'}
+                  {formatRelativeTime(u.lastLoginAt)}
                 </td>
                 <td className="px-4 py-3 text-right">
                   {u.discordId !== currentUser?.discordId && (
