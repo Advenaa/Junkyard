@@ -53,22 +53,26 @@ export function createHealthMonitor(
   }
 
   async function checkSourceSilence(): Promise<HealthCheckResult> {
+    // HM-020: LEFT JOIN to catch sources without source_state rows
     const { rows } = await pool.query<{
       label: string | null;
       poll_interval: number;
       last_fetched_at: number | null;
+      status: string | null;
     }>(`
-      SELECT s.label, s.poll_interval, ss.last_fetched_at
+      SELECT s.label, s.poll_interval, ss.last_fetched_at, ss.status
       FROM sources s
-      JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
-      WHERE ss.status = 'active'
+      LEFT JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
     `);
 
     const now = Date.now();
     const silent: string[] = [];
 
     for (const row of rows) {
+      if (row.status === 'disabled' || row.status === 'halted') continue; // HM-020
       if (!row.last_fetched_at) {
+        // HM-020: Never successfully polled (or no source_state yet)
+        silent.push(row.label ?? 'unknown');
         continue;
       }
       const elapsedMs = now - row.last_fetched_at;

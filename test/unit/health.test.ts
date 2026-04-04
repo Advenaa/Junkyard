@@ -190,12 +190,13 @@ describe('health monitor', () => {
           if (text.includes('SELECT 1')) {
             return { rows: [{ '?column?': 1 }] };
           }
-          if (text.includes("status = 'active'")) {
+          if (text.includes('LEFT JOIN source_state')) {
             return {
               rows: [{
                 label: 'stale-discord',
                 poll_interval: 60, // 60 seconds
                 last_fetched_at: Date.now() - 300_000, // 5 minutes ago = 5x the interval (> 3x threshold)
+                status: 'active',
               }],
             };
           }

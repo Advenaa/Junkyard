@@ -376,7 +376,8 @@ program
 
     // ── 8. Start server ───────────────────────────────────────────────
     const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);
-    const app = await createServer(config, pool, log, healthMonitor, chatHandler);
+    // CF-010: rebuild cron on config change
+    const app = await createServer(config, pool, log, healthMonitor, chatHandler, () => scheduler.refreshDailyCron());
     await startServer(app, config.port, log);
 
     // ── 9. Start background services ──────────────────────────────────

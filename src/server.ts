@@ -55,6 +55,7 @@ export async function createServer(
   log: Logger,
   healthMonitor: HealthMonitor,
   chatHandler?: ChatHandler,
+  onConfigChange?: () => Promise<void>,
 ): Promise<FastifyInstance> {
   // Warn if Discord OAuth is configured without PUBLIC_URL (DB-008)
   if (config.discordClientId && config.discordClientSecret && !config.publicUrl) {
@@ -237,6 +238,28 @@ export async function createServer(
     const body = request.body as Record<string, string>;
     const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
 
+    // CF-011 — validate digest_time format
+    if ('digest_time' in body && body['digest_time']) {
+      const match = body['digest_time'].match(/^(\d{1,2}):(\d{2})$/);
+      if (!match) {
+        return reply.code(400).send({ error: 'Invalid digest_time format, expected HH:MM' });
+      }
+      const hour = Number(match[1]);
+      const minute = Number(match[2]);
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return reply.code(400).send({ error: 'digest_time out of range (hour 0-23, minute 0-59)' });
+      }
+    }
+
+    // CF-011 — validate timezone
+    if ('timezone' in body && body['timezone']) {
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: body['timezone'] });
+      } catch {
+        return reply.code(400).send({ error: `Invalid timezone: ${body['timezone']}` });
+      }
+    }
+
     // Validate webhook_url if provided (SSRF protection — D-010)
     if ('webhook_url' in body && body['webhook_url']) {
       const validation = await validateUrl(body['webhook_url']);
@@ -252,6 +275,16 @@ export async function createServer(
       }
     }
     await Promise.all(updates);
+
+    // CF-010 — notify scheduler when cron-affecting config changes
+    if (onConfigChange && ('digest_time' in body || 'timezone' in body)) {
+      try {
+        await onConfigChange();
+      } catch (err) {
+        log.error({ err }, 'config change callback failed');
+      }
+    }
+
     const [digestTime, timezone, webhookUrl] = await Promise.all([
       getAppConfig(pool, 'digest_time'),
       getAppConfig(pool, 'timezone'),
