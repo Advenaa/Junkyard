@@ -17,6 +17,7 @@ export interface TokenState {
   lastSeq: number | null;
   assignedChannels: Set<string>;
   errorCount: number;
+  connectedAt: number | null;
 }
 
 interface GatewayPayload {
@@ -320,6 +321,7 @@ class TokenConnection {
       lastSeq: null,
       assignedChannels: new Set(),
       errorCount: 0,
+      connectedAt: null,
     };
   }
 
@@ -475,7 +477,7 @@ class TokenConnection {
         this.log.info({ tokenIndex: this.tokenIndex }, 'session resumed');
         this.state.status = 'connected';
         this.state.errorCount = 0;
-        this.reconnectAttempt = 0;
+        this.state.connectedAt = Date.now();
         break;
       case 'MESSAGE_CREATE':
         void this.handleMessageCreate(d);
@@ -495,13 +497,14 @@ class TokenConnection {
     this.state.resumeUrl = d.resume_gateway_url;
     this.state.status = 'connected';
     this.state.errorCount = 0;
-    this.reconnectAttempt = 0;
+    this.state.connectedAt = Date.now();
     this.log.info({ tokenIndex: this.tokenIndex }, 'gateway session ready');
   }
 
   // ---- message handling ----
 
   private async handleMessageCreate(d: unknown): Promise<void> {
+    if (this.destroyed) return;
     if (!isMessageCreateData(d)) return;
 
     // Filter: only assigned channels
@@ -665,11 +668,8 @@ class TokenConnection {
 
   // ---- reconnection ----
 
-  private handleClose(code: number): void {
-    if (this.destroyed) return;
-
-    this.state.errorCount += 1;
-
+  /** Returns true if the circuit breaker has tripped and the token is now disabled. */
+  private checkCircuitBreaker(): boolean {
     if (this.state.errorCount >= MAX_CONSECUTIVE_ERRORS) {
       this.log.error(
         { tokenIndex: this.tokenIndex, errorCount: this.state.errorCount },
@@ -677,8 +677,22 @@ class TokenConnection {
       );
       this.state.status = 'disabled';
       this.onDeath(this.tokenIndex);
-      return;
+      return true;
     }
+    return false;
+  }
+
+  private handleClose(code: number): void {
+    if (this.destroyed) return;
+
+    // Only count non-resumable close codes as errors toward the circuit breaker.
+    // Resumable codes (4000-4003, 4005, 4009, 1001, 1006, undefined) are normal
+    // reconnect scenarios and should not inflate the failure counter.
+    if (!RESUMABLE_CLOSE_CODES.has(code)) {
+      this.state.errorCount += 1;
+    }
+
+    if (this.checkCircuitBreaker()) return;
 
     if (FATAL_CLOSE_CODES.has(code)) {
       this.log.error(
@@ -719,12 +733,27 @@ class TokenConnection {
       this.ws = null;
     }
     this.clearHeartbeat();
+
+    // Count toward circuit breaker — repeated zombie connections must eventually trip it
+    this.state.errorCount += 1;
+    if (this.checkCircuitBreaker()) return;
+
     void this.resumeWithBackoff();
   }
 
   private async resumeWithBackoff(): Promise<void> {
     if (this.destroyed) return;
     this.state.status = 'backoff';
+
+    // Only reset backoff if the connection was stable for at least 30s
+    const STABLE_THRESHOLD_MS = 30_000;
+    if (
+      this.state.connectedAt !== null &&
+      Date.now() - this.state.connectedAt > STABLE_THRESHOLD_MS
+    ) {
+      this.reconnectAttempt = 0;
+    }
+
     this.reconnectAttempt += 1;
     const delay = backoffMs(this.reconnectAttempt);
     this.log.info(

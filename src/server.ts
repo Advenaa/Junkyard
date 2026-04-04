@@ -463,6 +463,10 @@ export async function createServer(
       `INSERT INTO users (discord_id, role) VALUES ($1, $2) ON CONFLICT (discord_id) DO UPDATE SET role = $2`,
       [discordId, role],
     );
+    // AU-035: purge all active sessions when a user is blocked
+    if (role === 'blocked') {
+      await sessionManager.deleteAllForUser(discordId);
+    }
     return { discordId, role };
   });
 

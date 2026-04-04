@@ -10,6 +10,7 @@ export interface SessionManager {
     userAgent: string,
   ): Promise<{ discordId: string; role: string } | null>;
   delete(sessionId: string): Promise<void>;
+  deleteAllForUser(discordId: string): Promise<number>;
   cleanupExpired(): Promise<number>;
 }
 
@@ -220,6 +221,18 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
     async delete(sessionId: string): Promise<void> {
       await pool.query(`DELETE FROM sessions WHERE id = $1`, [sessionId]);
       log.info({ sessionId: logSessionId(sessionId) }, 'Session deleted');
+    },
+
+    async deleteAllForUser(discordId: string): Promise<number> {
+      const result = await pool.query(
+        `DELETE FROM sessions WHERE discord_id = $1`,
+        [discordId],
+      );
+      const count = result.rowCount ?? 0;
+      if (count > 0) {
+        log.info({ discordId, count }, 'Purged all sessions for user');
+      }
+      return count;
     },
 
     async cleanupExpired(): Promise<number> {

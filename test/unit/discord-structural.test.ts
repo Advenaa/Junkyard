@@ -235,37 +235,30 @@ describe('DC-006: Circuit breaker disables token after consecutive errors', () =
     );
   });
 
-  it('handleClose checks errorCount against MAX_CONSECUTIVE_ERRORS before reconnecting', () => {
-    const body = extractFunctionBody(source, 'private handleClose');
+  it('checkCircuitBreaker compares errorCount against MAX_CONSECUTIVE_ERRORS', () => {
+    const body = extractFunctionBody(source, 'private checkCircuitBreaker');
 
     assert.ok(
       body.includes('errorCount >= MAX_CONSECUTIVE_ERRORS') ||
       body.includes('errorCount > MAX_CONSECUTIVE_ERRORS - 1'),
-      'handleClose must compare errorCount against MAX_CONSECUTIVE_ERRORS',
+      'checkCircuitBreaker must compare errorCount against MAX_CONSECUTIVE_ERRORS',
     );
   });
 
   it('sets status to disabled when circuit breaker trips', () => {
-    const body = extractFunctionBody(source, 'private handleClose');
-
-    // The circuit breaker block must set status to disabled
-    const cbIdx = body.indexOf('MAX_CONSECUTIVE_ERRORS');
-    const nearbySlice = body.slice(cbIdx, cbIdx + 300);
+    const body = extractFunctionBody(source, 'private checkCircuitBreaker');
 
     assert.ok(
-      nearbySlice.includes("'disabled'") || nearbySlice.includes('"disabled"'),
+      body.includes("'disabled'") || body.includes('"disabled"'),
       'circuit breaker must set status to disabled',
     );
   });
 
   it('calls onDeath when circuit breaker trips', () => {
-    const body = extractFunctionBody(source, 'private handleClose');
-
-    const cbIdx = body.indexOf('MAX_CONSECUTIVE_ERRORS');
-    const nearbySlice = body.slice(cbIdx, cbIdx + 300);
+    const body = extractFunctionBody(source, 'private checkCircuitBreaker');
 
     assert.ok(
-      nearbySlice.includes('onDeath'),
+      body.includes('onDeath'),
       'circuit breaker must call onDeath to trigger channel reassignment',
     );
   });
@@ -286,17 +279,17 @@ describe('DC-006: Circuit breaker disables token after consecutive errors', () =
     );
   });
 
-  it('circuit breaker check happens before fatal/resumable close code checks', () => {
+  it('handleClose calls checkCircuitBreaker before fatal/resumable close code checks', () => {
     const body = extractFunctionBody(source, 'private handleClose');
 
-    const cbIdx = body.indexOf('errorCount >= MAX_CONSECUTIVE_ERRORS');
+    const cbIdx = body.indexOf('checkCircuitBreaker()');
     const fatalIdx = body.indexOf('FATAL_CLOSE_CODES');
 
-    assert.ok(cbIdx !== -1, 'circuit breaker check must exist');
+    assert.ok(cbIdx !== -1, 'handleClose must call checkCircuitBreaker()');
     assert.ok(fatalIdx !== -1, 'fatal close code check must exist');
     assert.ok(
       cbIdx < fatalIdx,
-      'circuit breaker check must come before fatal close code handling (errors take priority)',
+      'checkCircuitBreaker() must come before fatal close code handling',
     );
   });
 });

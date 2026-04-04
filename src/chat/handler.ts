@@ -12,6 +12,7 @@ import type { ChatTool, Embedder, LLM as ToolLLM } from './tools.js';
 
 interface ChatLLM extends ToolLLM {
   call(params: LLMCallParams): Promise<LLMCallResult>;
+  wrapWithNonce(content: string): { wrapped: string; nonce: string };
 }
 
 interface ChatResult {
@@ -214,7 +215,10 @@ export function createChatHandler(
         // so use a generous 5x multiplier to avoid false rejections.
         const translated = translateResult.content?.trim();
         if (translated && translated.length > 0 && translated.length < query.length * 5) {
-          processedQuery = translated;
+          // Wrap translated text in nonce-protected XML — the translation came from an LLM
+          // and could carry through prompt injection embedded in the original Indonesian query.
+          const { wrapped } = llm.wrapWithNonce(translated);
+          processedQuery = wrapped;
         } else {
           log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, re-embedding original Indonesian query');
           // Re-embed the original Indonesian query so semantic search still works.

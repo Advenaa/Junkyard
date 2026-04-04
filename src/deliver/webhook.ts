@@ -217,6 +217,9 @@ async function postWithRetry(
         return true;
       }
 
+      // Drain response body on all non-2xx paths to prevent socket leaks
+      await response.body?.cancel();
+
       if (response.status === 429) {
         rateLimitCount++;
         if (rateLimitCount >= MAX_RATE_LIMIT_RETRIES) {
@@ -228,8 +231,9 @@ async function postWithRetry(
         }
         const retryAfterHeader = response.headers.get('Retry-After');
         const parsed = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
+        const MIN_RETRY_AFTER_MS = 1000;
         const retryAfterMs = Number.isFinite(parsed) && parsed > 0
-          ? Math.min(Math.ceil(parsed * 1000), MAX_RETRY_AFTER_MS)
+          ? Math.max(Math.min(Math.ceil(parsed * 1000), MAX_RETRY_AFTER_MS), MIN_RETRY_AFTER_MS)
           : BACKOFF_MS[attempt] ?? 32000;
         log.warn(
           { status: 429, retryAfterMs, attempt: attempt + 1, rateLimitCount },
