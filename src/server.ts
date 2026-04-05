@@ -24,6 +24,7 @@ import {
 } from './db/queries.js';
 import net from 'node:net';
 import { validateUrl } from './url-validator.js';
+import { createDiscordRest } from './ingest/discord-rest.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
@@ -64,6 +65,7 @@ export async function createServer(
 
   const sessionManager = createSessionManager(pool, log);
   const authPreHandler = requireAuth(pool, config, sessionManager);
+  const discordRest = createDiscordRest(config.discordTokens, log);
   const app = Fastify({ logger: false, trustProxy: config.publicUrl ? 1 : false });
 
   // --- Plugins ---
@@ -593,6 +595,22 @@ export async function createServer(
         return reply.code(404).send({ error: 'Source not found' });
       }
       reply.code(204).send();
+    },
+  );
+
+  // --- Discord server/channel discovery ---
+  app.get('/api/v1/discord/guilds', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const guilds = await discordRest.getGuilds();
+    return { guilds };
+  });
+
+  app.get<{ Params: { guildId: string } }>(
+    '/api/v1/discord/guilds/:guildId/channels',
+    { preHandler: [authPreHandler, requireAdmin] },
+    async (request) => {
+      const { guildId } = request.params;
+      const channels = await discordRest.getChannels(guildId);
+      return { channels };
     },
   );
 

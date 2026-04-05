@@ -37,11 +37,15 @@ describe('SR-009 — webhook test truncates response detail', () => {
 
 describe('SR-002 — PATCH /sources has source enum in params schema', () => {
   it('params schema for PATCH /sources includes source enum with all four types', () => {
-    // Find the PATCH /sources route and its params schema
-    const patchBlock = server.match(/patch\(.*sources.*params:.*?enum:\s*\[([^\]]+)\]/is);
-    assert.ok(patchBlock, 'Expected PATCH /sources route with params enum');
+    // Find the PATCH /sources/:source/:sourceId route specifically
+    const patchIdx = server.indexOf("'/api/v1/sources/:source/:sourceId'");
+    assert.ok(patchIdx !== -1, 'PATCH /sources/:source/:sourceId route must exist');
+    // Look within 1500 chars of the route for the enum
+    const routeBlock = server.slice(patchIdx, patchIdx + 1500);
+    const enumMatch = routeBlock.match(/enum:\s*\[([^\]]+)\]/);
+    assert.ok(enumMatch, 'Expected params enum in PATCH /sources route');
 
-    const enumValues = patchBlock[1];
+    const enumValues = enumMatch[1];
     for (const source of ['discord', 'twitter', 'rss', 'news']) {
       assert.ok(enumValues.includes(`'${source}'`), `Expected '${source}' in PATCH /sources params enum`);
     }
