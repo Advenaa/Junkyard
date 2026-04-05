@@ -139,6 +139,17 @@ function SourcesTab() {
     }
   };
 
+  const deleteSource = async (s: Source) => {
+    if (!window.confirm(`Delete source "${s.label}"? This cannot be undone.`)) return;
+    setError(null);
+    try {
+      await apiFetch(`/sources/${s.source}/${s.sourceId}`, { method: 'DELETE' });
+      setSources((prev) => prev.filter((src) => !(src.source === s.source && src.sourceId === s.sourceId)));
+    } catch {
+      setError(`Failed to delete source "${s.label}".`);
+    }
+  };
+
   const addSourceButton = (
     <button
       onClick={openModal}
@@ -251,7 +262,7 @@ function SourcesTab() {
               <th className="text-left px-4 py-3">Label</th>
               <th className="text-left px-4 py-3">Status</th>
               <th className="text-left px-4 py-3">Last Fetched</th>
-              <th className="text-right px-4 py-3">Enabled</th>
+              <th className="text-right px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -274,18 +285,27 @@ function SourcesTab() {
                     {formatRelativeTime(s.lastFetchedAt)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => toggleSource(s)}
-                      className={`relative w-10 h-5 rounded-full transition-colors ${
-                        isActive ? 'bg-accent-green' : 'bg-border'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                          isActive ? 'left-5' : 'left-0.5'
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => deleteSource(s)}
+                        className="text-accent-red/70 hover:text-accent-red text-xs font-mono transition-colors"
+                        title={`Delete ${s.label}`}
+                      >
+                        &times;
+                      </button>
+                      <button
+                        onClick={() => toggleSource(s)}
+                        className={`relative w-10 h-5 rounded-full transition-colors ${
+                          isActive ? 'bg-accent-green' : 'bg-border'
                         }`}
-                      />
-                    </button>
+                      >
+                        <span
+                          className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                            isActive ? 'left-5' : 'left-0.5'
+                          }`}
+                        />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -302,6 +322,8 @@ function SourcesTab() {
 function DeliveryTab() {
   const [config, setConfig] = useState<Config | null>(null);
   const [webhookUrl, setWebhookUrl] = useState('');
+  const [digestTime, setDigestTime] = useState('09:00');
+  const [timezone, setTimezone] = useState('Asia/Jakarta');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -318,6 +340,8 @@ function DeliveryTab() {
       };
       setConfig(mapped);
       setWebhookUrl(res.webhookUrl ?? '');
+      setDigestTime(res.digestTime ?? '09:00');
+      setTimezone(res.timezone ?? 'Asia/Jakarta');
     }).catch(() => {
       setFetchError('Failed to load delivery configuration. Please try refreshing the page.');
     });
@@ -334,11 +358,11 @@ function DeliveryTab() {
     try {
       await apiFetch('/config', {
         method: 'PATCH',
-        body: JSON.stringify({ webhook_url: webhookUrl }),
+        body: JSON.stringify({ webhook_url: webhookUrl, digest_time: digestTime, timezone: timezone }),
       });
-      setConfig((prev) => (prev ? { ...prev, webhookUrl } : prev));
+      setConfig((prev) => (prev ? { ...prev, webhookUrl, digestTime, timezone } : prev));
     } catch {
-      setError('Failed to save webhook configuration.');
+      setError('Failed to save delivery configuration.');
     } finally {
       setSaving(false);
     }
@@ -376,6 +400,38 @@ function DeliveryTab() {
   return (
     <div className="space-y-6">
       {error && <p className="text-red-400 text-sm font-body">{error}</p>}
+      <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
+        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+          Digest Time
+        </h3>
+        <input
+          type="time"
+          value={digestTime}
+          onChange={(e) => setDigestTime(e.target.value)}
+          className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+        />
+      </div>
+      <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
+        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+          Timezone
+        </h3>
+        <select
+          value={timezone}
+          onChange={(e) => setTimezone(e.target.value)}
+          className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+        >
+          <option value="Asia/Jakarta">Asia/Jakarta</option>
+          <option value="UTC">UTC</option>
+          <option value="America/New_York">America/New_York</option>
+          <option value="America/Los_Angeles">America/Los_Angeles</option>
+          <option value="Europe/London">Europe/London</option>
+          <option value="Europe/Berlin">Europe/Berlin</option>
+          <option value="Asia/Tokyo">Asia/Tokyo</option>
+          <option value="Asia/Singapore">Asia/Singapore</option>
+          <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
+          <option value="Australia/Sydney">Australia/Sydney</option>
+        </select>
+      </div>
       <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
         <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
           Webhook URL

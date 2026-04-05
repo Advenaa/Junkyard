@@ -8,7 +8,7 @@ interface ChatMessageProps {
   loading?: boolean;
 }
 
-function renderContent(text: string): ReactNode[] {
+function renderInline(text: string, keyPrefix: string): ReactNode[] {
   const parts: ReactNode[] = [];
   const regex = /(\*\*(.+?)\*\*|`([^`]+)`)/g;
   let lastIndex = 0;
@@ -19,12 +19,19 @@ function renderContent(text: string): ReactNode[] {
       parts.push(text.slice(lastIndex, match.index));
     }
     if (match[2]) {
-      parts.push(<strong key={match.index} className="font-semibold">{match[2]}</strong>);
+      parts.push(
+        <strong key={`${keyPrefix}-b-${match.index}`} className="font-semibold">
+          {match[2]}
+        </strong>,
+      );
     } else if (match[3]) {
       parts.push(
-        <code key={match.index} className="px-1 py-0.5 rounded bg-background text-accent text-[13px] font-mono">
+        <code
+          key={`${keyPrefix}-c-${match.index}`}
+          className="px-1 py-0.5 rounded bg-background text-accent text-[13px] font-mono"
+        >
           {match[3]}
-        </code>
+        </code>,
       );
     }
     lastIndex = regex.lastIndex;
@@ -35,6 +42,119 @@ function renderContent(text: string): ReactNode[] {
   }
 
   return parts;
+}
+
+function renderContent(text: string): ReactNode {
+  const lines = text.split('\n');
+  const elements: ReactNode[] = [];
+  let inCodeBlock = false;
+  let codeLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Code block toggle (``` with optional language tag)
+    if (line.trimStart().startsWith('```')) {
+      if (inCodeBlock) {
+        // Close code block
+        elements.push(
+          <pre
+            key={`code-${i}`}
+            className="bg-background rounded-lg p-3 text-xs font-mono text-text-primary overflow-x-auto my-2"
+          >
+            <code>{codeLines.join('\n')}</code>
+          </pre>,
+        );
+        codeLines = [];
+        inCodeBlock = false;
+      } else {
+        inCodeBlock = true;
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
+    // Headers
+    if (line.startsWith('### ')) {
+      elements.push(
+        <div key={`h3-${i}`} className="font-heading text-base text-text-primary mt-3 mb-1">
+          {renderInline(line.slice(4), `h3-${i}`)}
+        </div>,
+      );
+      continue;
+    }
+    if (line.startsWith('## ')) {
+      elements.push(
+        <div key={`h2-${i}`} className="font-heading text-lg text-text-primary mt-3 mb-1">
+          {renderInline(line.slice(3), `h2-${i}`)}
+        </div>,
+      );
+      continue;
+    }
+    if (line.startsWith('# ')) {
+      elements.push(
+        <div key={`h1-${i}`} className="font-heading text-xl text-text-primary mt-3 mb-1">
+          {renderInline(line.slice(2), `h1-${i}`)}
+        </div>,
+      );
+      continue;
+    }
+
+    // Bullet lists (- or * followed by space)
+    if (/^[-*] /.test(line)) {
+      elements.push(
+        <div key={`ul-${i}`} className="pl-4 text-text-primary">
+          {'• '}{renderInline(line.slice(2), `ul-${i}`)}
+        </div>,
+      );
+      continue;
+    }
+
+    // Numbered lists (1. , 2. , etc.)
+    const numMatch = line.match(/^(\d+)\. /);
+    if (numMatch) {
+      const num = numMatch[1];
+      const content = line.slice(numMatch[0].length);
+      elements.push(
+        <div key={`ol-${i}`} className="pl-4 text-text-primary">
+          {`${num}. `}{renderInline(content, `ol-${i}`)}
+        </div>,
+      );
+      continue;
+    }
+
+    // Empty line → line break
+    if (line.trim() === '') {
+      elements.push(<br key={`br-${i}`} />);
+      continue;
+    }
+
+    // Regular paragraph with inline formatting
+    elements.push(
+      <span key={`p-${i}`}>
+        {renderInline(line, `p-${i}`)}
+        {i < lines.length - 1 ? '\n' : ''}
+      </span>,
+    );
+  }
+
+  // Flush unclosed code block (defensive)
+  if (inCodeBlock && codeLines.length > 0) {
+    elements.push(
+      <pre
+        key="code-unclosed"
+        className="bg-background rounded-lg p-3 text-xs font-mono text-text-primary overflow-x-auto my-2"
+      >
+        <code>{codeLines.join('\n')}</code>
+      </pre>,
+    );
+  }
+
+  return <>{elements}</>;
 }
 
 export function ChatMessage({ role, content, toolsUsed, loading }: ChatMessageProps) {

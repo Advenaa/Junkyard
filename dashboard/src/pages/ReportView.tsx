@@ -114,9 +114,11 @@ export function ReportView() {
 
     const fetchReport = id
       ? apiFetch<{ report: FullReport }>(`/reports/${id}`)
-      : apiFetch<{ reports: FullReport[] }>('/reports?limit=1').then((res) => ({
-          report: 'reports' in res && res.reports.length > 0 ? res.reports[0] : null,
-        }));
+      : apiFetch<{ reports: Array<{ id: string }> }>('/reports?limit=1').then((res) => {
+          const latest = res.reports[0];
+          if (!latest) return { report: null } as { report: FullReport | null };
+          return apiFetch<{ report: FullReport }>(`/reports/${latest.id}`);
+        });
 
     fetchReport
       .then((res) => {

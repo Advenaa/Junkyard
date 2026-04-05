@@ -475,6 +475,30 @@ export async function createServer(
     return { source, sourceId, status: newStatus };
   });
 
+  // --- DELETE /sources/:source/:sourceId (PD-003) ---
+  app.delete('/api/v1/sources/:source/:sourceId', {
+    preHandler: [authPreHandler, requireAdmin],
+    schema: {
+      params: {
+        type: 'object',
+        required: ['source', 'sourceId'],
+        properties: {
+          source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
+          sourceId: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { source, sourceId } = request.params as { source: string; sourceId: string };
+    // Delete source_state first (may not exist)
+    await pool.query('DELETE FROM source_state WHERE source = $1 AND source_id = $2', [source, sourceId]);
+    const { rowCount } = await pool.query('DELETE FROM sources WHERE source = $1 AND source_id = $2', [source, sourceId]);
+    if (!rowCount) {
+      return reply.code(404).send({ error: 'Source not found' });
+    }
+    reply.code(204).send();
+  });
+
   // --- PATCH /users/:discordId (CD-003) ---
   app.patch('/api/v1/users/:discordId', {
     preHandler: [authPreHandler, requireAdmin],

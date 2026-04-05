@@ -20,10 +20,18 @@ function generateId(): string {
 }
 
 export function Chat() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('podders-chat-messages') ?? '[]');
+    } catch {
+      return [];
+    }
+  });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [conversationId, setConversationId] = useState(generateId);
+  const [conversationId, setConversationId] = useState(() => {
+    return sessionStorage.getItem('podders-chat-conversation-id') ?? generateId();
+  });
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const conversationIdRef = useRef(conversationId);
@@ -35,6 +43,21 @@ export function Chat() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
+
+  useEffect(() => {
+    sessionStorage.setItem('podders-chat-messages', JSON.stringify(messages));
+  }, [messages]);
+
+  useEffect(() => {
+    sessionStorage.setItem('podders-chat-conversation-id', conversationId);
+  }, [conversationId]);
+
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
 
   const send = useCallback(async () => {
     const query = input.trim();
@@ -80,6 +103,8 @@ export function Chat() {
     setMessages([]);
     setConversationId(generateId());
     setInput('');
+    sessionStorage.removeItem('podders-chat-messages');
+    sessionStorage.removeItem('podders-chat-conversation-id');
     textareaRef.current?.focus();
   };
 
@@ -122,7 +147,7 @@ export function Chat() {
             aria-label="Chat message input"
             placeholder="Ask about markets, entities, signals..."
             rows={1}
-            className="flex-1 resize-none bg-surface-raised text-text-primary placeholder:text-text-secondary text-sm rounded-lg px-4 py-2.5 border border-border focus:border-accent focus:outline-none"
+            className="flex-1 resize-none overflow-y-auto bg-surface-raised text-text-primary placeholder:text-text-secondary text-sm rounded-lg px-4 py-2.5 border border-border focus:border-accent focus:outline-none"
           />
           <button
             onClick={send}
