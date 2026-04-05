@@ -63,6 +63,8 @@ export async function createServer(
   healthMonitor: HealthMonitor,
   chatHandler?: ChatHandler,
   onConfigChange?: () => Promise<void>,
+  onTokensChanged?: () => Promise<string[]>,
+  getTokenHealth?: () => Array<{ index: number; status: string; errorCount: number; connectedAt: number | null; channelCount: number }>,
 ): Promise<FastifyInstance> {
   // Warn if Discord OAuth is configured without PUBLIC_URL (DB-008)
   if (config.discordClientId && config.discordClientSecret && !config.publicUrl) {
@@ -677,6 +679,7 @@ export async function createServer(
       const id = ulid();
       const encrypted = encryptToken(token, encKey);
       await insertDiscordToken(pool, id, encrypted.ciphertext, encrypted.iv, encrypted.authTag, label ?? null, Date.now());
+      if (onTokensChanged) onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
       reply.code(201);
       return { id, label: label ?? null, status: 'active', addedAt: Date.now() };
     },
@@ -702,6 +705,7 @@ export async function createServer(
       if (!deleted) {
         return reply.code(404).send({ error: 'Token not found' });
       }
+      if (onTokensChanged) onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
       reply.code(204).send();
     },
   );
@@ -739,9 +743,19 @@ export async function createServer(
         const updated = await updateDiscordTokenStatus(pool, tokenId, body.status);
         if (!updated) return reply.code(404).send({ error: 'Token not found' });
       }
+      if (body.status != null && onTokensChanged) {
+        onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
+      }
       return { ok: true };
     },
   );
+
+  // --- Discord token health (Gateway connection states) ---
+  app.get('/api/v1/discord/tokens/health', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    if (!getTokenHealth) return { states: [] };
+    const states = getTokenHealth();
+    return { states };
+  });
 
   // --- PATCH /users/:discordId (CD-003) ---
   app.patch(

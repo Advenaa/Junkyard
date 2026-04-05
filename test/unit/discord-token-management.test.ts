@@ -247,3 +247,104 @@ describe('Behavioral: encryption roundtrip', () => {
     }
   });
 });
+
+// ==========================================================================
+// Section 3: Structural tests — Cycle 143 integration wiring
+// ==========================================================================
+
+/** Read a source file relative to the project root. */
+function readSrc(relPath: string): string {
+  return readFileSync(resolve(ROOT, relPath), 'utf-8');
+}
+
+describe('Discord adapter reconnect (discord.ts)', () => {
+  const src = readSrc('src/ingest/discord.ts');
+
+  it('exports reconnect in return type', () => {
+    assert.ok(src.includes('reconnect'), 'adapter must include reconnect method');
+  });
+
+  it('reconnect disconnects before rebuilding connections', () => {
+    // reconnect should call disconnect() then rebuild
+    const reconnectBlock = src.match(/async function reconnect[\s\S]*?log\.info/);
+    assert.ok(reconnectBlock, 'reconnect function must exist');
+    const block = reconnectBlock[0];
+    assert.ok(block.includes('disconnect()'), 'reconnect must call disconnect');
+    assert.ok(block.includes('connections.length = 0') || block.includes('connections.splice'), 'reconnect must clear connections');
+    assert.ok(block.includes('connect()'), 'reconnect must call connect');
+  });
+});
+
+describe('Discord REST updateTokens (discord-rest.ts)', () => {
+  const src = readSrc('src/ingest/discord-rest.ts');
+
+  it('exports updateTokens method', () => {
+    assert.ok(src.includes('updateTokens'), 'REST adapter must include updateTokens method');
+  });
+
+  it('uses mutable activeTokens variable', () => {
+    assert.ok(src.includes('activeTokens'), 'Must use mutable activeTokens for hot-reload');
+  });
+});
+
+describe('Token integration wiring (server.ts)', () => {
+  const src = readSrc('src/server.ts');
+
+  it('createServer accepts onTokensChanged parameter', () => {
+    assert.ok(src.includes('onTokensChanged'), 'server must accept onTokensChanged callback');
+  });
+
+  it('createServer accepts getTokenHealth parameter', () => {
+    assert.ok(src.includes('getTokenHealth'), 'server must accept getTokenHealth callback');
+  });
+
+  it('POST /discord/tokens triggers onTokensChanged', () => {
+    // Find the await insertDiscordToken call (not the import)
+    const postIdx = src.indexOf('await insertDiscordToken(');
+    assert.ok(postIdx !== -1, 'await insertDiscordToken call must exist');
+    const block = src.slice(postIdx, postIdx + 300);
+    assert.ok(block.includes('onTokensChanged'), 'POST token must trigger onTokensChanged after insert');
+  });
+
+  it('DELETE /discord/tokens triggers onTokensChanged', () => {
+    // Find the await deleteDiscordToken call (not the import)
+    const deleteIdx = src.indexOf('await deleteDiscordToken(');
+    assert.ok(deleteIdx !== -1, 'await deleteDiscordToken call must exist');
+    const block = src.slice(deleteIdx, deleteIdx + 300);
+    assert.ok(block.includes('onTokensChanged'), 'DELETE token must trigger onTokensChanged after delete');
+  });
+
+  it('has GET /discord/tokens/health endpoint', () => {
+    assert.ok(src.includes('/api/v1/discord/tokens/health'), 'health endpoint must exist');
+  });
+
+  it('discordRest.updateTokens called on token change', () => {
+    assert.ok(src.includes('discordRest.updateTokens'), 'must update REST adapter tokens');
+  });
+});
+
+describe('Token loading in index.ts', () => {
+  const src = readSrc('src/index.ts');
+
+  it('imports getDiscordTokens from queries', () => {
+    assert.ok(src.includes('getDiscordTokens'), 'must import getDiscordTokens');
+  });
+
+  it('imports decryptToken from crypto', () => {
+    assert.ok(src.includes('decryptToken'), 'must import decryptToken');
+  });
+
+  it('defines loadAllTokens helper', () => {
+    assert.ok(src.includes('loadAllTokens'), 'must define loadAllTokens function');
+  });
+
+  it('passes onTokensChanged to createServer', () => {
+    const serverCall = src.match(/createServer\([\s\S]*?onTokensChanged/);
+    assert.ok(serverCall, 'createServer call must include onTokensChanged');
+  });
+
+  it('passes getTokenHealth to createServer', () => {
+    const serverCall = src.match(/createServer\([\s\S]*?getTokenHealth/);
+    assert.ok(serverCall, 'createServer call must include getTokenHealth');
+  });
+});

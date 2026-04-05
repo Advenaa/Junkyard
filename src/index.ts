@@ -29,10 +29,34 @@ import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
 import { createSentimentTracker } from './knowledge/sentiment.js';
 import { createDivergenceTracker } from './knowledge/divergence.js';
-import { getSources, resetCrashed, recoverStaleProcessing, getAppConfig } from './db/queries.js';
+import { getSources, resetCrashed, recoverStaleProcessing, getAppConfig, getDiscordTokens } from './db/queries.js';
+import { decryptToken, getEncryptionKey } from './crypto/token-encrypt.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
+
+/** Load all active Discord tokens (env var + DB), deduplicated. */
+async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Promise<string[]> {
+  const tokens = [...envTokens];
+  const encKey = getEncryptionKey();
+  if (encKey) {
+    try {
+      const rows = await getDiscordTokens(pool);
+      for (const row of rows) {
+        if (row.status !== 'active') continue;
+        try {
+          const plain = decryptToken({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
+          if (!tokens.includes(plain)) tokens.push(plain);
+        } catch {
+          log.warn({ tokenId: row.id }, 'failed to decrypt DB token — skipping');
+        }
+      }
+    } catch (err: unknown) {
+      log.warn({ err }, 'failed to load DB tokens — using env tokens only');
+    }
+  }
+  return tokens;
+}
 
 const program = new Command();
 
@@ -409,7 +433,20 @@ program
     // ── 8. Start server ───────────────────────────────────────────────
     const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);
     // CF-010: rebuild cron on config change
-    const app = await createServer(config, pool, log, healthMonitor, chatHandler, () => scheduler.refreshDailyCron());
+    const onTokensChanged = async (): Promise<string[]> => {
+      const allTokens = await loadAllTokens(pool, config.discordTokens, log);
+      discordAdapter.reconnect(allTokens).catch((err: unknown) => log.error({ err }, 'adapter reconnect failed'));
+      return allTokens;
+    };
+    const getTokenHealth = () =>
+      discordAdapter.getTokenStates().map((s) => ({
+        index: s.index,
+        status: s.status,
+        errorCount: s.errorCount,
+        connectedAt: s.connectedAt,
+        channelCount: s.assignedChannels.size,
+      }));
+    const app = await createServer(config, pool, log, healthMonitor, chatHandler, () => scheduler.refreshDailyCron(), onTokensChanged, getTokenHealth);
     await startServer(app, config.port, log);
 
     // ── 9. Start background services ──────────────────────────────────

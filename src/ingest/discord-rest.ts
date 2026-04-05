@@ -85,6 +85,8 @@ async function discordFetch<T>(path: string, token: string, log: Logger): Promis
 // ---------------------------------------------------------------------------
 
 export function createDiscordRest(tokens: string[], log: Logger) {
+  let activeTokens = tokens;
+
   /**
    * Fetch all guilds visible across all tokens, deduplicated by guild ID.
    * Returns guilds sorted by name.
@@ -92,7 +94,7 @@ export function createDiscordRest(tokens: string[], log: Logger) {
   async function getGuilds(): Promise<DiscordGuild[]> {
     const guildMap = new Map<string, DiscordGuild>();
 
-    for (const token of tokens) {
+    for (const token of activeTokens) {
       const guilds = await discordFetch<RawGuild[]>('/users/@me/guilds?limit=200', token, log);
       if (!guilds) continue;
 
@@ -115,7 +117,7 @@ export function createDiscordRest(tokens: string[], log: Logger) {
    * Returns only text (0) and announcement (5) channels, sorted by position.
    */
   async function getChannels(guildId: string): Promise<DiscordChannel[]> {
-    for (const token of tokens) {
+    for (const token of activeTokens) {
       const channels = await discordFetch<RawChannel[]>(`/guilds/${guildId}/channels`, token, log);
       if (!channels) continue;
 
@@ -135,5 +137,9 @@ export function createDiscordRest(tokens: string[], log: Logger) {
     return [];
   }
 
-  return { getGuilds, getChannels };
+  function updateTokens(newTokens: string[]): void {
+    activeTokens = newTokens;
+  }
+
+  return { getGuilds, getChannels, updateTokens };
 }

@@ -68,10 +68,10 @@ describe('createDiscordAdapter factory', () => {
     assert.strictEqual(typeof adapter.getTokenStates, 'function');
   });
 
-  it('returns exactly three keys', () => {
+  it('returns exactly four keys', () => {
     const adapter = createDiscordAdapter(makeConfig(), mockPool, makeLogger(), noopOnMessage);
     const keys = Object.keys(adapter).sort();
-    assert.deepStrictEqual(keys, ['connect', 'disconnect', 'getTokenStates']);
+    assert.deepStrictEqual(keys, ['connect', 'disconnect', 'getTokenStates', 'reconnect']);
   });
 });
 

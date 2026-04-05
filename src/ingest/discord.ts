@@ -809,6 +809,7 @@ export function createDiscordAdapter(
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   getTokenStates: () => TokenState[];
+  reconnect: (newTokens: string[]) => Promise<void>;
 } {
   const connections: TokenConnection[] = [];
 
@@ -862,5 +863,24 @@ export function createDiscordAdapter(
     return connections.map((c) => ({ ...c.state }));
   }
 
-  return { connect, disconnect, getTokenStates };
+  async function reconnect(newTokens: string[]): Promise<void> {
+    // 1. Disconnect all existing connections
+    await disconnect();
+
+    // 2. Clear the connections array
+    connections.length = 0;
+
+    // 3. Create new connections for the new tokens
+    for (let i = 0; i < newTokens.length; i++) {
+      const token = newTokens[i]!;
+      connections.push(new TokenConnection(i, token, log, onMessage, handleTokenDeath, pool));
+    }
+
+    // 4. Connect with the new tokens
+    await connect();
+
+    log.info({ tokenCount: newTokens.length }, 'discord adapter reconnected with updated tokens');
+  }
+
+  return { connect, disconnect, getTokenStates, reconnect };
 }
