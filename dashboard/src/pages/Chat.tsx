@@ -215,13 +215,20 @@ export function Chat() {
           />
           <button
             onClick={() => send()}
-            disabled={loading || !input.trim()}
+            disabled={loading || !input.trim() || input.length > 4000}
             aria-label="Send message"
             className="px-4 py-2.5 min-h-[44px] rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40 transition-opacity"
           >
             Send
           </button>
         </div>
+        {input.length > 3000 && (
+          <div
+            className={`text-xs font-mono mt-1 text-right max-w-3xl mx-auto ${input.length > 4000 ? 'text-red-400' : 'text-text-secondary'}`}
+          >
+            {input.length.toLocaleString()}/4,000
+          </div>
+        )}
       </div>
     </div>
   );

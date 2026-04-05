@@ -49,6 +49,26 @@ interface UserRecord {
   lastLoginAt: number | null;
 }
 
+const TIMEZONES = (() => {
+  try {
+    return Intl.supportedValuesOf('timeZone');
+  } catch {
+    // Fallback for older environments
+    return [
+      'Asia/Jakarta',
+      'UTC',
+      'America/New_York',
+      'America/Los_Angeles',
+      'Europe/London',
+      'Europe/Berlin',
+      'Asia/Tokyo',
+      'Asia/Singapore',
+      'Asia/Hong_Kong',
+      'Australia/Sydney',
+    ];
+  }
+})();
+
 function formatRelativeTime(dateValue: number | null): string {
   if (dateValue == null) return 'Never';
   const diff = Date.now() - dateValue;
@@ -76,6 +96,7 @@ function SourcesTab() {
   const [adding, setAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
 
   useEffect(() => {
     apiFetch<{ sources: Source[] }>('/sources')
@@ -158,14 +179,18 @@ function SourcesTab() {
     }
   };
 
-  const deleteSource = async (s: Source) => {
-    if (!window.confirm(`Delete source "${s.label}"? This cannot be undone.`)) return;
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
     setError(null);
     try {
-      await apiFetch(`/sources/${s.source}/${s.sourceId}`, { method: 'DELETE' });
-      setSources((prev) => prev.filter((src) => !(src.source === s.source && src.sourceId === s.sourceId)));
+      await apiFetch(`/sources/${deleteTarget.source}/${deleteTarget.sourceId}`, { method: 'DELETE' });
+      setSources((prev) =>
+        prev.filter((src) => !(src.source === deleteTarget.source && src.sourceId === deleteTarget.sourceId)),
+      );
     } catch {
-      setError(`Failed to delete source "${s.label}".`);
+      setError(`Failed to delete source "${deleteTarget.label}".`);
+    } finally {
+      setDeleteTarget(null);
     }
   };
 
@@ -292,6 +317,30 @@ function SourcesTab() {
     </Modal>
   );
 
+  const deleteSourceModal = (
+    <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Source">
+      <p className="text-text-secondary text-sm mb-4">
+        Are you sure you want to delete{' '}
+        <strong className="text-text-primary">{deleteTarget?.label || deleteTarget?.sourceId}</strong>? This action
+        cannot be undone.
+      </p>
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={() => setDeleteTarget(null)}
+          className="px-4 py-2 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm hover:text-text-primary transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={confirmDelete}
+          className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-sm hover:bg-red-500/30 transition-colors"
+        >
+          Delete
+        </button>
+      </div>
+    </Modal>
+  );
+
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
 
   if (sources.length === 0 && error) {
@@ -302,6 +351,7 @@ function SourcesTab() {
     return (
       <>
         {addSourceModal}
+        {deleteSourceModal}
         <div className="text-center py-16">
           <p className="text-text-secondary text-lg">No sources configured</p>
           <p className="text-text-secondary/60 mt-2 text-sm">
@@ -316,6 +366,7 @@ function SourcesTab() {
   return (
     <div className="space-y-2">
       {addSourceModal}
+      {deleteSourceModal}
       <div className="flex items-center justify-between">
         {error ? <p className="text-red-400 text-sm font-body">{error}</p> : <span />}
         {addSourceButton}
@@ -372,7 +423,11 @@ function SourcesTab() {
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={s.stateStatus ?? 'unknown'} />
-                    {s.lastError && <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>}
+                    {(s.lastError || s.stateStatus === 'halted') && (
+                      <p className="text-accent-red text-xs mt-1 font-body">
+                        {s.lastError || 'Source halted — check server logs for details'}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-text-secondary font-mono text-xs">
                     {formatRelativeTime(s.lastFetchedAt)}
@@ -380,7 +435,7 @@ function SourcesTab() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-3">
                       <button
-                        onClick={() => deleteSource(s)}
+                        onClick={() => setDeleteTarget(s)}
                         className="text-accent-red/70 hover:text-accent-red text-xs font-mono transition-colors"
                         title={`Delete ${s.label}`}
                       >
@@ -458,7 +513,7 @@ function DeliveryTab() {
     try {
       await apiFetch('/config', {
         method: 'PATCH',
-        body: JSON.stringify({ webhook_url: webhookUrl, digest_time: digestTime, timezone: timezone }),
+        body: JSON.stringify({ webhookUrl, digestTime, timezone }),
       });
       setConfig((prev) => (prev ? { ...prev, webhookUrl, digestTime, timezone } : prev));
     } catch {
@@ -516,16 +571,11 @@ function DeliveryTab() {
           onChange={(e) => setTimezone(e.target.value)}
           className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
         >
-          <option value="Asia/Jakarta">Asia/Jakarta</option>
-          <option value="UTC">UTC</option>
-          <option value="America/New_York">America/New_York</option>
-          <option value="America/Los_Angeles">America/Los_Angeles</option>
-          <option value="Europe/London">Europe/London</option>
-          <option value="Europe/Berlin">Europe/Berlin</option>
-          <option value="Asia/Tokyo">Asia/Tokyo</option>
-          <option value="Asia/Singapore">Asia/Singapore</option>
-          <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
-          <option value="Australia/Sydney">Australia/Sydney</option>
+          {TIMEZONES.map((tz) => (
+            <option key={tz} value={tz}>
+              {tz.replace(/_/g, ' ')}
+            </option>
+          ))}
         </select>
       </div>
       <div className="bg-surface border border-border rounded-lg p-6 space-y-4">

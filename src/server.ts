@@ -259,8 +259,10 @@ export async function createServer(
           type: 'object',
           properties: {
             digest_time: { type: 'string' },
+            digestTime: { type: 'string' },
             timezone: { type: 'string' },
             webhook_url: { type: 'string' },
+            webhookUrl: { type: 'string' },
           },
           additionalProperties: false,
         },
@@ -268,6 +270,15 @@ export async function createServer(
     },
     async (request, reply) => {
       const body = request.body as Record<string, string>;
+      // Normalize camelCase → snake_case for DB storage (PR-010)
+      if ('digestTime' in body) {
+        body['digest_time'] = body['digestTime'];
+        delete body['digestTime'];
+      }
+      if ('webhookUrl' in body) {
+        body['webhook_url'] = body['webhookUrl'];
+        delete body['webhookUrl'];
+      }
       const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
 
       // CF-011 — validate digest_time format

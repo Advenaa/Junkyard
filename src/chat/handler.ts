@@ -178,7 +178,11 @@ export function createChatHandler(
 
   async function handle(query: string, conversationId: string, userId: string): Promise<ChatResult> {
     if (!checkUserBudget(userId)) {
-      return { response: 'You have reached your daily query limit. Please try again tomorrow.', toolsUsed: [] };
+      return {
+        response:
+          'You have reached your daily query limit. Your budget resets at midnight UTC. Please try again later.',
+        toolsUsed: [],
+      };
     }
 
     if (query.length > 4000) {
@@ -314,12 +318,11 @@ export function createChatHandler(
           continue;
         }
 
-        if (!toolsUsed.includes(call.name)) {
-          toolsUsed.push(call.name);
-        }
-
         try {
           const toolResult = await tool.execute(call.args);
+          if (!toolsUsed.includes(call.name)) {
+            toolsUsed.push(call.name);
+          }
           const truncatedResult = truncateToolResult(toolResult, MAX_TOOL_RESULT_CHARS);
           totalToolResultChars += truncatedResult.length;
           toolResults.push(buildToolResultMessage(call.name, truncatedResult));
