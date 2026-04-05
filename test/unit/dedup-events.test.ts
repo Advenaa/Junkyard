@@ -13,34 +13,20 @@ describe('deduplicateEvents', () => {
   });
 
   it('removes exact duplicates', () => {
-    const events = [
-      'BTC price hits $50000',
-      'BTC price hits $50000',
-      'ETH breaks $3000',
-      'BTC price hits $50000',
-    ];
+    const events = ['BTC price hits $50000', 'BTC price hits $50000', 'ETH breaks $3000', 'BTC price hits $50000'];
     const result = deduplicateEvents(events);
-    assert.deepStrictEqual(result, [
-      'BTC price hits $50000',
-      'ETH breaks $3000',
-    ]);
+    assert.deepStrictEqual(result, ['BTC price hits $50000', 'ETH breaks $3000']);
   });
 
   it('deduplicates similar events above 0.85 threshold', () => {
-    const events = [
-      'BTC price hits $50000',
-      'BTC price hits $50001',
-    ];
+    const events = ['BTC price hits $50000', 'BTC price hits $50001'];
     const result = deduplicateEvents(events);
     assert.strictEqual(result.length, 1);
     assert.strictEqual(result[0], 'BTC price hits $50000');
   });
 
   it('keeps dissimilar events below 0.85 threshold', () => {
-    const events = [
-      'SEC rejects Bitcoin ETF',
-      'SEC approves Bitcoin ETF',
-    ];
+    const events = ['SEC rejects Bitcoin ETF', 'SEC approves Bitcoin ETF'];
     const result = deduplicateEvents(events);
     assert.strictEqual(result.length, 2);
     assert.strictEqual(result[0], 'SEC rejects Bitcoin ETF');
@@ -62,10 +48,7 @@ describe('deduplicateEvents', () => {
   });
 
   it('respects custom threshold', () => {
-    const events = [
-      'BTC price hits $50000',
-      'BTC price hits $50001',
-    ];
+    const events = ['BTC price hits $50000', 'BTC price hits $50001'];
     // With a very high threshold (0.99), these should be kept as separate
     const strict = deduplicateEvents(events, 0.99);
     assert.strictEqual(strict.length, 2);

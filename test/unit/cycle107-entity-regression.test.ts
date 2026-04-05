@@ -51,7 +51,7 @@ describe('EL-004: Tier 2 co-occurrence resurrects archived entities', () => {
     assert.match(
       src,
       /if\s*\(\s*match\.status\s*===\s*'archived'\s*\)/,
-      'Must check if (match.status === \'archived\') for Tier 2 matches',
+      "Must check if (match.status === 'archived') for Tier 2 matches",
     );
   });
 
@@ -59,7 +59,7 @@ describe('EL-004: Tier 2 co-occurrence resurrects archived entities', () => {
     assert.match(
       src,
       /UPDATE\s+entities\s+SET\s+status\s*=\s*'active',\s*relevance\s*=\s*GREATEST\(relevance,\s*0\.5\)\s+WHERE\s+id\s*=\s*\$1/,
-      'Resurrection UPDATE must set status = \'active\', relevance = GREATEST(relevance, 0.5)',
+      "Resurrection UPDATE must set status = 'active', relevance = GREATEST(relevance, 0.5)",
     );
   });
 

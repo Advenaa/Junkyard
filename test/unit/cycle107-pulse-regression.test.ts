@@ -79,57 +79,33 @@ describe('SY-008: buildUserMessage accepts momentum and divergence params', () =
 
 describe('SY-008: sentiment_momentum XML block rendering', () => {
   it('source contains <sentiment_momentum> XML tag', () => {
-    assert.ok(
-      src.includes('<sentiment_momentum>'),
-      'Source must contain <sentiment_momentum> opening tag',
-    );
+    assert.ok(src.includes('<sentiment_momentum>'), 'Source must contain <sentiment_momentum> opening tag');
   });
 
   it('source contains </sentiment_momentum> closing XML tag', () => {
-    assert.ok(
-      src.includes('</sentiment_momentum>'),
-      'Source must contain </sentiment_momentum> closing tag',
-    );
+    assert.ok(src.includes('</sentiment_momentum>'), 'Source must contain </sentiment_momentum> closing tag');
   });
 
   it('momentum lines include avg= formatting', () => {
-    assert.match(
-      src,
-      /avg=.*avgSentiment/,
-      'Momentum line must format avg= with avgSentiment value',
-    );
+    assert.match(src, /avg=.*avgSentiment/, 'Momentum line must format avg= with avgSentiment value');
   });
 
   it('momentum lines include momentum= formatting', () => {
-    assert.match(
-      src,
-      /momentum=.*momVal/,
-      'Momentum line must format momentum= with momentum value',
-    );
+    assert.match(src, /momentum=.*momVal/, 'Momentum line must format momentum= with momentum value');
   });
 
   it('momentum lines include trend label', () => {
-    assert.match(
-      src,
-      /\$\{m\.trend\}/,
-      'Momentum line must include trend label from MomentumEntry',
-    );
+    assert.match(src, /\$\{m\.trend\}/, 'Momentum line must include trend label from MomentumEntry');
   });
 });
 
 describe('SY-008: regional_divergence XML block rendering', () => {
   it('source contains <regional_divergence> XML tag', () => {
-    assert.ok(
-      src.includes('<regional_divergence>'),
-      'Source must contain <regional_divergence> opening tag',
-    );
+    assert.ok(src.includes('<regional_divergence>'), 'Source must contain <regional_divergence> opening tag');
   });
 
   it('source contains </regional_divergence> closing XML tag', () => {
-    assert.ok(
-      src.includes('</regional_divergence>'),
-      'Source must contain </regional_divergence> closing tag',
-    );
+    assert.ok(src.includes('</regional_divergence>'), 'Source must contain </regional_divergence> closing tag');
   });
 
   it('divergence lines include EN sentiment= formatting', () => {
@@ -149,11 +125,7 @@ describe('SY-008: regional_divergence XML block rendering', () => {
   });
 
   it('divergence lines include divergence= formatting', () => {
-    assert.match(
-      src,
-      /divergence=.*\.divergence/,
-      'Divergence line must format divergence= with divergence value',
-    );
+    assert.match(src, /divergence=.*\.divergence/, 'Divergence line must format divergence= with divergence value');
   });
 });
 

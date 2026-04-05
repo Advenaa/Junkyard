@@ -30,9 +30,7 @@ export function ReportList() {
   const fetchReports = useCallback(
     async (offset: number, append: boolean) => {
       const typeParam = filter !== 'all' ? `&type=${filter}` : '';
-      const res = await apiFetch<{ reports: Report[] }>(
-        `/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}`,
-      );
+      const res = await apiFetch<{ reports: Report[] }>(`/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}`);
       if (append) {
         setReports((prev) => [...prev, ...res.reports]);
       } else {
@@ -89,7 +87,18 @@ export function ReportList() {
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-red-400">
           <p>{error}</p>
-          <button onClick={() => { setError(null); setLoading(true); fetchReports(0, false).catch(() => setError('Failed to load reports. Please try again.')).finally(() => setLoading(false)); }} className="mt-2 text-sm underline">Retry</button>
+          <button
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              fetchReports(0, false)
+                .catch(() => setError('Failed to load reports. Please try again.'))
+                .finally(() => setLoading(false));
+            }}
+            className="mt-2 text-sm underline"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -112,9 +121,7 @@ export function ReportList() {
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-3">
                   <TypeBadge type={report.type} />
-                  <span className="font-mono text-xs text-text-secondary">
-                    {formatDate(report.date)}
-                  </span>
+                  <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   {report.sentiment !== null && (
@@ -134,9 +141,7 @@ export function ReportList() {
                   <StatusBadge status={report.deliveryStatus} />
                 </div>
               </div>
-              <p className="text-text-primary text-sm font-body leading-relaxed line-clamp-2">
-                {report.tldr}
-              </p>
+              <p className="text-text-primary text-sm font-body leading-relaxed line-clamp-2">{report.tldr}</p>
             </button>
           ))}
         </div>

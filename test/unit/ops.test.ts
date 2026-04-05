@@ -223,24 +223,15 @@ describe('retention run()', () => {
 
     // Items use 30-day cutoff
     const itemsTs = calls[0].params![0] as number;
-    assert.ok(
-      Math.abs(itemsTs - (before - thirtyDays)) < 100,
-      'items cutoff should be ~30 days ago',
-    );
+    assert.ok(Math.abs(itemsTs - (before - thirtyDays)) < 100, 'items cutoff should be ~30 days ago');
 
     // Mentions use 90-day cutoff
     const mentionsTs = calls[1].params![0] as number;
-    assert.ok(
-      Math.abs(mentionsTs - (before - ninetyDays)) < 100,
-      'mentions cutoff should be ~90 days ago',
-    );
+    assert.ok(Math.abs(mentionsTs - (before - ninetyDays)) < 100, 'mentions cutoff should be ~90 days ago');
 
     // Summaries use 90-day cutoff
     const summariesTs = calls[2].params![0] as number;
-    assert.ok(
-      Math.abs(summariesTs - (before - ninetyDays)) < 100,
-      'summaries cutoff should be ~90 days ago',
-    );
+    assert.ok(Math.abs(summariesTs - (before - ninetyDays)) < 100, 'summaries cutoff should be ~90 days ago');
   });
 });
 
@@ -249,14 +240,11 @@ describe('retention run()', () => {
 // ---------------------------------------------------------------------------
 
 describe('BK-001: backup minimum size check (structural)', () => {
-  const src = readFileSync(
-    new URL('../../src/ops/backup.ts', import.meta.url),
-    'utf-8',
-  );
+  const src = readFileSync(new URL('../../src/ops/backup.ts', import.meta.url), 'utf-8');
 
   it('imports stat from node:fs/promises', () => {
     assert.ok(
-      src.includes("stat") && src.includes("node:fs/promises"),
+      src.includes('stat') && src.includes('node:fs/promises'),
       'backup.ts must import stat from node:fs/promises',
     );
   });
@@ -266,33 +254,21 @@ describe('BK-001: backup minimum size check (structural)', () => {
     const statIdx = src.indexOf('stat(filePath)');
     assert.ok(renameIdx > -1, 'rename(tmpPath, filePath) must be present');
     assert.ok(statIdx > -1, 'stat(filePath) must be present');
-    assert.ok(
-      statIdx > renameIdx,
-      'stat() must appear after rename() — check file after finalization',
-    );
+    assert.ok(statIdx > renameIdx, 'stat() must appear after rename() — check file after finalization');
   });
 
   it('checks file size against 1024 byte threshold', () => {
-    assert.ok(
-      src.includes('< 1024'),
-      'backup.ts must check fileInfo.size < 1024',
-    );
+    assert.ok(src.includes('< 1024'), 'backup.ts must check fileInfo.size < 1024');
   });
 
   it('deletes undersized backup files', () => {
     // After the size check, unlink must be called to remove the bad file
     const sizeCheckIdx = src.indexOf('< 1024');
     const unlinkAfterCheck = src.indexOf('unlink(filePath)', sizeCheckIdx);
-    assert.ok(
-      unlinkAfterCheck > sizeCheckIdx,
-      'unlink(filePath) must appear after the < 1024 size check',
-    );
+    assert.ok(unlinkAfterCheck > sizeCheckIdx, 'unlink(filePath) must appear after the < 1024 size check');
   });
 
   it('throws an error for suspiciously small backups', () => {
-    assert.ok(
-      src.includes('suspiciously small'),
-      'backup.ts must throw an error mentioning "suspiciously small"',
-    );
+    assert.ok(src.includes('suspiciously small'), 'backup.ts must throw an error mentioning "suspiciously small"');
   });
 });

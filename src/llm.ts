@@ -2,12 +2,7 @@ import crypto from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { complete, getModel } from '@mariozechner/pi-ai';
 import { refreshOpenAICodexToken } from '@mariozechner/pi-ai/oauth';
-import type {
-  Context,
-  KnownProvider,
-  Message,
-  TextContent,
-} from '@mariozechner/pi-ai';
+import type { Context, KnownProvider, Message, TextContent } from '@mariozechner/pi-ai';
 import { ulid } from 'ulid';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
@@ -120,8 +115,7 @@ export class LLMHaltedError extends Error {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function parseModel(model: string): { provider: string; modelId: string } {
   const colonIdx = model.indexOf(':');
@@ -139,8 +133,7 @@ export function extractHttpStatus(err: unknown): number | null {
     // Check structured properties first — more reliable than regex
     const record = err as unknown as Record<string, unknown>;
     if (typeof record['status'] === 'number') return record['status'];
-    if (typeof record['statusCode'] === 'number')
-      return record['statusCode'] as number;
+    if (typeof record['statusCode'] === 'number') return record['statusCode'] as number;
 
     // Fallback: extract from message, rejecting word-char suffixes
     // like "432ms" or "500MB"
@@ -167,8 +160,7 @@ export function isContextLengthError(err: unknown): boolean {
 export function extractRetryAfter(err: unknown): number | null {
   if (err instanceof Error) {
     const record = err as unknown as Record<string, unknown>;
-    if (typeof record['retryAfter'] === 'number')
-      return record['retryAfter'] as number;
+    if (typeof record['retryAfter'] === 'number') return record['retryAfter'] as number;
 
     const match = /retry.?after[:\s]+(\d+)/i.exec(err.message);
     if (match) return parseInt(match[1], 10);
@@ -176,9 +168,7 @@ export function extractRetryAfter(err: unknown): number | null {
   return null;
 }
 
-function toPiMessages(
-  messages: { role: 'user' | 'assistant'; content: string }[],
-): Message[] {
+function toPiMessages(messages: { role: 'user' | 'assistant'; content: string }[]): Message[] {
   return messages.map((m) => {
     const now = Date.now();
     if (m.role === 'user') {
@@ -231,10 +221,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
     }
 
     const { provider, modelId } = parseModel(params.model);
-    const model = getModel(
-      provider as KnownProvider,
-      modelId as never,
-    );
+    const model = getModel(provider as KnownProvider, modelId as never);
 
     const piMessages = toPiMessages(params.messages);
     const context: Context = {
@@ -267,9 +254,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
               },
               'LLM refused to respond',
             );
-            throw new Error(
-              `LLM refused to respond: ${response.errorMessage}`,
-            );
+            throw new Error(`LLM refused to respond: ${response.errorMessage}`);
           }
         }
 
@@ -282,10 +267,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         // L7: empty content — retry once
         if (!text.trim() && !emptyRetried) {
           emptyRetried = true;
-          log.warn(
-            { stage: params.stage, attempt },
-            'Empty LLM response, retrying once',
-          );
+          log.warn({ stage: params.stage, attempt }, 'Empty LLM response, retrying once');
           continue;
         }
 
@@ -311,18 +293,13 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         return { content: text, usage, cost };
       } catch (err: unknown) {
         // If it's already one of our typed errors, rethrow
-        if (
-          err instanceof ContextLengthExceededError ||
-          err instanceof LLMHaltedError
-        ) {
+        if (err instanceof ContextLengthExceededError || err instanceof LLMHaltedError) {
           throw err;
         }
 
         // L1: context length exceeded
         if (isContextLengthError(err)) {
-          throw new ContextLengthExceededError(
-            err instanceof Error ? err.message : 'Context length exceeded',
-          );
+          throw new ContextLengthExceededError(err instanceof Error ? err.message : 'Context length exceeded');
         }
 
         const status = extractHttpStatus(err);
@@ -330,29 +307,20 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         // L3: 401 — halt everything
         if (status === 401) {
           halted = true;
-          log.fatal(
-            { stage: params.stage },
-            'LLM auth failure (401) — halting all LLM calls',
-          );
+          log.fatal({ stage: params.stage }, 'LLM auth failure (401) — halting all LLM calls');
           throw new LLMHaltedError('Authentication failed (401)');
         }
 
         // L2: 400 other — no retry
         if (status === 400) {
-          log.error(
-            { stage: params.stage, err },
-            'LLM bad request (400), not retrying',
-          );
+          log.error({ stage: params.stage, err }, 'LLM bad request (400), not retrying');
           throw err;
         }
 
         // L4: 429 — rate limited
         if (status === 429) {
           if (attempt >= MAX_RETRIES) {
-            log.error(
-              { stage: params.stage },
-              'LLM rate limited (429), exhausted retries',
-            );
+            log.error({ stage: params.stage }, 'LLM rate limited (429), exhausted retries');
             throw err;
           }
           const retryAfter = extractRetryAfter(err) ?? 60;
@@ -368,10 +336,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         // L5: 529 — overloaded
         if (status === 529) {
           if (attempt >= MAX_RETRIES) {
-            log.error(
-              { stage: params.stage },
-              'LLM overloaded (529), exhausted retries',
-            );
+            log.error({ stage: params.stage }, 'LLM overloaded (529), exhausted retries');
             throw err;
           }
           const overloadDelayMs = 30_000 + Math.random() * 15_000;
@@ -386,10 +351,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         // L6: 500/502/503 — exponential backoff
         if (status === 500 || status === 502 || status === 503) {
           if (attempt >= MAX_RETRIES) {
-            log.error(
-              { stage: params.stage, status },
-              'LLM server error, exhausted retries',
-            );
+            log.error({ stage: params.stage, status }, 'LLM server error, exhausted retries');
             throw err;
           }
           const baseBackoffMs = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s
@@ -404,20 +366,18 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
 
         // L8: refusal string in error
         if (err instanceof Error && /refus/i.test(err.message)) {
-          log.error(
-            { stage: params.stage },
-            'LLM refused to respond (error)',
-          );
+          log.error({ stage: params.stage }, 'LLM refused to respond (error)');
           throw err;
         }
 
         // Retry on timeout errors (LM-008)
-        if (err instanceof Error && (
-          ('code' in err && (err as { code: string }).code === 'ETIMEDOUT') ||
-          err.name === 'AbortError' ||
-          err.message.toLowerCase().includes('timeout') ||
-          err.message.toLowerCase().includes('aborted')
-        )) {
+        if (
+          err instanceof Error &&
+          (('code' in err && (err as { code: string }).code === 'ETIMEDOUT') ||
+            err.name === 'AbortError' ||
+            err.message.toLowerCase().includes('timeout') ||
+            err.message.toLowerCase().includes('aborted'))
+        ) {
           if (attempt < MAX_RETRIES) {
             log.warn({ err, attempt, stage: params.stage }, 'LLM call timed out, retrying');
             await _sleep(2000 * Math.pow(2, attempt));
@@ -427,10 +387,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         }
 
         // Unknown error — don't retry
-        log.error(
-          { stage: params.stage, err, attempt },
-          'LLM unknown error, not retrying',
-        );
+        log.error({ stage: params.stage, err, attempt }, 'LLM unknown error, not retrying');
         throw err;
       }
     }

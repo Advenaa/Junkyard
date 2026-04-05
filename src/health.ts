@@ -24,11 +24,7 @@ export interface HealthMonitor {
   getStatus(): Promise<{ checks: HealthCheckResult[]; healthy: boolean }>;
 }
 
-export function createHealthMonitor(
-  pool: Pool,
-  log: Logger,
-  config: Config,
-): HealthMonitor {
+export function createHealthMonitor(pool: Pool, log: Logger, config: Config): HealthMonitor {
   // HM-001: Log confirmation that alert webhook is configured (URL already validated in config.ts)
   if (config.alertWebhookUrl) {
     log.info({ url: config.alertWebhookUrl }, 'Alert webhook URL configured');
@@ -117,7 +113,7 @@ export function createHealthMonitor(
       WHERE ss.status = 'halted'
     `);
     if (rows.length > 0) {
-      const labels = rows.map(r => `${r.source}:${r.source_id}`).join(', ');
+      const labels = rows.map((r) => `${r.source}:${r.source_id}`).join(', ');
       return {
         name: 'source_halted',
         status: 'critical',
@@ -130,21 +126,27 @@ export function createHealthMonitor(
   async function checkLlmFailures(): Promise<HealthCheckResult> {
     const oneHourAgo = Date.now() - 60 * 60 * 1000;
 
-    const { rows: usageRows } = await pool.query<{ count: string }>(`
+    const { rows: usageRows } = await pool.query<{ count: string }>(
+      `
       SELECT COUNT(*) AS count
       FROM llm_usage
       WHERE created_at > $1
-    `, [oneHourAgo]);
+    `,
+      [oneHourAgo],
+    );
 
     const recentUsage = parseInt(usageRows[0].count, 10);
 
     if (recentUsage === 0) {
-      const { rows: readyRows } = await pool.query<{ count: string }>(`
+      const { rows: readyRows } = await pool.query<{ count: string }>(
+        `
         SELECT COUNT(*) AS count
         FROM items
         WHERE status = 'ready'
           AND created_at < $1
-      `, [oneHourAgo]);
+      `,
+        [oneHourAgo],
+      );
 
       const staleReady = parseInt(readyRows[0].count, 10);
       if (staleReady > 0) {
@@ -162,12 +164,15 @@ export function createHealthMonitor(
   async function checkMissedPulse(): Promise<HealthCheckResult> {
     const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
 
-    const { rows } = await pool.query<{ count: string }>(`
+    const { rows } = await pool.query<{ count: string }>(
+      `
       SELECT COUNT(*) AS count
       FROM reports
       WHERE type = 'pulse'
         AND created_at > $1
-    `, [fourHoursAgo]);
+    `,
+      [fourHoursAgo],
+    );
 
     if (parseInt(rows[0].count, 10) === 0) {
       return {
@@ -182,12 +187,15 @@ export function createHealthMonitor(
   async function checkMissedDaily(): Promise<HealthCheckResult> {
     const twentySixHoursAgo = Date.now() - 26 * 60 * 60 * 1000;
 
-    const { rows } = await pool.query<{ count: string }>(`
+    const { rows } = await pool.query<{ count: string }>(
+      `
       SELECT COUNT(*) AS count
       FROM reports
       WHERE type = 'daily'
         AND created_at > $1
-    `, [twentySixHoursAgo]);
+    `,
+      [twentySixHoursAgo],
+    );
 
     if (parseInt(rows[0].count, 10) === 0) {
       return {
@@ -220,7 +228,8 @@ export function createHealthMonitor(
     const { rows } = await pool.query<{
       today_cost: string | null;
       avg_cost: string | null;
-    }>(`
+    }>(
+      `
       SELECT
         (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage
          WHERE created_at >= EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000
@@ -230,7 +239,9 @@ export function createHealthMonitor(
            WHERE created_at >= EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1) - INTERVAL '7 days') * 1000
              AND created_at < EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000
         ) AS avg_cost
-    `, [timezone]);
+    `,
+      [timezone],
+    );
 
     const todayCost = parseFloat(rows[0].today_cost ?? '0');
     const avgCost = parseFloat(rows[0].avg_cost ?? '0');
@@ -285,16 +296,14 @@ export function createHealthMonitor(
     // Pin to resolved IP to prevent DNS rebinding
     const parsed = new URL(config.alertWebhookUrl);
     const pinnedUrl = new URL(config.alertWebhookUrl);
-    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp)
-      ? `[${validation.resolvedIp}]`
-      : validation.resolvedIp;
+    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
 
     const body = {
       embeds: [
         {
           title: `Health Alert: ${event.category}`,
           description: event.message,
-          color: 0xFF0000,
+          color: 0xff0000,
           timestamp: new Date().toISOString(),
         },
       ],
@@ -307,7 +316,7 @@ export function createHealthMonitor(
       try {
         const response = await fetch(pinnedUrl.toString(), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Host': parsed.host },
+          headers: { 'Content-Type': 'application/json', Host: parsed.host },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(10_000),
         });
@@ -325,7 +334,7 @@ export function createHealthMonitor(
         lastErr = err;
       }
       if (attempt === 0) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     }
     log.error({ err: lastErr }, 'Alert webhook failed after 2 attempts');
@@ -350,7 +359,15 @@ export function createHealthMonitor(
     ];
 
     const settled = await Promise.allSettled(dbDependentChecks);
-    const names = ['source_silence', 'source_disabled', 'source_halted', 'llm_failures', 'missed_pulse', 'missed_daily', 'cost_spike'];
+    const names = [
+      'source_silence',
+      'source_disabled',
+      'source_halted',
+      'llm_failures',
+      'missed_pulse',
+      'missed_daily',
+      'cost_spike',
+    ];
 
     const results: HealthCheckResult[] = [dbResult, checkDbPoolExhaustion()];
     for (let i = 0; i < settled.length; i++) {
@@ -368,7 +385,7 @@ export function createHealthMonitor(
 
   async function check(): Promise<void> {
     const results = await runChecks();
-    const dbDown = results.some(r => r.name === 'db_connectivity' && r.status === 'critical');
+    const dbDown = results.some((r) => r.name === 'db_connectivity' && r.status === 'critical');
 
     for (const result of results) {
       if (result.status === 'ok') continue;
@@ -381,7 +398,7 @@ export function createHealthMonitor(
             severity: result.status,
             message: result.message ?? `${result.name} check failed`,
             metadata: { checkName: result.name, status: result.status },
-          }).catch(err => log.error({ err }, 'alert webhook failed'));
+          }).catch((err) => log.error({ err }, 'alert webhook failed'));
         }
         continue;
       }

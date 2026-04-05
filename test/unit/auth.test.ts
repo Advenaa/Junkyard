@@ -71,13 +71,15 @@ function fakeConfig(overrides: Partial<Config> = {}): Config {
 }
 
 /** Build a mock Fastify request. */
-function fakeRequest(opts: {
-  cookies?: Record<string, string>;
-  authorization?: string;
-  unsignResult?: { valid: boolean; value: string | null };
-  ip?: string;
-  userAgent?: string;
-} = {}) {
+function fakeRequest(
+  opts: {
+    cookies?: Record<string, string>;
+    authorization?: string;
+    unsignResult?: { valid: boolean; value: string | null };
+    ip?: string;
+    userAgent?: string;
+  } = {},
+) {
   const req: Record<string, unknown> = {
     cookies: opts.cookies ?? {},
     headers: {
@@ -85,8 +87,7 @@ function fakeRequest(opts: {
       'user-agent': opts.userAgent ?? 'TestAgent/1.0',
     },
     ip: opts.ip ?? '127.0.0.1',
-    unsignCookie: (_raw: string) =>
-      opts.unsignResult ?? { valid: false, value: null },
+    unsignCookie: (_raw: string) => opts.unsignResult ?? { valid: false, value: null },
   };
   return req as never;
 }
@@ -149,8 +150,8 @@ describe('createSessionManager', () => {
   describe('create()', () => {
     it('returns a cryptographic random session ID (AU-025)', async () => {
       const pool = mockPool([
-        { rows: [] },  // SELECT existing sessions
-        {},             // INSERT
+        { rows: [] }, // SELECT existing sessions
+        {}, // INSERT
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
       const id = await mgr.create('user-1', '127.0.0.1', 'TestAgent');
@@ -167,7 +168,7 @@ describe('createSessionManager', () => {
       const after = Date.now();
 
       // Find the INSERT query (position varies due to transaction control queries)
-      const insertCall = pool.calls.find(c => c.text.includes('INSERT INTO sessions'));
+      const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO sessions'));
       assert.ok(insertCall, 'should have INSERT INTO sessions query');
 
       const expiresAt = insertCall!.values[4] as number;
@@ -180,17 +181,17 @@ describe('createSessionManager', () => {
       const oldSessions = [{ id: 'old-1' }, { id: 'old-2' }];
       const pool = mockPool([
         { rows: oldSessions }, // SELECT returns overflow sessions
-        {},                     // DELETE old sessions
-        {},                     // INSERT new session
+        {}, // DELETE old sessions
+        {}, // INSERT new session
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
       await mgr.create('user-1', '127.0.0.1', 'TestAgent');
 
       // Verify DELETE and INSERT queries exist (transaction adds BEGIN/COMMIT/FOR UPDATE)
-      const deleteCall = pool.calls.find(c => c.text.includes('DELETE FROM sessions'));
+      const deleteCall = pool.calls.find((c) => c.text.includes('DELETE FROM sessions'));
       assert.ok(deleteCall, 'should have DELETE query');
       assert.deepStrictEqual(deleteCall!.values, [['old-1', 'old-2']]);
-      const insertCall = pool.calls.find(c => c.text.includes('INSERT INTO sessions'));
+      const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO sessions'));
       assert.ok(insertCall, 'should have INSERT query');
     });
   });
@@ -235,7 +236,7 @@ describe('createSessionManager', () => {
               discord_id: 'user-1',
               role: 'viewer',
               expires_at: Date.now() + 86400000, // future
-              last_refreshed_at: Date.now(),       // recent
+              last_refreshed_at: Date.now(), // recent
               ip_address: '127.0.0.1',
               user_agent: 'unknown/unknown', // normalized form of 'TestAgent' (AU-024)
             },
@@ -595,12 +596,14 @@ describe('requireAdmin', () => {
 
 describe('normalizeUA', () => {
   it('detects Chrome on Mac', () => {
-    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+    const ua =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
     assert.strictEqual(normalizeUA(ua), 'mac/chrome');
   });
 
   it('detects Chrome on Mac with different version (same fingerprint)', () => {
-    const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+    const ua =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
     assert.strictEqual(normalizeUA(ua), 'mac/chrome');
   });
 
@@ -610,17 +613,20 @@ describe('normalizeUA', () => {
   });
 
   it('detects Edge on Windows (includes chrome in UA string)', () => {
-    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
+    const ua =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0';
     assert.strictEqual(normalizeUA(ua), 'win/edge');
   });
 
   it('detects Safari on iOS', () => {
-    const ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+    const ua =
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
     assert.strictEqual(normalizeUA(ua), 'ios/safari');
   });
 
   it('detects Chrome on Android', () => {
-    const ua = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+    const ua =
+      'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
     assert.strictEqual(normalizeUA(ua), 'android/chrome');
   });
 
@@ -633,7 +639,8 @@ describe('normalizeUA', () => {
   });
 
   it('detects Opera on Windows', () => {
-    const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0';
+    const ua =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 OPR/110.0.0.0';
     assert.strictEqual(normalizeUA(ua), 'win/opera');
   });
 
@@ -653,14 +660,18 @@ describe('session invalidation on empty UA', () => {
     // Create session manager with mock pool that returns a session with a UA
     const pool = mockPool([
       // validate SELECT
-      { rows: [{
-        discord_id: 'user-1',
-        role: 'viewer',
-        expires_at: Date.now() + 86400000,
-        user_agent: 'Mozilla/5.0 Chrome/124',
-        ip_address: '1.2.3.4',
-        last_refreshed_at: Date.now(),
-      }] },
+      {
+        rows: [
+          {
+            discord_id: 'user-1',
+            role: 'viewer',
+            expires_at: Date.now() + 86400000,
+            user_agent: 'Mozilla/5.0 Chrome/124',
+            ip_address: '1.2.3.4',
+            last_refreshed_at: Date.now(),
+          },
+        ],
+      },
       // DELETE for invalidation
       { rows: [], rowCount: 1 },
     ]);

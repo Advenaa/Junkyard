@@ -46,7 +46,7 @@ function commaSplit(raw: string | undefined): string[] {
 function validateModelId(id: string, name: string): void {
   if (!/^[a-zA-Z0-9][\w.\-/:]{2,100}$/.test(id)) {
     throw new Error(
-      `Invalid model ID for ${name}: "${id}" — must be 3-101 chars, alphanumeric/hyphens/dots/underscores/slashes/colons`
+      `Invalid model ID for ${name}: "${id}" — must be 3-101 chars, alphanumeric/hyphens/dots/underscores/slashes/colons`,
     );
   }
 }
@@ -64,34 +64,26 @@ export function loadConfig(): Config {
   const hasCodexOAuth = existsSync('.oauth-codex.json');
   if (!anthropicApiKey && !openaiApiKey && !googleApiKey && !hasCodexOAuth) {
     throw new Error(
-      'At least one LLM provider is required: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or .oauth-codex.json'
+      'At least one LLM provider is required: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or .oauth-codex.json',
     );
   }
 
   if (!geminiApiKey && !googleApiKey) {
-    console.warn(
-      'WARNING: Neither GEMINI_API_KEY nor GOOGLE_API_KEY set — embeddings will be disabled'
-    );
+    console.warn('WARNING: Neither GEMINI_API_KEY nor GOOGLE_API_KEY set — embeddings will be disabled');
   }
 
   if (!/^postgres(ql)?:\/\//.test(databaseUrl)) {
-    throw new Error(
-      'DATABASE_URL must start with postgres:// or postgresql://'
-    );
+    throw new Error('DATABASE_URL must start with postgres:// or postgresql://');
   }
 
   const discordClientId = process.env['DISCORD_CLIENT_ID'] || null;
   const discordClientSecret = process.env['DISCORD_CLIENT_SECRET'] || null;
 
   if (!discordClientId) {
-    console.warn(
-      'WARNING: DISCORD_CLIENT_ID is missing — Discord auth unavailable'
-    );
+    console.warn('WARNING: DISCORD_CLIENT_ID is missing — Discord auth unavailable');
   }
   if (!discordClientSecret) {
-    console.warn(
-      'WARNING: DISCORD_CLIENT_SECRET is missing — Discord auth unavailable'
-    );
+    console.warn('WARNING: DISCORD_CLIENT_SECRET is missing — Discord auth unavailable');
   }
 
   const adminUserIds = commaSplit(process.env['ADMIN_USER_IDS']);
@@ -140,9 +132,7 @@ export function loadConfig(): Config {
       const parsed = new URL(rawAlertWebhookUrl);
       alertWebhookUrl = parsed.origin + parsed.pathname.replace(/\/+$/, '');
     } catch {
-      console.warn(
-        `WARNING: ALERT_WEBHOOK_URL is not a valid URL ("${rawAlertWebhookUrl}") — alerts disabled`
-      );
+      console.warn(`WARNING: ALERT_WEBHOOK_URL is not a valid URL ("${rawAlertWebhookUrl}") — alerts disabled`);
     }
   }
 

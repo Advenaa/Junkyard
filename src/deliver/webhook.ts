@@ -43,9 +43,9 @@ interface DiscordEmbed {
 }
 
 const EMBED_COLORS: Record<string, number> = {
-  daily: 0x5B8DEF,
-  flash: 0xFF6B35,
-  pulse: 0x4A4A5A,
+  daily: 0x5b8def,
+  flash: 0xff6b35,
+  pulse: 0x4a4a5a,
 };
 
 const MAX_RETRIES = 3;
@@ -58,14 +58,14 @@ export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
   let end = max - 3;
   // Don't split UTF-16 surrogate pairs
-  if (end > 0 && text.charCodeAt(end - 1) >= 0xD800 && text.charCodeAt(end - 1) <= 0xDBFF) {
+  if (end > 0 && text.charCodeAt(end - 1) >= 0xd800 && text.charCodeAt(end - 1) <= 0xdbff) {
     end--;
   }
   return text.slice(0, end) + '...';
 }
 
 export function colorForType(type: string): number {
-  return EMBED_COLORS[type] ?? 0x4A4A5A;
+  return EMBED_COLORS[type] ?? 0x4a4a5a;
 }
 
 export function buildTitle(type: string, date: string): string {
@@ -102,9 +102,7 @@ export function buildFields(parsed: MarketReportParsed): DiscordField[] {
   const fields: DiscordField[] = [];
 
   if (parsed.keyEvents.length > 0) {
-    const bulleted = parsed.keyEvents
-      .map((e) => `> ${e}`)
-      .join('\n');
+    const bulleted = parsed.keyEvents.map((e) => `> ${e}`).join('\n');
     fields.push({
       name: 'Key Events',
       value: truncate(bulleted, 1024),
@@ -167,11 +165,7 @@ export function enforceEmbedLimit(embed: DiscordEmbed): void {
   }
 }
 
-export function buildEmbed(
-  report: Report,
-  parsed: MarketReportParsed,
-  config: Config,
-): DiscordEmbed {
+export function buildEmbed(report: Report, parsed: MarketReportParsed, config: Config): DiscordEmbed {
   const embed: DiscordEmbed = {
     title: buildTitle(report.type, report.date),
     description: truncate(parsed.tldr, 4096),
@@ -190,12 +184,7 @@ export function buildEmbed(
   return embed;
 }
 
-async function postWithRetry(
-  webhookUrl: string,
-  payload: string,
-  log: Logger,
-  hostHeader?: string,
-): Promise<boolean> {
+async function postWithRetry(webhookUrl: string, payload: string, log: Logger, hostHeader?: string): Promise<boolean> {
   let rateLimitCount = 0;
   const startTime = Date.now();
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -223,18 +212,16 @@ async function postWithRetry(
       if (response.status === 429) {
         rateLimitCount++;
         if (rateLimitCount >= MAX_RATE_LIMIT_RETRIES) {
-          log.error(
-            { rateLimitCount },
-            'webhook rate limited too many times, giving up',
-          );
+          log.error({ rateLimitCount }, 'webhook rate limited too many times, giving up');
           return false;
         }
         const retryAfterHeader = response.headers.get('Retry-After');
         const parsed = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
         const MIN_RETRY_AFTER_MS = 1000;
-        const retryAfterMs = Number.isFinite(parsed) && parsed > 0
-          ? Math.max(Math.min(Math.ceil(parsed * 1000), MAX_RETRY_AFTER_MS), MIN_RETRY_AFTER_MS)
-          : BACKOFF_MS[attempt] ?? 32000;
+        const retryAfterMs =
+          Number.isFinite(parsed) && parsed > 0
+            ? Math.max(Math.min(Math.ceil(parsed * 1000), MAX_RETRY_AFTER_MS), MIN_RETRY_AFTER_MS)
+            : (BACKOFF_MS[attempt] ?? 32000);
         log.warn(
           { status: 429, retryAfterMs, attempt: attempt + 1, rateLimitCount },
           'webhook rate limited, waiting before retry',
@@ -253,24 +240,15 @@ async function postWithRetry(
       }
 
       if (response.status >= 500) {
-        log.warn(
-          { status: response.status, attempt: attempt + 1 },
-          'webhook POST failed with server error, retrying',
-        );
+        log.warn({ status: response.status, attempt: attempt + 1 }, 'webhook POST failed with server error, retrying');
         await sleep(BACKOFF_MS[attempt] ?? 32000);
         continue;
       }
 
-      log.error(
-        { status: response.status },
-        'webhook POST returned unexpected status',
-      );
+      log.error({ status: response.status }, 'webhook POST returned unexpected status');
       return false;
     } catch (err: unknown) {
-      log.error(
-        { err, attempt: attempt + 1 },
-        'webhook POST threw an error',
-      );
+      log.error({ err, attempt: attempt + 1 }, 'webhook POST threw an error');
       if (attempt < MAX_RETRIES - 1) {
         await sleep(BACKOFF_MS[attempt] ?? 32000);
       }
@@ -284,16 +262,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function updateDeliveryStatus(
-  pool: Pool,
-  reportId: string,
-  status: 'delivered' | 'failed',
-): Promise<void> {
+async function updateDeliveryStatus(pool: Pool, reportId: string, status: 'delivered' | 'failed'): Promise<void> {
   const deliveredAt = status === 'delivered' ? Date.now() : null;
-  await pool.query(
-    `UPDATE reports SET delivery_status = $1, delivered_at = $2 WHERE id = $3`,
-    [status, deliveredAt, reportId],
-  );
+  await pool.query(`UPDATE reports SET delivery_status = $1, delivered_at = $2 WHERE id = $3`, [
+    status,
+    deliveredAt,
+    reportId,
+  ]);
 }
 
 export function createDelivery(pool: Pool, log: Logger, config: Config) {
@@ -323,9 +298,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
 
     // Pin to resolved IP to prevent DNS rebinding between validation and fetch
     const pinnedUrl = new URL(webhookUrl);
-    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp)
-      ? `[${validation.resolvedIp}]`
-      : validation.resolvedIp;
+    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
     const pinnedWebhookUrl = pinnedUrl.toString();
     const originalHost = new URL(webhookUrl).host;
 

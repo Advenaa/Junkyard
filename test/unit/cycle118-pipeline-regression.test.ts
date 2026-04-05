@@ -20,13 +20,8 @@ const summarize = readFileSync(resolve(root, 'src/process/summarize.ts'), 'utf-8
 describe('PS-001 — pre-summarize success UPDATE resets retry_count', () => {
   it('success UPDATE that sets status=ready also sets retry_count = 0', () => {
     // Find the UPDATE query that sets status = 'ready' for successful items
-    const successUpdate = preSummarize.match(
-      /UPDATE items SET.*status\s*=\s*'ready'.*retry_count\s*=\s*0/s,
-    );
-    assert.ok(
-      successUpdate,
-      "Expected success UPDATE to contain both status = 'ready' and retry_count = 0",
-    );
+    const successUpdate = preSummarize.match(/UPDATE items SET.*status\s*=\s*'ready'.*retry_count\s*=\s*0/s);
+    assert.ok(successUpdate, "Expected success UPDATE to contain both status = 'ready' and retry_count = 0");
   });
 
   it('retry_count = 0 appears in the same query as content = data.content (success path)', () => {
@@ -34,10 +29,7 @@ describe('PS-001 — pre-summarize success UPDATE resets retry_count', () => {
     const updateWithContent = preSummarize.match(
       /UPDATE items SET\s+content\s*=\s*data\.content.*retry_count\s*=\s*0/s,
     );
-    assert.ok(
-      updateWithContent,
-      'Expected the content-replacement UPDATE to also reset retry_count to 0',
-    );
+    assert.ok(updateWithContent, 'Expected the content-replacement UPDATE to also reset retry_count to 0');
   });
 });
 
@@ -61,9 +53,7 @@ describe('SM-001 — oversized single item is truncated before marking failed', 
   it('truncation (.slice) occurs in the single-item-exceeds-context block', () => {
     // The block starts at chunk.length <= 1 inside the ContextLengthExceededError handler.
     // We look for .slice( between the chunk.length <= 1 guard and the status = 'failed' UPDATE.
-    const singleItemBlock = summarize.match(
-      /chunk\.length\s*<=\s*1[\s\S]*?\.slice\([\s\S]*?status\s*=\s*'failed'/,
-    );
+    const singleItemBlock = summarize.match(/chunk\.length\s*<=\s*1[\s\S]*?\.slice\([\s\S]*?status\s*=\s*'failed'/);
     assert.ok(
       singleItemBlock,
       "Expected .slice() truncation to appear between the single-item guard and the status = 'failed' UPDATE",

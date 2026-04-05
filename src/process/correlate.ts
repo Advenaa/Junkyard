@@ -67,7 +67,7 @@ const CORRELATION_SQL = `
 
 export function createCorrelator(pool: Pool, log: Logger) {
   async function run(cutoff?: number): Promise<{ correlated: CorrelatedEntity[]; shouldFlash: boolean }> {
-    const effectiveCutoff = cutoff ?? (Date.now() - 24 * 60 * 60 * 1000);
+    const effectiveCutoff = cutoff ?? Date.now() - 24 * 60 * 60 * 1000;
 
     const { rows: rawRows } = await pool.query<MentionRow>(CORRELATION_SQL, [effectiveCutoff]);
 
@@ -98,33 +98,41 @@ export function createCorrelator(pool: Pool, log: Logger) {
     log.info({ entityCount: rows.length }, 'Found cross-source correlated entities');
 
     // Batch-fetch urgencies and source_ids from summaries (CR-003)
-    const allSummaryIds = [...new Set(rows.flatMap(r => r.mentions.map(m => m.summary_id)))];
-    const summaryMetaRows = allSummaryIds.length > 0
-      ? (await pool.query<{ id: string; urgency: string; source_id: string; source: string }>(
-          'SELECT id, urgency, source_id, source FROM summaries WHERE id = ANY($1)',
-          [allSummaryIds],
-        )).rows
-      : [];
-    const urgencyMap = new Map(summaryMetaRows.map(r => [r.id, r.urgency]));
-    const sourceIdMap = new Map(summaryMetaRows.map(r => [r.id, r.source_id]));
+    const allSummaryIds = [...new Set(rows.flatMap((r) => r.mentions.map((m) => m.summary_id)))];
+    const summaryMetaRows =
+      allSummaryIds.length > 0
+        ? (
+            await pool.query<{ id: string; urgency: string; source_id: string; source: string }>(
+              'SELECT id, urgency, source_id, source FROM summaries WHERE id = ANY($1)',
+              [allSummaryIds],
+            )
+          ).rows
+        : [];
+    const urgencyMap = new Map(summaryMetaRows.map((r) => [r.id, r.urgency]));
+    const sourceIdMap = new Map(summaryMetaRows.map((r) => [r.id, r.source_id]));
 
     // CO-001: Batch-fetch trust weights per (source, source_id) pair (CR-003 + CR-010: clamp to [0, 1])
     const sourcePairSet = new Set<string>();
     for (const meta of summaryMetaRows) {
       sourcePairSet.add(`${meta.source}:${meta.source_id}`);
     }
-    const sourcePairs = [...sourcePairSet].map(key => {
+    const sourcePairs = [...sourcePairSet].map((key) => {
       const [source, ...rest] = key.split(':');
       return { source, source_id: rest.join(':') };
     });
-    const trustRows = sourcePairs.length > 0
-      ? (await pool.query<TrustRow>(
-          `SELECT source, source_id, trust_weight FROM sources
+    const trustRows =
+      sourcePairs.length > 0
+        ? (
+            await pool.query<TrustRow>(
+              `SELECT source, source_id, trust_weight FROM sources
            WHERE (source, source_id) IN (${sourcePairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(', ')})`,
-          sourcePairs.flatMap(p => [p.source, p.source_id]),
-        )).rows
-      : [];
-    const trustMap = new Map(trustRows.map(r => [`${r.source}:${r.source_id}`, Math.max(0, Math.min(1, r.trust_weight))]));
+              sourcePairs.flatMap((p) => [p.source, p.source_id]),
+            )
+          ).rows
+        : [];
+    const trustMap = new Map(
+      trustRows.map((r) => [`${r.source}:${r.source_id}`, Math.max(0, Math.min(1, r.trust_weight))]),
+    );
 
     const correlated: CorrelatedEntity[] = [];
     let shouldFlash = false;
@@ -147,7 +155,7 @@ export function createCorrelator(pool: Pool, log: Logger) {
 
       for (const [source, { summaryIds }] of seenSources) {
         // CO-011: Collect ALL unique source_ids from the group and pick the highest trust weight
-        const uniqueSourceIds = [...new Set(summaryIds.map(sid => sourceIdMap.get(sid) ?? source))];
+        const uniqueSourceIds = [...new Set(summaryIds.map((sid) => sourceIdMap.get(sid) ?? source))];
         let bestSourceId = uniqueSourceIds[0];
         let bestTrustWeight = -1;
         let anyFound = false;
@@ -164,7 +172,10 @@ export function createCorrelator(pool: Pool, log: Logger) {
         }
         if (!anyFound) {
           bestTrustWeight = 0.5;
-          log.warn({ source, sourceIds: uniqueSourceIds }, 'No trust_weight found for any source_id, defaulting to 0.5');
+          log.warn(
+            { source, sourceIds: uniqueSourceIds },
+            'No trust_weight found for any source_id, defaulting to 0.5',
+          );
         }
         sources.push({ source, sourceId: bestSourceId, trustWeight: bestTrustWeight });
         weightedSum += bestTrustWeight;
@@ -172,9 +183,7 @@ export function createCorrelator(pool: Pool, log: Logger) {
 
       // Collect urgencies from all referenced summaries
       const uniqueSummaryIds = [...new Set(row.mentions.map((m) => m.summary_id))];
-      const urgencies: string[] = uniqueSummaryIds.map(
-        (id) => urgencyMap.get(id) ?? 'routine',
-      );
+      const urgencies: string[] = uniqueSummaryIds.map((id) => urgencyMap.get(id) ?? 'routine');
 
       const entityUrgency = highestUrgency(urgencies);
 
@@ -188,22 +197,13 @@ export function createCorrelator(pool: Pool, log: Logger) {
       correlated.push(entity);
 
       // Flash trigger
-      if (
-        weightedSum >= 2.0 &&
-        entityUrgency === 'breaking'
-      ) {
+      if (weightedSum >= 2.0 && entityUrgency === 'breaking') {
         shouldFlash = true;
-        log.info(
-          { entity: row.entity_name, weightedSum, urgency: entityUrgency },
-          'Flash trigger activated',
-        );
+        log.info({ entity: row.entity_name, weightedSum, urgency: entityUrgency }, 'Flash trigger activated');
       }
     }
 
-    log.info(
-      { correlated: correlated.length, shouldFlash },
-      'Correlation complete',
-    );
+    log.info({ correlated: correlated.length, shouldFlash }, 'Correlation complete');
 
     return { correlated, shouldFlash };
   }

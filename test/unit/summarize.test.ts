@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  buildSystemPrompt,
-  stripCodeFences,
-  verifyEntities,
-} from '../../src/process/summarize.js';
+import { buildSystemPrompt, stripCodeFences, verifyEntities } from '../../src/process/summarize.js';
 import { ChunkSummaryLLMSchema } from '../../src/process/schemas.js';
 import type { ChunkSummary } from '../../src/process/schemas.js';
 
@@ -105,17 +101,13 @@ describe('verifyEntities', () => {
   });
 
   it('matches case-insensitively', () => {
-    const parsed = makeSummary([
-      { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 1, sentiment: 0.3 },
-    ]);
+    const parsed = makeSummary([{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 1, sentiment: 0.3 }]);
     const result = verifyEntities(parsed, 'BITCOIN is king', noopLog, 'discord', 'chan1');
     assert.equal(result.entities.length, 1);
   });
 
   it('preserves non-entity fields of the summary', () => {
-    const parsed = makeSummary([
-      { name: 'Ghost', aliases: [], type: 'project', mentionCount: 1, sentiment: 0 },
-    ]);
+    const parsed = makeSummary([{ name: 'Ghost', aliases: [], type: 'project', mentionCount: 1, sentiment: 0 }]);
     parsed.urgency = 'breaking';
     parsed.confidence = 9;
     parsed.keyEvents = ['Something happened'];
@@ -135,7 +127,9 @@ describe('verifyEntities', () => {
     const result = verifyEntities(
       parsed,
       'Uniswap v4 hooks and AAVE lending pool discussion',
-      noopLog, 'discord', 'chan1',
+      noopLog,
+      'discord',
+      'chan1',
     );
     assert.equal(result.entities.length, 2);
     const names = result.entities.map((e) => e.name);
@@ -204,9 +198,7 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
       summary: 'A valid summary that is long enough to satisfy the min(10) constraint.',
       urgency: 'routine',
       confidence: 7,
-      entities: [
-        { name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 },
-      ],
+      entities: [{ name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 }],
       keyEvents: ['Something happened'],
     };
     const result = ChunkSummaryLLMSchema.safeParse(input);

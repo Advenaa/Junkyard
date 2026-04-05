@@ -13,9 +13,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const embedSrc = readFileSync(
-  new URL('../../src/embed.ts', import.meta.url), 'utf-8',
-);
+const embedSrc = readFileSync(new URL('../../src/embed.ts', import.meta.url), 'utf-8');
 
 // Extract the embedBatch function body for scoped assertions
 const embedBatchIdx = embedSrc.indexOf('async function embedBatch(');
@@ -23,10 +21,7 @@ assert.ok(embedBatchIdx > -1, 'precondition: should find embedBatch function');
 
 // Find the closing of the function (next function or end of createEmbedder)
 const embedBatchEnd = embedSrc.indexOf('\n  async function ', embedBatchIdx + 1);
-const embedBatchBody = embedSrc.slice(
-  embedBatchIdx,
-  embedBatchEnd > -1 ? embedBatchEnd : undefined,
-);
+const embedBatchBody = embedSrc.slice(embedBatchIdx, embedBatchEnd > -1 ? embedBatchEnd : undefined);
 
 describe('EM-023 — embedBatch batch result length mismatch handling', () => {
   it('inner loop iterates over chunk.length, not batchResult.embeddings.length', () => {

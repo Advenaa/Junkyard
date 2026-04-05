@@ -45,10 +45,7 @@ describe('RS-010: RSS feed body capped at 5 MB', () => {
     const textCall = pollFnBody.indexOf('feedResponse.text()');
     assert.ok(contentLengthCheck !== -1, 'Must check contentLength against MAX_FEED_BYTES');
     assert.ok(textCall !== -1, 'Must call feedResponse.text()');
-    assert.ok(
-      contentLengthCheck < textCall,
-      'Content-Length check must happen before reading body with .text()',
-    );
+    assert.ok(contentLengthCheck < textCall, 'Content-Length check must happen before reading body with .text()');
   });
 
   it('checks body length after reading text', () => {
@@ -58,10 +55,7 @@ describe('RS-010: RSS feed body capped at 5 MB', () => {
     const textCall = pollFnBody.indexOf('feedResponse.text()');
     const bodyLengthCheck = pollFnBody.indexOf('feedXml.length > MAX_FEED_BYTES');
     assert.ok(bodyLengthCheck !== -1, 'Must check feedXml.length against MAX_FEED_BYTES');
-    assert.ok(
-      bodyLengthCheck > textCall,
-      'Body length check must happen after .text() call',
-    );
+    assert.ok(bodyLengthCheck > textCall, 'Body length check must happen after .text() call');
   });
 
   it('returns early with empty items when feed is too large', () => {
@@ -79,19 +73,11 @@ describe('RS-011: Items per poll capped at 50', () => {
   const src = readSrc('src/ingest/rss.ts');
 
   it('defines MAX_ITEMS_PER_POLL constant as 50', () => {
-    assert.match(
-      src,
-      /const\s+MAX_ITEMS_PER_POLL\s*=\s*50/,
-      'MAX_ITEMS_PER_POLL must be defined as 50',
-    );
+    assert.match(src, /const\s+MAX_ITEMS_PER_POLL\s*=\s*50/, 'MAX_ITEMS_PER_POLL must be defined as 50');
   });
 
   it('compares filtered length against MAX_ITEMS_PER_POLL', () => {
-    assert.match(
-      src,
-      /filtered\.length\s*>\s*MAX_ITEMS_PER_POLL/,
-      'Must check filtered.length > MAX_ITEMS_PER_POLL',
-    );
+    assert.match(src, /filtered\.length\s*>\s*MAX_ITEMS_PER_POLL/, 'Must check filtered.length > MAX_ITEMS_PER_POLL');
   });
 
   it('slices to keep newest items using .slice(-MAX_ITEMS_PER_POLL)', () => {
@@ -119,18 +105,17 @@ describe('RS-012: RSS feed URLs validated at POST /sources', () => {
   });
 
   it('POST /sources handler checks source === rss', () => {
-    const postSourcesStart = src.indexOf("app.post('/api/v1/sources'");
-    assert.ok(postSourcesStart !== -1, 'POST /api/v1/sources route must exist');
+    const postMatch = src.match(/app\.post\(\s*\n?\s*'\/api\/v1\/sources'/);
+    assert.ok(postMatch && postMatch.index !== undefined, 'POST /api/v1/sources route must exist');
+    const postSourcesStart = postMatch.index;
 
     const handlerBody = src.slice(postSourcesStart, postSourcesStart + 1500);
-    assert.ok(
-      handlerBody.includes("source === 'rss'"),
-      'POST /sources handler must check if source is rss',
-    );
+    assert.ok(handlerBody.includes("source === 'rss'"), 'POST /sources handler must check if source is rss');
   });
 
   it('calls validateUrl on RSS sourceId', () => {
-    const postSourcesStart = src.indexOf("app.post('/api/v1/sources'");
+    const postMatch = src.match(/app\.post\(\s*\n?\s*'\/api\/v1\/sources'/);
+    const postSourcesStart = postMatch!.index!;
     const handlerBody = src.slice(postSourcesStart, postSourcesStart + 1500);
 
     assert.ok(
@@ -140,7 +125,8 @@ describe('RS-012: RSS feed URLs validated at POST /sources', () => {
   });
 
   it('returns 400 for invalid RSS feed URLs', () => {
-    const postSourcesStart = src.indexOf("app.post('/api/v1/sources'");
+    const postMatch = src.match(/app\.post\(\s*\n?\s*'\/api\/v1\/sources'/);
+    const postSourcesStart = postMatch!.index!;
     const handlerBody = src.slice(postSourcesStart, postSourcesStart + 1500);
 
     assert.ok(
@@ -164,10 +150,7 @@ describe('TM-002: Pulse/health crons use configured timezone', () => {
     const callEnd = src.indexOf(');', pulseRegister);
     const callStr = src.slice(pulseRegister, callEnd + 2);
 
-    assert.ok(
-      callStr.includes('timezone'),
-      'market-pulse register call must include timezone in options',
-    );
+    assert.ok(callStr.includes('timezone'), 'market-pulse register call must include timezone in options');
   });
 
   it('health-monitor register call includes timezone in options', () => {
@@ -177,10 +160,7 @@ describe('TM-002: Pulse/health crons use configured timezone', () => {
     const callEnd = src.indexOf(');', healthRegister);
     const callStr = src.slice(healthRegister, callEnd + 2);
 
-    assert.ok(
-      callStr.includes('timezone'),
-      'health-monitor register call must include timezone in options',
-    );
+    assert.ok(callStr.includes('timezone'), 'health-monitor register call must include timezone in options');
   });
 
   it('timezone is fetched from app_config before registering cron jobs', () => {
@@ -192,11 +172,7 @@ describe('TM-002: Pulse/health crons use configured timezone', () => {
   });
 
   it('timezone defaults to Asia/Jakarta', () => {
-    assert.match(
-      src,
-      /timezone[^;]*\?\?\s*['"]Asia\/Jakarta['"]/,
-      'timezone must default to Asia/Jakarta',
-    );
+    assert.match(src, /timezone[^;]*\?\?\s*['"]Asia\/Jakarta['"]/, 'timezone must default to Asia/Jakarta');
   });
 });
 
@@ -206,37 +182,34 @@ describe('TM-002: Pulse/health crons use configured timezone', () => {
 
 describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
   const src = readSrc('src/server.ts');
+  const patchSourcesRe = /app\.patch\(\s*\n?\s*'\/api\/v1\/sources\/:source\/:sourceId'/;
+
+  function getPatchSourcesStart(): number {
+    const m = src.match(patchSourcesRe);
+    assert.ok(m && m.index !== undefined, 'PATCH /api/v1/sources/:source/:sourceId route must exist');
+    return m.index;
+  }
 
   it('PATCH /sources handler exists', () => {
-    assert.ok(
-      src.includes("app.patch('/api/v1/sources/:source/:sourceId'"),
-      'PATCH /api/v1/sources/:source/:sourceId route must exist',
-    );
+    assert.ok(patchSourcesRe.test(src), 'PATCH /api/v1/sources/:source/:sourceId route must exist');
   });
 
   it('checks for halted status', () => {
-    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
-    assert.ok(patchStart !== -1);
+    const patchStart = getPatchSourcesStart();
 
     const handlerBody = src.slice(patchStart, patchStart + 2000);
-    assert.ok(
-      handlerBody.includes("=== 'halted'"),
-      'PATCH handler must check if current status is halted',
-    );
+    assert.ok(handlerBody.includes("=== 'halted'"), 'PATCH handler must check if current status is halted');
   });
 
   it('returns 409 when source is halted and trying to enable', () => {
-    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    const patchStart = getPatchSourcesStart();
     const handlerBody = src.slice(patchStart, patchStart + 2000);
 
-    assert.ok(
-      handlerBody.includes('409'),
-      'PATCH handler must send 409 status code for halted sources',
-    );
+    assert.ok(handlerBody.includes('409'), 'PATCH handler must send 409 status code for halted sources');
   });
 
   it('includes last_error in 409 response', () => {
-    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    const patchStart = getPatchSourcesStart();
     const handlerBody = src.slice(patchStart, patchStart + 2000);
 
     assert.ok(
@@ -246,7 +219,7 @@ describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
   });
 
   it('queries source_state table for current status', () => {
-    const patchStart = src.indexOf("app.patch('/api/v1/sources/:source/:sourceId'");
+    const patchStart = getPatchSourcesStart();
     const handlerBody = src.slice(patchStart, patchStart + 2000);
 
     assert.ok(
@@ -264,11 +237,7 @@ describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => 
   const src = readSrc('dashboard/src/pages/Settings.tsx');
 
   it('Source interface includes stateStatus field', () => {
-    assert.match(
-      src,
-      /stateStatus\s*:\s*string/,
-      'Source interface must include stateStatus field',
-    );
+    assert.match(src, /stateStatus\s*:\s*string/, 'Source interface must include stateStatus field');
   });
 
   it('toggleSource uses stateStatus to determine active state', () => {
@@ -287,7 +256,7 @@ describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => 
     const mapArea = src.slice(src.indexOf('sources.map'));
     assert.ok(
       mapArea.includes("stateStatus == null || s.stateStatus === 'active'") ||
-      mapArea.includes("s.stateStatus === 'active'"),
+        mapArea.includes("s.stateStatus === 'active'"),
       'Toggle button visual state must derive from stateStatus, not s.enabled',
     );
   });
@@ -297,9 +266,6 @@ describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => 
     assert.ok(toggleFnStart !== -1, 'toggleSource function must exist');
 
     const toggleBody = src.slice(toggleFnStart, toggleFnStart + 600);
-    assert.ok(
-      toggleBody.includes('stateStatus:'),
-      'Optimistic update must set stateStatus field',
-    );
+    assert.ok(toggleBody.includes('stateStatus:'), 'Optimistic update must set stateStatus field');
   });
 });

@@ -10,10 +10,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const serverPath = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..', '..', 'src', 'server.ts',
-);
+const serverPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'server.ts');
 const src = readFileSync(serverPath, 'utf-8');
 
 // ---------------------------------------------------------------------------
@@ -22,7 +19,7 @@ const src = readFileSync(serverPath, 'utf-8');
 
 /** Extract the search handler block (from the /search route to the next app. route). */
 function extractSearchHandler(): string {
-  const searchStart = src.indexOf("app.get('/api/v1/search'");
+  const searchStart = src.indexOf("'/api/v1/search'");
   assert.notEqual(searchStart, -1, 'Could not locate search route in server.ts');
   const nextRoute = src.indexOf('\n  app.', searchStart + 1);
   return src.slice(searchStart, nextRoute === -1 ? undefined : nextRoute);
@@ -30,8 +27,9 @@ function extractSearchHandler(): string {
 
 /** Extract the PATCH /config handler block. */
 function extractConfigPatchHandler(): string {
-  const patchStart = src.indexOf("app.patch('/api/v1/config'");
-  assert.notEqual(patchStart, -1, 'Could not locate PATCH /config route in server.ts');
+  const match = src.match(/app\.patch\(\s*\n?\s*'\/api\/v1\/config'/);
+  assert.ok(match && match.index !== undefined, 'Could not locate PATCH /config route in server.ts');
+  const patchStart = match.index;
   const nextRoute = src.indexOf('\n  app.', patchStart + 1);
   return src.slice(patchStart, nextRoute === -1 ? undefined : nextRoute);
 }
@@ -43,10 +41,7 @@ describe('DA-001 — Search endpoint uses epoch-ms cutoff', () => {
   const handler = extractSearchHandler();
 
   it('cutoff does NOT use .toISOString()', () => {
-    assert.ok(
-      !handler.includes('.toISOString()'),
-      'Search handler must not wrap cutoff with .toISOString()',
-    );
+    assert.ok(!handler.includes('.toISOString()'), 'Search handler must not wrap cutoff with .toISOString()');
   });
 
   it('cutoff uses Date.now() - days pattern (epoch-ms arithmetic)', () => {
@@ -75,11 +70,7 @@ describe('DA-010 — PATCH /config has body schema', () => {
   const handler = extractConfigPatchHandler();
 
   it('route has a schema property with body', () => {
-    assert.match(
-      handler,
-      /schema:\s*\{[^}]*body:/s,
-      'PATCH /config must declare a schema with a body property',
-    );
+    assert.match(handler, /schema:\s*\{[^}]*body:/s, 'PATCH /config must declare a schema with a body property');
   });
 
   it('body schema includes additionalProperties: false', () => {
@@ -130,10 +121,7 @@ describe('DA-010 — PATCH /config has body schema', () => {
     const bodySchema = handler.slice(bodyObjStart, bodyObjEnd);
 
     for (const prop of ['digest_time', 'timezone', 'webhook_url']) {
-      assert.ok(
-        bodySchema.includes(prop),
-        `Body schema must list '${prop}' as a property`,
-      );
+      assert.ok(bodySchema.includes(prop), `Body schema must list '${prop}' as a property`);
     }
   });
 });

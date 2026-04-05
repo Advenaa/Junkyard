@@ -20,7 +20,9 @@ export interface VectorCache {
 
 export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   if (a.length !== b.length) return 0;
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -41,7 +43,7 @@ function bytesToVector(buf: Buffer): Float32Array | null {
 // ── Cache ──────────────────────────────────────────────────────────────
 
 const SEARCHABLE_TYPES = ['summary', 'report'] as const;
-type SearchableType = typeof SEARCHABLE_TYPES[number];
+type SearchableType = (typeof SEARCHABLE_TYPES)[number];
 
 /** Maximum vectors per type map. At 768 dims x 4 bytes = ~3KB/vector, 20K = ~60MB per map. */
 export const MAX_VECTORS = 20_000;
@@ -107,7 +109,7 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
   async function load(): Promise<void> {
     const counts = await Promise.all(
-      SEARCHABLE_TYPES.map(async type => {
+      SEARCHABLE_TYPES.map(async (type) => {
         const count = await loadType(type);
         return { type, count };
       }),
@@ -123,11 +125,7 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
   /** Max vectors to scan from DB when falling back past the in-memory cache. */
   const DB_FALLBACK_BATCH = 500;
 
-  async function search(
-    query: Float32Array,
-    type: 'summary' | 'report',
-    limit = 10,
-  ): Promise<SearchResult[]> {
+  async function search(query: Float32Array, type: 'summary' | 'report', limit = 10): Promise<SearchResult[]> {
     const map = maps[type];
     const results: SearchResult[] = [];
 

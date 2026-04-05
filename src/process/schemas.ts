@@ -9,9 +9,7 @@ export const ChunkSummaryLLMSchema = z.object({
       z.object({
         name: z.string().min(1),
         aliases: z.array(z.string()).default([]),
-        type: z
-          .enum(['token', 'person', 'project', 'company', 'event'])
-          .default('project'),
+        type: z.enum(['token', 'person', 'project', 'company', 'event']).default('project'),
         mentionCount: z.number().int().min(1).default(1),
         sentiment: z.number().min(-1).max(1).default(0),
       }),

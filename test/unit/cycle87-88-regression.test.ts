@@ -44,11 +44,7 @@ describe('EL-015: Tier 1 alias lookup selects status and reactivates archived en
   });
 
   it('checks if matched entity status is archived', () => {
-    assert.match(
-      src,
-      /row\.status\s*===\s*'archived'/,
-      'Tier 1 must check if the matched entity is archived',
-    );
+    assert.match(src, /row\.status\s*===\s*'archived'/, 'Tier 1 must check if the matched entity is archived');
   });
 
   it('UPDATEs archived entity to active preserving prior relevance', () => {
@@ -148,28 +144,16 @@ describe('EL-011: CoinGecko seed uses context_key for non-top-100 symbol aliases
   });
 
   it('differentiates top symbols from others using TOP_SYMBOLS Set', () => {
-    assert.match(
-      src,
-      /TOP_SYMBOLS\.has\(/,
-      'Must use TOP_SYMBOLS.has() to differentiate top tokens from others',
-    );
+    assert.match(src, /TOP_SYMBOLS\.has\(/, 'Must use TOP_SYMBOLS.has() to differentiate top tokens from others');
   });
 
   it('top symbols get empty context_key for their symbol', () => {
     // The ternary should assign '' for top symbols
-    assert.match(
-      src,
-      /TOP_SYMBOLS\.has\(symbolAlias\)\s*\?\s*''/,
-      'Top symbols must get empty string context_key',
-    );
+    assert.match(src, /TOP_SYMBOLS\.has\(symbolAlias\)\s*\?\s*''/, 'Top symbols must get empty string context_key');
   });
 
   it('non-top-100 tokens get a coingecko-prefixed context_key', () => {
-    assert.match(
-      src,
-      /`coingecko:\$\{coin\.id\}`/,
-      'Non-top-100 tokens must get context_key like coingecko:<coin_id>',
-    );
+    assert.match(src, /`coingecko:\$\{coin\.id\}`/, 'Non-top-100 tokens must get context_key like coingecko:<coin_id>');
   });
 
   it('symbolContextKey variable is used when inserting symbol alias', () => {
@@ -181,10 +165,7 @@ describe('EL-011: CoinGecko seed uses context_key for non-top-100 symbol aliases
 
     // Verify it appears in the alias values push
     const pushIdx = src.indexOf('aliasValues.push(symbolAlias, symbolContextKey');
-    assert.ok(
-      pushIdx !== -1,
-      'symbolContextKey must be pushed into aliasValues alongside the symbol alias',
-    );
+    assert.ok(pushIdx !== -1, 'symbolContextKey must be pushed into aliasValues alongside the symbol alias');
   });
 });
 
@@ -228,7 +209,10 @@ describe('EL-016: dateToEpochMsBounds computes offset from target date, not now'
     for (let i = bodyStart; i < src.length; i++) {
       if (src[i] === '{') depth++;
       if (src[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     assert.ok(fnEnd > bodyStart, 'Could not find end of dateToEpochMsBounds');
     const fnBody = src.slice(bodyStart, fnEnd + 1);
@@ -258,7 +242,10 @@ describe('EL-016: dateToEpochMsBounds computes offset from target date, not now'
     for (let i = bodyStart; i < src.length; i++) {
       if (src[i] === '{') depth++;
       if (src[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = src.slice(bodyStart, fnEnd + 1);
 
@@ -287,7 +274,10 @@ describe('EL-016: dateToEpochMsBounds computes offset from target date, not now'
     for (let i = bodyStart; i < src.length; i++) {
       if (src[i] === '{') depth++;
       if (src[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = src.slice(bodyStart, fnEnd + 1);
 
@@ -320,19 +310,11 @@ describe('EL-014: retention prunes entity_sentiment_daily at 365 days', () => {
   });
 
   it('uses 365-day retention period for sentiment data', () => {
-    assert.match(
-      src,
-      /365/,
-      'retention must reference 365 days for sentiment daily cleanup',
-    );
+    assert.match(src, /365/, 'retention must reference 365 days for sentiment daily cleanup');
   });
 
   it('sentimentDailyDeleted is tracked in the result', () => {
-    assert.match(
-      src,
-      /sentimentDailyDeleted/,
-      'retention result must track sentimentDailyDeleted count',
-    );
+    assert.match(src, /sentimentDailyDeleted/, 'retention result must track sentimentDailyDeleted count');
   });
 
   it('RetentionResult interface includes sentimentDailyDeleted field', () => {

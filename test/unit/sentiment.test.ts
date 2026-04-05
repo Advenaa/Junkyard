@@ -88,10 +88,7 @@ describe('Momentum calculation (runDaily)', () => {
     // Params: [entity_id, date, avg_sentiment, mention_count, momentum]
     const momentum = upsertCall.params[4] as number;
     assert.ok(momentum !== null, 'Momentum should not be null');
-    assert.ok(
-      Math.abs(momentum - (-0.3)) < 0.01,
-      `Expected momentum ~-0.3, got ${momentum}`,
-    );
+    assert.ok(Math.abs(momentum - -0.3) < 0.01, `Expected momentum ~-0.3, got ${momentum}`);
   });
 
   it('returns null momentum when no prior history exists', async () => {
@@ -158,10 +155,7 @@ describe('Momentum calculation (runDaily)', () => {
 
     const momentum = upsertCall.params[4] as number;
     assert.ok(momentum !== null, 'Momentum should not be null');
-    assert.ok(
-      Math.abs(momentum) < 0.01,
-      `Expected momentum ~0, got ${momentum}`,
-    );
+    assert.ok(Math.abs(momentum) < 0.01, `Expected momentum ~0, got ${momentum}`);
   });
 });
 
@@ -174,10 +168,7 @@ describe('Momentum calculation (runDaily)', () => {
 describe('Trend classification', () => {
   // Re-implement classifyTrend locally for unit-level testing since the
   // source does not export it. This validates our understanding of the logic.
-  function classifyTrend(
-    momentum: number | null,
-    yesterdayMomentum: number | null,
-  ): Trend {
+  function classifyTrend(momentum: number | null, yesterdayMomentum: number | null): Trend {
     if (momentum === null) return 'stable';
     if (momentum > 0.15) return 'accelerating';
     if (momentum < -0.15) return 'declining';
@@ -284,10 +275,7 @@ describe('Daily rollup SQL (runDaily)', () => {
 
     const aggCall = calls.find((c) => c.sql.includes('FROM entity_mentions'));
     assert.ok(aggCall, 'Should query entity_mentions');
-    assert.ok(
-      aggCall.sql.includes('sentiment IS NOT NULL'),
-      'Aggregation query must filter out NULL sentiment rows',
-    );
+    assert.ok(aggCall.sql.includes('sentiment IS NOT NULL'), 'Aggregation query must filter out NULL sentiment rows');
   });
 
   it('calls bulk UPSERT with correct parameters for all entities', async () => {
@@ -333,7 +321,7 @@ describe('Daily rollup SQL (runDaily)', () => {
     assert.equal(params[0], 'ent-btc');
     assert.equal(params[1], '2025-04-01');
     assert.equal(params[2], 0.4); // avg_sentiment
-    assert.equal(params[3], 12);   // mention_count (parsed from string)
+    assert.equal(params[3], 12); // mention_count (parsed from string)
 
     // Second entity: ent-eth (params 5-9)
     assert.equal(params[5], 'ent-eth');
@@ -369,14 +357,8 @@ describe('Daily rollup SQL (runDaily)', () => {
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
     assert.ok(upsertCall, 'Should find UPSERT query');
-    assert.ok(
-      upsertCall.sql.includes('ON CONFLICT'),
-      'UPSERT should use ON CONFLICT clause',
-    );
-    assert.ok(
-      upsertCall.sql.includes('DO UPDATE'),
-      'UPSERT should use DO UPDATE on conflict',
-    );
+    assert.ok(upsertCall.sql.includes('ON CONFLICT'), 'UPSERT should use ON CONFLICT clause');
+    assert.ok(upsertCall.sql.includes('DO UPDATE'), 'UPSERT should use DO UPDATE on conflict');
   });
 
   it('skips processing when no mentions have sentiment today', async () => {
@@ -614,7 +596,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
     assert.ok(
       Math.abs(momentum - expectedRecentAvg) < 0.001,
       `Expected momentum ~${expectedRecentAvg.toFixed(4)}, got ${momentum} ` +
-      `(would be 0.6 under old AVG-based 50/50 weighting)`,
+        `(would be 0.6 under old AVG-based 50/50 weighting)`,
     );
 
     // Explicitly verify this is NOT the old broken value
@@ -694,10 +676,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
     // recentAvg = (0.4 + 0.6) / (1 + 1) = 0.5
     // momentum = 0.5 - 0.2 = 0.3
     const momentum = upsertCall.params[4] as number;
-    assert.ok(
-      Math.abs(momentum - 0.3) < 0.001,
-      `Expected momentum 0.3, got ${momentum}`,
-    );
+    assert.ok(Math.abs(momentum - 0.3) < 0.001, `Expected momentum 0.3, got ${momentum}`);
   });
 
   it('queries use SUM/COUNT, not AVG, for the recent window', async () => {
@@ -727,13 +706,8 @@ describe('SM-001: equal-weight 3-day blending', () => {
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     // Verify the recent window query uses SUM, not AVG
-    const recentWindowCall = calls.find(
-      (c) => c.sql.includes('SUM(avg_sentiment)') && c.sql.includes('COUNT(*)'),
-    );
-    assert.ok(
-      recentWindowCall,
-      'Recent window query must use SUM(avg_sentiment) and COUNT(*), not AVG',
-    );
+    const recentWindowCall = calls.find((c) => c.sql.includes('SUM(avg_sentiment)') && c.sql.includes('COUNT(*)'));
+    assert.ok(recentWindowCall, 'Recent window query must use SUM(avg_sentiment) and COUNT(*), not AVG');
   });
 });
 
@@ -774,11 +748,7 @@ describe('CF-004: computeDailySentiment epoch-ms bounds', () => {
     await computeDailySentiment(mockPool as any, '2025-04-01');
 
     const [dayStart, dayEnd] = calls[0].params as [number, number];
-    assert.equal(
-      dayEnd - dayStart,
-      86_400_000,
-      `Bounds must span exactly 86400000 ms (24h), got ${dayEnd - dayStart}`,
-    );
+    assert.equal(dayEnd - dayStart, 86_400_000, `Bounds must span exactly 86400000 ms (24h), got ${dayEnd - dayStart}`);
   });
 
   it('uses >= for start and < for end (half-open interval)', async () => {

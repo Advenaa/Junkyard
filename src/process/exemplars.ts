@@ -7,23 +7,14 @@ export interface Exemplar {
   author: string;
 }
 
-const URGENCY_KEYWORDS = [
-  'exploit',
-  'hack',
-  'rate decision',
-  'flash crash',
-  'halt',
-  'circuit breaker',
-];
+const URGENCY_KEYWORDS = ['exploit', 'hack', 'rate decision', 'flash crash', 'halt', 'circuit breaker'];
 
 const URGENCY_PATTERN = new RegExp(URGENCY_KEYWORDS.join('|'), 'i');
 
 /** Count capitalized multi-word terms and $-prefixed tokens in text. */
 function countEntities(content: string): number {
   // Capitalized multi-word terms: two+ consecutive capitalized words
-  const capitalizedMultiWord = content.match(
-    /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/g,
-  );
+  const capitalizedMultiWord = content.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/g);
   // $-prefixed tokens like $BTC, $ETH
   const dollarTokens = content.match(/\$[A-Za-z]+/g);
 
@@ -42,10 +33,7 @@ function scoreNewsItem(item: Exemplar): number {
   return entityDensity * urgencyWeight;
 }
 
-export function selectExemplars(
-  items: Exemplar[],
-  maxSlots = 10,
-): Exemplar[] {
+export function selectExemplars(items: Exemplar[], maxSlots = 10): Exemplar[] {
   const engagementSlots = Math.max(0, maxSlots - 3);
   const newsSlots = maxSlots - engagementSlots;
 
@@ -56,14 +44,10 @@ export function selectExemplars(
 
   // 2. RSS/news picks scored by entityDensity * urgencyWeight
   const newsItems = items.filter(
-    (item) =>
-      (item.source === 'rss' || item.source === 'news') &&
-      !pickedIds.has(item.id),
+    (item) => (item.source === 'rss' || item.source === 'news') && !pickedIds.has(item.id),
   );
 
-  const scoredNews = newsItems
-    .map((item) => ({ item, score: scoreNewsItem(item) }))
-    .sort((a, b) => b.score - a.score);
+  const scoredNews = newsItems.map((item) => ({ item, score: scoreNewsItem(item) })).sort((a, b) => b.score - a.score);
 
   const newsPicks = scoredNews.slice(0, newsSlots).map((s) => s.item);
 

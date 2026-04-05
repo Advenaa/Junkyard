@@ -108,7 +108,8 @@ function renderContent(text: string): ReactNode {
     if (/^[-*] /.test(line)) {
       elements.push(
         <div key={`ul-${i}`} className="pl-4 text-text-primary">
-          {'• '}{renderInline(line.slice(2), `ul-${i}`)}
+          {'• '}
+          {renderInline(line.slice(2), `ul-${i}`)}
         </div>,
       );
       continue;
@@ -121,7 +122,8 @@ function renderContent(text: string): ReactNode {
       const content = line.slice(numMatch[0].length);
       elements.push(
         <div key={`ol-${i}`} className="pl-4 text-text-primary">
-          {`${num}. `}{renderInline(content, `ol-${i}`)}
+          {`${num}. `}
+          {renderInline(content, `ol-${i}`)}
         </div>,
       );
       continue;
@@ -165,9 +167,7 @@ export function ChatMessage({ role, content, toolsUsed, loading }: ChatMessagePr
       <div className={`max-w-[75%] ${isUser ? 'order-1' : ''}`}>
         <div
           className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-            isUser
-              ? 'bg-accent text-white rounded-br-md'
-              : 'bg-surface text-text-primary rounded-bl-md'
+            isUser ? 'bg-accent text-white rounded-br-md' : 'bg-surface text-text-primary rounded-bl-md'
           }`}
         >
           {loading ? (
@@ -180,9 +180,7 @@ export function ChatMessage({ role, content, toolsUsed, loading }: ChatMessagePr
             renderContent(content)
           )}
         </div>
-        {!loading && toolsUsed && toolsUsed.length > 0 && (
-          <ToolUsageIndicator tools={toolsUsed} />
-        )}
+        {!loading && toolsUsed && toolsUsed.length > 0 && <ToolUsageIndicator tools={toolsUsed} />}
       </div>
     </div>
   );

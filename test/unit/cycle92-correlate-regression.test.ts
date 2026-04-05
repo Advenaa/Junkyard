@@ -12,10 +12,7 @@ describe('CO-010 — Flash trigger requires breaking urgency only + weightedSum 
       src.indexOf('shouldFlash = true') + 'shouldFlash = true'.length,
     );
     assert.ok(flashBlock.length > 0, 'Flash trigger block must exist');
-    assert.ok(
-      !flashBlock.includes("'elevated'"),
-      `Flash trigger must not reference 'elevated', found: ${flashBlock}`,
-    );
+    assert.ok(!flashBlock.includes("'elevated'"), `Flash trigger must not reference 'elevated', found: ${flashBlock}`);
   });
 
   it('flash trigger uses >= 2.0 threshold (not >= 1.5)', () => {
@@ -24,10 +21,7 @@ describe('CO-010 — Flash trigger requires breaking urgency only + weightedSum 
       src.indexOf('shouldFlash = true') + 'shouldFlash = true'.length,
     );
     assert.match(flashBlock, />= 2(\.0)?/, 'Threshold must be >= 2 or >= 2.0');
-    assert.ok(
-      !flashBlock.includes('>= 1.5'),
-      'Old threshold >= 1.5 must not be present',
-    );
+    assert.ok(!flashBlock.includes('>= 1.5'), 'Old threshold >= 1.5 must not be present');
   });
 
   it("flash trigger checks entityUrgency === 'breaking'", () => {
@@ -35,11 +29,7 @@ describe('CO-010 — Flash trigger requires breaking urgency only + weightedSum 
       src.indexOf('// Flash trigger'),
       src.indexOf('shouldFlash = true') + 'shouldFlash = true'.length,
     );
-    assert.match(
-      flashBlock,
-      /entityUrgency === 'breaking'/,
-      "Flash trigger must check entityUrgency === 'breaking'",
-    );
+    assert.match(flashBlock, /entityUrgency === 'breaking'/, "Flash trigger must check entityUrgency === 'breaking'");
   });
 
   it('shouldFlash = true is preceded by the breaking check', () => {
@@ -48,14 +38,10 @@ describe('CO-010 — Flash trigger requires breaking urgency only + weightedSum 
 
     // Look at the 300 chars before shouldFlash = true for the breaking condition
     const preceding = src.slice(Math.max(0, flashIdx - 300), flashIdx);
-    assert.match(
-      preceding,
-      /entityUrgency === 'breaking'/,
-      "The breaking check must appear before shouldFlash = true",
-    );
+    assert.match(preceding, /entityUrgency === 'breaking'/, 'The breaking check must appear before shouldFlash = true');
     assert.ok(
       !preceding.includes("entityUrgency === 'elevated'"),
-      "No elevated check should precede shouldFlash = true",
+      'No elevated check should precede shouldFlash = true',
     );
   });
 
@@ -66,9 +52,6 @@ describe('CO-010 — Flash trigger requires breaking urgency only + weightedSum 
     assert.ok(startIdx > 0 && endIdx > startIdx, 'Flash trigger block boundaries must exist');
 
     const fullBlock = src.slice(startIdx, endIdx);
-    assert.ok(
-      !fullBlock.includes('elevated'),
-      `The word 'elevated' must not appear in the flash trigger block`,
-    );
+    assert.ok(!fullBlock.includes('elevated'), `The word 'elevated' must not appear in the flash trigger block`);
   });
 });

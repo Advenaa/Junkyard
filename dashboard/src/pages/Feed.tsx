@@ -34,7 +34,11 @@ export function normalizeFeedItem(raw: FeedItemRaw): FeedItem {
   if (Array.isArray(raw.attachments)) {
     attachments = raw.attachments;
   } else if (typeof raw.attachments === 'string') {
-    try { attachments = JSON.parse(raw.attachments); } catch { attachments = []; }
+    try {
+      attachments = JSON.parse(raw.attachments);
+    } catch {
+      attachments = [];
+    }
   }
   return { ...raw, attachments };
 }
@@ -72,13 +76,15 @@ export function Feed() {
 
   // Load sources
   useEffect(() => {
-    apiFetch<{ sources: FeedSource[] }>('/sources').then((res) => {
-      const discordSources = res.sources.filter((s) => s.source === 'discord');
-      setSources(discordSources);
-      if (discordSources.length > 0 && !selectedSource) {
-        setSelectedSource(discordSources[0].sourceId);
-      }
-    }).catch(() => setError('Failed to load sources.'));
+    apiFetch<{ sources: FeedSource[] }>('/sources')
+      .then((res) => {
+        const discordSources = res.sources.filter((s) => s.source === 'discord');
+        setSources(discordSources);
+        if (discordSources.length > 0 && !selectedSource) {
+          setSelectedSource(discordSources[0].sourceId);
+        }
+      })
+      .catch(() => setError('Failed to load sources.'));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchItems = useCallback(
@@ -211,7 +217,9 @@ export function Feed() {
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-red-400">
           <p>{error}</p>
-          <button onClick={() => fetchItems(0, 'replace')} className="mt-2 text-sm underline">Retry</button>
+          <button onClick={() => fetchItems(0, 'replace')} className="mt-2 text-sm underline">
+            Retry
+          </button>
         </div>
       )}
 
@@ -226,44 +234,32 @@ export function Feed() {
       ) : (
         <div className="space-y-3">
           {items.map((item) => (
-            <div
-              key={item.id}
-              className="bg-surface border border-border rounded-lg p-4 space-y-2"
-            >
+            <div key={item.id} className="bg-surface border border-border rounded-lg p-4 space-y-2">
               {/* Meta */}
               <div className="flex items-center justify-between">
-                <span className="text-text-primary text-sm font-body font-medium">
-                  @{item.author}
-                </span>
-                <span className="text-text-secondary text-xs font-mono">
-                  {formatTime(item.timestamp)}
-                </span>
+                <span className="text-text-primary text-sm font-body font-medium">@{item.author}</span>
+                <span className="text-text-secondary text-xs font-mono">{formatTime(item.timestamp)}</span>
               </div>
 
               {/* Content */}
-              <p className="text-text-primary text-sm font-body leading-relaxed whitespace-pre-wrap">
-                {item.content}
-              </p>
+              <p className="text-text-primary text-sm font-body leading-relaxed whitespace-pre-wrap">{item.content}</p>
 
               {/* Attachments / Images */}
               {item.attachments && item.attachments.length > 0 && (
                 <div className="flex gap-2 flex-wrap pt-1">
-                  {item.attachments.slice(0, 4).filter(isSafeUrl).map((url, i) => (
-                    <a
-                      key={i}
-                      href={url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block"
-                    >
-                      <img
-                        src={url}
-                        alt=""
-                        loading="lazy"
-                        className="max-w-[200px] max-h-[150px] rounded border border-border object-cover"
-                      />
-                    </a>
-                  ))}
+                  {item.attachments
+                    .slice(0, 4)
+                    .filter(isSafeUrl)
+                    .map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="block">
+                        <img
+                          src={url}
+                          alt=""
+                          loading="lazy"
+                          className="max-w-[200px] max-h-[150px] rounded border border-border object-cover"
+                        />
+                      </a>
+                    ))}
                 </div>
               )}
             </div>

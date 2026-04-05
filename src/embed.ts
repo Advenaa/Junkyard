@@ -9,8 +9,8 @@ import { insertLlmUsage } from './db/queries.js';
 
 export interface EmbedResult {
   vector: Float32Array;
-  dimensions: number;   // 768
-  model: string;        // 'text-embedding-004'
+  dimensions: number; // 768
+  model: string; // 'text-embedding-004'
 }
 
 interface GoogleGenerativeAIFetchError extends Error {
@@ -18,11 +18,7 @@ interface GoogleGenerativeAIFetchError extends Error {
 }
 
 function isFetchError(err: unknown): err is GoogleGenerativeAIFetchError {
-  return (
-    err instanceof Error &&
-    'status' in err &&
-    typeof (err as GoogleGenerativeAIFetchError).status === 'number'
-  );
+  return err instanceof Error && 'status' in err && typeof (err as GoogleGenerativeAIFetchError).status === 'number';
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -39,7 +35,7 @@ const DAILY_QUOTA_LIMIT = 1400;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -68,10 +64,7 @@ function stripDiscordFormatting(text: string): string {
 
 // ── Retry wrapper ──────────────────────────────────────────────────────
 
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  log: Logger,
-): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, log: Logger): Promise<T> {
   let lastError: unknown;
 
   // Initial attempt + 3 retries
@@ -232,7 +225,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         const batchResult = await withRetry(
           () =>
             model.batchEmbedContents({
-              requests: chunk.map(text => ({
+              requests: chunk.map((text) => ({
                 content: { parts: [{ text }], role: 'user' },
                 taskType: TaskType.RETRIEVAL_DOCUMENT,
               })),
@@ -243,17 +236,23 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         chunksCompleted += 1;
 
         if (batchResult.embeddings.length !== chunk.length) {
-          log.warn({
-            expected: chunk.length,
-            got: batchResult.embeddings.length,
-          }, 'embed: batch result count mismatch — some items may have been filtered');
+          log.warn(
+            {
+              expected: chunk.length,
+              got: batchResult.embeddings.length,
+            },
+            'embed: batch result count mismatch — some items may have been filtered',
+          );
         }
 
         for (let j = 0; j < chunk.length; j++) {
           if (j < batchResult.embeddings.length) {
             const vector = new Float32Array(batchResult.embeddings[j].values);
             if (vector.length !== DIMENSIONS) {
-              log.warn({ expected: DIMENSIONS, got: vector.length, model: MODEL_NAME, batchIndex: j }, 'embedBatch: unexpected vector dimensions');
+              log.warn(
+                { expected: DIMENSIONS, got: vector.length, model: MODEL_NAME, batchIndex: j },
+                'embedBatch: unexpected vector dimensions',
+              );
               throw new Error(`embedBatch: expected ${DIMENSIONS} dimensions but got ${vector.length}`);
             }
             results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });

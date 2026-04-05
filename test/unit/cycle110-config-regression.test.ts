@@ -36,19 +36,11 @@ describe('CG-001: API key masked in stderr', () => {
   });
 
   it('uses .slice() to truncate the key before printing', () => {
-    assert.match(
-      src,
-      /apiKey\.slice\(/,
-      'The generated key output must use .slice() to truncate the key',
-    );
+    assert.match(src, /apiKey\.slice\(/, 'The generated key output must use .slice() to truncate the key');
   });
 
   it('still prints the "Generated" label in the box', () => {
-    assert.match(
-      src,
-      /Generated/,
-      'The warning box must still contain the word "Generated"',
-    );
+    assert.match(src, /Generated/, 'The warning box must still contain the word "Generated"');
   });
 });
 
@@ -60,28 +52,16 @@ describe('CG-002: PUBLIC_URL validated', () => {
   const src = readSrc('src/config.ts');
 
   it('uses new URL() to parse the publicUrl value', () => {
-    assert.match(
-      src,
-      /new URL\(/,
-      'PUBLIC_URL handling must use new URL() for validation',
-    );
+    assert.match(src, /new URL\(/, 'PUBLIC_URL handling must use new URL() for validation');
   });
 
   it('strips trailing slashes from the URL', () => {
-    assert.match(
-      src,
-      /\.replace\(\/\\\/\+\$\//,
-      'PUBLIC_URL must strip trailing slashes via .replace(/\\/+$/, ...)',
-    );
+    assert.match(src, /\.replace\(\/\\\/\+\$\//, 'PUBLIC_URL must strip trailing slashes via .replace(/\\/+$/, ...)');
   });
 
   it('has a try/catch around URL parsing with an error throw', () => {
     // Verify try block exists
-    assert.match(
-      src,
-      /try\s*\{[^}]*new URL\(/s,
-      'PUBLIC_URL parsing must be inside a try block',
-    );
+    assert.match(src, /try\s*\{[^}]*new URL\(/s, 'PUBLIC_URL parsing must be inside a try block');
     // Verify catch block with throw
     assert.match(
       src,

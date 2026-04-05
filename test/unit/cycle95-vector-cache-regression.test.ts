@@ -13,9 +13,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const vectorCacheSrc = readFileSync(
-  new URL('../../src/vector-cache.ts', import.meta.url), 'utf-8',
-);
+const vectorCacheSrc = readFileSync(new URL('../../src/vector-cache.ts', import.meta.url), 'utf-8');
 
 describe('CH-002 — loadType loads all vectors without date filter', () => {
   it('loadType query does NOT contain a date filter', () => {
@@ -30,14 +28,8 @@ describe('CH-002 — loadType loads all vectors without date filter', () => {
       !loadTypeBody.includes('created_at >= $2'),
       'loadType query must NOT contain created_at >= $2 date filter',
     );
-    assert.ok(
-      !loadTypeBody.includes('Date.now()'),
-      'loadType must NOT reference Date.now() for a time window',
-    );
-    assert.ok(
-      !loadTypeBody.includes('created_at >'),
-      'loadType query must NOT contain any created_at > comparison',
-    );
+    assert.ok(!loadTypeBody.includes('Date.now()'), 'loadType must NOT reference Date.now() for a time window');
+    assert.ok(!loadTypeBody.includes('created_at >'), 'loadType query must NOT contain any created_at > comparison');
   });
 
   it('loadType query has ORDER BY created_at ASC LIMIT for correct eviction order', () => {
@@ -57,10 +49,7 @@ describe('CH-002 — loadType loads all vectors without date filter', () => {
     const loadTypeEnd = vectorCacheSrc.indexOf('\n  }', loadTypeIdx);
     const loadTypeBody = vectorCacheSrc.slice(loadTypeIdx, loadTypeEnd);
 
-    assert.ok(
-      !loadTypeBody.includes('thirtyDaysAgo'),
-      'loadType must NOT contain thirtyDaysAgo variable',
-    );
+    assert.ok(!loadTypeBody.includes('thirtyDaysAgo'), 'loadType must NOT contain thirtyDaysAgo variable');
     assert.ok(
       !/\d+\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(loadTypeBody),
       'loadType must NOT contain days-to-milliseconds calculation (N * 24 * 60 * 60 * 1000)',
@@ -84,10 +73,6 @@ describe('CH-003 — MIN_SIMILARITY lowered to 0.3', () => {
     const searchEnd = vectorCacheSrc.indexOf('\n  }', searchIdx);
     const searchBody = vectorCacheSrc.slice(searchIdx, searchEnd);
 
-    assert.match(
-      searchBody,
-      /score\s*>=\s*MIN_SIMILARITY/,
-      'search function must filter with score >= MIN_SIMILARITY',
-    );
+    assert.match(searchBody, /score\s*>=\s*MIN_SIMILARITY/, 'search function must filter with score >= MIN_SIMILARITY');
   });
 });

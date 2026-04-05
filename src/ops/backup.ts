@@ -47,10 +47,14 @@ export function createBackup(config: Config, log: Logger) {
         }
 
         const pgArgs = [
-          '--host', dbUrl.hostname,
-          '--port', dbUrl.port || '5432',
-          '--username', decodeURIComponent(dbUrl.username),
-          '--dbname', dbUrl.pathname.slice(1),
+          '--host',
+          dbUrl.hostname,
+          '--port',
+          dbUrl.port || '5432',
+          '--username',
+          decodeURIComponent(dbUrl.username),
+          '--dbname',
+          dbUrl.pathname.slice(1),
           '--no-password',
         ];
 
@@ -85,9 +89,18 @@ export function createBackup(config: Config, log: Logger) {
           resolve();
         });
 
-        output.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
-        pgDump.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
-        gzip.on('error', (err) => { clearTimeout(killTimeout); reject(err); });
+        output.on('error', (err) => {
+          clearTimeout(killTimeout);
+          reject(err);
+        });
+        pgDump.on('error', (err) => {
+          clearTimeout(killTimeout);
+          reject(err);
+        });
+        gzip.on('error', (err) => {
+          clearTimeout(killTimeout);
+          reject(err);
+        });
       });
 
       await rename(tmpPath, filePath);
@@ -96,10 +109,7 @@ export function createBackup(config: Config, log: Logger) {
         await unlink(filePath).catch(() => {});
         throw new Error(`backup file suspiciously small: ${fileInfo.size} bytes`);
       }
-      log.info(
-        { filePath, sizeBytes: fileInfo.size },
-        'backup: completed successfully',
-      );
+      log.info({ filePath, sizeBytes: fileInfo.size }, 'backup: completed successfully');
 
       // Delete backups older than 7 days
       const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;

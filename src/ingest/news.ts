@@ -17,7 +17,7 @@ export function createNewsAdapter(log: Logger): NewsAdapter {
           signal: AbortSignal.timeout(10_000),
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; Podders/2.0)',
-            'Accept': 'text/html',
+            Accept: 'text/html',
           },
         });
 

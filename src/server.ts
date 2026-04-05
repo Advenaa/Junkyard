@@ -114,7 +114,11 @@ export async function createServer(
 
   // --- Reports ---
   app.get('/api/v1/reports', { preHandler: [authPreHandler] }, async (request) => {
-    const { limit: rawLimit, offset: rawOffset, type } = request.query as { limit?: string; offset?: string; type?: string };
+    const {
+      limit: rawLimit,
+      offset: rawOffset,
+      type,
+    } = request.query as { limit?: string; offset?: string; type?: string };
     const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
     const offset = Math.max(parseInt(rawOffset ?? '0', 10) || 0, 0);
     const params: unknown[] = [limit, offset];
@@ -137,15 +141,15 @@ export async function createServer(
       `SELECT COUNT(*) AS count FROM reports ${countWhere}`,
       countParams,
     );
-    return { reports: reports.map(r => toCamelCase(r as unknown as Record<string, unknown>)), total: parseInt(countRows[0].count, 10) };
+    return {
+      reports: reports.map((r) => toCamelCase(r as unknown as Record<string, unknown>)),
+      total: parseInt(countRows[0].count, 10),
+    };
   });
 
   app.get('/api/v1/reports/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { rows } = await pool.query<ReportRow>(
-      `SELECT * FROM reports WHERE id = $1`,
-      [id],
-    );
+    const { rows } = await pool.query<ReportRow>(`SELECT * FROM reports WHERE id = $1`, [id]);
     if (rows.length === 0) {
       return reply.code(404).send({ error: 'Report not found' });
     }
@@ -167,55 +171,59 @@ export async function createServer(
   // --- Sources ---
   app.get('/api/v1/sources', { preHandler: [authPreHandler] }, async () => {
     const sources = await getAllSourcesWithState(pool);
-    return { sources: sources.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
+    return { sources: sources.map((r) => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
-  app.post('/api/v1/sources', {
-    preHandler: [authPreHandler, requireAdmin],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['source', 'sourceId'],
-        properties: {
-          source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
-          sourceId: { type: 'string', minLength: 1, maxLength: 255 },
-          label: { type: 'string', maxLength: 255 },
+  app.post(
+    '/api/v1/sources',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['source', 'sourceId'],
+          properties: {
+            source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
+            sourceId: { type: 'string', minLength: 1, maxLength: 255 },
+            label: { type: 'string', maxLength: 255 },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    const { source, sourceId, label } = request.body as { source?: string; sourceId?: string; label?: string };
-    if (!source || !sourceId) {
-      return reply.code(400).send({ error: 'source and sourceId are required' });
-    }
-    if (source === 'rss') {
-      const validation = await validateUrl(sourceId);
-      if (!validation.valid) {
-        return reply.code(400).send({ error: `Invalid RSS feed URL: ${validation.reason}` });
+    async (request, reply) => {
+      const { source, sourceId, label } = request.body as { source?: string; sourceId?: string; label?: string };
+      if (!source || !sourceId) {
+        return reply.code(400).send({ error: 'source and sourceId are required' });
       }
-    }
-    try {
-      await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
-    } catch (err: unknown) {
-      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
-        return reply.code(409).send({ error: 'Source already exists' });
+      if (source === 'rss') {
+        const validation = await validateUrl(sourceId);
+        if (!validation.valid) {
+          return reply.code(400).send({ error: `Invalid RSS feed URL: ${validation.reason}` });
+        }
       }
-      throw err;
-    }
-    await pool.query(
-      `INSERT INTO source_state (source, source_id, status, error_count)
+      try {
+        await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
+      } catch (err: unknown) {
+        if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+          return reply.code(409).send({ error: 'Source already exists' });
+        }
+        throw err;
+      }
+      await pool.query(
+        `INSERT INTO source_state (source, source_id, status, error_count)
        VALUES ($1, $2, 'active', 0)
        ON CONFLICT (source, source_id) DO NOTHING`,
-      [source, sourceId],
-    );
-    const { rows } = await pool.query<SourceRow>(
-      `SELECT * FROM sources WHERE source = $1 AND source_id = $2`,
-      [source, sourceId],
-    );
-    reply.code(201);
-    return toCamelCase(rows[0] as unknown as Record<string, unknown>);
-  });
+        [source, sourceId],
+      );
+      const { rows } = await pool.query<SourceRow>(`SELECT * FROM sources WHERE source = $1 AND source_id = $2`, [
+        source,
+        sourceId,
+      ]);
+      reply.code(201);
+      return toCamelCase(rows[0] as unknown as Record<string, unknown>);
+    },
+  );
 
   // --- Config ---
   app.get('/api/v1/config', { preHandler: [authPreHandler] }, async () => {
@@ -227,311 +235,350 @@ export async function createServer(
     return { digestTime, timezone, webhookUrl };
   });
 
-  app.patch('/api/v1/config', {
-    preHandler: [authPreHandler, requireAdmin],
-    schema: {
-      body: {
-        type: 'object',
-        properties: {
-          digest_time: { type: 'string' },
-          timezone: { type: 'string' },
-          webhook_url: { type: 'string' },
+  app.patch(
+    '/api/v1/config',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            digest_time: { type: 'string' },
+            timezone: { type: 'string' },
+            webhook_url: { type: 'string' },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    const body = request.body as Record<string, string>;
-    const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
+    async (request, reply) => {
+      const body = request.body as Record<string, string>;
+      const allowedKeys = ['digest_time', 'timezone', 'webhook_url'];
 
-    // CF-011 — validate digest_time format
-    if ('digest_time' in body && body['digest_time']) {
-      const match = body['digest_time'].match(/^(\d{1,2}):(\d{2})$/);
-      if (!match) {
-        return reply.code(400).send({ error: 'Invalid digest_time format, expected HH:MM' });
+      // CF-011 — validate digest_time format
+      if ('digest_time' in body && body['digest_time']) {
+        const match = body['digest_time'].match(/^(\d{1,2}):(\d{2})$/);
+        if (!match) {
+          return reply.code(400).send({ error: 'Invalid digest_time format, expected HH:MM' });
+        }
+        const hour = Number(match[1]);
+        const minute = Number(match[2]);
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+          return reply.code(400).send({ error: 'digest_time out of range (hour 0-23, minute 0-59)' });
+        }
       }
-      const hour = Number(match[1]);
-      const minute = Number(match[2]);
-      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-        return reply.code(400).send({ error: 'digest_time out of range (hour 0-23, minute 0-59)' });
-      }
-    }
 
-    // CF-011 — validate timezone
-    if ('timezone' in body && body['timezone']) {
-      try {
-        Intl.DateTimeFormat(undefined, { timeZone: body['timezone'] });
-      } catch {
-        return reply.code(400).send({ error: `Invalid timezone: ${body['timezone']}` });
+      // CF-011 — validate timezone
+      if ('timezone' in body && body['timezone']) {
+        try {
+          Intl.DateTimeFormat(undefined, { timeZone: body['timezone'] });
+        } catch {
+          return reply.code(400).send({ error: `Invalid timezone: ${body['timezone']}` });
+        }
       }
-    }
 
-    // Validate webhook_url if provided (SSRF protection — D-010)
-    if ('webhook_url' in body && body['webhook_url']) {
-      const validation = await validateUrl(body['webhook_url']);
-      if (!validation.valid) {
-        return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason}` });
+      // Validate webhook_url if provided (SSRF protection — D-010)
+      if ('webhook_url' in body && body['webhook_url']) {
+        const validation = await validateUrl(body['webhook_url']);
+        if (!validation.valid) {
+          return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason}` });
+        }
       }
-    }
 
-    const updates: Array<Promise<void>> = [];
-    for (const key of allowedKeys) {
-      if (key in body) {
-        updates.push(setAppConfig(pool, key, body[key]));
+      const updates: Array<Promise<void>> = [];
+      for (const key of allowedKeys) {
+        if (key in body) {
+          updates.push(setAppConfig(pool, key, body[key]));
+        }
       }
-    }
-    await Promise.all(updates);
+      await Promise.all(updates);
 
-    // CF-010 — notify scheduler when cron-affecting config changes
-    if (onConfigChange && ('digest_time' in body || 'timezone' in body)) {
-      try {
-        await onConfigChange();
-      } catch (err) {
-        log.error({ err }, 'config change callback failed');
+      // CF-010 — notify scheduler when cron-affecting config changes
+      if (onConfigChange && ('digest_time' in body || 'timezone' in body)) {
+        try {
+          await onConfigChange();
+        } catch (err) {
+          log.error({ err }, 'config change callback failed');
+        }
       }
-    }
 
-    const [digestTime, timezone, webhookUrl] = await Promise.all([
-      getAppConfig(pool, 'digest_time'),
-      getAppConfig(pool, 'timezone'),
-      getAppConfig(pool, 'webhook_url'),
-    ]);
-    return { digestTime, timezone, webhookUrl };
-  });
+      const [digestTime, timezone, webhookUrl] = await Promise.all([
+        getAppConfig(pool, 'digest_time'),
+        getAppConfig(pool, 'timezone'),
+        getAppConfig(pool, 'webhook_url'),
+      ]);
+      return { digestTime, timezone, webhookUrl };
+    },
+  );
 
   // --- Search ---
-  app.get('/api/v1/search', {
-    preHandler: [authPreHandler],
-    schema: {
-      querystring: {
-        type: 'object',
-        properties: {
-          q: { type: 'string', minLength: 1 },
-          limit: { type: 'integer', minimum: 1, maximum: 100 },
-          days: { type: 'integer', minimum: 1, maximum: 365 },
-          mode: { type: 'string', enum: ['keyword', 'semantic'] },
+  app.get(
+    '/api/v1/search',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            q: { type: 'string', minLength: 1 },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+            days: { type: 'integer', minimum: 1, maximum: 365 },
+            mode: { type: 'string', enum: ['keyword', 'semantic'] },
+          },
+          required: ['q'],
+          additionalProperties: false,
         },
-        required: ['q'],
-        additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    const { q, limit: rawLimit, days: rawDays, mode: rawMode } = request.query as {
-      q: string;
-      limit?: number;
-      days?: number;
-      mode?: 'keyword' | 'semantic';
-    };
-    const mode = rawMode ?? 'keyword';
-    if (mode === 'semantic') {
-      return reply.code(501).send({ error: 'semantic search is only available via the chat interface' });
-    }
-    const limit = Math.min(Math.max(rawLimit ?? 20, 1), 100);
-    const days = Math.min(Math.max(rawDays ?? 30, 1), 365);
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    const { rows: results } = await pool.query<SummaryRow>(
-      `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
-      [`%${q}%`, cutoff, limit],
-    );
-    return { results: results.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
-  });
+    async (request, reply) => {
+      const {
+        q,
+        limit: rawLimit,
+        days: rawDays,
+        mode: rawMode,
+      } = request.query as {
+        q: string;
+        limit?: number;
+        days?: number;
+        mode?: 'keyword' | 'semantic';
+      };
+      const mode = rawMode ?? 'keyword';
+      if (mode === 'semantic') {
+        return reply.code(501).send({ error: 'semantic search is only available via the chat interface' });
+      }
+      const limit = Math.min(Math.max(rawLimit ?? 20, 1), 100);
+      const days = Math.min(Math.max(rawDays ?? 30, 1), 365);
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      const { rows: results } = await pool.query<SummaryRow>(
+        `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
+        [`%${q}%`, cutoff, limit],
+      );
+      return { results: results.map((r) => toCamelCase(r as unknown as Record<string, unknown>)) };
+    },
+  );
 
   // --- Raw feed ---
-  app.get('/api/v1/feed/:sourceId', {
-    preHandler: [authPreHandler],
-    schema: {
-      querystring: {
-        type: 'object',
-        properties: {
-          limit: { type: 'integer', minimum: 1, maximum: 200 },
-          offset: { type: 'integer', minimum: 0 },
-          after: { type: 'integer', minimum: 0 },
+  app.get(
+    '/api/v1/feed/:sourceId',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+            offset: { type: 'integer', minimum: 0 },
+            after: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
       },
     },
-  }, async (request) => {
-    const { sourceId } = request.params as { sourceId: string };
-    const { limit: rawLimit, offset, after } = request.query as {
-      limit?: number;
-      offset?: number;
-      after?: number;
-    };
-    const limit = Math.min(Math.max(rawLimit ?? 50, 1), 200);
+    async (request) => {
+      const { sourceId } = request.params as { sourceId: string };
+      const {
+        limit: rawLimit,
+        offset,
+        after,
+      } = request.query as {
+        limit?: number;
+        offset?: number;
+        after?: number;
+      };
+      const limit = Math.min(Math.max(rawLimit ?? 50, 1), 200);
 
-    let sql = `SELECT * FROM items WHERE source_id = $1`;
-    const params: (string | number)[] = [sourceId];
+      let sql = `SELECT * FROM items WHERE source_id = $1`;
+      const params: (string | number)[] = [sourceId];
 
-    if (after != null) {
-      params.push(after);
-      sql += ` AND timestamp > $${params.length}`;
-    }
+      if (after != null) {
+        params.push(after);
+        sql += ` AND timestamp > $${params.length}`;
+      }
 
-    sql += ` ORDER BY timestamp DESC`;
+      sql += ` ORDER BY timestamp DESC`;
 
-    params.push(limit);
-    sql += ` LIMIT $${params.length}`;
+      params.push(limit);
+      sql += ` LIMIT $${params.length}`;
 
-    if (offset != null) {
-      params.push(offset);
-      sql += ` OFFSET $${params.length}`;
-    }
+      if (offset != null) {
+        params.push(offset);
+        sql += ` OFFSET $${params.length}`;
+      }
 
-    const { rows: items } = await pool.query<ItemRow>(sql, params);
-    const parsed = items.map(r => {
-      const camelRow = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
-      // Parse attachments JSON string to array
-      if (typeof camelRow.attachments === 'string') {
-        try {
-          camelRow.attachments = JSON.parse(camelRow.attachments);
-        } catch {
+      const { rows: items } = await pool.query<ItemRow>(sql, params);
+      const parsed = items.map((r) => {
+        const camelRow = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
+        // Parse attachments JSON string to array
+        if (typeof camelRow.attachments === 'string') {
+          try {
+            camelRow.attachments = JSON.parse(camelRow.attachments);
+          } catch {
+            camelRow.attachments = [];
+          }
+        } else if (camelRow.attachments === null || camelRow.attachments === undefined) {
           camelRow.attachments = [];
         }
-      } else if (camelRow.attachments === null || camelRow.attachments === undefined) {
-        camelRow.attachments = [];
-      }
-      return camelRow;
-    });
-    return { items: parsed };
-  });
+        return camelRow;
+      });
+      return { items: parsed };
+    },
+  );
 
-  app.post('/api/v1/chat', {
-    preHandler: [authPreHandler],
-    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
-    schema: {
-      body: {
-        type: 'object',
-        required: ['query'],
-        properties: {
-          query: { type: 'string', minLength: 1, maxLength: 4000 },
-          conversationId: { type: 'string', maxLength: 100 },
+  app.post(
+    '/api/v1/chat',
+    {
+      preHandler: [authPreHandler],
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+      schema: {
+        body: {
+          type: 'object',
+          required: ['query'],
+          properties: {
+            query: { type: 'string', minLength: 1, maxLength: 4000 },
+            conversationId: { type: 'string', maxLength: 100 },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    if (!chatHandler) {
-      return reply.code(501).send({ error: 'Chat not available' });
-    }
-    const { query, conversationId } = request.body as { query: string; conversationId?: string };
-    const userId = request.user!.discordId;
-    const result = await chatHandler.handle(query, conversationId ?? userId, userId);
-    return result;
-  });
+    async (request, reply) => {
+      if (!chatHandler) {
+        return reply.code(501).send({ error: 'Chat not available' });
+      }
+      const { query, conversationId } = request.body as { query: string; conversationId?: string };
+      const userId = request.user!.discordId;
+      const result = await chatHandler.handle(query, conversationId ?? userId, userId);
+      return result;
+    },
+  );
 
   app.get('/api/v1/users', { preHandler: [authPreHandler, requireAdmin] }, async () => {
-    const { rows: users } = await pool.query<UserRow>(
-      `SELECT * FROM users ORDER BY created_at DESC`,
-    );
-    return { users: users.map(r => toCamelCase(r as unknown as Record<string, unknown>)) };
+    const { rows: users } = await pool.query<UserRow>(`SELECT * FROM users ORDER BY created_at DESC`);
+    return { users: users.map((r) => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
 
   // --- PATCH /sources/:source/:sourceId (CD-002) ---
-  app.patch('/api/v1/sources/:source/:sourceId', {
-    preHandler: [authPreHandler, requireAdmin],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['enabled'],
-        properties: {
-          enabled: { type: 'boolean' },
+  app.patch(
+    '/api/v1/sources/:source/:sourceId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['enabled'],
+          properties: {
+            enabled: { type: 'boolean' },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
-      },
-      params: {
-        type: 'object',
-        required: ['source', 'sourceId'],
-        properties: {
-          source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
-          sourceId: { type: 'string' },
+        params: {
+          type: 'object',
+          required: ['source', 'sourceId'],
+          properties: {
+            source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
+            sourceId: { type: 'string' },
+          },
         },
       },
     },
-  }, async (request, reply) => {
-    const { source, sourceId } = request.params as { source: string; sourceId: string };
-    const { enabled } = request.body as { enabled: boolean };
+    async (request, reply) => {
+      const { source, sourceId } = request.params as { source: string; sourceId: string };
+      const { enabled } = request.body as { enabled: boolean };
 
-    // Check current status — block re-enabling halted sources (CR-001)
-    const { rows: stateRows } = await pool.query<{ status: string; last_error: string | null }>(
-      `SELECT status, last_error FROM source_state WHERE source = $1 AND source_id = $2`,
-      [source, sourceId],
-    );
-    if (stateRows.length === 0) {
-      return reply.code(404).send({ error: 'Source not found' });
-    }
-    const currentStatus = stateRows[0].status;
-    if (currentStatus === 'halted' && enabled) {
-      return reply.code(409).send({
-        error: 'Source is halted — fix the underlying issue before re-enabling',
-        lastError: stateRows[0].last_error,
-      });
-    }
+      // Check current status — block re-enabling halted sources (CR-001)
+      const { rows: stateRows } = await pool.query<{ status: string; last_error: string | null }>(
+        `SELECT status, last_error FROM source_state WHERE source = $1 AND source_id = $2`,
+        [source, sourceId],
+      );
+      if (stateRows.length === 0) {
+        return reply.code(404).send({ error: 'Source not found' });
+      }
+      const currentStatus = stateRows[0].status;
+      if (currentStatus === 'halted' && enabled) {
+        return reply.code(409).send({
+          error: 'Source is halted — fix the underlying issue before re-enabling',
+          lastError: stateRows[0].last_error,
+        });
+      }
 
-    const newStatus = enabled ? 'active' : 'disabled';
-    await pool.query(
-      `UPDATE source_state SET status = $1 WHERE source = $2 AND source_id = $3`,
-      [newStatus, source, sourceId],
-    );
-    return { source, sourceId, status: newStatus };
-  });
+      const newStatus = enabled ? 'active' : 'disabled';
+      await pool.query(`UPDATE source_state SET status = $1 WHERE source = $2 AND source_id = $3`, [
+        newStatus,
+        source,
+        sourceId,
+      ]);
+      return { source, sourceId, status: newStatus };
+    },
+  );
 
   // --- DELETE /sources/:source/:sourceId (PD-003) ---
-  app.delete('/api/v1/sources/:source/:sourceId', {
-    preHandler: [authPreHandler, requireAdmin],
-    schema: {
-      params: {
-        type: 'object',
-        required: ['source', 'sourceId'],
-        properties: {
-          source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
-          sourceId: { type: 'string' },
+  app.delete(
+    '/api/v1/sources/:source/:sourceId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['source', 'sourceId'],
+          properties: {
+            source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
+            sourceId: { type: 'string' },
+          },
         },
       },
     },
-  }, async (request, reply) => {
-    const { source, sourceId } = request.params as { source: string; sourceId: string };
-    // Delete source_state first (may not exist)
-    await pool.query('DELETE FROM source_state WHERE source = $1 AND source_id = $2', [source, sourceId]);
-    const { rowCount } = await pool.query('DELETE FROM sources WHERE source = $1 AND source_id = $2', [source, sourceId]);
-    if (!rowCount) {
-      return reply.code(404).send({ error: 'Source not found' });
-    }
-    reply.code(204).send();
-  });
+    async (request, reply) => {
+      const { source, sourceId } = request.params as { source: string; sourceId: string };
+      // Delete source_state first (may not exist)
+      await pool.query('DELETE FROM source_state WHERE source = $1 AND source_id = $2', [source, sourceId]);
+      const { rowCount } = await pool.query('DELETE FROM sources WHERE source = $1 AND source_id = $2', [
+        source,
+        sourceId,
+      ]);
+      if (!rowCount) {
+        return reply.code(404).send({ error: 'Source not found' });
+      }
+      reply.code(204).send();
+    },
+  );
 
   // --- PATCH /users/:discordId (CD-003) ---
-  app.patch('/api/v1/users/:discordId', {
-    preHandler: [authPreHandler, requireAdmin],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['role'],
-        properties: {
-          role: { type: 'string', enum: ['admin', 'viewer', 'blocked'] },
+  app.patch(
+    '/api/v1/users/:discordId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['role'],
+          properties: {
+            role: { type: 'string', enum: ['admin', 'viewer', 'blocked'] },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
-      },
-      params: {
-        type: 'object',
-        required: ['discordId'],
-        properties: {
-          discordId: { type: 'string', pattern: '^\\d{17,20}$' },
+        params: {
+          type: 'object',
+          required: ['discordId'],
+          properties: {
+            discordId: { type: 'string', pattern: '^\\d{17,20}$' },
+          },
         },
       },
     },
-  }, async (request) => {
-    const { discordId } = request.params as { discordId: string };
-    const { role } = request.body as { role: string };
-    await pool.query(
-      `INSERT INTO users (discord_id, role) VALUES ($1, $2) ON CONFLICT (discord_id) DO UPDATE SET role = $2`,
-      [discordId, role],
-    );
-    // AU-035: purge all active sessions when a user is blocked
-    if (role === 'blocked') {
-      await sessionManager.deleteAllForUser(discordId);
-    }
-    return { discordId, role };
-  });
+    async (request) => {
+      const { discordId } = request.params as { discordId: string };
+      const { role } = request.body as { role: string };
+      await pool.query(
+        `INSERT INTO users (discord_id, role) VALUES ($1, $2) ON CONFLICT (discord_id) DO UPDATE SET role = $2`,
+        [discordId, role],
+      );
+      // AU-035: purge all active sessions when a user is blocked
+      if (role === 'blocked') {
+        await sessionManager.deleteAllForUser(discordId);
+      }
+      return { discordId, role };
+    },
+  );
 
   // --- GET /api/v1/status (CD-004) ---
   app.get('/api/v1/status', { preHandler: [authPreHandler] }, async () => {
@@ -559,63 +606,64 @@ export async function createServer(
   });
 
   // --- POST /api/v1/config/test-webhook (CD-005) ---
-  app.post('/api/v1/config/test-webhook', {
-    preHandler: [authPreHandler, requireAdmin],
-    schema: {
-      body: {
-        type: 'object',
-        required: ['url'],
-        properties: {
-          url: { type: 'string', minLength: 1, maxLength: 2048 },
+  app.post(
+    '/api/v1/config/test-webhook',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['url'],
+          properties: {
+            url: { type: 'string', minLength: 1, maxLength: 2048 },
+          },
+          additionalProperties: false,
         },
-        additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    const { url } = request.body as { url: string };
-    const validation = await validateUrl(url);
-    if (!validation.valid || !validation.resolvedIp) {
-      return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason ?? 'DNS resolution failed'}` });
-    }
-    try {
-      const payload = JSON.stringify({
-        embeds: [{
-          title: 'Podders Test Webhook',
-          description: 'If you can see this, your webhook is configured correctly.',
-          color: 0x5B8DEF,
-          timestamp: new Date().toISOString(),
-          footer: { text: 'podders — test delivery' },
-        }],
-        allowed_mentions: { parse: [] },
-      });
-      // Pin to resolved IP to prevent DNS rebinding (TOCTOU) between validateUrl and fetch
-      const parsed = new URL(url);
-      const pinnedUrl = new URL(url);
-      pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
-      const response = await fetch(pinnedUrl.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Host: parsed.host },
-        body: payload,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        return reply.code(400).send({ error: `Webhook returned ${response.status}`, detail: text.slice(0, 200) });
+    async (request, reply) => {
+      const { url } = request.body as { url: string };
+      const validation = await validateUrl(url);
+      if (!validation.valid || !validation.resolvedIp) {
+        return reply.code(400).send({ error: `Invalid webhook URL: ${validation.reason ?? 'DNS resolution failed'}` });
       }
-      return { success: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      return reply.code(400).send({ error: `Webhook delivery failed: ${message}` });
-    }
-  });
+      try {
+        const payload = JSON.stringify({
+          embeds: [
+            {
+              title: 'Podders Test Webhook',
+              description: 'If you can see this, your webhook is configured correctly.',
+              color: 0x5b8def,
+              timestamp: new Date().toISOString(),
+              footer: { text: 'podders — test delivery' },
+            },
+          ],
+          allowed_mentions: { parse: [] },
+        });
+        // Pin to resolved IP to prevent DNS rebinding (TOCTOU) between validateUrl and fetch
+        const parsed = new URL(url);
+        const pinnedUrl = new URL(url);
+        pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
+        const response = await fetch(pinnedUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Host: parsed.host },
+          body: payload,
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          return reply.code(400).send({ error: `Webhook returned ${response.status}`, detail: text.slice(0, 200) });
+        }
+        return { success: true };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        return reply.code(400).send({ error: `Webhook delivery failed: ${message}` });
+      }
+    },
+  );
 
   // --- Static files (dashboard SPA) ---
-  const dashboardRoot = path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-    'dashboard',
-    'dist',
-  );
+  const dashboardRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dashboard', 'dist');
   await app.register(fastifyStatic, {
     root: dashboardRoot,
     prefix: '/',
@@ -643,11 +691,7 @@ export async function createServer(
   return app;
 }
 
-export async function startServer(
-  app: FastifyInstance,
-  port: number,
-  log: Logger,
-): Promise<void> {
+export async function startServer(app: FastifyInstance, port: number, log: Logger): Promise<void> {
   try {
     await app.listen({ port, host: '0.0.0.0' });
     log.info(`Server listening on port ${port}`);

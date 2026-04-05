@@ -44,9 +44,7 @@ function validChunkJson(): string {
     summary: 'Market discussion about Bitcoin and Ethereum with moderate activity across channels.',
     urgency: 'routine',
     confidence: 7,
-    entities: [
-      { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 3, sentiment: 0.2 },
-    ],
+    entities: [{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 3, sentiment: 0.2 }],
     keyEvents: ['BTC discussed'],
   });
 }
@@ -139,7 +137,7 @@ describe('summarize: call budget', () => {
     let llmCallCount = 0;
     // Return JSON that parses but fails zod (summary too short)
     const badZodJson = JSON.stringify({
-      summary: 'short',         // min 10 chars — this is only 5
+      summary: 'short', // min 10 chars — this is only 5
       urgency: 'routine',
       confidence: 7,
       entities: [],
@@ -168,10 +166,7 @@ describe('summarize: call budget', () => {
 
     await summarizer.runBatch('discord', 'test-channel', Date.now() - 3600000, Date.now());
 
-    assert.ok(
-      llmCallCount <= 50,
-      `LLM call count should be capped at 50, got ${llmCallCount}`,
-    );
+    assert.ok(llmCallCount <= 50, `LLM call count should be capped at 50, got ${llmCallCount}`);
     // With 13 chunks * 4 calls each = 52, we expect exactly 50 due to budget
     assert.ok(
       llmCallCount >= 40,
@@ -240,7 +235,7 @@ describe('summarize: call budget', () => {
     const callsByModel: string[] = [];
     // Return JSON that fails zod to maximize calls per chunk
     const badZodJson = JSON.stringify({
-      summary: 'tiny',  // too short for min(10)
+      summary: 'tiny', // too short for min(10)
       urgency: 'routine',
       confidence: 7,
       entities: [],
@@ -297,10 +292,8 @@ describe('summarize: call budget', () => {
     const lowConfidenceJson = JSON.stringify({
       summary: 'Major exploit detected on DeFi protocol with significant funds at risk and multiple wallets involved.',
       urgency: 'breaking',
-      confidence: 3,  // low confidence + non-routine => triggers escalation
-      entities: [
-        { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 5, sentiment: -0.5 },
-      ],
+      confidence: 3, // low confidence + non-routine => triggers escalation
+      entities: [{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 5, sentiment: -0.5 }],
       keyEvents: ['Major exploit detected'],
     });
 
@@ -471,10 +464,7 @@ describe('summarize: poison pill (single oversized item)', () => {
     const retryCallIdx = pool.calls.findIndex(
       (c, i) => i > failedCallIdx && c.text.includes('retry_count') && c.text.includes('UPDATE items'),
     );
-    assert.ok(
-      retryCallIdx > failedCallIdx,
-      'Per-item failed mark should precede batch cleanup retry-count update',
-    );
+    assert.ok(retryCallIdx > failedCallIdx, 'Per-item failed mark should precede batch cleanup retry-count update');
   });
 
   it('multi-item chunk splits down, only single oversized item marked failed', async () => {
@@ -483,10 +473,7 @@ describe('summarize: poison pill (single oversized item)', () => {
     // single-item chunks. The oversized one gets marked failed, the normal one
     // may also fail (since our mock LLM always throws), but the key test is
     // that the poison pill path is exercised for single items.
-    const items = [
-      fakeItem('normal-item'),
-      fakeItem('oversized-item'),
-    ];
+    const items = [fakeItem('normal-item'), fakeItem('oversized-item')];
 
     const llm = {
       call: async () => {

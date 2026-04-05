@@ -12,9 +12,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const rssSrc = readFileSync(
-  new URL('../../src/ingest/rss.ts', import.meta.url), 'utf-8',
-);
+const rssSrc = readFileSync(new URL('../../src/ingest/rss.ts', import.meta.url), 'utf-8');
 
 describe('RS-001 — HTML content stripping when contentSnippet missing', () => {
   it('checks item.contentSnippet === undefined before HTML extraction', () => {
@@ -42,10 +40,7 @@ describe('RS-001 — HTML content stripping when contentSnippet missing', () => 
 
     assert.ok(snippetCheckIdx > -1, 'should find contentSnippet === undefined check');
     assert.ok(lengthCompareIdx > -1, 'should find extracted.length > content.length comparison');
-    assert.ok(
-      lengthCompareIdx > snippetCheckIdx,
-      'length comparison must appear after the contentSnippet check',
-    );
+    assert.ok(lengthCompareIdx > snippetCheckIdx, 'length comparison must appear after the contentSnippet check');
   });
 
   it('references item.content as the raw HTML source', () => {
@@ -55,28 +50,19 @@ describe('RS-001 — HTML content stripping when contentSnippet missing', () => 
     // Search for item.content that is NOT item.contentSnippet (use word boundary after "content")
     const afterCheck = rssSrc.slice(snippetCheckIdx);
     const itemContentMatch = afterCheck.match(/item\.content[^S]/);
-    assert.ok(
-      itemContentMatch,
-      'should reference item.content (not item.contentSnippet) after the undefined check',
-    );
+    assert.ok(itemContentMatch, 'should reference item.content (not item.contentSnippet) after the undefined check');
   });
 });
 
 describe('RS-004 — RSS engagement sentinel', () => {
   it('uses engagement: -1 (not engagement: 0)', () => {
-    assert.ok(
-      rssSrc.includes('engagement: -1'),
-      'should contain engagement: -1 sentinel value',
-    );
+    assert.ok(rssSrc.includes('engagement: -1'), 'should contain engagement: -1 sentinel value');
     // Ensure there is no engagement: 0 in the return object area
     const returnIdx = rssSrc.indexOf('return {');
     const satisfiesIdx = rssSrc.indexOf('satisfies RawItem', returnIdx);
     if (returnIdx > -1 && satisfiesIdx > -1) {
       const returnBlock = rssSrc.slice(returnIdx, satisfiesIdx);
-      assert.ok(
-        !returnBlock.includes('engagement: 0'),
-        'should NOT contain engagement: 0 in the return block',
-      );
+      assert.ok(!returnBlock.includes('engagement: 0'), 'should NOT contain engagement: 0 in the return block');
     }
   });
 
@@ -90,9 +76,6 @@ describe('RS-004 — RSS engagement sentinel', () => {
     const context = rssSrc.slice(contextStart, contextEnd);
 
     const hasSentinelComment = /\/\/.*sentinel/i.test(context) || /\/\/.*unknown/i.test(context);
-    assert.ok(
-      hasSentinelComment,
-      'should have a comment mentioning "sentinel" or "unknown" near engagement: -1',
-    );
+    assert.ok(hasSentinelComment, 'should have a comment mentioning "sentinel" or "unknown" near engagement: -1');
   });
 });

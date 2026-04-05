@@ -4,10 +4,7 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-export function chunkByTokens<T extends { content: string }>(
-  items: T[],
-  budget: number,
-): T[][] {
+export function chunkByTokens<T extends { content: string }>(items: T[], budget: number): T[][] {
   const chunks: T[][] = [];
   let current: T[] = [];
   let currentTokens = 0;
@@ -44,15 +41,11 @@ const URGENCY_KEYWORDS = [
   'bank run',
 ];
 
-export function analyzeChunk<T extends { content: string }>(
-  items: T[],
-): ChunkMeta {
+export function analyzeChunk<T extends { content: string }>(items: T[]): ChunkMeta {
   const combined = items.map((i) => i.content).join(' ');
   const tokenCount = estimateTokens(combined);
   const lower = combined.toLowerCase();
-  const entityHints = (
-    combined.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|\$[A-Za-z]+/g) ?? []
-  ).length;
+  const entityHints = (combined.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|\$[A-Za-z]+/g) ?? []).length;
   return {
     tokenCount,
     itemCount: items.length,

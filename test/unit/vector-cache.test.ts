@@ -1,11 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  cosineSimilarity,
-  evict,
-  MAX_VECTORS,
-  createVectorCache,
-} from '../../src/vector-cache.js';
+import { cosineSimilarity, evict, MAX_VECTORS, createVectorCache } from '../../src/vector-cache.js';
 import type { VectorCache } from '../../src/vector-cache.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -21,7 +16,9 @@ const noopLog = {
   debug() {},
   warn() {},
   error() {},
-  child() { return noopLog; },
+  child() {
+    return noopLog;
+  },
 } as any;
 
 /** Stub pool — only needed for load() which we skip in unit tests. */
@@ -56,7 +53,7 @@ describe('cosineSimilarity', () => {
   it('opposite vectors → -1.0', () => {
     const a = vec(1, 0, 0);
     const b = vec(-1, 0, 0);
-    assert.ok(Math.abs(cosineSimilarity(a, b) - (-1.0)) < 1e-6);
+    assert.ok(Math.abs(cosineSimilarity(a, b) - -1.0) < 1e-6);
   });
 
   it('zero vector → 0.0 (no division by zero)', () => {
@@ -223,7 +220,9 @@ describe('VectorCache (unit, no pool)', () => {
     const warnings: unknown[] = [];
     const log = {
       ...noopLog,
-      warn(...args: unknown[]) { warnings.push(args); },
+      warn(...args: unknown[]) {
+        warnings.push(args);
+      },
     };
 
     const mockPool = {
@@ -240,13 +239,15 @@ describe('VectorCache (unit, no pool)', () => {
   });
 
   it('load: 5-byte buffer (not divisible by 4) → skipped with warning', async () => {
-    const buf = Buffer.alloc(5, 0xAB);
+    const buf = Buffer.alloc(5, 0xab);
     assert.equal(buf.byteLength, 5);
 
     const warnings: unknown[] = [];
     const log = {
       ...noopLog,
-      warn(...args: unknown[]) { warnings.push(args); },
+      warn(...args: unknown[]) {
+        warnings.push(args);
+      },
     };
 
     const mockPool = {
@@ -269,7 +270,9 @@ describe('VectorCache (unit, no pool)', () => {
     const warnings: unknown[] = [];
     const log = {
       ...noopLog,
-      warn(...args: unknown[]) { warnings.push(args); },
+      warn(...args: unknown[]) {
+        warnings.push(args);
+      },
     };
 
     const mockPool = {
@@ -294,7 +297,9 @@ describe('VectorCache (unit, no pool)', () => {
     const warnings: unknown[] = [];
     const log = {
       ...noopLog,
-      warn(...args: unknown[]) { warnings.push(args); },
+      warn(...args: unknown[]) {
+        warnings.push(args);
+      },
     };
 
     const mockPool = {
@@ -319,7 +324,9 @@ describe('VectorCache (unit, no pool)', () => {
     const warnings: unknown[] = [];
     const log = {
       ...noopLog,
-      warn(...args: unknown[]) { warnings.push(args); },
+      warn(...args: unknown[]) {
+        warnings.push(args);
+      },
     };
 
     const mockPool = {

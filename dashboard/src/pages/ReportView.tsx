@@ -49,9 +49,7 @@ function SentimentBar({ entity }: { entity: EntitySentiment }) {
 
   return (
     <div className="flex items-center gap-3 py-2">
-      <span className="w-28 text-sm text-text-primary font-body truncate">
-        {entity.name}
-      </span>
+      <span className="w-28 text-sm text-text-primary font-body truncate">{entity.name}</span>
       <div className="flex-1 h-2 bg-surface-raised rounded-full relative overflow-hidden">
         <div className="absolute inset-0 flex">
           <div className="w-1/2 flex justify-end">
@@ -74,7 +72,8 @@ function SentimentBar({ entity }: { entity: EntitySentiment }) {
         </div>
       </div>
       <span className={`w-12 text-right font-mono text-xs ${sentimentTextColor(entity.sentiment)}`}>
-        {entity.sentiment > 0 ? '+' : ''}{entity.sentiment.toFixed(2)}
+        {entity.sentiment > 0 ? '+' : ''}
+        {entity.sentiment.toFixed(2)}
       </span>
     </div>
   );
@@ -133,19 +132,17 @@ export function ReportView() {
         if (!cancelled) setLoading(false);
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   if (loading) {
-    return (
-      <div className="p-6 text-text-secondary font-body">Loading...</div>
-    );
+    return <div className="p-6 text-text-secondary font-body">Loading...</div>;
   }
 
   if (error) {
-    return (
-      <div className="p-6 text-accent-red font-body">Error: {error}</div>
-    );
+    return <div className="p-6 text-accent-red font-body">Error: {error}</div>;
   }
 
   if (!report) {
@@ -165,13 +162,9 @@ export function ReportView() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <TypeBadge type={report.type} />
-          <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">
-            Report
-          </span>
+          <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Report</span>
         </div>
-        <span className="font-mono text-xs text-text-secondary">
-          {formatDate(report.date)}
-        </span>
+        <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
       </div>
 
       {/* TL;DR Hero */}
@@ -182,9 +175,7 @@ export function ReportView() {
       {/* Key Events */}
       {report.keyEvents && report.keyEvents.length > 0 && (
         <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-            Key Events
-          </h2>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Key Events</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {report.keyEvents.map((event, i) => (
               <div
@@ -201,9 +192,7 @@ export function ReportView() {
       {/* Entity Sentiment */}
       {report.entitySentiment && report.entitySentiment.length > 0 && (
         <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-            Entity Sentiment
-          </h2>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Entity Sentiment</h2>
           <div className="bg-surface border border-border rounded-lg p-4">
             {report.entitySentiment.map((entity) => (
               <SentimentBar key={entity.name} entity={entity} />
@@ -215,9 +204,7 @@ export function ReportView() {
       {/* Collapsible Sections */}
       {report.sections && report.sections.length > 0 && (
         <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-            Sections
-          </h2>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Sections</h2>
           <div className="space-y-2">
             {report.sections.map((section) => (
               <CollapsibleSection key={section.title} section={section} />

@@ -31,16 +31,10 @@ function wrapNonce(tag: string, content: string): string {
 
 // ── Tool Factories ────────────────────────────────────────────────────
 
-function createSemanticSearch(
-  pool: Pool,
-  log: Logger,
-  vectorCache: VectorCache,
-  embedder: Embedder,
-): ChatTool {
+function createSemanticSearch(pool: Pool, log: Logger, vectorCache: VectorCache, embedder: Embedder): ChatTool {
   return {
     name: 'semantic_search',
-    description:
-      'Search summaries and reports by semantic similarity. Returns top 10 results with IDs for citation.',
+    description: 'Search summaries and reports by semantic similarity. Returns top 10 results with IDs for citation.',
     async execute(args: Record<string, unknown>): Promise<string> {
       const query = args['query'] as string | undefined;
       if (!query) return 'Error: query is required';
@@ -71,10 +65,7 @@ function createSemanticSearch(
         id: string;
         body: string;
         created_at: string;
-      }>(
-        `SELECT id, body, created_at FROM ${table} WHERE id IN (${placeholders})`,
-        ids,
-      );
+      }>(`SELECT id, body, created_at FROM ${table} WHERE id IN (${placeholders})`, ids);
 
       const contentMap = new Map<string, { content: string; createdAt: string }>();
       for (const row of dbResult.rows) {
@@ -90,21 +81,18 @@ function createSemanticSearch(
         if (!entry) continue;
 
         // Truncate each result body so more results survive the handler's MAX_TOOL_RESULT_CHARS limit
-        const truncatedBody = entry.content.length > 300
-          ? entry.content.slice(0, 300) + '...'
-          : entry.content;
+        const truncatedBody = entry.content.length > 300 ? entry.content.slice(0, 300) + '...' : entry.content;
 
         // Display created_at as YYYY-MM-DD instead of raw epoch-ms
         const epochMs = Number(entry.createdAt);
-        const dateStr = Number.isFinite(epochMs) && epochMs > 1e12
-          ? new Date(epochMs).toISOString().slice(0, 10)
-          : String(entry.createdAt).slice(0, 10);
+        const dateStr =
+          Number.isFinite(epochMs) && epochMs > 1e12
+            ? new Date(epochMs).toISOString().slice(0, 10)
+            : String(entry.createdAt).slice(0, 10);
 
         // Already pipeline-processed content — wrap but don't re-sanitize
         const wrapped = wrapNonce('search_result', truncatedBody);
-        lines.push(
-          `[${result.targetId}] (score: ${result.score.toFixed(3)}, date: ${dateStr})\n${wrapped}`,
-        );
+        lines.push(`[${result.targetId}] (score: ${result.score.toFixed(3)}, date: ${dateStr})\n${wrapped}`);
       }
 
       return lines.join('\n\n');
@@ -115,8 +103,7 @@ function createSemanticSearch(
 function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
   return {
     name: 'keyword_search',
-    description:
-      'Look up an entity by name/alias. Returns mention counts, sentiment history, and related entities.',
+    description: 'Look up an entity by name/alias. Returns mention counts, sentiment history, and related entities.',
     async execute(args: Record<string, unknown>): Promise<string> {
       const entity = args['entity'] as string | undefined;
       if (!entity) return 'Error: entity is required';
@@ -146,8 +133,7 @@ function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
 
       const first = dbResult.rows[0];
       const mentionCount = dbResult.rows.length;
-      const avgSentiment =
-        dbResult.rows.reduce((sum, r) => sum + r.sentiment, 0) / mentionCount;
+      const avgSentiment = dbResult.rows.reduce((sum, r) => sum + r.sentiment, 0) / mentionCount;
 
       const lines: string[] = [
         `Entity: ${first.name} (${first.type})`,
@@ -170,8 +156,7 @@ function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
 function createReadRaw(pool: Pool, log: Logger, llm: LLM): ChatTool {
   return {
     name: 'read_raw',
-    description:
-      'Read the original raw source message by item ID. Returns sanitized content.',
+    description: 'Read the original raw source message by item ID. Returns sanitized content.',
     async execute(args: Record<string, unknown>): Promise<string> {
       const itemId = args['itemId'] as string | undefined;
       if (!itemId) return 'Error: itemId is required';
@@ -183,10 +168,7 @@ function createReadRaw(pool: Pool, log: Logger, llm: LLM): ChatTool {
         content: string;
         author: string;
         created_at: string;
-      }>(
-        'SELECT id, content, author, created_at FROM items WHERE id = $1',
-        [itemId],
-      );
+      }>('SELECT id, content, author, created_at FROM items WHERE id = $1', [itemId]);
 
       if (dbResult.rows.length === 0) {
         return `No item found with ID "${itemId}".`;

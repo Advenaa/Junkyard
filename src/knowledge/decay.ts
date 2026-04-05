@@ -21,9 +21,7 @@ export function createDecayManager(pool: Pool, log: Logger): DecayManager {
       await client.query('BEGIN');
 
       // Lock active entities to prevent concurrent relevance updates during decay
-      await client.query(
-        "SELECT id FROM entities WHERE status = 'active' FOR UPDATE",
-      );
+      await client.query("SELECT id FROM entities WHERE status = 'active' FOR UPDATE");
 
       // Apply 5% decay to all active entities
       const decayResult = await client.query(
@@ -53,10 +51,7 @@ export function createDecayManager(pool: Pool, log: Logger): DecayManager {
 
       await client.query('COMMIT');
 
-      log.info(
-        { decayed, archived },
-        `Decay complete: decayed ${decayed} entities, archived ${archived}`,
-      );
+      log.info({ decayed, archived }, `Decay complete: decayed ${decayed} entities, archived ${archived}`);
 
       return { decayed, archived };
     } catch (err) {

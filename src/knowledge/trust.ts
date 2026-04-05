@@ -7,18 +7,11 @@ interface SourceRef {
 }
 
 interface TrustManager {
-  adjustAfterFlash(
-    confirmedSources: SourceRef[],
-    unconfirmedSources: SourceRef[],
-  ): Promise<void>;
+  adjustAfterFlash(confirmedSources: SourceRef[], unconfirmedSources: SourceRef[]): Promise<void>;
 }
 
 export function createTrustManager(pool: Pool, log: Logger): TrustManager {
-  async function adjustSource(
-    client: Pool,
-    ref: SourceRef,
-    confirmed: boolean,
-  ): Promise<void> {
+  async function adjustSource(client: Pool, ref: SourceRef, confirmed: boolean): Promise<void> {
     const query = confirmed
       ? `UPDATE sources
            SET trust_weight = LEAST(initial_trust_weight + 0.2, trust_weight + 0.05)
@@ -51,10 +44,7 @@ export function createTrustManager(pool: Pool, log: Logger): TrustManager {
   }
 
   return {
-    async adjustAfterFlash(
-      confirmedSources: SourceRef[],
-      unconfirmedSources: SourceRef[],
-    ): Promise<void> {
+    async adjustAfterFlash(confirmedSources: SourceRef[], unconfirmedSources: SourceRef[]): Promise<void> {
       for (const ref of confirmedSources) {
         await adjustSource(pool, ref, true);
       }

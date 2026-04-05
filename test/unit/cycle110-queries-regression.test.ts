@@ -25,16 +25,11 @@ describe('QR-010: insertSource call uses Date.now() not epoch-seconds', () => {
   const src = readSrc('src/server.ts');
 
   // Extract the line(s) around the insertSource call
-  const insertSourceCallLines = src
-    .split('\n')
-    .filter((line) => line.includes('insertSource'));
+  const insertSourceCallLines = src.split('\n').filter((line) => line.includes('insertSource'));
 
   it('insertSource call does NOT contain / 1000', () => {
     for (const line of insertSourceCallLines) {
-      assert.ok(
-        !line.includes('/ 1000'),
-        `insertSource call must not contain "/ 1000" but found: ${line.trim()}`,
-      );
+      assert.ok(!line.includes('/ 1000'), `insertSource call must not contain "/ 1000" but found: ${line.trim()}`);
     }
   });
 
@@ -48,13 +43,8 @@ describe('QR-010: insertSource call uses Date.now() not epoch-seconds', () => {
   });
 
   it('insertSource call passes Date.now() as the timestamp argument', () => {
-    const callLine = insertSourceCallLines.find(
-      (line) => line.includes('Date.now()'),
-    );
-    assert.ok(
-      callLine !== undefined,
-      'insertSource call must contain Date.now() in the invocation line',
-    );
+    const callLine = insertSourceCallLines.find((line) => line.includes('Date.now()'));
+    assert.ok(callLine !== undefined, 'insertSource call must contain Date.now() in the invocation line');
   });
 });
 
@@ -91,16 +81,10 @@ describe('QR-009: insertSummary is idempotent', () => {
 
   it('insertSummary SQL contains ON CONFLICT', () => {
     assert.ok(fnStart !== -1, 'insertSummary function must exist in queries.ts');
-    assert.ok(
-      fnBody.includes('ON CONFLICT'),
-      'insertSummary SQL must contain "ON CONFLICT" for idempotency',
-    );
+    assert.ok(fnBody.includes('ON CONFLICT'), 'insertSummary SQL must contain "ON CONFLICT" for idempotency');
   });
 
   it('insertSummary SQL contains DO NOTHING', () => {
-    assert.ok(
-      fnBody.includes('DO NOTHING'),
-      'insertSummary SQL must contain "DO NOTHING" for idempotency',
-    );
+    assert.ok(fnBody.includes('DO NOTHING'), 'insertSummary SQL must contain "DO NOTHING" for idempotency');
   });
 });

@@ -32,11 +32,7 @@ describe('EL-008: keyword_search normalizes aliases before querying', () => {
   });
 
   it('calls normalizeAlias(entity) in the keyword_search function', () => {
-    assert.match(
-      src,
-      /normalizeAlias\(entity\)/,
-      'keyword_search must call normalizeAlias(entity) before querying',
-    );
+    assert.match(src, /normalizeAlias\(entity\)/, 'keyword_search must call normalizeAlias(entity) before querying');
   });
 
   it('query joins entity_aliases ea ON ea.entity_id = e.id', () => {
@@ -47,10 +43,7 @@ describe('EL-008: keyword_search normalizes aliases before querying', () => {
   });
 
   it('WHERE clause uses ea.alias = $1', () => {
-    assert.ok(
-      src.includes('ea.alias = $1'),
-      'keyword_search WHERE clause must use ea.alias = $1',
-    );
+    assert.ok(src.includes('ea.alias = $1'), 'keyword_search WHERE clause must use ea.alias = $1');
   });
 });
 
@@ -62,11 +55,7 @@ describe('EL-012: TOP_SYMBOLS drives context_key instead of market_cap_rank', ()
   const src = readSrc('src/knowledge/seed.ts');
 
   it('defines TOP_SYMBOLS as a new Set', () => {
-    assert.match(
-      src,
-      /TOP_SYMBOLS\s*=\s*new\s+Set\(\[/,
-      'TOP_SYMBOLS must be defined as new Set([',
-    );
+    assert.match(src, /TOP_SYMBOLS\s*=\s*new\s+Set\(\[/, 'TOP_SYMBOLS must be defined as new Set([');
   });
 
   it("TOP_SYMBOLS contains 'btc'", () => {
@@ -82,27 +71,16 @@ describe('EL-012: TOP_SYMBOLS drives context_key instead of market_cap_rank', ()
   });
 
   it('uses TOP_SYMBOLS.has(symbolAlias) to decide context_key', () => {
-    assert.match(
-      src,
-      /TOP_SYMBOLS\.has\(symbolAlias\)/,
-      'context_key decision must use TOP_SYMBOLS.has(symbolAlias)',
-    );
+    assert.match(src, /TOP_SYMBOLS\.has\(symbolAlias\)/, 'context_key decision must use TOP_SYMBOLS.has(symbolAlias)');
   });
 
   it("assigns empty context_key '' for top symbols", () => {
     // The ternary: TOP_SYMBOLS.has(symbolAlias) ? '' : `coingecko:${coin.id}`
-    assert.match(
-      src,
-      /TOP_SYMBOLS\.has\(symbolAlias\)\s*\?\s*['"]['"]/,
-      "top symbols must get empty context_key ''",
-    );
+    assert.match(src, /TOP_SYMBOLS\.has\(symbolAlias\)\s*\?\s*['"]['"]/, "top symbols must get empty context_key ''");
   });
 
   it('assigns coingecko:${coin.id} context_key for non-top symbols', () => {
-    assert.ok(
-      src.includes('`coingecko:${coin.id}`'),
-      'non-top symbols must get coingecko:${coin.id} as context_key',
-    );
+    assert.ok(src.includes('`coingecko:${coin.id}`'), 'non-top symbols must get coingecko:${coin.id} as context_key');
   });
 
   it('does not use market_cap_rank for context_key decisions', () => {

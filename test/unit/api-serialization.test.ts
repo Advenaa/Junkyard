@@ -111,26 +111,17 @@ let source: string;
 let queriesSource: string;
 
 before(async () => {
-  [source, queriesSource] = await Promise.all([
-    readFile(SERVER_SRC, 'utf-8'),
-    readFile(QUERIES_SRC, 'utf-8'),
-  ]);
+  [source, queriesSource] = await Promise.all([readFile(SERVER_SRC, 'utf-8'), readFile(QUERIES_SRC, 'utf-8')]);
 });
 
 describe('toCamelCase — structural (server.ts source)', () => {
   it('defines the toCamelCase function', () => {
-    assert.ok(
-      source.includes('function toCamelCase'),
-      'server.ts must define a toCamelCase function',
-    );
+    assert.ok(source.includes('function toCamelCase'), 'server.ts must define a toCamelCase function');
   });
 
   it('toCamelCase uses shallow key.replace with /_([a-z])/g regex', () => {
     // Ensure it is the snake_case -> camelCase regex pattern
-    assert.ok(
-      source.includes('/_([a-z])/g'),
-      'toCamelCase must use the /_([a-z])/g regex for snake_case conversion',
-    );
+    assert.ok(source.includes('/_([a-z])/g'), 'toCamelCase must use the /_([a-z])/g regex for snake_case conversion');
   });
 
   it('toCamelCase does NOT recurse into nested values', () => {
@@ -143,18 +134,17 @@ describe('toCamelCase — structural (server.ts source)', () => {
     for (let i = braceStart; i < source.length; i++) {
       if (source[i] === '{') depth++;
       if (source[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = source.slice(fnStart, fnEnd + 1);
 
     // Should NOT contain recursive calls to toCamelCase within itself
     const bodyAfterSignature = fnBody.slice(fnBody.indexOf('{'));
     const recursiveCalls = bodyAfterSignature.match(/toCamelCase\(/g);
-    assert.strictEqual(
-      recursiveCalls,
-      null,
-      'toCamelCase must not recursively call itself (shallow only)',
-    );
+    assert.strictEqual(recursiveCalls, null, 'toCamelCase must not recursively call itself (shallow only)');
   });
 
   it('GET /api/v1/reports applies toCamelCase to report rows', () => {
@@ -164,10 +154,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
 
     // Look for toCamelCase usage in the vicinity (within the handler)
     const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1200);
-    assert.ok(
-      handlerSlice.includes('toCamelCase'),
-      'GET /api/v1/reports must apply toCamelCase to its response rows',
-    );
+    assert.ok(handlerSlice.includes('toCamelCase'), 'GET /api/v1/reports must apply toCamelCase to its response rows');
   });
 
   it('reports endpoint uses .map pattern with toCamelCase', () => {
@@ -231,17 +218,14 @@ describe('CD-012 — getAllSourcesWithState (queries.ts source)', () => {
 
 describe('CD-013 — feed endpoint parses attachments (server.ts source)', () => {
   it('feed endpoint exists at /api/v1/feed/:sourceId', () => {
-    assert.ok(
-      source.includes("'/api/v1/feed/:sourceId'"),
-      'feed endpoint must be defined',
-    );
+    assert.ok(source.includes("'/api/v1/feed/:sourceId'"), 'feed endpoint must be defined');
   });
 
   it('feed response handling includes JSON.parse for attachments', () => {
     const feedStart = source.indexOf("'/api/v1/feed/:sourceId'");
     assert.ok(feedStart !== -1);
     // Scan forward to find the handler body (up to next app. route or end)
-    const feedSlice = source.slice(feedStart, feedStart + 1500);
+    const feedSlice = source.slice(feedStart, feedStart + 2000);
     assert.ok(
       feedSlice.includes('JSON.parse') && feedSlice.includes('attachments'),
       'feed endpoint must JSON.parse the attachments column',
@@ -251,12 +235,9 @@ describe('CD-013 — feed endpoint parses attachments (server.ts source)', () =>
   it('defaults null/undefined attachments to an empty array', () => {
     const feedStart = source.indexOf("'/api/v1/feed/:sourceId'");
     assert.ok(feedStart !== -1);
-    const feedSlice = source.slice(feedStart, feedStart + 1500);
+    const feedSlice = source.slice(feedStart, feedStart + 2000);
     // Should have a fallback to [] for null attachments — e.g. ?? [] or || []
-    assert.ok(
-      feedSlice.includes('[]'),
-      'feed endpoint must default null attachments to an empty array ([])',
-    );
+    assert.ok(feedSlice.includes('[]'), 'feed endpoint must default null attachments to an empty array ([])');
   });
 });
 
@@ -266,10 +247,7 @@ describe('CD-013 — feed endpoint parses attachments (server.ts source)', () =>
 
 describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
   it('reports/:id endpoint exists', () => {
-    assert.ok(
-      source.includes("'/api/v1/reports/:id'"),
-      'reports/:id endpoint must be defined',
-    );
+    assert.ok(source.includes("'/api/v1/reports/:id'"), 'reports/:id endpoint must be defined');
   });
 
   it('parses the report body as JSON', () => {
@@ -285,10 +263,7 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
   it('extracts keyEvents from parsed body', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
     const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
-    assert.ok(
-      handlerSlice.includes('keyEvents'),
-      'reports/:id must extract keyEvents from the parsed body',
-    );
+    assert.ok(handlerSlice.includes('keyEvents'), 'reports/:id must extract keyEvents from the parsed body');
   });
 
   it('extracts entitySentiment from parsed body', () => {
@@ -303,10 +278,7 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
   it('extracts sections from parsed body', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
     const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
-    assert.ok(
-      handlerSlice.includes('sections'),
-      'reports/:id must extract sections from the parsed body',
-    );
+    assert.ok(handlerSlice.includes('sections'), 'reports/:id must extract sections from the parsed body');
   });
 
   it('wraps JSON.parse in a try/catch for invalid body JSON', () => {
@@ -333,13 +305,13 @@ describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', 
     for (let i = braceStart; i < source.length; i++) {
       if (source[i] === '{') depth++;
       if (source[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = source.slice(fnStart, fnEnd + 1);
-    assert.ok(
-      fnBody.includes('__proto__'),
-      'toCamelCase must guard against __proto__ key (prototype pollution)',
-    );
+    assert.ok(fnBody.includes('__proto__'), 'toCamelCase must guard against __proto__ key (prototype pollution)');
   });
 
   it('toCamelCase body skips constructor key', () => {
@@ -350,13 +322,13 @@ describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', 
     for (let i = braceStart; i < source.length; i++) {
       if (source[i] === '{') depth++;
       if (source[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = source.slice(fnStart, fnEnd + 1);
-    assert.ok(
-      fnBody.includes("'constructor'"),
-      'toCamelCase must guard against constructor key (prototype pollution)',
-    );
+    assert.ok(fnBody.includes("'constructor'"), 'toCamelCase must guard against constructor key (prototype pollution)');
   });
 
   it('toCamelCase body skips prototype key', () => {
@@ -367,13 +339,13 @@ describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', 
     for (let i = braceStart; i < source.length; i++) {
       if (source[i] === '{') depth++;
       if (source[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = source.slice(fnStart, fnEnd + 1);
-    assert.ok(
-      fnBody.includes("'prototype'"),
-      'toCamelCase must guard against prototype key (prototype pollution)',
-    );
+    assert.ok(fnBody.includes("'prototype'"), 'toCamelCase must guard against prototype key (prototype pollution)');
   });
 
   it('toCamelCase uses continue to skip dangerous keys', () => {
@@ -384,7 +356,10 @@ describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', 
     for (let i = braceStart; i < source.length; i++) {
       if (source[i] === '{') depth++;
       if (source[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     const fnBody = source.slice(fnStart, fnEnd + 1);
     assert.ok(
@@ -400,29 +375,20 @@ describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', 
 
 describe('SV-004 — test-webhook DNS rebinding prevention (server.ts source)', () => {
   it('test-webhook endpoint exists', () => {
-    assert.ok(
-      source.includes("'/api/v1/config/test-webhook'"),
-      'test-webhook endpoint must be defined',
-    );
+    assert.ok(source.includes("'/api/v1/config/test-webhook'"), 'test-webhook endpoint must be defined');
   });
 
   it('test-webhook calls validateUrl before fetching', () => {
     const whStart = source.indexOf("'/api/v1/config/test-webhook'");
     assert.ok(whStart !== -1);
     const handlerSlice = source.slice(whStart, whStart + 2000);
-    assert.ok(
-      handlerSlice.includes('validateUrl'),
-      'test-webhook must call validateUrl for SSRF protection',
-    );
+    assert.ok(handlerSlice.includes('validateUrl'), 'test-webhook must call validateUrl for SSRF protection');
   });
 
   it('test-webhook checks for resolvedIp from validateUrl', () => {
     const whStart = source.indexOf("'/api/v1/config/test-webhook'");
     const handlerSlice = source.slice(whStart, whStart + 2000);
-    assert.ok(
-      handlerSlice.includes('resolvedIp'),
-      'test-webhook must use resolvedIp from validateUrl result',
-    );
+    assert.ok(handlerSlice.includes('resolvedIp'), 'test-webhook must use resolvedIp from validateUrl result');
   });
 
   it('test-webhook does NOT use bare fetch(url) after validation — uses pinnedUrl', () => {
@@ -463,10 +429,7 @@ describe('SV-004 — test-webhook DNS rebinding prevention (server.ts source)', 
 
 describe('SV-005 — PATCH /users/:discordId snowflake validation (server.ts source)', () => {
   it('PATCH /users/:discordId endpoint exists', () => {
-    assert.ok(
-      source.includes("'/api/v1/users/:discordId'"),
-      'PATCH /users/:discordId endpoint must be defined',
-    );
+    assert.ok(source.includes("'/api/v1/users/:discordId'"), 'PATCH /users/:discordId endpoint must be defined');
   });
 
   it('discordId param has pattern constraint for snowflake format', () => {
@@ -505,10 +468,7 @@ describe('SV-005 — PATCH /users/:discordId snowflake validation (server.ts sou
 
 describe('SV-010 — GET /status timezone-aware day boundary (server.ts source)', () => {
   it('GET /status endpoint exists', () => {
-    assert.ok(
-      source.includes("'/api/v1/status'"),
-      'GET /status endpoint must be defined',
-    );
+    assert.ok(source.includes("'/api/v1/status'"), 'GET /status endpoint must be defined');
   });
 
   it('GET /status fetches timezone from getAppConfig', () => {

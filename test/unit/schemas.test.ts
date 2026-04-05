@@ -1,9 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  ChunkSummaryLLMSchema,
-  MarketReportLLMSchema,
-} from '../../src/process/schemas.js';
+import { ChunkSummaryLLMSchema, MarketReportLLMSchema } from '../../src/process/schemas.js';
 
 /* ------------------------------------------------------------------ */
 /*  ChunkSummaryLLMSchema                                             */
@@ -49,9 +46,7 @@ describe('ChunkSummaryLLMSchema', () => {
   });
 
   it('fails when summary is too short (< 10 chars)', () => {
-    assert.throws(() =>
-      ChunkSummaryLLMSchema.parse({ ...validChunk, summary: 'short' }),
-    );
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, summary: 'short' }));
   });
 
   /* -- Sentiment boundaries -- */
@@ -111,15 +106,11 @@ describe('ChunkSummaryLLMSchema', () => {
   });
 
   it('confidence 0 fails', () => {
-    assert.throws(() =>
-      ChunkSummaryLLMSchema.parse({ ...validChunk, confidence: 0 }),
-    );
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, confidence: 0 }));
   });
 
   it('confidence 11 fails', () => {
-    assert.throws(() =>
-      ChunkSummaryLLMSchema.parse({ ...validChunk, confidence: 11 }),
-    );
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, confidence: 11 }));
   });
 
   /* -- Entity array max -- */
@@ -139,9 +130,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const entities = Array.from({ length: 21 }, (_, i) => ({
       name: `Entity${i}`,
     }));
-    assert.throws(() =>
-      ChunkSummaryLLMSchema.parse({ ...validChunk, entities }),
-    );
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, entities }));
   });
 
   /* -- keyEvents max (5 for chunk) -- */
@@ -157,9 +146,7 @@ describe('ChunkSummaryLLMSchema', () => {
 
   it('6 keyEvents fails', () => {
     const keyEvents = Array.from({ length: 6 }, (_, i) => `Event ${i}`);
-    assert.throws(() =>
-      ChunkSummaryLLMSchema.parse({ ...validChunk, keyEvents }),
-    );
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, keyEvents }));
   });
 
   /* -- Default values -- */
@@ -221,9 +208,7 @@ describe('MarketReportLLMSchema', () => {
   const validReport = {
     tldr: 'Markets are calm today with minor movements across major tokens.',
     keyEvents: ['Fed held rates steady'],
-    entitySentiment: [
-      { name: 'Bitcoin', sentiment: 0.3, reason: 'Slow grind up' },
-    ],
+    entitySentiment: [{ name: 'Bitcoin', sentiment: 0.3, reason: 'Slow grind up' }],
     sections: [{ title: 'Overview', body: 'All quiet.' }],
     newProjects: [{ name: 'CoolDAO', description: 'A new DAO project' }],
   };
@@ -296,9 +281,7 @@ describe('MarketReportLLMSchema', () => {
 
   it('11 keyEvents fails', () => {
     const keyEvents = Array.from({ length: 11 }, (_, i) => `Event ${i}`);
-    assert.throws(() =>
-      MarketReportLLMSchema.parse({ ...validReport, keyEvents }),
-    );
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, keyEvents }));
   });
 
   /* -- Default values -- */

@@ -57,13 +57,8 @@ describe('CF-002: No fire-and-forget .then() on webhook calls in health.ts', () 
     // The sendAlertWebhook call should use await, not .then()
     // Check that there is no `.then(` immediately after sendAlertWebhook
     const lines = src.split('\n');
-    const thenAfterWebhook = lines.some((line) =>
-      /sendAlertWebhook\(.*\)\.then\(/.test(line),
-    );
-    assert.ok(
-      !thenAfterWebhook,
-      'sendAlertWebhook must not use .then() fire-and-forget pattern; should be awaited',
-    );
+    const thenAfterWebhook = lines.some((line) => /sendAlertWebhook\(.*\)\.then\(/.test(line));
+    assert.ok(!thenAfterWebhook, 'sendAlertWebhook must not use .then() fire-and-forget pattern; should be awaited');
   });
 
   it('sendAlertWebhook invocations use await keyword', () => {
@@ -76,10 +71,7 @@ describe('CF-002: No fire-and-forget .then() on webhook calls in health.ts', () 
     });
     assert.ok(invocations.length > 0, 'health.ts must invoke sendAlertWebhook at least once');
     for (const m of invocations) {
-      assert.ok(
-        m[0].startsWith('await'),
-        `sendAlertWebhook invocation must be awaited: found "${m[0]}" without await`,
-      );
+      assert.ok(m[0].startsWith('await'), `sendAlertWebhook invocation must be awaited: found "${m[0]}" without await`);
     }
   });
 });
@@ -95,20 +87,12 @@ describe('AC-002: /auth/me handler returns avatar field', () => {
     // Find the /auth/me handler and check its return object includes avatar
     const authMeSection = src.slice(src.indexOf('/api/v1/auth/me'));
     assert.ok(authMeSection.length > 0, 'Must contain /api/v1/auth/me route');
-    assert.match(
-      authMeSection,
-      /avatar/,
-      '/auth/me handler must include avatar in the response',
-    );
+    assert.match(authMeSection, /avatar/, '/auth/me handler must include avatar in the response');
   });
 
   it('queries avatar from users table', () => {
     const authMeSection = src.slice(src.indexOf('/api/v1/auth/me'));
-    assert.match(
-      authMeSection,
-      /SELECT\s+avatar\s+FROM\s+users/i,
-      '/auth/me must query avatar from users table',
-    );
+    assert.match(authMeSection, /SELECT\s+avatar\s+FROM\s+users/i, '/auth/me must query avatar from users table');
   });
 });
 
@@ -129,10 +113,7 @@ describe('AC-003: lastFetchedAt typed as number | null in Settings.tsx', () => {
 
   it('lastFetchedAt is NOT typed as string', () => {
     const hasStringType = /lastFetchedAt:\s*string/.test(src);
-    assert.ok(
-      !hasStringType,
-      'lastFetchedAt must not be typed as string (should be number | null)',
-    );
+    assert.ok(!hasStringType, 'lastFetchedAt must not be typed as string (should be number | null)');
   });
 });
 

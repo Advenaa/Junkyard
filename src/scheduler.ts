@@ -38,10 +38,19 @@ export function createScheduler(deps: SchedulerDeps) {
     }
   }
 
-  function register(name: string, expression: string, handler: () => Promise<void>, options?: { scheduled?: boolean; timezone?: string }): void {
-    const task = cron.schedule(expression, () => {
-      void withMutex(name, handler);
-    }, options);
+  function register(
+    name: string,
+    expression: string,
+    handler: () => Promise<void>,
+    options?: { scheduled?: boolean; timezone?: string },
+  ): void {
+    const task = cron.schedule(
+      expression,
+      () => {
+        void withMutex(name, handler);
+      },
+      options,
+    );
     tasks.push(task);
     log.info({ job: name, cron: expression }, 'registered cron job');
   }
@@ -78,9 +87,13 @@ export function createScheduler(deps: SchedulerDeps) {
       const idx = tasks.indexOf(dailyTask);
       if (idx !== -1) tasks.splice(idx, 1);
     }
-    dailyTask = cron.schedule(expression, () => {
-      void withMutex('daily-synthesis', deps.onDaily);
-    }, { timezone });
+    dailyTask = cron.schedule(
+      expression,
+      () => {
+        void withMutex('daily-synthesis', deps.onDaily);
+      },
+      { timezone },
+    );
     tasks.push(dailyTask);
     log.info({ job: 'daily-synthesis', cron: expression, timezone }, 'daily cron rebuilt');
   }
@@ -90,8 +103,14 @@ export function createScheduler(deps: SchedulerDeps) {
     log.info({ recovered }, 'crash recovery complete');
 
     register('source-poll-tick', '* * * * *', deps.onSourcePollTick);
-    register('market-pulse', '0 */3 * * *', deps.onPulse, { scheduled: true, timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta' });
-    register('health-monitor', '*/5 * * * *', deps.onHealthCheck, { scheduled: true, timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta' });
+    register('market-pulse', '0 */3 * * *', deps.onPulse, {
+      scheduled: true,
+      timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta',
+    });
+    register('health-monitor', '*/5 * * * *', deps.onHealthCheck, {
+      scheduled: true,
+      timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta',
+    });
     await refreshDailyCron();
 
     log.info('scheduler started');

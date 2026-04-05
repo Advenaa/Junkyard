@@ -45,9 +45,7 @@ function makeSummaryBody(overrides: Record<string, unknown> = {}) {
   return JSON.stringify({
     summary: 'Bitcoin trading sideways around 60k with low volume.',
     urgency: 'routine',
-    entities: [
-      { name: 'Bitcoin', type: 'token', sentiment: 0.3, mentionCount: 5 },
-    ],
+    entities: [{ name: 'Bitcoin', type: 'token', sentiment: 0.3, mentionCount: 5 }],
     keyEvents: ['BTC consolidation'],
     confidence: 7,
     ...overrides,
@@ -71,12 +69,14 @@ function makeSummaryRow(overrides: Record<string, unknown> = {}) {
 }
 
 /** Build a mock pool that returns configurable query results. */
-function makePool(opts: {
-  summaries?: any[];
-  priorPulse?: any[];
-  existingPulse?: any[];
-  appConfig?: any[];
-} = {}) {
+function makePool(
+  opts: {
+    summaries?: any[];
+    priorPulse?: any[];
+    existingPulse?: any[];
+    appConfig?: any[];
+  } = {},
+) {
   return {
     query: async (sql: string, _params?: any[]) => {
       // getSummariesByTimeWindow: SELECT * FROM summaries WHERE created_at >= $1 ...
@@ -101,17 +101,21 @@ function makePool(opts: {
       }
       // insertReport: INSERT INTO reports ... RETURNING *
       if (sql.includes('INSERT INTO reports')) {
-        return { rows: [{
-          id: 'report-1',
-          date: '2024-01-01',
-          type: 'pulse',
-          body: JSON.stringify(makeValidReport()),
-          tldr: makeValidReport().tldr,
-          sentiment: 0.3,
-          delivery_status: 'pending',
-          delivered_at: null,
-          created_at: Date.now(),
-        }] };
+        return {
+          rows: [
+            {
+              id: 'report-1',
+              date: '2024-01-01',
+              type: 'pulse',
+              body: JSON.stringify(makeValidReport()),
+              tldr: makeValidReport().tldr,
+              sentiment: 0.3,
+              delivery_status: 'pending',
+              delivered_at: null,
+              created_at: Date.now(),
+            },
+          ],
+        };
       }
       return { rows: [] };
     },
@@ -131,411 +135,435 @@ function makeLlm(reportOverrides: Record<string, unknown> = {}) {
 // ═════════════════════════════════════════════════════════════════════
 
 describe('pulse', { concurrency: 1 }, () => {
+  // ═════════════════════════════════════════════════════════════════════
+  // MarketReportLLMSchema validation
+  // ═════════════════════════════════════════════════════════════════════
 
-// ═════════════════════════════════════════════════════════════════════
-// MarketReportLLMSchema validation
-// ═════════════════════════════════════════════════════════════════════
-
-describe('MarketReportLLMSchema', () => {
-  it('accepts a valid market report', () => {
-    const result = MarketReportLLMSchema.safeParse(makeValidReport());
-    assert.ok(result.success);
-  });
-
-  it('defaults optional arrays to empty', () => {
-    const result = MarketReportLLMSchema.safeParse({ tldr: 'Short update.' });
-    assert.ok(result.success);
-    assert.deepStrictEqual(result.data!.keyEvents, []);
-    assert.deepStrictEqual(result.data!.entitySentiment, []);
-    assert.deepStrictEqual(result.data!.sections, []);
-    assert.deepStrictEqual(result.data!.newProjects, []);
-  });
-
-  it('rejects sentiment outside -1 to 1', () => {
-    const report = makeValidReport();
-    report.entitySentiment = [{ name: 'BTC', sentiment: 1.5, reason: 'Too high' }];
-    const result = MarketReportLLMSchema.safeParse(report);
-    assert.ok(!result.success);
-  });
-
-  it('caps keyEvents at max 10', () => {
-    const report = makeValidReport();
-    report.keyEvents = Array.from({ length: 11 }, (_, i) => `Event ${i}`);
-    const result = MarketReportLLMSchema.safeParse(report);
-    assert.ok(!result.success);
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// runPulse — no summaries (quality gate)
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — quality gates', () => {
-  it('returns null when no summaries exist in the window', async () => {
-    const pool = makePool({ summaries: [] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.equal(result, null);
-  });
-
-  it('returns null when all summaries fail to parse', async () => {
-    const badRow = makeSummaryRow({ body: 'not valid json at all' });
-    const pool = makePool({ summaries: [badRow] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.equal(result, null);
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// runPulse — successful report generation
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — successful generation', () => {
-  it('returns a valid ReportRow on success', async () => {
-    const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.ok(result !== null);
-    assert.ok(typeof result!.tldr === 'string');
-    assert.ok(typeof result!.id === 'string');
-    assert.ok(typeof result!.body === 'string');
-    assert.strictEqual(result!.type, 'pulse');
-  });
-
-  it('passes correct maxTokens to LLM based on summary count', async () => {
-    let capturedMaxTokens = 0;
-    const llm = {
-      call: async (params: any) => {
-        capturedMaxTokens = params.maxTokens;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    // 2 summaries, routine = 500 tokens (PL-004: raised from 300)
-    const rows = [makeSummaryRow({ id: 's1' }), makeSummaryRow({ id: 's2' })];
-    const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-    assert.equal(capturedMaxTokens, 500);
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// Activity-scaled maxTokens
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — activity scaling', () => {
-  async function runWithSummaries(count: number, urgency = 'routine') {
-    let capturedMaxTokens = 0;
-    const llm = {
-      call: async (params: any) => {
-        capturedMaxTokens = params.maxTokens;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    const rows = Array.from({ length: count }, (_, i) =>
-      makeSummaryRow({ id: `s${i}`, urgency }),
-    );
-    const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-    return capturedMaxTokens;
-  }
-
-  it('uses 500 tokens for quiet periods (< 4 summaries, routine)', async () => {
-    const tokens = await runWithSummaries(2);
-    assert.equal(tokens, 500);
-  });
-
-  it('uses 800 tokens for moderate activity (4-10 summaries)', async () => {
-    const tokens = await runWithSummaries(5);
-    assert.equal(tokens, 800);
-  });
-
-  it('uses 1500 tokens for high activity (> 10 summaries)', async () => {
-    const tokens = await runWithSummaries(12);
-    assert.equal(tokens, 1500);
-  });
-
-  it('uses 1500 tokens when breaking urgency is present', async () => {
-    const tokens = await runWithSummaries(2, 'breaking');
-    assert.equal(tokens, 1500);
-  });
-
-  it('uses 800 tokens when elevated urgency is present (even with few summaries)', async () => {
-    const tokens = await runWithSummaries(2, 'elevated');
-    assert.equal(tokens, 800);
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// Prior pulse context
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — prior pulse handling', () => {
-  it('includes prior pulse tldr in the LLM prompt', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    const priorBody = JSON.stringify({
-      tldr: 'Markets were bullish earlier.',
-      entitySentiment: [{ name: 'Bitcoin', sentiment: 0.8, reason: 'Rally' }],
-    });
-    const pool = makePool({
-      summaries: [makeSummaryRow()],
-      priorPulse: [{ body: priorBody }],
-    });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-    assert.ok(capturedMessage.includes('Markets were bullish earlier.'));
-  });
-
-  it('works correctly when no prior pulse exists', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    const pool = makePool({ summaries: [makeSummaryRow()], priorPulse: [] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-    assert.ok(!capturedMessage.includes('prior_pulse_tldr'));
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// Sentiment drift detection
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — sentiment drift', () => {
-  it('includes drift flags in prompt when entity sentiment shifts > 0.4', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    // Current summary has Bitcoin at 0.3
-    const summaryBody = makeSummaryBody({
-      entities: [{ name: 'Bitcoin', type: 'token', sentiment: -0.5, mentionCount: 3 }],
-    });
-    // Prior pulse had Bitcoin at 0.8 — delta of 1.3
-    const priorBody = JSON.stringify({
-      tldr: 'BTC pumping.',
-      entitySentiment: [{ name: 'Bitcoin', sentiment: 0.8, reason: 'Rally' }],
+  describe('MarketReportLLMSchema', () => {
+    it('accepts a valid market report', () => {
+      const result = MarketReportLLMSchema.safeParse(makeValidReport());
+      assert.ok(result.success);
     });
 
-    const pool = makePool({
-      summaries: [makeSummaryRow({ body: summaryBody })],
-      priorPulse: [{ body: priorBody }],
-    });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-    assert.ok(capturedMessage.includes('sentiment_drift'));
-    assert.ok(capturedMessage.includes('Bitcoin'));
-  });
-
-  it('does not include drift flags when sentiment change is small', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    // Current: Bitcoin at 0.3, Prior: Bitcoin at 0.2 — delta 0.1
-    const priorBody = JSON.stringify({
-      tldr: 'Stable.',
-      entitySentiment: [{ name: 'Bitcoin', sentiment: 0.2, reason: 'Stable' }],
+    it('defaults optional arrays to empty', () => {
+      const result = MarketReportLLMSchema.safeParse({ tldr: 'Short update.' });
+      assert.ok(result.success);
+      assert.deepStrictEqual(result.data!.keyEvents, []);
+      assert.deepStrictEqual(result.data!.entitySentiment, []);
+      assert.deepStrictEqual(result.data!.sections, []);
+      assert.deepStrictEqual(result.data!.newProjects, []);
     });
 
-    const pool = makePool({
-      summaries: [makeSummaryRow()],
-      priorPulse: [{ body: priorBody }],
+    it('rejects sentiment outside -1 to 1', () => {
+      const report = makeValidReport();
+      report.entitySentiment = [{ name: 'BTC', sentiment: 1.5, reason: 'Too high' }];
+      const result = MarketReportLLMSchema.safeParse(report);
+      assert.ok(!result.success);
     });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-    assert.ok(!capturedMessage.includes('sentiment_drift'));
-  });
-});
 
-// ═════════════════════════════════════════════════════════════════════
-// Summary cap (P-004)
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — summary cap at 50', () => {
-  it('caps summaries to 50 when more are returned from DB', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    // Create 60 summaries, each with a unique marker in the body
-    const rows = Array.from({ length: 60 }, (_, i) =>
-      makeSummaryRow({
-        id: `s${i}`,
-        body: makeSummaryBody({ summary: `Summary number ${i}` }),
-        created_at: Date.now() - (60 - i) * 60 * 1000, // ascending order
-      }),
-    );
-    const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-
-    // The oldest 10 (indices 0-9) should be trimmed; newest 50 (indices 10-59) kept
-    assert.ok(!capturedMessage.includes('Summary number 0'), 'oldest summary should be excluded');
-    assert.ok(!capturedMessage.includes('Summary number 9'), 'summary at index 9 should be excluded');
-    assert.ok(capturedMessage.includes('Summary number 10'), 'summary at index 10 should be included');
-    assert.ok(capturedMessage.includes('Summary number 59'), 'newest summary should be included');
+    it('caps keyEvents at max 10', () => {
+      const report = makeValidReport();
+      report.keyEvents = Array.from({ length: 11 }, (_, i) => `Event ${i}`);
+      const result = MarketReportLLMSchema.safeParse(report);
+      assert.ok(!result.success);
+    });
   });
 
-  it('includes all summaries when count is under the cap', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
+  // ═════════════════════════════════════════════════════════════════════
+  // runPulse — no summaries (quality gate)
+  // ═════════════════════════════════════════════════════════════════════
 
-    const rows = Array.from({ length: 10 }, (_, i) =>
-      makeSummaryRow({
-        id: `s${i}`,
-        body: makeSummaryBody({ summary: `Summary number ${i}` }),
-      }),
-    );
-    const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
+  describe('runPulse — quality gates', () => {
+    it('returns null when no summaries exist in the window', async () => {
+      const pool = makePool({ summaries: [] });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        makeLlm(),
+        mockSentimentTracker,
+        mockDivergenceTracker,
+      );
+      const result = await runPulse();
+      assert.equal(result, null);
+    });
 
-    // All 10 should be present
-    for (let i = 0; i < 10; i++) {
-      assert.ok(capturedMessage.includes(`Summary number ${i}`), `summary ${i} should be included`);
+    it('returns null when all summaries fail to parse', async () => {
+      const badRow = makeSummaryRow({ body: 'not valid json at all' });
+      const pool = makePool({ summaries: [badRow] });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        makeLlm(),
+        mockSentimentTracker,
+        mockDivergenceTracker,
+      );
+      const result = await runPulse();
+      assert.equal(result, null);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // runPulse — successful report generation
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — successful generation', () => {
+    it('returns a valid ReportRow on success', async () => {
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        makeLlm(),
+        mockSentimentTracker,
+        mockDivergenceTracker,
+      );
+      const result = await runPulse();
+      assert.ok(result !== null);
+      assert.ok(typeof result!.tldr === 'string');
+      assert.ok(typeof result!.id === 'string');
+      assert.ok(typeof result!.body === 'string');
+      assert.strictEqual(result!.type, 'pulse');
+    });
+
+    it('passes correct maxTokens to LLM based on summary count', async () => {
+      let capturedMaxTokens = 0;
+      const llm = {
+        call: async (params: any) => {
+          capturedMaxTokens = params.maxTokens;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      // 2 summaries, routine = 500 tokens (PL-004: raised from 300)
+      const rows = [makeSummaryRow({ id: 's1' }), makeSummaryRow({ id: 's2' })];
+      const pool = makePool({ summaries: rows });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+      assert.equal(capturedMaxTokens, 500);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // Activity-scaled maxTokens
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — activity scaling', () => {
+    async function runWithSummaries(count: number, urgency = 'routine') {
+      let capturedMaxTokens = 0;
+      const llm = {
+        call: async (params: any) => {
+          capturedMaxTokens = params.maxTokens;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const rows = Array.from({ length: count }, (_, i) => makeSummaryRow({ id: `s${i}`, urgency }));
+      const pool = makePool({ summaries: rows });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+      return capturedMaxTokens;
     }
-  });
 
-  it('includes exactly 50 summaries when given exactly 50', async () => {
-    let capturedMessage = '';
-    const llm = {
-      call: async (params: any) => {
-        capturedMessage = params.messages[0].content;
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    const rows = Array.from({ length: 50 }, (_, i) =>
-      makeSummaryRow({
-        id: `s${i}`,
-        body: makeSummaryBody({ summary: `Summary number ${i}` }),
-      }),
-    );
-    const pool = makePool({ summaries: rows });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    await runPulse();
-
-    // All 50 should be present (no trimming at boundary)
-    assert.ok(capturedMessage.includes('Summary number 0'), 'first summary should be included');
-    assert.ok(capturedMessage.includes('Summary number 49'), 'last summary should be included');
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// LLM retry and error handling
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — LLM error handling', () => {
-  it('retries once on LLM parse failure and succeeds', async () => {
-    let callCount = 0;
-    const llm = {
-      call: async () => {
-        callCount++;
-        if (callCount === 1) return { content: 'not json' };
-        return { content: JSON.stringify(makeValidReport()) };
-      },
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.ok(result !== null);
-    assert.equal(callCount, 2);
-  });
-
-  it('returns null after both LLM attempts fail', async () => {
-    const llm = {
-      call: async () => ({ content: 'garbage output' }),
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
-
-    const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.equal(result, null);
-  });
-});
-
-// ═════════════════════════════════════════════════════════════════════
-// Duplicate guard
-// ═════════════════════════════════════════════════════════════════════
-
-describe('runPulse — duplicate guard', () => {
-  it('returns null if a pulse already exists in this 3-hour window', async () => {
-    const pool = makePool({
-      summaries: [makeSummaryRow()],
-      existingPulse: [{ id: 'existing-pulse-id' }],
+    it('uses 500 tokens for quiet periods (< 4 summaries, routine)', async () => {
+      const tokens = await runWithSummaries(2);
+      assert.equal(tokens, 500);
     });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, makeLlm(), mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.equal(result, null);
+
+    it('uses 800 tokens for moderate activity (4-10 summaries)', async () => {
+      const tokens = await runWithSummaries(5);
+      assert.equal(tokens, 800);
+    });
+
+    it('uses 1500 tokens for high activity (> 10 summaries)', async () => {
+      const tokens = await runWithSummaries(12);
+      assert.equal(tokens, 1500);
+    });
+
+    it('uses 1500 tokens when breaking urgency is present', async () => {
+      const tokens = await runWithSummaries(2, 'breaking');
+      assert.equal(tokens, 1500);
+    });
+
+    it('uses 800 tokens when elevated urgency is present (even with few summaries)', async () => {
+      const tokens = await runWithSummaries(2, 'elevated');
+      assert.equal(tokens, 800);
+    });
   });
-});
 
-// ═════════════════════════════════════════════════════════════════════
-// LLM response parsing (code fence stripping)
-// ═════════════════════════════════════════════════════════════════════
+  // ═════════════════════════════════════════════════════════════════════
+  // Prior pulse context
+  // ═════════════════════════════════════════════════════════════════════
 
-describe('runPulse — code fence stripping', () => {
-  it('handles LLM response wrapped in code fences', async () => {
-    const report = makeValidReport();
-    const fencedContent = '```json\n' + JSON.stringify(report) + '\n```';
-    const llm = {
-      call: async () => ({ content: fencedContent }),
-      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
-    };
+  describe('runPulse — prior pulse handling', () => {
+    it('includes prior pulse tldr in the LLM prompt', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
 
-    const pool = makePool({ summaries: [makeSummaryRow()] });
-    const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
-    const result = await runPulse();
-    assert.ok(result !== null);
-    assert.ok(typeof result!.tldr === 'string');
-    assert.ok(result!.tldr.length > 0);
+      const priorBody = JSON.stringify({
+        tldr: 'Markets were bullish earlier.',
+        entitySentiment: [{ name: 'Bitcoin', sentiment: 0.8, reason: 'Rally' }],
+      });
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        priorPulse: [{ body: priorBody }],
+      });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+      assert.ok(capturedMessage.includes('Markets were bullish earlier.'));
+    });
+
+    it('works correctly when no prior pulse exists', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const pool = makePool({ summaries: [makeSummaryRow()], priorPulse: [] });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+      assert.ok(!capturedMessage.includes('prior_pulse_tldr'));
+    });
   });
-});
 
+  // ═════════════════════════════════════════════════════════════════════
+  // Sentiment drift detection
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — sentiment drift', () => {
+    it('includes drift flags in prompt when entity sentiment shifts > 0.4', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      // Current summary has Bitcoin at 0.3
+      const summaryBody = makeSummaryBody({
+        entities: [{ name: 'Bitcoin', type: 'token', sentiment: -0.5, mentionCount: 3 }],
+      });
+      // Prior pulse had Bitcoin at 0.8 — delta of 1.3
+      const priorBody = JSON.stringify({
+        tldr: 'BTC pumping.',
+        entitySentiment: [{ name: 'Bitcoin', sentiment: 0.8, reason: 'Rally' }],
+      });
+
+      const pool = makePool({
+        summaries: [makeSummaryRow({ body: summaryBody })],
+        priorPulse: [{ body: priorBody }],
+      });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+      assert.ok(capturedMessage.includes('sentiment_drift'));
+      assert.ok(capturedMessage.includes('Bitcoin'));
+    });
+
+    it('does not include drift flags when sentiment change is small', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      // Current: Bitcoin at 0.3, Prior: Bitcoin at 0.2 — delta 0.1
+      const priorBody = JSON.stringify({
+        tldr: 'Stable.',
+        entitySentiment: [{ name: 'Bitcoin', sentiment: 0.2, reason: 'Stable' }],
+      });
+
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        priorPulse: [{ body: priorBody }],
+      });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+      assert.ok(!capturedMessage.includes('sentiment_drift'));
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // Summary cap (P-004)
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — summary cap at 50', () => {
+    it('caps summaries to 50 when more are returned from DB', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      // Create 60 summaries, each with a unique marker in the body
+      const rows = Array.from({ length: 60 }, (_, i) =>
+        makeSummaryRow({
+          id: `s${i}`,
+          body: makeSummaryBody({ summary: `Summary number ${i}` }),
+          created_at: Date.now() - (60 - i) * 60 * 1000, // ascending order
+        }),
+      );
+      const pool = makePool({ summaries: rows });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+
+      // The oldest 10 (indices 0-9) should be trimmed; newest 50 (indices 10-59) kept
+      assert.ok(!capturedMessage.includes('Summary number 0'), 'oldest summary should be excluded');
+      assert.ok(!capturedMessage.includes('Summary number 9'), 'summary at index 9 should be excluded');
+      assert.ok(capturedMessage.includes('Summary number 10'), 'summary at index 10 should be included');
+      assert.ok(capturedMessage.includes('Summary number 59'), 'newest summary should be included');
+    });
+
+    it('includes all summaries when count is under the cap', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const rows = Array.from({ length: 10 }, (_, i) =>
+        makeSummaryRow({
+          id: `s${i}`,
+          body: makeSummaryBody({ summary: `Summary number ${i}` }),
+        }),
+      );
+      const pool = makePool({ summaries: rows });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+
+      // All 10 should be present
+      for (let i = 0; i < 10; i++) {
+        assert.ok(capturedMessage.includes(`Summary number ${i}`), `summary ${i} should be included`);
+      }
+    });
+
+    it('includes exactly 50 summaries when given exactly 50', async () => {
+      let capturedMessage = '';
+      const llm = {
+        call: async (params: any) => {
+          capturedMessage = params.messages[0].content;
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const rows = Array.from({ length: 50 }, (_, i) =>
+        makeSummaryRow({
+          id: `s${i}`,
+          body: makeSummaryBody({ summary: `Summary number ${i}` }),
+        }),
+      );
+      const pool = makePool({ summaries: rows });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      await runPulse();
+
+      // All 50 should be present (no trimming at boundary)
+      assert.ok(capturedMessage.includes('Summary number 0'), 'first summary should be included');
+      assert.ok(capturedMessage.includes('Summary number 49'), 'last summary should be included');
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // LLM retry and error handling
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — LLM error handling', () => {
+    it('retries once on LLM parse failure and succeeds', async () => {
+      let callCount = 0;
+      const llm = {
+        call: async () => {
+          callCount++;
+          if (callCount === 1) return { content: 'not json' };
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const result = await runPulse();
+      assert.ok(result !== null);
+      assert.equal(callCount, 2);
+    });
+
+    it('returns null after both LLM attempts fail', async () => {
+      const llm = {
+        call: async () => ({ content: 'garbage output' }),
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const result = await runPulse();
+      assert.equal(result, null);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // Duplicate guard
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — duplicate guard', () => {
+    it('returns null if a pulse already exists in this 3-hour window', async () => {
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        existingPulse: [{ id: 'existing-pulse-id' }],
+      });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        makeLlm(),
+        mockSentimentTracker,
+        mockDivergenceTracker,
+      );
+      const result = await runPulse();
+      assert.equal(result, null);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════
+  // LLM response parsing (code fence stripping)
+  // ═════════════════════════════════════════════════════════════════════
+
+  describe('runPulse — code fence stripping', () => {
+    it('handles LLM response wrapped in code fences', async () => {
+      const report = makeValidReport();
+      const fencedContent = '```json\n' + JSON.stringify(report) + '\n```';
+      const llm = {
+        call: async () => ({ content: fencedContent }),
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const result = await runPulse();
+      assert.ok(result !== null);
+      assert.ok(typeof result!.tldr === 'string');
+      assert.ok(result!.tldr.length > 0);
+    });
+  });
 }); // end describe('pulse')

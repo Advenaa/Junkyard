@@ -46,9 +46,7 @@ export function createLogger(secrets: string[]): pino.Logger {
   const filtered = secrets.filter((s) => s.length >= 4);
 
   const transport: pino.TransportSingleOptions | undefined =
-    process.env['NODE_ENV'] !== 'production'
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined;
+    process.env['NODE_ENV'] !== 'production' ? { target: 'pino-pretty', options: { colorize: true } } : undefined;
 
   return pino({
     name: 'podders',

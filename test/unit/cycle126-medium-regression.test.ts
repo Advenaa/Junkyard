@@ -56,26 +56,19 @@ describe('CH-020 — Conversation history always nonce-wrapped', () => {
   });
 
   it('CH-020 comment is present', () => {
-    assert.ok(
-      handlerSrc.includes('// CH-020'),
-      'handler.ts must contain a // CH-020 comment',
-    );
+    assert.ok(handlerSrc.includes('// CH-020'), 'handler.ts must contain a // CH-020 comment');
   });
 });
 
 describe('D-020 — Failed delivery retry mechanism', () => {
   it('retryFailed function exists in webhook.ts', () => {
-    assert.match(
-      webhookSrc,
-      /async\s+function\s+retryFailed/,
-      'webhook.ts must define a retryFailed function',
-    );
+    assert.match(webhookSrc, /async\s+function\s+retryFailed/, 'webhook.ts must define a retryFailed function');
   });
 
   it('retryFailed queries for failed delivery_status', () => {
     assert.ok(
       webhookSrc.includes("delivery_status = 'failed'"),
-      'retryFailed must query for reports with delivery_status = \'failed\'',
+      "retryFailed must query for reports with delivery_status = 'failed'",
     );
   });
 

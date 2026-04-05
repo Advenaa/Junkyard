@@ -55,7 +55,7 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
   async function embedTargets(targets: EmbedTarget[]): Promise<number> {
     if (targets.length === 0) return 0;
 
-    const prepared = targets.map(t => embedder.prepareText(t.text, t.type));
+    const prepared = targets.map((t) => embedder.prepareText(t.text, t.type));
     const results = await embedder.embedBatch(prepared);
 
     // Collect all successful embeddings for a single batch INSERT
@@ -139,8 +139,8 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
       ]);
 
       const targets: EmbedTarget[] = [
-        ...summaryRows.map(r => ({ id: r.id, text: r.text, type: 'summary' as const })),
-        ...reportRows.map(r => ({ id: r.id, text: r.text, type: 'report' as const })),
+        ...summaryRows.map((r) => ({ id: r.id, text: r.text, type: 'summary' as const })),
+        ...reportRows.map((r) => ({ id: r.id, text: r.text, type: 'report' as const })),
       ];
 
       if (targets.length === 0) {
@@ -148,10 +148,7 @@ export function createEmbedPipeline(pool: Pool, log: Logger, embedder: Embedder,
         return 0;
       }
 
-      log.info(
-        { summaries: summaryRows.length, reports: reportRows.length },
-        'embed-pipeline: embedding batch',
-      );
+      log.info({ summaries: summaryRows.length, reports: reportRows.length }, 'embed-pipeline: embedding batch');
 
       const count = await embedTargets(targets);
 

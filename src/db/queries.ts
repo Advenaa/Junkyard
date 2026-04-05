@@ -173,10 +173,7 @@ export async function claimBatch(
 }
 
 export async function markProcessed(pool: Pool, batchId: string): Promise<void> {
-  await pool.query(
-    `UPDATE items SET status = 'processed' WHERE batch_id = $1`,
-    [batchId],
-  );
+  await pool.query(`UPDATE items SET status = 'processed' WHERE batch_id = $1`, [batchId]);
 }
 
 /**
@@ -194,9 +191,7 @@ export async function resetCrashed(pool: Pool, maxRetries = 3): Promise<number> 
       [maxRetries],
     );
     // Reset remaining orphaned items to ready
-    const result = await client.query(
-      `UPDATE items SET status = 'ready', batch_id = NULL WHERE status = 'processing'`,
-    );
+    const result = await client.query(`UPDATE items SET status = 'ready', batch_id = NULL WHERE status = 'processing'`);
     await client.query('COMMIT');
     return result.rowCount ?? 0;
   } catch (err) {
@@ -213,11 +208,7 @@ export async function resetCrashed(pool: Pool, maxRetries = 3): Promise<number> 
  * each item has been processing — no schema migration needed.
  * Safe to call periodically (e.g., from health check) without a restart.
  */
-export async function recoverStaleProcessing(
-  pool: Pool,
-  staleMinutes = 30,
-  maxRetries = 3,
-): Promise<number> {
+export async function recoverStaleProcessing(pool: Pool, staleMinutes = 30, maxRetries = 3): Promise<number> {
   const staleThreshold = Date.now() - staleMinutes * 60 * 1000;
 
   // Fetch all processing items that have a batch_id (i.e., were claimed)
@@ -303,26 +294,11 @@ export async function insertSummary(
       body, sentiment, urgency, item_count, created_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (id) DO NOTHING`,
-    [
-      s.id,
-      s.source,
-      s.sourceId,
-      s.windowStart,
-      s.windowEnd,
-      s.body,
-      s.sentiment,
-      s.urgency,
-      s.itemCount,
-      s.createdAt,
-    ],
+    [s.id, s.source, s.sourceId, s.windowStart, s.windowEnd, s.body, s.sentiment, s.urgency, s.itemCount, s.createdAt],
   );
 }
 
-export async function getSummariesByTimeWindow(
-  pool: Pool,
-  start: number,
-  end: number,
-): Promise<SummaryRow[]> {
+export async function getSummariesByTimeWindow(pool: Pool, start: number, end: number): Promise<SummaryRow[]> {
   const { rows } = await pool.query<SummaryRow>(
     `SELECT * FROM summaries WHERE created_at >= $1 AND created_at <= $2 ORDER BY created_at DESC LIMIT 200`,
     [start, end],
@@ -373,9 +349,7 @@ export interface SourceWithState extends SourceRow {
 
 /** Scheduler-only: returns enabled sources for polling. */
 export async function getSources(pool: Pool): Promise<SourceRow[]> {
-  const { rows } = await pool.query<SourceRow>(
-    `SELECT * FROM sources WHERE enabled = true`,
-  );
+  const { rows } = await pool.query<SourceRow>(`SELECT * FROM sources WHERE enabled = true`);
   return rows;
 }
 
@@ -408,10 +382,7 @@ export async function insertSource(
 // ── App Config ──────────────────────────────────────────────────────────
 
 export async function getAppConfig(pool: Pool, key: string): Promise<string | null> {
-  const { rows } = await pool.query<AppConfigRow>(
-    `SELECT value FROM app_config WHERE key = $1`,
-    [key],
-  );
+  const { rows } = await pool.query<AppConfigRow>(`SELECT value FROM app_config WHERE key = $1`, [key]);
   return rows[0]?.value ?? null;
 }
 

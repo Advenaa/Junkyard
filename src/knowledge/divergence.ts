@@ -34,11 +34,7 @@ export function createDivergenceTracker(pool: Pool, log: Logger) {
    * Fetch entities where English and Indonesian sentiment diverge significantly.
    * Returns entries sorted by divergence (descending).
    */
-  async function getDivergence(
-    startTime: number,
-    endTime: number,
-    minMentions?: number,
-  ): Promise<DivergenceEntry[]> {
+  async function getDivergence(startTime: number, endTime: number, minMentions?: number): Promise<DivergenceEntry[]> {
     const rows = await getRegionalDivergence(pool, startTime, endTime, minMentions);
 
     const entries: DivergenceEntry[] = rows.map((row) => ({

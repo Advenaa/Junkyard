@@ -131,10 +131,7 @@ describe('TW-006: Expanded zod schema fields in TwitterTweetSchema', () => {
 
   it('author schema includes id as optional string', () => {
     // Match within the author object definition
-    assert.ok(
-      src.includes('id: z.string().optional()'),
-      'Author schema must include id: z.string().optional()',
-    );
+    assert.ok(src.includes('id: z.string().optional()'), 'Author schema must include id: z.string().optional()');
   });
 
   it('author schema includes isBlueVerified as optional boolean', () => {
@@ -150,35 +147,19 @@ describe('TW-006: tweetToRawItem metadata includes expanded fields', () => {
   const src = readSrc('src/ingest/twitter.ts');
 
   it('metadata includes views field', () => {
-    assert.match(
-      src,
-      /views:\s*tweet\.viewCount/,
-      'metadata must include views: tweet.viewCount',
-    );
+    assert.match(src, /views:\s*tweet\.viewCount/, 'metadata must include views: tweet.viewCount');
   });
 
   it('metadata includes bookmarks field', () => {
-    assert.match(
-      src,
-      /bookmarks:\s*tweet\.bookmarkCount/,
-      'metadata must include bookmarks: tweet.bookmarkCount',
-    );
+    assert.match(src, /bookmarks:\s*tweet\.bookmarkCount/, 'metadata must include bookmarks: tweet.bookmarkCount');
   });
 
   it('metadata includes lang field', () => {
-    assert.match(
-      src,
-      /lang:\s*tweet\.lang/,
-      'metadata must include lang: tweet.lang',
-    );
+    assert.match(src, /lang:\s*tweet\.lang/, 'metadata must include lang: tweet.lang');
   });
 
   it('metadata includes isReply field', () => {
-    assert.match(
-      src,
-      /isReply:\s*tweet\.isReply/,
-      'metadata must include isReply: tweet.isReply',
-    );
+    assert.match(src, /isReply:\s*tweet\.isReply/, 'metadata must include isReply: tweet.isReply');
   });
 
   it('metadata includes isVerified field from author', () => {
@@ -198,10 +179,6 @@ describe('TW-006: tweetToRawItem metadata includes expanded fields', () => {
   });
 
   it('metadata includes authorId field from author', () => {
-    assert.match(
-      src,
-      /authorId:\s*tweet\.author\.id/,
-      'metadata must include authorId: tweet.author.id',
-    );
+    assert.match(src, /authorId:\s*tweet\.author\.id/, 'metadata must include authorId: tweet.author.id');
   });
 });

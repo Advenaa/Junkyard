@@ -232,10 +232,12 @@ const migrations: Migration[] = [
     await client.query(`CREATE INDEX idx_embeddings_type ON embeddings(target_type, created_at)`);
 
     // Seed app_config
-    await client.query(
-      `INSERT INTO app_config (key, value) VALUES ($1, $2), ($3, $4)`,
-      ['digest_time', '09:00', 'timezone', 'Asia/Jakarta'],
-    );
+    await client.query(`INSERT INTO app_config (key, value) VALUES ($1, $2), ($3, $4)`, [
+      'digest_time',
+      '09:00',
+      'timezone',
+      'Asia/Jakarta',
+    ]);
   },
 
   // Migration 2: Add UNIQUE index on items.content_hash for atomic dedup (H-004)
@@ -325,8 +327,12 @@ const migrations: Migration[] = [
 
   // Migration 7: Add unique partial indexes on reports to prevent duplicate flash/pulse/daily per date (CL-005)
   async (client) => {
-    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_flash_per_day ON reports(date) WHERE type = 'flash'`);
-    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_daily_per_day ON reports(date) WHERE type = 'daily'`);
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_flash_per_day ON reports(date) WHERE type = 'flash'`,
+    );
+    await client.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_daily_per_day ON reports(date) WHERE type = 'daily'`,
+    );
   },
 
   // Migration 8: Add 'failed' to items.status CHECK constraint (CF-002)
@@ -341,9 +347,7 @@ const migrations: Migration[] = [
 
   // Migration 9: Add retry_count to items for retry limiting (DP-003)
   async (client) => {
-    await client.query(
-      `ALTER TABLE items ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
-    );
+    await client.query(`ALTER TABLE items ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`);
   },
 
   // Migration 10: Create entity_sentiment_daily table for sentiment momentum (Feature 2.1)
@@ -365,7 +369,9 @@ const migrations: Migration[] = [
   // Migration 11: Add language column to entity_mentions for regional divergence analysis
   async (client) => {
     await client.query(`ALTER TABLE entity_mentions ADD COLUMN IF NOT EXISTS language TEXT`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_mentions_language ON entity_mentions(language) WHERE language IS NOT NULL`);
+    await client.query(
+      `CREATE INDEX IF NOT EXISTS idx_mentions_language ON entity_mentions(language) WHERE language IS NOT NULL`,
+    );
   },
 
   // Migration 12: Add missing indexes for time-window queries (DB-020..023)

@@ -4,11 +4,7 @@ import type { Logger } from '../logger.js';
 
 export interface SessionManager {
   create(discordId: string, ip: string, userAgent: string): Promise<string>;
-  validate(
-    sessionId: string,
-    ip: string,
-    userAgent: string,
-  ): Promise<{ discordId: string; role: string } | null>;
+  validate(sessionId: string, ip: string, userAgent: string): Promise<{ discordId: string; role: string } | null>;
   delete(sessionId: string): Promise<void>;
   deleteAllForUser(discordId: string): Promise<number>;
   cleanupExpired(): Promise<number>;
@@ -53,15 +49,10 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
   let lastCleanupAt = 0;
 
   return {
-    async create(
-      discordId: string,
-      ip: string,
-      userAgent: string,
-    ): Promise<string> {
+    async create(discordId: string, ip: string, userAgent: string): Promise<string> {
       const sessionId = crypto.randomBytes(32).toString('hex');
       const now = Date.now();
-      const expiresAt =
-        now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
+      const expiresAt = now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
       const normalizedUA = normalizeUA(userAgent);
 
       // Wrap eviction + insert in a transaction with FOR UPDATE lock
@@ -71,10 +62,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         await client.query('BEGIN');
 
         // Lock user's sessions to prevent concurrent overflow
-        await client.query(
-          'SELECT id FROM sessions WHERE discord_id = $1 FOR UPDATE',
-          [discordId],
-        );
+        await client.query('SELECT id FROM sessions WHERE discord_id = $1 FOR UPDATE', [discordId]);
 
         // Evict oldest sessions if at limit
         const existing = await client.query<{ id: string }>(
@@ -84,14 +72,8 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
 
         if (existing.rows.length > 0) {
           const idsToDelete = existing.rows.map((r) => r.id);
-          await client.query(
-            'DELETE FROM sessions WHERE id = ANY($1)',
-            [idsToDelete],
-          );
-          log.info(
-            { discordId, count: idsToDelete.length },
-            'Evicted oldest sessions to enforce limit',
-          );
+          await client.query('DELETE FROM sessions WHERE id = ANY($1)', [idsToDelete]);
+          log.info({ discordId, count: idsToDelete.length }, 'Evicted oldest sessions to enforce limit');
         }
 
         // Insert new session
@@ -187,16 +169,15 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       }
 
       // Sliding refresh: update last_refreshed_at if stale
-      const hoursSinceRefresh =
-        (now - row.last_refreshed_at) / (1000 * 60 * 60);
+      const hoursSinceRefresh = (now - row.last_refreshed_at) / (1000 * 60 * 60);
 
       if (hoursSinceRefresh > SLIDING_REFRESH_HOURS) {
-        const newExpiresAt =
-          now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
-        await pool.query(
-          `UPDATE sessions SET last_refreshed_at = $1, expires_at = $3 WHERE id = $2`,
-          [now, sessionId, newExpiresAt],
-        );
+        const newExpiresAt = now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
+        await pool.query(`UPDATE sessions SET last_refreshed_at = $1, expires_at = $3 WHERE id = $2`, [
+          now,
+          sessionId,
+          newExpiresAt,
+        ]);
       }
 
       // Opportunistic cleanup of expired sessions (AU-022)
@@ -224,10 +205,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
     },
 
     async deleteAllForUser(discordId: string): Promise<number> {
-      const result = await pool.query(
-        `DELETE FROM sessions WHERE discord_id = $1`,
-        [discordId],
-      );
+      const result = await pool.query(`DELETE FROM sessions WHERE discord_id = $1`, [discordId]);
       const count = result.rowCount ?? 0;
       if (count > 0) {
         log.info({ discordId, count }, 'Purged all sessions for user');
@@ -236,10 +214,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
     },
 
     async cleanupExpired(): Promise<number> {
-      const result = await pool.query(
-        `DELETE FROM sessions WHERE expires_at < $1`,
-        [Date.now()],
-      );
+      const result = await pool.query(`DELETE FROM sessions WHERE expires_at < $1`, [Date.now()]);
       const count = result.rowCount ?? 0;
       if (count > 0) {
         log.info({ count }, 'Cleaned up expired sessions');

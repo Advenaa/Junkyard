@@ -10,7 +10,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({ user: null, loading: true, logout: async () => {} });
 
-export function useAuth() { return useContext(AuthContext); }
+export function useAuth() {
+  return useContext(AuthContext);
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -29,7 +31,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Re-validate session when user returns to tab
       // Only clear user on 401 (handled by apiFetch redirect to /login)
       // On network errors, keep current user to avoid false logouts
-      apiFetch<User>('/auth/me').then(setUser).catch(() => {});
+      apiFetch<User>('/auth/me')
+        .then(setUser)
+        .catch(() => {});
     };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);

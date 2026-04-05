@@ -12,9 +12,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const vectorCacheSrc = readFileSync(
-  new URL('../../src/vector-cache.ts', import.meta.url), 'utf-8',
-);
+const vectorCacheSrc = readFileSync(new URL('../../src/vector-cache.ts', import.meta.url), 'utf-8');
 
 // ── Extract the search function body once ──────────────────────────────
 
@@ -29,11 +27,7 @@ describe('VE-003 — async DB fallback for search', () => {
 
   it('search function is declared as async', () => {
     // The function must start with `async function search(`
-    assert.match(
-      searchBody,
-      /^async function search\(/,
-      'search must be declared as async',
-    );
+    assert.match(searchBody, /^async function search\(/, 'search must be declared as async');
   });
 
   it('VectorCache interface declares search returning Promise<SearchResult[]>', () => {
@@ -52,10 +46,7 @@ describe('VE-003 — async DB fallback for search', () => {
   });
 
   it('DB fallback excludes already-cached IDs', () => {
-    assert.ok(
-      searchBody.includes('!= ALL('),
-      'DB fallback query must exclude cached IDs using != ALL()',
-    );
+    assert.ok(searchBody.includes('!= ALL('), 'DB fallback query must exclude cached IDs using != ALL()');
   });
 
   it('DB fallback is wrapped in try/catch for graceful failure', () => {

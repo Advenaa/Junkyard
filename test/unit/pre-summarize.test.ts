@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  shouldSkip,
-  parseLabeledOutput,
-  createPreSummarizer,
-} from '../../src/pre-summarize/index.js';
+import { shouldSkip, parseLabeledOutput, createPreSummarizer } from '../../src/pre-summarize/index.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────
 
@@ -44,16 +40,20 @@ describe('shouldSkip', () => {
   });
 
   it('skips items with urgency keywords', () => {
-    const keywords = ['exploit', 'hack', 'rate decision', 'flash crash',
-      'halt', 'circuit breaker', 'emergency', 'bank run'];
+    const keywords = [
+      'exploit',
+      'hack',
+      'rate decision',
+      'flash crash',
+      'halt',
+      'circuit breaker',
+      'emergency',
+      'bank run',
+    ];
 
     for (const kw of keywords) {
       const content = longContent(4500) + ` Breaking news: ${kw} detected`;
-      assert.equal(
-        shouldSkip({ source: 'rss', content }),
-        true,
-        `should skip for urgency keyword "${kw}"`,
-      );
+      assert.equal(shouldSkip({ source: 'rss', content }), true, `should skip for urgency keyword "${kw}"`);
     }
   });
 
@@ -222,14 +222,8 @@ describe('createPreSummarizer.run()', () => {
     const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
     await ps.run();
 
-    assert.ok(
-      capturedContent.includes('<nonce>'),
-      'LLM content must include nonce wrapping',
-    );
-    assert.ok(
-      capturedContent.includes('</nonce>'),
-      'LLM content must include closing nonce tag',
-    );
+    assert.ok(capturedContent.includes('<nonce>'), 'LLM content must include nonce wrapping');
+    assert.ok(capturedContent.includes('</nonce>'), 'LLM content must include closing nonce tag');
   });
 
   it('includes untrusted data instruction in system prompt', async () => {
@@ -328,9 +322,7 @@ describe('createPreSummarizer.run()', () => {
     assert.equal(result, 2);
 
     // DP-001: content and content_anchor are set atomically in a single UPDATE
-    const contentUpdateIdx = queries.findIndex(
-      q => q.includes('SET content =') && q.includes('content_anchor'),
-    );
+    const contentUpdateIdx = queries.findIndex((q) => q.includes('SET content =') && q.includes('content_anchor'));
     assert.ok(contentUpdateIdx >= 0, 'expected an atomic content + content_anchor UPDATE query');
     assert.deepEqual(queryValues[contentUpdateIdx][0], ['item-1', 'item-2']);
     assert.deepEqual(queryValues[contentUpdateIdx][1], ['First summary', 'Second summary']);

@@ -36,7 +36,10 @@ function extractFunctionBody(src: string, name: string): string {
   for (let i = braceStart; i < src.length; i++) {
     if (src[i] === '{') depth++;
     if (src[i] === '}') depth--;
-    if (depth === 0) { fnEnd = i; break; }
+    if (depth === 0) {
+      fnEnd = i;
+      break;
+    }
   }
   assert.ok(fnEnd > fnStart, `could not find closing brace for "${name}"`);
   return src.slice(fnStart, fnEnd + 1);
@@ -64,10 +67,7 @@ describe('DC-013: handleMessageCreate shutdown guard', () => {
 
     assert.ok(destroyedIdx !== -1, 'destroyed guard must exist');
     assert.ok(channelCheckIdx !== -1, 'channel filtering must exist');
-    assert.ok(
-      destroyedIdx < channelCheckIdx,
-      'destroyed guard must come before channel filtering logic',
-    );
+    assert.ok(destroyedIdx < channelCheckIdx, 'destroyed guard must come before channel filtering logic');
   });
 });
 
@@ -88,10 +88,7 @@ describe('DC-011: handleClose conditional errorCount increment', () => {
     const guardIdx = body.indexOf('!RESUMABLE_CLOSE_CODES.has(code)');
     const incrementIdx = body.indexOf('errorCount += 1', guardIdx);
 
-    assert.ok(
-      incrementIdx !== -1,
-      'errorCount increment must exist after the RESUMABLE_CLOSE_CODES guard',
-    );
+    assert.ok(incrementIdx !== -1, 'errorCount increment must exist after the RESUMABLE_CLOSE_CODES guard');
     assert.ok(
       incrementIdx - guardIdx < 80,
       'errorCount increment must be close to the RESUMABLE_CLOSE_CODES guard (inside the if block)',
@@ -99,10 +96,7 @@ describe('DC-011: handleClose conditional errorCount increment', () => {
   });
 
   it('RESUMABLE_CLOSE_CODES set is defined with expected codes', () => {
-    assert.ok(
-      source.includes('RESUMABLE_CLOSE_CODES'),
-      'RESUMABLE_CLOSE_CODES constant must be defined',
-    );
+    assert.ok(source.includes('RESUMABLE_CLOSE_CODES'), 'RESUMABLE_CLOSE_CODES constant must be defined');
     // Must include the key resumable codes
     const match = source.match(/RESUMABLE_CLOSE_CODES[^=]*=\s*new Set\(([^)]+)\)/);
     assert.ok(match, 'RESUMABLE_CLOSE_CODES must be a Set');
@@ -133,10 +127,7 @@ describe('DC-012: closeAndResume circuit breaker integration', () => {
 
     assert.ok(incrementIdx !== -1, 'errorCount reference must exist');
     assert.ok(cbIdx !== -1, 'checkCircuitBreaker() call must exist');
-    assert.ok(
-      incrementIdx < cbIdx,
-      'errorCount increment must come before checkCircuitBreaker() call',
-    );
+    assert.ok(incrementIdx < cbIdx, 'errorCount increment must come before checkCircuitBreaker() call');
   });
 
   it('closeAndResume returns early if circuit breaker trips', () => {
@@ -172,10 +163,7 @@ describe('DC-015: connectedAt and backoff reset semantics', () => {
     // Slice from RESUMED to the next case or end of switch
     const afterResumed = body.slice(resumedIdx, resumedIdx + 300);
 
-    assert.ok(
-      afterResumed.includes('connectedAt = Date.now()'),
-      'RESUMED handler must set connectedAt = Date.now()',
-    );
+    assert.ok(afterResumed.includes('connectedAt = Date.now()'), 'RESUMED handler must set connectedAt = Date.now()');
     assert.ok(
       !afterResumed.includes('reconnectAttempt = 0'),
       'RESUMED handler must NOT directly set reconnectAttempt = 0 (backoff reset happens in resumeWithBackoff)',
@@ -185,14 +173,8 @@ describe('DC-015: connectedAt and backoff reset semantics', () => {
   it('READY handler sets connectedAt but does NOT directly reset reconnectAttempt', () => {
     const body = extractFunctionBody(source, 'private handleReady');
 
-    assert.ok(
-      body.includes('connectedAt = Date.now()'),
-      'handleReady must set connectedAt = Date.now()',
-    );
-    assert.ok(
-      !body.includes('reconnectAttempt = 0'),
-      'handleReady must NOT directly set reconnectAttempt = 0',
-    );
+    assert.ok(body.includes('connectedAt = Date.now()'), 'handleReady must set connectedAt = Date.now()');
+    assert.ok(!body.includes('reconnectAttempt = 0'), 'handleReady must NOT directly set reconnectAttempt = 0');
   });
 
   it('resumeWithBackoff resets reconnectAttempt only when connection was stable >30s', () => {
@@ -208,9 +190,6 @@ describe('DC-015: connectedAt and backoff reset semantics', () => {
     const thresholdIdx = body.indexOf('STABLE_THRESHOLD_MS');
     const resetIdx = body.indexOf('reconnectAttempt = 0');
     assert.ok(resetIdx !== -1, 'reconnectAttempt = 0 must exist in resumeWithBackoff');
-    assert.ok(
-      resetIdx > thresholdIdx,
-      'reconnectAttempt reset must come after the stability threshold check',
-    );
+    assert.ok(resetIdx > thresholdIdx, 'reconnectAttempt reset must come after the stability threshold check');
   });
 });

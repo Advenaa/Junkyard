@@ -13,12 +13,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const normalizeSrc = readFileSync(
-  new URL('../../src/normalize/index.ts', import.meta.url), 'utf-8',
-);
-const urlExpandSrc = readFileSync(
-  new URL('../../src/normalize/url-expand.ts', import.meta.url), 'utf-8',
-);
+const normalizeSrc = readFileSync(new URL('../../src/normalize/index.ts', import.meta.url), 'utf-8');
+const urlExpandSrc = readFileSync(new URL('../../src/normalize/url-expand.ts', import.meta.url), 'utf-8');
 
 describe('NP-020 — translated flag only set on successful translation', () => {
   it('translated = true appears after item.content = cleaned (in else branch)', () => {
@@ -52,10 +48,7 @@ describe('NP-011 — content hash recomputed after translation', () => {
   it('contentHash is declared with let (not const)', () => {
     // Match the main hash declaration (not the injection-block const)
     const hashDeclMatch = normalizeSrc.match(/let\s+contentHash\s*=\s*sha256\(/);
-    assert.ok(
-      hashDeclMatch,
-      'contentHash should be declared with "let contentHash = sha256(" to allow reassignment',
-    );
+    assert.ok(hashDeclMatch, 'contentHash should be declared with "let contentHash = sha256(" to allow reassignment');
   });
 
   it('contentHash is reassigned after item.content = cleaned in the else branch', () => {
@@ -65,30 +58,18 @@ describe('NP-011 — content hash recomputed after translation', () => {
 
     assert.ok(contentAssignIdx > -1, 'should find item.content = cleaned');
     assert.ok(hashReassignIdx > -1, 'should find contentHash = sha256( after content assignment');
-    assert.ok(
-      hashReassignIdx > contentAssignIdx,
-      'contentHash reassignment must follow item.content = cleaned',
-    );
+    assert.ok(hashReassignIdx > contentAssignIdx, 'contentHash reassignment must follow item.content = cleaned');
   });
 });
 
 describe('NP-014 — DNS pinning on redirect hops in URL expansion', () => {
   it('imports net from node:net', () => {
-    assert.ok(
-      urlExpandSrc.includes("import net from 'node:net'"),
-      'url-expand.ts must import net from node:net',
-    );
+    assert.ok(urlExpandSrc.includes("import net from 'node:net'"), 'url-expand.ts must import net from node:net');
   });
 
   it('declares pinnedFetchUrl and pinnedHost variables', () => {
-    assert.ok(
-      urlExpandSrc.includes('pinnedFetchUrl'),
-      'should declare pinnedFetchUrl variable',
-    );
-    assert.ok(
-      urlExpandSrc.includes('pinnedHost'),
-      'should declare pinnedHost variable',
-    );
+    assert.ok(urlExpandSrc.includes('pinnedFetchUrl'), 'should declare pinnedFetchUrl variable');
+    assert.ok(urlExpandSrc.includes('pinnedHost'), 'should declare pinnedHost variable');
   });
 
   it('uses validation.resolvedIp after validateUrl succeeds', () => {
@@ -97,24 +78,14 @@ describe('NP-014 — DNS pinning on redirect hops in URL expansion', () => {
 
     assert.ok(validateCallIdx > -1, 'should call validateUrl');
     assert.ok(resolvedIpIdx > -1, 'should reference validation.resolvedIp');
-    assert.ok(
-      resolvedIpIdx > validateCallIdx,
-      'validation.resolvedIp usage must come after validateUrl call',
-    );
+    assert.ok(resolvedIpIdx > validateCallIdx, 'validation.resolvedIp usage must come after validateUrl call');
   });
 
   it('calls net.isIPv6 for IPv6 bracket handling', () => {
-    assert.ok(
-      urlExpandSrc.includes('net.isIPv6('),
-      'should call net.isIPv6 for IPv6 bracket wrapping',
-    );
+    assert.ok(urlExpandSrc.includes('net.isIPv6('), 'should call net.isIPv6 for IPv6 bracket wrapping');
   });
 
   it('sets Host header from pinnedHost', () => {
-    assert.match(
-      urlExpandSrc,
-      /['"]Host['"]\]\s*=\s*pinnedHost/,
-      'should set Host header from pinnedHost',
-    );
+    assert.match(urlExpandSrc, /['"]Host['"]\]\s*=\s*pinnedHost/, 'should set Host header from pinnedHost');
   });
 });

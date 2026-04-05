@@ -80,9 +80,6 @@ describe('PL-004 — quiet pulse maxTokens is 500', () => {
   it('computeMaxTokens returns 500 as the default/minimum', () => {
     // The function should have "return 500" as the fallback (quiet) case
     const fnMatch = pulse.match(/function\s+computeMaxTokens[\s\S]*?return\s+500\s*;/);
-    assert.ok(
-      fnMatch,
-      'Expected computeMaxTokens to contain "return 500" as the quiet-period default',
-    );
+    assert.ok(fnMatch, 'Expected computeMaxTokens to contain "return 500" as the quiet-period default');
   });
 });

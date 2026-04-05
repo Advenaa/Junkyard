@@ -4,12 +4,7 @@ import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
 import { deduplicateEvents } from './dedup-events.js';
 import type { CorrelatedEntity } from './correlate.js';
-import {
-  insertReport,
-  dailyReportExists,
-  getSummariesByTimeWindow,
-  getAppConfig,
-} from '../db/queries.js';
+import { insertReport, dailyReportExists, getSummariesByTimeWindow, getAppConfig } from '../db/queries.js';
 import type { SummaryRow, ReportRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
@@ -91,7 +86,9 @@ function getTodayWindow(timezone: string): { start: number; end: number; dateStr
   const now = new Date();
   // Extract local date parts using Intl (DST-safe)
   const dtf = new Intl.DateTimeFormat('en-CA', {
-    year: 'numeric', month: '2-digit', day: '2-digit',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
     timeZone: timezone,
   });
   const dateString = dtf.format(now); // YYYY-MM-DD
@@ -121,12 +118,14 @@ const URGENCY_SCORES: Record<string, number> = {
 const ParsedSummaryBodySchema = z.object({
   summary: z.string(),
   urgency: z.string(),
-  entities: z.array(z.object({
-    name: z.string(),
-    type: z.string(),
-    sentiment: z.number(),
-    mentionCount: z.number(),
-  })),
+  entities: z.array(
+    z.object({
+      name: z.string(),
+      type: z.string(),
+      sentiment: z.number(),
+      mentionCount: z.number(),
+    }),
+  ),
   keyEvents: z.array(z.string()),
   confidence: z.number(),
 });
@@ -147,7 +146,7 @@ function scoreSummary(row: SummaryRow, parsed: ParsedSummaryBody): number {
   const urgencyScore = URGENCY_SCORES[row.urgency ?? 'routine'] ?? 1;
   const entityCount = parsed.entities.length;
   const engagement = row.item_count; // proxy for engagement
-  return (urgencyScore * 3) + (entityCount * 2) + Math.log(1 + engagement);
+  return urgencyScore * 3 + entityCount * 2 + Math.log(1 + engagement);
 }
 
 // ── XML escaping ─────────────────────────────────────────────────────
@@ -197,9 +196,7 @@ function buildDailyUserMessage(
 
   // Summary data
   const summaryBlocks = summaries.map((s) => {
-    const entities = s.parsed.entities
-      .map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`)
-      .join(', ');
+    const entities = s.parsed.entities.map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`).join(', ');
     return `[${escapeXml(s.row.source)}] ${s.parsed.summary}\nEntities: ${entities}`;
   });
   parts.push(`<summaries>\n${summaryBlocks.join('\n\n')}\n</summaries>`);
@@ -215,9 +212,7 @@ function buildDailyUserMessage(
       (c) =>
         `${escapeXml(c.entityName)}: weight=${c.weightedSum.toFixed(2)}, urgency=${c.urgency}, sources=${c.sources.map((s) => escapeXml(s.source)).join('+')}`,
     );
-    parts.push(
-      `<correlated_entities>\n${entityLines.join('\n')}\n</correlated_entities>`,
-    );
+    parts.push(`<correlated_entities>\n${entityLines.join('\n')}\n</correlated_entities>`);
   }
 
   // Sentiment momentum context
@@ -231,47 +226,42 @@ function buildDailyUserMessage(
     // SY-003: Detect stale momentum data
     const todayStr = new Date().toLocaleDateString('en-CA');
     const latestDate = momentum.reduce((latest, m) => (m.date > latest ? m.date : latest), momentum[0].date);
-    const staleNote = latestDate !== todayStr
-      ? `\n[Note: momentum data is from ${latestDate}, not today — rollup may have failed]`
-      : '';
+    const staleNote =
+      latestDate !== todayStr
+        ? `\n[Note: momentum data is from ${latestDate}, not today — rollup may have failed]`
+        : '';
 
-    parts.push(
-      `<sentiment_momentum>\n${momentumLines.join('\n')}${staleNote}\n</sentiment_momentum>`,
-    );
+    parts.push(`<sentiment_momentum>\n${momentumLines.join('\n')}${staleNote}\n</sentiment_momentum>`);
   }
 
   // Regional divergence context
   if (divergence.length > 0) {
-    const divergenceLines = divergence.map((d) =>
-      `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
+    const divergenceLines = divergence.map(
+      (d) =>
+        `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
     );
-    parts.push(
-      `<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`,
-    );
+    parts.push(`<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`);
   }
 
   // SY-001: Narrative context from clustering
   if (narratives.length > 0) {
-    const narrativeLines = narratives.map((n) =>
-      `${escapeXml(n.name)}: growth=${n.growthRate}, summaries=${n.summaryCount}`,
+    const narrativeLines = narratives.map(
+      (n) => `${escapeXml(n.name)}: growth=${n.growthRate}, summaries=${n.summaryCount}`,
     );
-    parts.push(
-      `<narrative_context>\n${narrativeLines.join('\n')}\n</narrative_context>`,
-    );
+    parts.push(`<narrative_context>\n${narrativeLines.join('\n')}\n</narrative_context>`);
   }
 
   // SY-006: Quiet day indicator
   if (quietDay) {
-    parts.push(`<quiet_day>No new summaries today — write a brief "quiet market" update based on whatever context is available above (yesterday's TLDR, momentum, narratives). Keep it short.</quiet_day>`);
+    parts.push(
+      `<quiet_day>No new summaries today — write a brief "quiet market" update based on whatever context is available above (yesterday's TLDR, momentum, narratives). Keep it short.</quiet_day>`,
+    );
   }
 
   return parts.join('\n\n');
 }
 
-function buildFlashUserMessage(
-  summaries: ScoredSummary[],
-  correlated: CorrelatedEntity[],
-): string {
+function buildFlashUserMessage(summaries: ScoredSummary[], correlated: CorrelatedEntity[]): string {
   const parts: string[] = [];
 
   const entityNames = new Set(correlated.map((c) => c.entityName.toLowerCase()));
@@ -281,20 +271,14 @@ function buildFlashUserMessage(
     (c) =>
       `${escapeXml(c.entityName)}: weight=${c.weightedSum.toFixed(2)}, urgency=${c.urgency}, sources=${c.sources.map((s) => escapeXml(s.source)).join('+')}`,
   );
-  parts.push(
-    `<breaking_entities>\n${entityLines.join('\n')}\n</breaking_entities>`,
-  );
+  parts.push(`<breaking_entities>\n${entityLines.join('\n')}\n</breaking_entities>`);
 
   // Relevant summaries
-  const relevant = summaries.filter((s) =>
-    s.parsed.entities.some((e) => entityNames.has(e.name.toLowerCase())),
-  );
+  const relevant = summaries.filter((s) => s.parsed.entities.some((e) => entityNames.has(e.name.toLowerCase())));
 
   if (relevant.length > 0) {
     const summaryBlocks = relevant.map((s) => {
-      const entities = s.parsed.entities
-        .map((e) => `${e.name} (sentiment: ${e.sentiment})`)
-        .join(', ');
+      const entities = s.parsed.entities.map((e) => `${e.name} (sentiment: ${e.sentiment})`).join(', ');
       return `[${escapeXml(s.row.source)}] ${s.parsed.summary}\nEntities: ${entities}`;
     });
     parts.push(`<recent_summaries>\n${summaryBlocks.join('\n\n')}\n</recent_summaries>`);
@@ -359,7 +343,15 @@ export interface DivergenceTracker {
 
 // ── Factory ───────────────────────────────────────────────────────────
 
-export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: LLM, correlator: Correlator, sentimentTracker: SentimentTracker, divergenceTracker: DivergenceTracker) {
+export function createSynthesizer(
+  pool: Pool,
+  log: Logger,
+  config: Config,
+  llm: LLM,
+  correlator: Correlator,
+  sentimentTracker: SentimentTracker,
+  divergenceTracker: DivergenceTracker,
+) {
   /**
    * Parse all summaries into scored entries, filtering out unparseable bodies.
    */
@@ -432,27 +424,26 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     const yesterdayTldr = await getYesterdayTldr();
 
     // Run cross-source correlation for the same window
-    const { correlated } = quietDay
-      ? { correlated: [] as CorrelatedEntity[] }
-      : await correlator.run(start);
+    const { correlated } = quietDay ? { correlated: [] as CorrelatedEntity[] } : await correlator.run(start);
 
     log.info({ correlatedEntities: correlated.length }, 'Correlated entities for daily synthesis');
 
     // SM-008: Fetch entity IDs with alias fallback
     const entityNames = [...new Set(correlated.map((c) => c.entityName))];
     const normalizedNames = entityNames.map((n) => n.toLowerCase());
-    const entityIdRows = entityNames.length > 0
-      ? (await pool.query<{ id: string }>(
-          `SELECT DISTINCT e.id FROM entities e
+    const entityIdRows =
+      entityNames.length > 0
+        ? (
+            await pool.query<{ id: string }>(
+              `SELECT DISTINCT e.id FROM entities e
            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
            WHERE e.name = ANY($1) OR ea.alias = ANY($2)`,
-          [entityNames, normalizedNames],
-        )).rows
-      : [];
+              [entityNames, normalizedNames],
+            )
+          ).rows
+        : [];
     const entityIds = entityIdRows.map((r) => r.id);
-    const momentum = entityIds.length > 0
-      ? await sentimentTracker.getMomentumContext(entityIds)
-      : [];
+    const momentum = entityIds.length > 0 ? await sentimentTracker.getMomentumContext(entityIds) : [];
 
     log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for daily synthesis');
 
@@ -487,7 +478,16 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     log.info({ narrativeCount: narratives.length }, 'Loaded narrative context for daily synthesis');
 
     // Build prompt
-    const userMessage = buildDailyUserMessage(summaries, dedupedEvents, correlated, yesterdayTldr, momentum, divergence, narratives, quietDay);
+    const userMessage = buildDailyUserMessage(
+      summaries,
+      dedupedEvents,
+      correlated,
+      yesterdayTldr,
+      momentum,
+      divergence,
+      narratives,
+      quietDay,
+    );
 
     log.info(
       { events: dedupedEvents.length, summaries: summaries.length, hasYesterday: !!yesterdayTldr },
@@ -581,9 +581,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
 
     // Filter to summaries mentioning correlated entities
     const entityNames = new Set(correlatedEntities.map((c) => c.entityName.toLowerCase()));
-    const relevant = summaries.filter((s) =>
-      s.parsed.entities.some((e) => entityNames.has(e.name.toLowerCase())),
-    );
+    const relevant = summaries.filter((s) => s.parsed.entities.some((e) => entityNames.has(e.name.toLowerCase())));
 
     if (relevant.length === 0) {
       log.info('No summaries mention correlated entities, skipping flash');
@@ -603,10 +601,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
     // Build prompt
     const userMessage = buildFlashUserMessage(relevant, correlatedEntities);
 
-    log.info(
-      { entities: correlatedEntities.length, summaries: relevant.length },
-      'Sending flash synthesis to LLM',
-    );
+    log.info({ entities: correlatedEntities.length, summaries: relevant.length }, 'Sending flash synthesis to LLM');
 
     // Wrap user message with nonce to defend against prompt injection
     const { wrapped: wrappedFlash } = llm.wrapWithNonce(userMessage);
@@ -666,10 +661,7 @@ export function createSynthesizer(pool: Pool, log: Logger, config: Config, llm: 
       throw err;
     }
 
-    log.info(
-      { reportId, entities: correlatedEntities.map((c) => c.entityName) },
-      'Flash report created',
-    );
+    log.info({ reportId, entities: correlatedEntities.map((c) => c.entityName) }, 'Flash report created');
 
     return reportRow;
   }

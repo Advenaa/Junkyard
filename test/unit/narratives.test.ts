@@ -13,7 +13,9 @@ function vectorToBuffer(values: number[]): Buffer {
 
 /** Local copy of cosineSimilarity for test assertions. */
 function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -45,7 +47,9 @@ const noopLog = {
   debug() {},
   warn() {},
   error() {},
-  child() { return noopLog; },
+  child() {
+    return noopLog;
+  },
 } as any;
 
 const defaultConfig = {
@@ -56,8 +60,13 @@ const defaultConfig = {
 function mockPool(opts: {
   summaryRows?: Array<{ summary_id: string; vector: Buffer; body: string; sentiment: number | null }>;
   priorNarratives?: Array<{
-    id: string; name: string; date: string; member_count: number;
-    avg_sentiment: number | null; signal_strength: string; summary_ids: string[];
+    id: string;
+    name: string;
+    date: string;
+    member_count: number;
+    avg_sentiment: number | null;
+    signal_strength: string;
+    summary_ids: string[];
   }>;
   priorEmbeddings?: Map<string, Buffer[]>;
 }) {
@@ -111,8 +120,12 @@ const disabledEmbedder = { isAvailable: () => false };
  * Generate N vectors in 3D that form tight clusters.
  * Each cluster is centred around a distinct axis direction.
  */
-function makeClusteredVectors(clusterSizes: number[], dim = 10): {
-  vectors: number[][]; buffers: Buffer[];
+function makeClusteredVectors(
+  clusterSizes: number[],
+  dim = 10,
+): {
+  vectors: number[][];
+  buffers: Buffer[];
 } {
   const vectors: number[][] = [];
   for (let c = 0; c < clusterSizes.length; c++) {
@@ -178,12 +191,19 @@ describe('computeCentroid (local reference)', () => {
   });
 
   it('two points returns midpoint', () => {
-    const c = computeCentroid([[0, 0], [4, 6]]);
+    const c = computeCentroid([
+      [0, 0],
+      [4, 6],
+    ]);
     assert.deepEqual(c, [2, 3]);
   });
 
   it('three points returns average', () => {
-    const c = computeCentroid([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
+    const c = computeCentroid([
+      [1, 2, 3],
+      [4, 5, 6],
+      [7, 8, 9],
+    ]);
     assert.deepEqual(c, [4, 5, 6]);
   });
 
@@ -203,7 +223,8 @@ describe('silhouetteScore properties (local reference)', () => {
     let counted = 0;
     for (let i = 0; i < n; i++) {
       const clusterI = assignments[i];
-      let sumA = 0, countA = 0;
+      let sumA = 0,
+        countA = 0;
       for (let j = 0; j < n; j++) {
         if (j === i) continue;
         if (assignments[j] === clusterI) {
@@ -216,7 +237,8 @@ describe('silhouetteScore properties (local reference)', () => {
       let minB = Infinity;
       for (let c = 0; c < k; c++) {
         if (c === clusterI) continue;
-        let sumB = 0, countB = 0;
+        let sumB = 0,
+          countB = 0;
         for (let j = 0; j < n; j++) {
           if (assignments[j] === c) {
             sumB += cosineDistance(points[i], points[j]);
@@ -243,15 +265,23 @@ describe('silhouetteScore properties (local reference)', () => {
   });
 
   it('all points in same cluster with k=1 -> 0 (no other cluster)', () => {
-    const pts = [[1, 0, 0], [0.9, 0.1, 0], [0.8, 0.2, 0]];
+    const pts = [
+      [1, 0, 0],
+      [0.9, 0.1, 0],
+      [0.8, 0.2, 0],
+    ];
     assert.equal(silhouetteScore(pts, [0, 0, 0], 1), 0);
   });
 
   it('well-separated clusters -> high score (>0.5)', () => {
     // Cluster 0: near [1,0,0], Cluster 1: near [0,1,0]
     const pts = [
-      [1, 0.01, 0], [1, -0.01, 0], [1, 0, 0.01],
-      [0.01, 1, 0], [-0.01, 1, 0], [0, 1, 0.01],
+      [1, 0.01, 0],
+      [1, -0.01, 0],
+      [1, 0, 0.01],
+      [0.01, 1, 0],
+      [-0.01, 1, 0],
+      [0, 1, 0.01],
     ];
     const assignments = [0, 0, 0, 1, 1, 1];
     const score = silhouetteScore(pts, assignments, 2);
@@ -261,8 +291,12 @@ describe('silhouetteScore properties (local reference)', () => {
   it('overlapping clusters -> low score (<0.3)', () => {
     // All points near [1,1,1] but split into 2 clusters
     const pts = [
-      [1, 1, 1], [1.01, 1, 1], [1, 1.01, 1],
-      [0.99, 1, 1], [1, 0.99, 1], [1, 1, 0.99],
+      [1, 1, 1],
+      [1.01, 1, 1],
+      [1, 1.01, 1],
+      [0.99, 1, 1],
+      [1, 0.99, 1],
+      [1, 1, 0.99],
     ];
     const assignments = [0, 0, 0, 1, 1, 1];
     const score = silhouetteScore(pts, assignments, 2);
@@ -274,7 +308,11 @@ describe('silhouetteScore properties (local reference)', () => {
   });
 
   it('all singleton clusters -> 0 (each point alone)', () => {
-    const pts = [[1, 0], [0, 1], [1, 1]];
+    const pts = [
+      [1, 0],
+      [0, 1],
+      [1, 1],
+    ];
     const assignments = [0, 1, 2];
     const score = silhouetteScore(pts, assignments, 3);
     assert.equal(score, 0);
@@ -400,18 +438,18 @@ describe('createNarrativeDetector', () => {
     // Use member_count=1 so even a 3-member sub-cluster gives growth=3.0 -> strong
     const { pool } = mockPool({
       summaryRows: rows,
-      priorNarratives: [{
-        id: 'prior1',
-        name: 'Old Narrative',
-        date: '2026-04-01',
-        member_count: 1,
-        avg_sentiment: 0.5,
-        signal_strength: 'new',
-        summary_ids: ['prior_s0'],
-      }],
-      priorEmbeddings: new Map([
-        ['prior_s0', [vectorToBuffer(baseVec)]],
-      ]),
+      priorNarratives: [
+        {
+          id: 'prior1',
+          name: 'Old Narrative',
+          date: '2026-04-01',
+          member_count: 1,
+          avg_sentiment: 0.5,
+          signal_strength: 'new',
+          summary_ids: ['prior_s0'],
+        },
+      ],
+      priorEmbeddings: new Map([['prior_s0', [vectorToBuffer(baseVec)]]]),
     });
     const llm = mockLlm();
     const detector = createNarrativeDetector(pool, noopLog, defaultConfig, llm, enabledEmbedder);
@@ -419,7 +457,10 @@ describe('createNarrativeDetector', () => {
 
     // At least one narrative matching the prior direction should be "strong"
     const strongOnes = narratives.filter((n) => n.signalStrength === 'strong');
-    assert.ok(strongOnes.length > 0, `Expected at least one "strong" narrative, got: ${narratives.map((n) => `${n.signalStrength}(${n.memberCount})`)}`);
+    assert.ok(
+      strongOnes.length > 0,
+      `Expected at least one "strong" narrative, got: ${narratives.map((n) => `${n.signalStrength}(${n.memberCount})`)}`,
+    );
   });
 
   it('signal strength "fading" when growth rate <= 0.5', async () => {
@@ -471,25 +512,28 @@ describe('createNarrativeDetector', () => {
     // Cosine similarity between cluster A centroid and prior centroid is ~1.0 (same axis).
     const { pool } = mockPool({
       summaryRows: rows,
-      priorNarratives: [{
-        id: 'prior1',
-        name: 'Big Narrative',
-        date: '2026-04-01',
-        member_count: 8,
-        avg_sentiment: 0.5,
-        signal_strength: 'strong',
-        summary_ids: ['ps0', 'ps1'],
-      }],
-      priorEmbeddings: new Map([
-        ['ps0,ps1', [vectorToBuffer(baseVec), vectorToBuffer(baseVec)]],
-      ]),
+      priorNarratives: [
+        {
+          id: 'prior1',
+          name: 'Big Narrative',
+          date: '2026-04-01',
+          member_count: 8,
+          avg_sentiment: 0.5,
+          signal_strength: 'strong',
+          summary_ids: ['ps0', 'ps1'],
+        },
+      ],
+      priorEmbeddings: new Map([['ps0,ps1', [vectorToBuffer(baseVec), vectorToBuffer(baseVec)]]]),
     });
     const llm = mockLlm();
     const detector = createNarrativeDetector(pool, noopLog, defaultConfig, llm, enabledEmbedder);
     const narratives = await detector.detectNarratives();
 
     const fadingOnes = narratives.filter((n) => n.signalStrength === 'fading');
-    assert.ok(fadingOnes.length > 0, `Expected a "fading" narrative, got: ${narratives.map((n) => `${n.signalStrength}(${n.memberCount})`)}`);
+    assert.ok(
+      fadingOnes.length > 0,
+      `Expected a "fading" narrative, got: ${narratives.map((n) => `${n.signalStrength}(${n.memberCount})`)}`,
+    );
   });
 
   it('computes avgSentiment correctly (mixed sentiments)', async () => {
@@ -500,7 +544,7 @@ describe('createNarrativeDetector', () => {
       summary_id: `s${i}`,
       vector: buffers[i],
       body: `Summary ${i}`,
-      sentiment: i % 3 === 2 ? null : (i % 3 === 0 ? 0.8 : -0.2),
+      sentiment: i % 3 === 2 ? null : i % 3 === 0 ? 0.8 : -0.2,
     }));
 
     const { pool } = mockPool({ summaryRows: rows });
@@ -676,7 +720,9 @@ describe('validateTimezone (via detectNarratives)', () => {
     const warnings: string[] = [];
     const capturingLog = {
       ...noopLog,
-      warn(...args: any[]) { warnings.push(String(args)); },
+      warn(...args: any[]) {
+        warnings.push(String(args));
+      },
     };
     const { pool } = mockPoolWithTimezone('Asia/Jakarta', fewRows());
     const llm = mockLlm();
@@ -691,7 +737,9 @@ describe('validateTimezone (via detectNarratives)', () => {
     const warnings: string[] = [];
     const capturingLog = {
       ...noopLog,
-      warn(...args: any[]) { warnings.push(String(args)); },
+      warn(...args: any[]) {
+        warnings.push(String(args));
+      },
     };
     const { pool } = mockPoolWithTimezone('America/New_York', fewRows());
     const llm = mockLlm();
@@ -706,7 +754,9 @@ describe('validateTimezone (via detectNarratives)', () => {
     const warnings: string[] = [];
     const capturingLog = {
       ...noopLog,
-      warn(...args: any[]) { warnings.push(String(args)); },
+      warn(...args: any[]) {
+        warnings.push(String(args));
+      },
     };
     const { pool } = mockPoolWithTimezone('Invalid/Timezone', fewRows());
     const llm = mockLlm();
@@ -724,7 +774,9 @@ describe('validateTimezone (via detectNarratives)', () => {
     const warnings: string[] = [];
     const capturingLog = {
       ...noopLog,
-      warn(...args: any[]) { warnings.push(String(args)); },
+      warn(...args: any[]) {
+        warnings.push(String(args));
+      },
     };
     const { pool } = mockPoolWithTimezone('', fewRows());
     const llm = mockLlm();
@@ -740,7 +792,9 @@ describe('validateTimezone (via detectNarratives)', () => {
     const warnings: string[] = [];
     const capturingLog = {
       ...noopLog,
-      warn(...args: any[]) { warnings.push(String(args)); },
+      warn(...args: any[]) {
+        warnings.push(String(args));
+      },
     };
     const { pool } = mockPoolWithTimezone(null, fewRows());
     const llm = mockLlm();

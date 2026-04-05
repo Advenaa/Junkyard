@@ -1,11 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  DisambiguatedEntitySchema,
-  SOURCE_WEIGHTS,
-  normalizeAlias,
-} from '../../src/knowledge/entities.js';
+import { DisambiguatedEntitySchema, SOURCE_WEIGHTS, normalizeAlias } from '../../src/knowledge/entities.js';
 
 // ── DisambiguatedEntitySchema (H-037) ──────────────────────────────────────
 
@@ -48,15 +44,10 @@ describe('DisambiguatedEntitySchema', () => {
   });
 
   it('strips extra fields from parsed output', () => {
-    const input = [
-      { name: 'A', type: 'token', context_key: 'k', extraField: true },
-    ];
+    const input = [{ name: 'A', type: 'token', context_key: 'k', extraField: true }];
     const result = DisambiguatedEntitySchema.safeParse(input);
     assert.ok(result.success);
-    assert.equal(
-      (result.data![0] as Record<string, unknown>).extraField,
-      undefined,
-    );
+    assert.equal((result.data![0] as Record<string, unknown>).extraField, undefined);
   });
 
   it('accepts an empty array', () => {

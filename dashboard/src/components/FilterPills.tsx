@@ -1,4 +1,12 @@
-export function FilterPills({ options, selected, onSelect }: { options: string[]; selected: string; onSelect: (option: string) => void }) {
+export function FilterPills({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: string[];
+  selected: string;
+  onSelect: (option: string) => void;
+}) {
   return (
     <div className="flex gap-2 flex-wrap">
       {options.map((option) => (

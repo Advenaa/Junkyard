@@ -36,7 +36,10 @@ function extractFunctionBody(src: string, name: string): string {
   for (let i = braceStart; i < src.length; i++) {
     if (src[i] === '{') depth++;
     if (src[i] === '}') depth--;
-    if (depth === 0) { fnEnd = i; break; }
+    if (depth === 0) {
+      fnEnd = i;
+      break;
+    }
   }
   assert.ok(fnEnd > fnStart, `could not find closing brace for "${name}"`);
   return src.slice(fnStart, fnEnd + 1);
@@ -48,10 +51,7 @@ function extractFunctionBody(src: string, name: string): string {
 
 describe('DC-002: disconnect() drains concurrency queue', () => {
   it('disconnect method exists', () => {
-    assert.ok(
-      source.includes('async disconnect()'),
-      'TokenConnection must have an async disconnect() method',
-    );
+    assert.ok(source.includes('async disconnect()'), 'TokenConnection must have an async disconnect() method');
   });
 
   it('disconnect iterates concurrency queue and calls resolve()', () => {
@@ -64,10 +64,7 @@ describe('DC-002: disconnect() drains concurrency queue', () => {
     );
 
     // Must call resolve on each pending waiter
-    assert.ok(
-      body.includes('resolve()'),
-      'disconnect must call resolve() on queued waiters to drain them',
-    );
+    assert.ok(body.includes('resolve()'), 'disconnect must call resolve() on queued waiters to drain them');
   });
 
   it('disconnect clears the queue after draining', () => {
@@ -95,10 +92,7 @@ describe('DC-002: disconnect() drains concurrency queue', () => {
 
 describe('DC-005: NaN timestamp falls back to Date.now()', () => {
   it('handleMessageCreate method exists', () => {
-    assert.ok(
-      source.includes('handleMessageCreate'),
-      'handleMessageCreate method must exist',
-    );
+    assert.ok(source.includes('handleMessageCreate'), 'handleMessageCreate method must exist');
   });
 
   it('checks for NaN on parsed timestamp', () => {
@@ -148,18 +142,9 @@ describe('DC-005: NaN timestamp falls back to Date.now()', () => {
 
 describe('DC-003: Attachment URLs validated against Discord CDN allowlist', () => {
   it('DISCORD_CDN_HOSTS constant exists with expected hosts', () => {
-    assert.ok(
-      source.includes('DISCORD_CDN_HOSTS'),
-      'DISCORD_CDN_HOSTS constant must be defined',
-    );
-    assert.ok(
-      source.includes('cdn.discordapp.com'),
-      'allowlist must include cdn.discordapp.com',
-    );
-    assert.ok(
-      source.includes('media.discordapp.net'),
-      'allowlist must include media.discordapp.net',
-    );
+    assert.ok(source.includes('DISCORD_CDN_HOSTS'), 'DISCORD_CDN_HOSTS constant must be defined');
+    assert.ok(source.includes('cdn.discordapp.com'), 'allowlist must include cdn.discordapp.com');
+    assert.ok(source.includes('media.discordapp.net'), 'allowlist must include media.discordapp.net');
   });
 
   it('isValidDiscordUrl function exists and checks protocol + hostname', () => {
@@ -170,8 +155,7 @@ describe('DC-003: Attachment URLs validated against Discord CDN allowlist', () =
       'isValidDiscordUrl must require https protocol',
     );
     assert.ok(
-      body.includes('DISCORD_CDN_HOSTS.has(parsed.hostname)') ||
-      body.includes('DISCORD_CDN_HOSTS.has(parsed.host)'),
+      body.includes('DISCORD_CDN_HOSTS.has(parsed.hostname)') || body.includes('DISCORD_CDN_HOSTS.has(parsed.host)'),
       'isValidDiscordUrl must check hostname against DISCORD_CDN_HOSTS',
     );
   });
@@ -179,23 +163,14 @@ describe('DC-003: Attachment URLs validated against Discord CDN allowlist', () =
   it('isValidDiscordUrl returns false for invalid URLs (try/catch)', () => {
     const body = extractFunctionBody(source, 'function isValidDiscordUrl');
 
-    assert.ok(
-      body.includes('catch'),
-      'isValidDiscordUrl must catch URL parse errors',
-    );
-    assert.ok(
-      body.includes('return false'),
-      'isValidDiscordUrl must return false for unparseable URLs',
-    );
+    assert.ok(body.includes('catch'), 'isValidDiscordUrl must catch URL parse errors');
+    assert.ok(body.includes('return false'), 'isValidDiscordUrl must return false for unparseable URLs');
   });
 
   it('handleMessageCreate filters attachments through isValidDiscordUrl', () => {
     const body = extractFunctionBody(source, 'private async handleMessageCreate');
 
-    assert.ok(
-      body.includes('isValidDiscordUrl'),
-      'handleMessageCreate must filter attachments via isValidDiscordUrl',
-    );
+    assert.ok(body.includes('isValidDiscordUrl'), 'handleMessageCreate must filter attachments via isValidDiscordUrl');
     assert.ok(
       body.includes('.filter(') && body.includes('isValidDiscordUrl'),
       'attachments must be filtered (not just checked) through the CDN validator',
@@ -209,10 +184,7 @@ describe('DC-003: Attachment URLs validated against Discord CDN allowlist', () =
 
 describe('DC-006: Circuit breaker disables token after consecutive errors', () => {
   it('MAX_CONSECUTIVE_ERRORS constant is defined with value 20', () => {
-    assert.ok(
-      source.includes('MAX_CONSECUTIVE_ERRORS'),
-      'MAX_CONSECUTIVE_ERRORS constant must be defined',
-    );
+    assert.ok(source.includes('MAX_CONSECUTIVE_ERRORS'), 'MAX_CONSECUTIVE_ERRORS constant must be defined');
 
     const match = source.match(/MAX_CONSECUTIVE_ERRORS\s*=\s*(\d+)/);
     assert.ok(match, 'MAX_CONSECUTIVE_ERRORS must be assigned a numeric value');
@@ -239,8 +211,7 @@ describe('DC-006: Circuit breaker disables token after consecutive errors', () =
     const body = extractFunctionBody(source, 'private checkCircuitBreaker');
 
     assert.ok(
-      body.includes('errorCount >= MAX_CONSECUTIVE_ERRORS') ||
-      body.includes('errorCount > MAX_CONSECUTIVE_ERRORS - 1'),
+      body.includes('errorCount >= MAX_CONSECUTIVE_ERRORS') || body.includes('errorCount > MAX_CONSECUTIVE_ERRORS - 1'),
       'checkCircuitBreaker must compare errorCount against MAX_CONSECUTIVE_ERRORS',
     );
   });
@@ -257,26 +228,17 @@ describe('DC-006: Circuit breaker disables token after consecutive errors', () =
   it('calls onDeath when circuit breaker trips', () => {
     const body = extractFunctionBody(source, 'private checkCircuitBreaker');
 
-    assert.ok(
-      body.includes('onDeath'),
-      'circuit breaker must call onDeath to trigger channel reassignment',
-    );
+    assert.ok(body.includes('onDeath'), 'circuit breaker must call onDeath to trigger channel reassignment');
   });
 
   it('errorCount is reset to 0 on successful READY or RESUMED', () => {
     // Check READY handler
     const readyBody = extractFunctionBody(source, 'private handleReady');
-    assert.ok(
-      readyBody.includes('errorCount = 0'),
-      'handleReady must reset errorCount to 0',
-    );
+    assert.ok(readyBody.includes('errorCount = 0'), 'handleReady must reset errorCount to 0');
 
     // Check RESUMED handling in handleDispatch
     const dispatchBody = extractFunctionBody(source, 'private handleDispatch');
-    assert.ok(
-      dispatchBody.includes('errorCount = 0'),
-      'RESUMED handler must reset errorCount to 0',
-    );
+    assert.ok(dispatchBody.includes('errorCount = 0'), 'RESUMED handler must reset errorCount to 0');
   });
 
   it('handleClose calls checkCircuitBreaker before fatal/resumable close code checks', () => {
@@ -287,9 +249,6 @@ describe('DC-006: Circuit breaker disables token after consecutive errors', () =
 
     assert.ok(cbIdx !== -1, 'handleClose must call checkCircuitBreaker()');
     assert.ok(fatalIdx !== -1, 'fatal close code check must exist');
-    assert.ok(
-      cbIdx < fatalIdx,
-      'checkCircuitBreaker() must come before fatal close code handling',
-    );
+    assert.ok(cbIdx < fatalIdx, 'checkCircuitBreaker() must come before fatal close code handling');
   });
 });

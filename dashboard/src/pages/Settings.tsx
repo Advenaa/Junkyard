@@ -164,9 +164,7 @@ function SourcesTab() {
       <form onSubmit={handleAddSource} className="space-y-4">
         {addError && <p className="text-red-400 text-sm font-body">{addError}</p>}
         <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-            Source Type
-          </label>
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Source Type</label>
           <select
             value={addSource}
             onChange={(e) => setAddSource(e.target.value)}
@@ -179,19 +177,20 @@ function SourcesTab() {
           </select>
         </div>
         <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-            Source ID
-          </label>
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Source ID</label>
           <input
             type="text"
             required
             value={addSourceId}
             onChange={(e) => setAddSourceId(e.target.value)}
             placeholder={
-              addSource === 'rss' ? 'https://example.com/feed.xml' :
-              addSource === 'discord' ? 'Channel ID' :
-              addSource === 'twitter' ? 'Username or list' :
-              'Source identifier'
+              addSource === 'rss'
+                ? 'https://example.com/feed.xml'
+                : addSource === 'discord'
+                  ? 'Channel ID'
+                  : addSource === 'twitter'
+                    ? 'Username or list'
+                    : 'Source identifier'
             }
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
           />
@@ -240,7 +239,9 @@ function SourcesTab() {
         {addSourceModal}
         <div className="text-center py-16">
           <p className="text-text-secondary text-lg">No sources configured</p>
-          <p className="text-text-secondary/60 mt-2 text-sm">Add your first source to start collecting market intelligence.</p>
+          <p className="text-text-secondary/60 mt-2 text-sm">
+            Add your first source to start collecting market intelligence.
+          </p>
           <div className="mt-6">{addSourceButton}</div>
         </div>
       </>
@@ -277,9 +278,7 @@ function SourcesTab() {
                   <td className="px-4 py-3 text-text-primary font-body">{s.label}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={s.stateStatus ?? 'unknown'} />
-                    {s.lastError && (
-                      <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>
-                    )}
+                    {s.lastError && <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>}
                   </td>
                   <td className="px-4 py-3 text-text-secondary font-mono text-xs">
                     {formatRelativeTime(s.lastFetchedAt)}
@@ -331,20 +330,22 @@ function DeliveryTab() {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<{ digestTime?: string; timezone?: string; webhookUrl?: string }>('/config').then((res) => {
-      const mapped: Config = {
-        webhookUrl: res.webhookUrl ?? '',
-        digestTime: res.digestTime ?? '09:00',
-        timezone: res.timezone ?? 'Asia/Jakarta',
-        publicUrl: null,
-      };
-      setConfig(mapped);
-      setWebhookUrl(res.webhookUrl ?? '');
-      setDigestTime(res.digestTime ?? '09:00');
-      setTimezone(res.timezone ?? 'Asia/Jakarta');
-    }).catch(() => {
-      setFetchError('Failed to load delivery configuration. Please try refreshing the page.');
-    });
+    apiFetch<{ digestTime?: string; timezone?: string; webhookUrl?: string }>('/config')
+      .then((res) => {
+        const mapped: Config = {
+          webhookUrl: res.webhookUrl ?? '',
+          digestTime: res.digestTime ?? '09:00',
+          timezone: res.timezone ?? 'Asia/Jakarta',
+          publicUrl: null,
+        };
+        setConfig(mapped);
+        setWebhookUrl(res.webhookUrl ?? '');
+        setDigestTime(res.digestTime ?? '09:00');
+        setTimezone(res.timezone ?? 'Asia/Jakarta');
+      })
+      .catch(() => {
+        setFetchError('Failed to load delivery configuration. Please try refreshing the page.');
+      });
   }, []);
 
   const save = async () => {
@@ -401,9 +402,7 @@ function DeliveryTab() {
     <div className="space-y-6">
       {error && <p className="text-red-400 text-sm font-body">{error}</p>}
       <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
-        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-          Digest Time
-        </h3>
+        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Digest Time</h3>
         <input
           type="time"
           value={digestTime}
@@ -412,9 +411,7 @@ function DeliveryTab() {
         />
       </div>
       <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
-        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-          Timezone
-        </h3>
+        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Timezone</h3>
         <select
           value={timezone}
           onChange={(e) => setTimezone(e.target.value)}
@@ -433,9 +430,7 @@ function DeliveryTab() {
         </select>
       </div>
       <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
-        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-          Webhook URL
-        </h3>
+        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Webhook URL</h3>
         <input
           type="url"
           value={webhookUrl}
@@ -459,9 +454,7 @@ function DeliveryTab() {
             {saving ? 'Saving...' : 'Save'}
           </button>
         </div>
-        {testResult && (
-          <p className="text-sm text-text-secondary font-body">{testResult}</p>
-        )}
+        {testResult && <p className="text-sm text-text-secondary font-body">{testResult}</p>}
       </div>
     </div>
   );
@@ -482,7 +475,8 @@ function PipelineTab() {
   }, []);
 
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
-  if (!status) return <p className="text-red-400 text-sm font-body py-4">{error ?? 'Failed to load pipeline status.'}</p>;
+  if (!status)
+    return <p className="text-red-400 text-sm font-body py-4">{error ?? 'Failed to load pipeline status.'}</p>;
 
   return (
     <div className="space-y-6">
@@ -509,12 +503,9 @@ function PipelineTab() {
 
       {/* Cost Summary */}
       <div className="bg-surface border border-border rounded-lg p-4">
-        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-3">
-          LLM Cost
-        </h3>
+        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-3">LLM Cost</h3>
         <p className="text-text-primary text-lg font-mono">
-          ${status.costToday.toFixed(2)}{' '}
-          <span className="text-text-secondary text-xs">today</span>
+          ${status.costToday.toFixed(2)} <span className="text-text-secondary text-xs">today</span>
         </p>
       </div>
     </div>
@@ -543,11 +534,7 @@ function UsersTab() {
         method: 'PATCH',
         body: JSON.stringify({ role }),
       });
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.discordId === discordId ? { ...u, role: role as UserRecord['role'] } : u,
-        ),
-      );
+      setUsers((prev) => prev.map((u) => (u.discordId === discordId ? { ...u, role: role as UserRecord['role'] } : u)));
     } catch {
       setError(`Failed to update role for user.`);
     }
@@ -607,9 +594,7 @@ function UsersTab() {
                     {u.role}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-text-secondary font-mono text-xs">
-                  {formatRelativeTime(u.lastLoginAt)}
-                </td>
+                <td className="px-4 py-3 text-text-secondary font-mono text-xs">{formatRelativeTime(u.lastLoginAt)}</td>
                 <td className="px-4 py-3 text-right">
                   {u.discordId !== currentUser?.discordId && (
                     <select

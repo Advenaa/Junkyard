@@ -54,19 +54,19 @@ describe('buildTitle', () => {
 
 describe('colorForType', () => {
   it('returns correct color for daily', () => {
-    assert.strictEqual(colorForType('daily'), 0x5B8DEF);
+    assert.strictEqual(colorForType('daily'), 0x5b8def);
   });
 
   it('returns correct color for flash', () => {
-    assert.strictEqual(colorForType('flash'), 0xFF6B35);
+    assert.strictEqual(colorForType('flash'), 0xff6b35);
   });
 
   it('returns correct color for pulse', () => {
-    assert.strictEqual(colorForType('pulse'), 0x4A4A5A);
+    assert.strictEqual(colorForType('pulse'), 0x4a4a5a);
   });
 
   it('returns default color for unknown type', () => {
-    assert.strictEqual(colorForType('other'), 0x4A4A5A);
+    assert.strictEqual(colorForType('other'), 0x4a4a5a);
   });
 });
 
@@ -87,7 +87,10 @@ describe('buildFields', () => {
   });
 
   it('truncates field values to 1024 chars', () => {
-    const longEvents = Array.from({ length: 100 }, (_, i) => `Event number ${i} with some extra text to make it longer and fill up space`);
+    const longEvents = Array.from(
+      { length: 100 },
+      (_, i) => `Event number ${i} with some extra text to make it longer and fill up space`,
+    );
     const parsed = {
       tldr: 'test',
       keyEvents: longEvents,
@@ -150,7 +153,7 @@ describe('enforceEmbedLimit — total embed under 6000', () => {
     const embed = {
       title: 'Test Title',
       description: 'A'.repeat(4000),
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [
         { name: 'Field 1', value: 'B'.repeat(1000), inline: false },
         { name: 'Field 2', value: 'C'.repeat(1000), inline: false },
@@ -169,7 +172,7 @@ describe('enforceEmbedLimit — total embed under 6000', () => {
     const embed = {
       title: 'Title',
       description: 'A'.repeat(4000),
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [
         { name: 'Short', value: 'B'.repeat(100), inline: false },
         { name: 'Long', value: 'C'.repeat(2000), inline: false },
@@ -187,10 +190,8 @@ describe('enforceEmbedLimit — total embed under 6000', () => {
     const embed = {
       title: 'Title',
       description: 'A'.repeat(5800),
-      color: 0x5B8DEF,
-      fields: [
-        { name: 'Tiny', value: 'B', inline: false },
-      ],
+      color: 0x5b8def,
+      fields: [{ name: 'Tiny', value: 'B', inline: false }],
       timestamp: new Date().toISOString(),
       footer: { text: 'podders' },
     };
@@ -204,7 +205,7 @@ describe('enforceEmbedLimit — total embed under 6000', () => {
     const embed = {
       title: 'Title',
       description: 'A'.repeat(5900),
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [],
       timestamp: new Date().toISOString(),
       footer: { text: 'podders' },
@@ -220,7 +221,7 @@ describe('enforceEmbedLimit — total embed under 6000', () => {
     const embed = {
       title: 'Title',
       description: 'Short desc',
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [{ name: 'F', value: 'val', inline: false }],
       timestamp: new Date().toISOString(),
       footer: { text: 'podders' },
@@ -265,10 +266,13 @@ describe('buildEmbed — full integration', () => {
     const report = { id: 'rpt-big', type: 'flash', body: '{}', date: '2026-04-01' };
     const parsed = {
       tldr: 'X'.repeat(4096),
-      keyEvents: Array.from({ length: 20 }, (_, i) => `Major event number ${i} with detailed description that goes on for a while`),
+      keyEvents: Array.from(
+        { length: 20 },
+        (_, i) => `Major event number ${i} with detailed description that goes on for a while`,
+      ),
       entitySentiment: Array.from({ length: 10 }, (_, i) => ({
         name: `Token${i}`,
-        sentiment: (i % 3 === 0) ? 0.8 : -0.5,
+        sentiment: i % 3 === 0 ? 0.8 : -0.5,
         reason: 'test reason',
       })),
       sections: [],
@@ -332,10 +336,7 @@ describe('deliver — missing webhook_url marks failed (SD-001 regression)', () 
     // Pool responses:
     // 1. getAppConfig('webhook_url') → no rows (not configured)
     // 2. UPDATE reports SET delivery_status = 'failed'
-    const pool = mockPool([
-      { rows: [] },
-      { rowCount: 1 },
-    ]);
+    const pool = mockPool([{ rows: [] }, { rowCount: 1 }]);
 
     const config = {} as any;
     const { deliver } = createDelivery(pool as any, silentLog as any, config);
@@ -357,10 +358,7 @@ describe('deliver — idempotency guard', () => {
     // Pool responses:
     // 1. getAppConfig('webhook_url') → returns a valid webhook URL
     // 2. Atomic UPDATE...RETURNING → 0 rows (already delivered)
-    const pool = mockPool([
-      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
-      { rows: [] },
-    ]);
+    const pool = mockPool([{ rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] }, { rows: [] }]);
 
     // Mock DNS so validateUrl passes
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
@@ -432,7 +430,9 @@ describe('deliver — idempotency guard', () => {
     assert.strictEqual(body.embeds.length, 1);
 
     // Verify delivery_status was updated to 'delivered'
-    const updateQuery = pool.calls.find((c) => c.text.includes("delivery_status = $1") && !c.text.includes('RETURNING'));
+    const updateQuery = pool.calls.find(
+      (c) => c.text.includes('delivery_status = $1') && !c.text.includes('RETURNING'),
+    );
     assert.ok(updateQuery, 'Expected an UPDATE delivery_status query');
     assert.strictEqual(updateQuery.values[0], 'delivered');
     assert.strictEqual(updateQuery.values[2], FAKE_REPORT.id);
@@ -484,10 +484,7 @@ describe('truncate — UTF-16 surrogate pair safety (DL-010)', () => {
 import { readFileSync } from 'node:fs';
 
 describe('Retry-After cap — structural verification (DL-011)', () => {
-  const webhookSrc = readFileSync(
-    new URL('../../src/deliver/webhook.ts', import.meta.url),
-    'utf-8',
-  );
+  const webhookSrc = readFileSync(new URL('../../src/deliver/webhook.ts', import.meta.url), 'utf-8');
 
   it('defines MAX_RETRY_AFTER_MS = 60_000', () => {
     assert.ok(
@@ -497,10 +494,7 @@ describe('Retry-After cap — structural verification (DL-011)', () => {
   });
 
   it('uses Number.isFinite for NaN guard', () => {
-    assert.ok(
-      webhookSrc.includes('Number.isFinite'),
-      'Expected Number.isFinite guard on Retry-After parsing',
-    );
+    assert.ok(webhookSrc.includes('Number.isFinite'), 'Expected Number.isFinite guard on Retry-After parsing');
   });
 
   it('uses Math.min to cap the retry value', () => {
@@ -516,10 +510,7 @@ describe('Retry-After cap — structural verification (DL-011)', () => {
 // ---------------------------------------------------------------------------
 
 describe('Atomic idempotency — structural verification (DL-014)', () => {
-  const webhookSrc = readFileSync(
-    new URL('../../src/deliver/webhook.ts', import.meta.url),
-    'utf-8',
-  );
+  const webhookSrc = readFileSync(new URL('../../src/deliver/webhook.ts', import.meta.url), 'utf-8');
 
   it('uses UPDATE reports … RETURNING instead of SELECT', () => {
     assert.ok(

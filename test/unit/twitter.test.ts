@@ -94,10 +94,11 @@ describe('Twitter adapter', () => {
   describe('tweetToRawItem transformation', () => {
     it('maps tweet JSON to RawItem fields correctly', async () => {
       const tweet = makeTweet();
-      globalThis.fetch = () => mockFetchResponse({
-        tweets: [tweet],
-        has_next_page: false,
-      });
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets: [tweet],
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items, lastId } = await adapter.poll('@testuser', null);
@@ -130,10 +131,11 @@ describe('Twitter adapter', () => {
 
     it('handles tweet without optional url', async () => {
       const tweet = makeTweet({ url: undefined });
-      globalThis.fetch = () => mockFetchResponse({
-        tweets: [tweet],
-        has_next_page: false,
-      });
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets: [tweet],
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items } = await adapter.poll('@testuser', null);
@@ -148,10 +150,11 @@ describe('Twitter adapter', () => {
   describe('engagement score computation', () => {
     async function getEngagement(likeCount: number, retweetCount: number, quoteCount: number): Promise<number> {
       const tweet = makeTweet({ likeCount, retweetCount, quoteCount });
-      globalThis.fetch = () => mockFetchResponse({
-        tweets: [tweet],
-        has_next_page: false,
-      });
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets: [tweet],
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items } = await adapter.poll('@testuser', null);
@@ -214,7 +217,10 @@ describe('Twitter adapter', () => {
       await adapter.poll('bitcoin pump', null);
 
       assert.ok(capturedUrl.includes('/twitter/tweet/advanced_search'), 'should use search endpoint');
-      assert.ok(capturedUrl.includes('query=bitcoin+pump') || capturedUrl.includes('query=bitcoin%20pump'), 'should pass query param');
+      assert.ok(
+        capturedUrl.includes('query=bitcoin+pump') || capturedUrl.includes('query=bitcoin%20pump'),
+        'should pass query param',
+      );
       assert.ok(capturedUrl.includes('queryType=Latest'), 'should use Latest query type');
     });
   });
@@ -229,10 +235,11 @@ describe('Twitter adapter', () => {
         makeTweet({ id: '300', text: 'third tweet' }),
         makeTweet({ id: '200', text: 'second tweet' }),
       ];
-      globalThis.fetch = () => mockFetchResponse({
-        tweets,
-        has_next_page: false,
-      });
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets,
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items, lastId } = await adapter.poll('@testuser', null);
@@ -247,10 +254,11 @@ describe('Twitter adapter', () => {
         makeTweet({ id: '200', text: 'also old' }),
         makeTweet({ id: '300', text: 'new tweet' }),
       ];
-      globalThis.fetch = () => mockFetchResponse({
-        tweets,
-        has_next_page: false,
-      });
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets,
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items, lastId } = await adapter.poll('@testuser', '200');
@@ -316,10 +324,11 @@ describe('Twitter adapter', () => {
   // -------------------------------------------------------------------------
   describe('poll handles empty response', () => {
     it('returns empty items and null lastId when no tweets', async () => {
-      globalThis.fetch = () => mockFetchResponse({
-        tweets: [],
-        has_next_page: false,
-      });
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets: [],
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items, lastId } = await adapter.poll('@testuser', null);
@@ -329,14 +338,12 @@ describe('Twitter adapter', () => {
     });
 
     it('returns empty when all tweets are older than lastId', async () => {
-      const tweets = [
-        makeTweet({ id: '100' }),
-        makeTweet({ id: '200' }),
-      ];
-      globalThis.fetch = () => mockFetchResponse({
-        tweets,
-        has_next_page: false,
-      });
+      const tweets = [makeTweet({ id: '100' }), makeTweet({ id: '200' })];
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets,
+          has_next_page: false,
+        });
 
       const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
       const { items, lastId } = await adapter.poll('@testuser', '500');
@@ -346,11 +353,7 @@ describe('Twitter adapter', () => {
     });
 
     it('returns empty when twitterApiKey is not set', async () => {
-      const adapter = createTwitterAdapter(
-        makeConfig({ twitterApiKey: null }),
-        mockPool,
-        makeLogger(),
-      );
+      const adapter = createTwitterAdapter(makeConfig({ twitterApiKey: null }), mockPool, makeLogger());
       const { items, lastId } = await adapter.poll('@testuser', null);
 
       assert.equal(items.length, 0);
@@ -383,11 +386,7 @@ describe('Twitter adapter', () => {
     }
 
     it('does not crash on 429 and returns empty', async () => {
-      globalThis.fetch = () => mockFetchResponse(
-        {},
-        429,
-        { 'retry-after': '60' },
-      );
+      globalThis.fetch = () => mockFetchResponse({}, 429, { 'retry-after': '60' });
 
       const log = makeLogger();
       const adapter = createTwitterAdapter(makeConfig(), makeRateLimitAwarePool(), log);
@@ -416,9 +415,10 @@ describe('Twitter adapter', () => {
       const result = await adapter.poll('@testuser', null);
       assert.equal(fetchCalls, 1, 'should not make another fetch call');
       assert.equal(result.items.length, 0);
-      assert.ok(log.calls['debug']?.some(
-        (args) => JSON.stringify(args).includes('rate limit'),
-      ), 'should log debug about rate limit backoff');
+      assert.ok(
+        log.calls['debug']?.some((args) => JSON.stringify(args).includes('rate limit')),
+        'should log debug about rate limit backoff',
+      );
     });
   });
 

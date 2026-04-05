@@ -140,10 +140,7 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     return val != null ? Number(val) : 0;
   }
 
-  async function fetchPage(
-    sourceId: string,
-    cursor?: string,
-  ): Promise<z.infer<typeof TwitterResponseSchema> | null> {
+  async function fetchPage(sourceId: string, cursor?: string): Promise<z.infer<typeof TwitterResponseSchema> | null> {
     const url = buildUrl(sourceId, cursor);
 
     let response: Response;
@@ -166,18 +163,11 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
 
     if (response.status === 429) {
       const retryAfter = response.headers.get('retry-after');
-      const delayMs = retryAfter
-        ? Number(retryAfter) * 1000
-        : DEFAULT_RATE_LIMIT_MS;
-      const backoffMs = Number.isFinite(delayMs) && delayMs > 0
-        ? delayMs
-        : DEFAULT_RATE_LIMIT_MS;
+      const delayMs = retryAfter ? Number(retryAfter) * 1000 : DEFAULT_RATE_LIMIT_MS;
+      const backoffMs = Number.isFinite(delayMs) && delayMs > 0 ? delayMs : DEFAULT_RATE_LIMIT_MS;
       const deadline = Date.now() + backoffMs;
       await setRateLimitedUntil(sourceId, deadline);
-      log.warn(
-        { sourceId, status: 429, backoffMs },
-        'Twitter API rate limited — backing off',
-      );
+      log.warn({ sourceId, status: 429, backoffMs }, 'Twitter API rate limited — backing off');
       return null;
     }
 
@@ -215,10 +205,7 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     return parsed.data;
   }
 
-  async function poll(
-    sourceId: string,
-    lastId: string | null,
-  ): Promise<{ items: RawItem[]; lastId: string | null }> {
+  async function poll(sourceId: string, lastId: string | null): Promise<{ items: RawItem[]; lastId: string | null }> {
     const empty = { items: [], lastId: null };
 
     if (!config.twitterApiKey) {
@@ -252,9 +239,7 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
           'Twitter fetchPage returned null — incrementing consecutive failure counter',
         );
         if (failures >= CONSECUTIVE_FAILURE_THRESHOLD) {
-          throw new Error(
-            `Twitter circuit breaker: ${failures} consecutive failures for source ${sourceId}`,
-          );
+          throw new Error(`Twitter circuit breaker: ${failures} consecutive failures for source ${sourceId}`);
         }
         paginationErrored = true;
         break;
@@ -288,7 +273,10 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     }
 
     if (allTweets.length > 0 && hasMore) {
-      log.warn({ sourceId, maxPages: MAX_PAGES, fetched: allTweets.length }, 'Hit pagination limit — some tweets may not be ingested');
+      log.warn(
+        { sourceId, maxPages: MAX_PAGES, fetched: allTweets.length },
+        'Hit pagination limit — some tweets may not be ingested',
+      );
     }
 
     if (allTweets.length === 0) {
@@ -296,15 +284,13 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
     }
 
     // Validate tweet IDs are numeric before BigInt operations
-    const validTweets = allTweets.filter(t => /^\d+$/.test(t.id));
+    const validTweets = allTweets.filter((t) => /^\d+$/.test(t.id));
     if (validTweets.length < allTweets.length) {
       log.warn({ sourceId, invalid: allTweets.length - validTweets.length }, 'Skipped tweets with non-numeric IDs');
     }
 
     // Dedup: filter out tweets we've already seen
-    const filtered = lastId
-      ? validTweets.filter((t) => BigInt(t.id) > BigInt(lastId))
-      : validTweets;
+    const filtered = lastId ? validTweets.filter((t) => BigInt(t.id) > BigInt(lastId)) : validTweets;
 
     if (filtered.length === 0) {
       return { items: [], lastId };

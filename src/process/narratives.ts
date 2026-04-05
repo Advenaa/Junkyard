@@ -51,7 +51,9 @@ interface NarrativeRow {
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
+  let dot = 0,
+    normA = 0,
+    normB = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     normA += a[i] * a[i];
@@ -64,12 +66,7 @@ function cosineDistance(a: number[], b: number[]): number {
   return 1 - cosineSimilarity(a, b);
 }
 
-function silhouetteScore(
-  points: number[][],
-  assignments: number[],
-  k: number,
-  sampleRate = 0.1,
-): number {
+function silhouetteScore(points: number[][], assignments: number[], k: number, sampleRate = 0.1): number {
   const n = points.length;
   if (n <= 1) return 0;
 
@@ -185,13 +182,7 @@ function computeCentroid(points: number[][]): number[] {
   return centroid;
 }
 
-export function createNarrativeDetector(
-  pool: Pool,
-  log: Logger,
-  config: Config,
-  llm: LLM,
-  embedder: Embedder,
-) {
+export function createNarrativeDetector(pool: Pool, log: Logger, config: Config, llm: LLM, embedder: Embedder) {
   async function detectNarratives(): Promise<Narrative[]> {
     if (!embedder.isAvailable()) {
       log.info('Embedder not available, skipping narrative detection');
@@ -201,9 +192,7 @@ export function createNarrativeDetector(
     // Compute yesterday's date range in configured timezone (SL-013 fix)
     let timezone = 'Asia/Jakarta';
     try {
-      const tzResult = await pool.query<{ value: string }>(
-        "SELECT value FROM app_config WHERE key = 'timezone'",
-      );
+      const tzResult = await pool.query<{ value: string }>("SELECT value FROM app_config WHERE key = 'timezone'");
       timezone = tzResult.rows[0]?.value ?? timezone;
     } catch {
       log.warn('Could not read timezone from app_config, defaulting to Asia/Jakarta');
@@ -286,10 +275,9 @@ export function createNarrativeDetector(
     // Step h: Load prior day's narratives for signal strength comparison
     const priorDateStr = decrementDate(yesterdayStr);
 
-    const { rows: priorNarratives } = await pool.query<NarrativeRow>(
-      'SELECT * FROM narratives WHERE date = $1',
-      [priorDateStr],
-    );
+    const { rows: priorNarratives } = await pool.query<NarrativeRow>('SELECT * FROM narratives WHERE date = $1', [
+      priorDateStr,
+    ]);
 
     // Compute centroids for prior narratives using their summary embeddings
     const priorCentroids: { narrative: NarrativeRow; centroid: number[] }[] = [];
@@ -317,27 +305,19 @@ export function createNarrativeDetector(
       const centroid = computeCentroid(clusterVectors);
 
       // Compute avg sentiment
-      const sentiments = indices
-        .map((i) => rows[i].sentiment)
-        .filter((s): s is number => s !== null);
-      const avgSentiment =
-        sentiments.length > 0
-          ? sentiments.reduce((sum, s) => sum + s, 0) / sentiments.length
-          : null;
+      const sentiments = indices.map((i) => rows[i].sentiment).filter((s): s is number => s !== null);
+      const avgSentiment = sentiments.length > 0 ? sentiments.reduce((sum, s) => sum + s, 0) / sentiments.length : null;
 
       // Summary IDs
       const summaryIds = indices.map((i) => rows[i].summary_id);
 
       // Name via Haiku (with fallback on failure)
-      const snippets = indices
-        .map((i) => rows[i].body.slice(0, 200))
-        .join('\n---\n');
+      const snippets = indices.map((i) => rows[i].body.slice(0, 200)).join('\n---\n');
       let name: string;
       try {
         const nameResult = await llm.call({
           model: config.models.haiku,
-          system:
-            'Name this discussion cluster in 3-5 words. Return ONLY the name, nothing else.',
+          system: 'Name this discussion cluster in 3-5 words. Return ONLY the name, nothing else.',
           messages: [{ role: 'user', content: snippets }],
           maxTokens: 20,
           stage: 'narrative-cluster',
@@ -349,9 +329,7 @@ export function createNarrativeDetector(
       }
       if (!name) {
         // Fallback: first 5 words from the longest summary body
-        const longestBody = indices
-          .map((i) => rows[i].body)
-          .sort((a, b) => b.length - a.length)[0] ?? '';
+        const longestBody = indices.map((i) => rows[i].body).sort((a, b) => b.length - a.length)[0] ?? '';
         name = longestBody.split(/\s+/).slice(0, 5).join(' ') || `Cluster ${dateStr}`;
       }
 
@@ -390,25 +368,13 @@ export function createNarrativeDetector(
       await pool.query(
         `INSERT INTO narratives (id, name, date, member_count, avg_sentiment, signal_strength, summary_ids, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          id,
-          name,
-          dateStr,
-          indices.length,
-          avgSentiment,
-          signalStrength,
-          JSON.stringify(summaryIds),
-          Date.now(),
-        ],
+        [id, name, dateStr, indices.length, avgSentiment, signalStrength, JSON.stringify(summaryIds), Date.now()],
       );
 
       narratives.push(narrative);
     }
 
-    log.info(
-      { count: narratives.length, date: dateStr },
-      'Narrative detection complete',
-    );
+    log.info({ count: narratives.length, date: dateStr }, 'Narrative detection complete');
 
     return narratives;
   }

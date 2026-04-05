@@ -14,12 +14,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync(
-  new URL('../../src/pre-summarize/index.ts', import.meta.url), 'utf-8',
-);
+const src = readFileSync(new URL('../../src/pre-summarize/index.ts', import.meta.url), 'utf-8');
 
 describe('PS-020 — Atomic claim', () => {
-  it('uses UPDATE items SET status = \'processing\' (not just SELECT)', () => {
+  it("uses UPDATE items SET status = 'processing' (not just SELECT)", () => {
     assert.ok(
       src.includes("UPDATE items SET status = 'processing'"),
       "claim query should use UPDATE items SET status = 'processing'",
@@ -44,10 +42,7 @@ describe('PS-020 — Atomic claim', () => {
     const closingBacktick = afterClaim.indexOf('`', 1);
 
     assert.ok(returningIdx > -1, 'claim query should have a RETURNING clause');
-    assert.ok(
-      returningIdx < closingBacktick,
-      'RETURNING clause should be inside the claim query',
-    );
+    assert.ok(returningIdx < closingBacktick, 'RETURNING clause should be inside the claim query');
   });
 });
 
@@ -60,20 +55,14 @@ describe('PS-021 — Livelock guard', () => {
     const closingBacktick = afterClaim.indexOf('`', 1);
     const claimQuery = afterClaim.slice(0, closingBacktick);
 
-    assert.ok(
-      claimQuery.includes('retry_count < 3'),
-      'claim query should include retry_count < 3 to prevent livelock',
-    );
+    assert.ok(claimQuery.includes('retry_count < 3'), 'claim query should include retry_count < 3 to prevent livelock');
   });
 
   it('increments retry_count on parse failure', () => {
-    assert.ok(
-      src.includes('retry_count = retry_count + 1'),
-      'should increment retry_count on parse failure',
-    );
+    assert.ok(src.includes('retry_count = retry_count + 1'), 'should increment retry_count on parse failure');
   });
 
-  it('sets failed items back to status = \'ready\'', () => {
+  it("sets failed items back to status = 'ready'", () => {
     // Find the retry_count increment query and verify it also sets status = 'ready'
     const retryIdx = src.indexOf('retry_count = retry_count + 1');
     assert.ok(retryIdx > -1, 'should find retry_count increment');
@@ -83,10 +72,7 @@ describe('PS-021 — Livelock guard', () => {
     const lineEnd = src.indexOf('`', retryIdx);
     const updateStmt = src.slice(lineStart, lineEnd);
 
-    assert.ok(
-      updateStmt.includes("status = 'ready'"),
-      "retry_count increment query should also set status = 'ready'",
-    );
+    assert.ok(updateStmt.includes("status = 'ready'"), "retry_count increment query should also set status = 'ready'");
   });
 });
 
@@ -108,13 +94,7 @@ describe('PS-022 — ORDER BY', () => {
 
 describe('PS-023 — Token budget', () => {
   it('maxTokens uses 500 * batch.length (not 300)', () => {
-    assert.ok(
-      src.includes('500 * batch.length'),
-      'maxTokens should use 500 * batch.length',
-    );
-    assert.ok(
-      !src.includes('300 * batch.length'),
-      'maxTokens should NOT use 300 * batch.length',
-    );
+    assert.ok(src.includes('500 * batch.length'), 'maxTokens should use 500 * batch.length');
+    assert.ok(!src.includes('300 * batch.length'), 'maxTokens should NOT use 300 * batch.length');
   });
 });

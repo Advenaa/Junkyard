@@ -29,24 +29,12 @@ describe('SR-008: Search endpoint days and mode query params', () => {
   // --- Schema assertions ---
 
   it('search schema includes days property with integer type', () => {
-    assert.match(
-      src,
-      /days:\s*\{\s*type:\s*'integer'/,
-      'Search schema must define days with type integer',
-    );
+    assert.match(src, /days:\s*\{\s*type:\s*'integer'/, 'Search schema must define days with type integer');
   });
 
   it('search schema defines days minimum: 1, maximum: 365', () => {
-    assert.match(
-      src,
-      /days:\s*\{[^}]*minimum:\s*1/,
-      'Search schema days must have minimum: 1',
-    );
-    assert.match(
-      src,
-      /days:\s*\{[^}]*maximum:\s*365/,
-      'Search schema days must have maximum: 365',
-    );
+    assert.match(src, /days:\s*\{[^}]*minimum:\s*1/, 'Search schema days must have minimum: 1');
+    assert.match(src, /days:\s*\{[^}]*maximum:\s*365/, 'Search schema days must have maximum: 365');
   });
 
   it('search schema includes mode property with enum keyword and semantic', () => {
@@ -60,16 +48,8 @@ describe('SR-008: Search endpoint days and mode query params', () => {
   // --- Handler assertions ---
 
   it('handler destructures days as rawDays and mode as rawMode', () => {
-    assert.match(
-      src,
-      /days:\s*rawDays/,
-      'Handler must destructure days: rawDays',
-    );
-    assert.match(
-      src,
-      /mode:\s*rawMode/,
-      'Handler must destructure mode: rawMode',
-    );
+    assert.match(src, /days:\s*rawDays/, 'Handler must destructure days: rawDays');
+    assert.match(src, /mode:\s*rawMode/, 'Handler must destructure mode: rawMode');
   });
 
   it('handler defaults mode to keyword when not provided', () => {

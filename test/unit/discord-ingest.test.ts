@@ -214,13 +214,7 @@ describe('TokenState status values', () => {
     const config = makeConfig({ discordTokens: ['tok'] });
     const adapter = createDiscordAdapter(config, mockPool, makeLogger(), noopOnMessage);
     const [state] = adapter.getTokenStates();
-    const validStatuses: TokenState['status'][] = [
-      'idle',
-      'connecting',
-      'connected',
-      'backoff',
-      'disabled',
-    ];
+    const validStatuses: TokenState['status'][] = ['idle', 'connecting', 'connected', 'backoff', 'disabled'];
     assert.ok(validStatuses.includes(state!.status));
   });
 });

@@ -25,9 +25,10 @@ describe('AU-031: blocked user session cleanup in requireAuth middleware', () =>
 
   // Extract the blocked-user handling block for ordering assertions
   const blockedBlockStart = src.indexOf("role === 'blocked'");
-  const blockedBlock = blockedBlockStart !== -1
-    ? src.slice(blockedBlockStart, src.indexOf('}', src.indexOf('return;', blockedBlockStart)) + 1)
-    : '';
+  const blockedBlock =
+    blockedBlockStart !== -1
+      ? src.slice(blockedBlockStart, src.indexOf('}', src.indexOf('return;', blockedBlockStart)) + 1)
+      : '';
 
   it('detects role === blocked and has a handling block', () => {
     assert.ok(blockedBlockStart !== -1, "middleware must check for role === 'blocked'");
@@ -71,22 +72,17 @@ describe('AU-031: blocked user session cleanup in requireAuth middleware', () =>
   it('deletes session before clearing cookie and returning 403', () => {
     const deletePos = blockedBlock.indexOf('sessionManager.delete');
     const clearCookiePos = blockedBlock.indexOf('reply.clearCookie');
-    const statusPos = blockedBlock.indexOf('.status(403)') !== -1
-      ? blockedBlock.indexOf('.status(403)')
-      : blockedBlock.indexOf('.code(403)');
+    const statusPos =
+      blockedBlock.indexOf('.status(403)') !== -1
+        ? blockedBlock.indexOf('.status(403)')
+        : blockedBlock.indexOf('.code(403)');
 
     assert.ok(deletePos !== -1, 'sessionManager.delete must be present');
     assert.ok(clearCookiePos !== -1, 'reply.clearCookie must be present');
     assert.ok(statusPos !== -1, '403 response must be present');
 
-    assert.ok(
-      deletePos < clearCookiePos,
-      'sessionManager.delete must be called before reply.clearCookie',
-    );
-    assert.ok(
-      clearCookiePos < statusPos,
-      'reply.clearCookie must be called before the 403 response',
-    );
+    assert.ok(deletePos < clearCookiePos, 'sessionManager.delete must be called before reply.clearCookie');
+    assert.ok(clearCookiePos < statusPos, 'reply.clearCookie must be called before the 403 response');
   });
 
   it('session delete is awaited', () => {

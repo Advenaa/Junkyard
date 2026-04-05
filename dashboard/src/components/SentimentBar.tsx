@@ -8,7 +8,8 @@ export function SentimentBar({ name, sentiment, reason }: { name: string; sentim
       <div className="flex items-center justify-between">
         <span className="text-text-primary text-sm">{name}</span>
         <span className={`font-mono text-xs ${isPositive ? 'text-accent-green' : 'text-accent-red'}`}>
-          {isPositive ? '+' : ''}{sentiment.toFixed(2)}
+          {isPositive ? '+' : ''}
+          {sentiment.toFixed(2)}
         </span>
       </div>
       <div className="h-2 bg-surface rounded-full overflow-hidden">

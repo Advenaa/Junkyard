@@ -1,4 +1,12 @@
-export function LoadMoreButton({ loading, onClick, hasMore }: { loading: boolean; onClick: () => void; hasMore: boolean }) {
+export function LoadMoreButton({
+  loading,
+  onClick,
+  hasMore,
+}: {
+  loading: boolean;
+  onClick: () => void;
+  hasMore: boolean;
+}) {
   if (!hasMore) return null;
 
   return (

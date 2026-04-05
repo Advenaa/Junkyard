@@ -27,7 +27,7 @@ describe('DL-015: embedCharCount includes embed.url length', () => {
     const embed = {
       title: 'Test',
       description: 'Desc',
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [],
       timestamp: new Date().toISOString(),
       footer: { text: 'podders' },
@@ -45,7 +45,7 @@ describe('DL-015: embedCharCount includes embed.url length', () => {
     const embed = {
       title: 'Test',
       description: 'Desc',
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [],
       timestamp: new Date().toISOString(),
       footer: { text: 'podders' },
@@ -61,7 +61,7 @@ describe('DL-015: embedCharCount includes embed.url length', () => {
     const embed = {
       title: 'T',
       description: 'D',
-      color: 0x5B8DEF,
+      color: 0x5b8def,
       fields: [{ name: 'FN', value: 'FV', inline: false }],
       timestamp: new Date().toISOString(),
       footer: { text: 'F' },
@@ -137,9 +137,7 @@ describe('DL-020: updateDeliveryStatus after successful POST is wrapped in try/c
 
   it('catch block logs error but does not re-throw', () => {
     // Find the success delivery section (indentation varies)
-    const successBlock = src.match(
-      /if\s*\(success\)\s*\{([\s\S]*?)return true;/,
-    );
+    const successBlock = src.match(/if\s*\(success\)\s*\{([\s\S]*?)return true;/);
     assert.ok(successBlock, 'success block must exist after postWithRetry');
 
     const block = successBlock[1]!;
@@ -148,17 +146,12 @@ describe('DL-020: updateDeliveryStatus after successful POST is wrapped in try/c
     // Must log error
     assert.match(block, /log\.error/, 'catch block must log the error');
     // Must NOT re-throw (the block ends with return true, not throw)
-    assert.ok(
-      !block.includes('throw'),
-      'catch block must not re-throw — delivery should still return true',
-    );
+    assert.ok(!block.includes('throw'), 'catch block must not re-throw — delivery should still return true');
   });
 
   it('returns true after the try/catch, not inside the try block', () => {
     // The `return true` must come after the catch block closes
-    const successBlock = src.match(
-      /if\s*\(success\)\s*\{([\s\S]*?)return true;/,
-    );
+    const successBlock = src.match(/if\s*\(success\)\s*\{([\s\S]*?)return true;/);
     assert.ok(successBlock, 'success block must exist');
 
     const block = successBlock[1]!;

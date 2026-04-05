@@ -112,7 +112,7 @@ function buildBatchPool(opts: {
   sourceIds?: Record<string, string>;
 }) {
   // All distinct summary IDs across all entities
-  const allSummaryIds = [...new Set(opts.correlationRows.flatMap(r => r.mentions.map(m => m.summary_id)))];
+  const allSummaryIds = [...new Set(opts.correlationRows.flatMap((r) => r.mentions.map((m) => m.summary_id)))];
 
   // Build summary meta rows — now includes `source` field for CO-001
   // Map each summary_id to its source type from the correlation rows
@@ -124,8 +124,8 @@ function buildBatchPool(opts: {
   }
 
   const summaryMetaRows = allSummaryIds
-    .filter(id => id in opts.urgencies || (opts.sourceIds && id in opts.sourceIds) || summarySourceMap.has(id))
-    .map(id => ({
+    .filter((id) => id in opts.urgencies || (opts.sourceIds && id in opts.sourceIds) || summarySourceMap.has(id))
+    .map((id) => ({
       id,
       urgency: opts.urgencies[id] ?? 'routine',
       source_id: opts.sourceIds?.[id] ?? id,
@@ -138,17 +138,17 @@ function buildBatchPool(opts: {
     trustPairSet.add(`${meta.source}:${meta.source_id}`);
   }
   const trustRows = [...trustPairSet]
-    .map(key => {
+    .map((key) => {
       const [source, ...rest] = key.split(':');
       const sourceId = rest.join(':');
       return { source, source_id: sourceId, trust_weight: opts.trustWeights[source] };
     })
-    .filter(r => r.trust_weight !== undefined);
+    .filter((r) => r.trust_weight !== undefined);
 
   return mockPool([
-    { rows: opts.correlationRows },  // CORRELATION_SQL
-    { rows: summaryMetaRows },        // batch summaries (urgency + source_id + source)
-    { rows: trustRows },              // batch trust weights per (source, source_id)
+    { rows: opts.correlationRows }, // CORRELATION_SQL
+    { rows: summaryMetaRows }, // batch summaries (urgency + source_id + source)
+    { rows: trustRows }, // batch trust weights per (source, source_id)
   ]);
 }
 
@@ -159,14 +159,16 @@ function buildBatchPool(opts: {
 describe('createCorrelator.run() — single entity, two sources', () => {
   it('correlates entity from two different sources', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 0.8, twitter: 0.6 },
       urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
     });
@@ -183,15 +185,17 @@ describe('createCorrelator.run() — single entity, two sources', () => {
 
   it('deduplicates multiple mentions from the same source', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'discord', summary_id: 'sum-3', sentiment: 0.6 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'discord', summary_id: 'sum-3', sentiment: 0.6 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 0.8, twitter: 0.6 },
       urgencies: { 'sum-1': 'routine', 'sum-3': 'routine', 'sum-2': 'routine' },
     });
@@ -207,15 +211,17 @@ describe('createCorrelator.run() — single entity, two sources', () => {
 
   it('uses the first summary_id as representative sourceId for a source', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'discord', summary_id: 'sum-3', sentiment: 0.6 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'discord', summary_id: 'sum-3', sentiment: 0.6 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 0.8, twitter: 0.6 },
       urgencies: { 'sum-1': 'routine', 'sum-3': 'routine', 'sum-2': 'routine' },
     });
@@ -229,14 +235,16 @@ describe('createCorrelator.run() — single entity, two sources', () => {
 
   it('defaults trust_weight to 0.5 when source is not found in DB', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'unknown-source', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'unknown-source', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 0.8 }, // unknown-source not in DB
       urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
     });
@@ -251,14 +259,16 @@ describe('createCorrelator.run() — single entity, two sources', () => {
 
   it('defaults urgency to routine when summary not found', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Solana',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Solana',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 0.5, twitter: 0.5 },
       urgencies: {}, // no urgencies in DB
     });
@@ -284,11 +294,13 @@ describe('createCorrelator.run() — urgency resolution', () => {
     }));
 
     return buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'ETH',
-        mentions,
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'ETH',
+          mentions,
+        },
+      ],
       trustWeights: { discord: 0.5, twitter: 0.5 },
       urgencies,
     });
@@ -337,14 +349,16 @@ describe('createCorrelator.run() — flash trigger', () => {
     const w2 = weightedSum - w1;
 
     return buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Flash Entity',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.8 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.9 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Flash Entity',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.8 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.9 },
+          ],
+        },
+      ],
       trustWeights: { discord: w1, twitter: w2 },
       urgencies: { 'sum-1': urgency, 'sum-2': urgency },
     });
@@ -456,7 +470,13 @@ describe('createCorrelator.run() — multiple entities', () => {
         },
       ],
       trustWeights: { discord: 0.3, twitter: 0.8, rss: 0.9, news: 1.0 },
-      urgencies: { 'sum-1': 'routine', 'sum-2': 'routine', 'sum-3': 'breaking', 'sum-4': 'breaking', 'sum-5': 'breaking' },
+      urgencies: {
+        'sum-1': 'routine',
+        'sum-2': 'routine',
+        'sum-3': 'breaking',
+        'sum-4': 'breaking',
+        'sum-5': 'breaking',
+      },
     });
 
     const correlator = createCorrelator(pool as never, silentLog);
@@ -473,14 +493,16 @@ describe('createCorrelator.run() — multiple entities', () => {
 describe('createCorrelator.run() — trust weight clamping', () => {
   it('clamps trust weight > 1 to 1.0', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 1.5, twitter: 0.6 },
       urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
     });
@@ -488,7 +510,7 @@ describe('createCorrelator.run() — trust weight clamping', () => {
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
-    const discordSource = result.correlated[0].sources.find(s => s.source === 'discord');
+    const discordSource = result.correlated[0].sources.find((s) => s.source === 'discord');
     assert.strictEqual(discordSource?.trustWeight, 1.0);
     // weightedSum uses clamped value: 1.0 + 0.6
     assert.strictEqual(result.correlated[0].weightedSum, 1.6);
@@ -496,14 +518,16 @@ describe('createCorrelator.run() — trust weight clamping', () => {
 
   it('clamps negative trust weight to 0', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: -0.3, twitter: 0.6 },
       urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
     });
@@ -511,7 +535,7 @@ describe('createCorrelator.run() — trust weight clamping', () => {
     const correlator = createCorrelator(pool as never, silentLog);
     const result = await correlator.run();
 
-    const discordSource = result.correlated[0].sources.find(s => s.source === 'discord');
+    const discordSource = result.correlated[0].sources.find((s) => s.source === 'discord');
     assert.strictEqual(discordSource?.trustWeight, 0);
     // weightedSum uses clamped value: 0 + 0.6
     assert.strictEqual(result.correlated[0].weightedSum, 0.6);
@@ -525,14 +549,16 @@ describe('createCorrelator.run() — trust weight clamping', () => {
 describe('createCorrelator.run() — batch queries', () => {
   it('makes exactly 3 queries: correlation + trust batch + urgency batch', async () => {
     const pool = buildBatchPool({
-      correlationRows: [{
-        entity_id: 'ent-1',
-        entity_name: 'Bitcoin',
-        mentions: [
-          { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
-          { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
-        ],
-      }],
+      correlationRows: [
+        {
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          mentions: [
+            { source: 'discord', summary_id: 'sum-1', sentiment: 0.5 },
+            { source: 'twitter', summary_id: 'sum-2', sentiment: 0.7 },
+          ],
+        },
+      ],
       trustWeights: { discord: 0.8, twitter: 0.6 },
       urgencies: { 'sum-1': 'routine', 'sum-2': 'routine' },
     });
@@ -544,11 +570,12 @@ describe('createCorrelator.run() — batch queries', () => {
     // First call: CORRELATION_SQL
     assert.ok(pool.calls[0].text.includes('entity_mentions'), 'first query should be CORRELATION_SQL');
     // Second call: batch summaries (urgency + source_id + source)
-    assert.ok(pool.calls[1].text.includes('FROM summaries WHERE id = ANY($1)'),
-      'second query should batch-fetch summaries');
+    assert.ok(
+      pool.calls[1].text.includes('FROM summaries WHERE id = ANY($1)'),
+      'second query should batch-fetch summaries',
+    );
     // Third call: batch trust weight lookup per (source, source_id) pairs
-    assert.ok(pool.calls[2].text.includes('FROM sources'),
-      'third query should batch-fetch trust weights');
+    assert.ok(pool.calls[2].text.includes('FROM sources'), 'third query should batch-fetch trust weights');
   });
 });
 

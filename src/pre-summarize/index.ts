@@ -21,8 +21,14 @@ interface Item {
 }
 
 const URGENCY_KEYWORDS = [
-  'exploit', 'hack', 'rate decision', 'flash crash',
-  'halt', 'circuit breaker', 'emergency', 'bank run',
+  'exploit',
+  'hack',
+  'rate decision',
+  'flash crash',
+  'halt',
+  'circuit breaker',
+  'emergency',
+  'bank run',
 ];
 
 export function shouldSkip(item: { source: string; content: string }): boolean {
@@ -31,14 +37,12 @@ export function shouldSkip(item: { source: string; content: string }): boolean {
 
   // Urgency items still need pre-summarization if extremely long
   const lower = item.content.toLowerCase();
-  const isUrgent = URGENCY_KEYWORDS.some(kw => lower.includes(kw));
+  const isUrgent = URGENCY_KEYWORDS.some((kw) => lower.includes(kw));
   if (isUrgent && item.content.length <= 8000) return true; // Short urgent: skip pre-summarize
   // Long urgent (>8000): fall through to pre-summarization
 
   const tokenEstimate = item.content.length / 4;
-  const entityHints = (
-    item.content.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|\$[A-Za-z]+/g) ?? []
-  ).length;
+  const entityHints = (item.content.match(/[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+|\$[A-Za-z]+/g) ?? []).length;
   const density = entityHints / (tokenEstimate / 100);
   if (density > 2) return true;
 
@@ -62,9 +66,7 @@ const OUTPUT_FORMAT_SUFFIX =
   '\n\nOutput format: label each summary with its number, e.g. [1] Summary text... [2] Summary text...';
 
 function classifyBatch(batch: Item[]): 'regulatory' | 'general' {
-  return batch.some(item => REGULATORY_RE.test(item.content))
-    ? 'regulatory'
-    : 'general';
+  return batch.some((item) => REGULATORY_RE.test(item.content)) ? 'regulatory' : 'general';
 }
 
 function formatBatchContent(
@@ -79,16 +81,11 @@ function formatBatchContent(
     .join('\n\n');
 }
 
-export function parseLabeledOutput(
-  output: string,
-  batchSize: number,
-): (string | null)[] {
+export function parseLabeledOutput(output: string, batchSize: number): (string | null)[] {
   const results: (string | null)[] = new Array(batchSize).fill(null);
 
   for (let i = 1; i <= batchSize; i++) {
-    const labelPattern = new RegExp(
-      `\\[${i}\\]\\s*([\\s\\S]*?)(?=\\[${i + 1}\\]|$)`,
-    );
+    const labelPattern = new RegExp(`\\[${i}\\]\\s*([\\s\\S]*?)(?=\\[${i + 1}\\]|$)`);
     const match = output.match(labelPattern);
     if (match) {
       const text = match[1].trim();
@@ -112,12 +109,7 @@ function chunk<T>(arr: T[], min: number, max: number): T[][] {
   return batches;
 }
 
-export function createPreSummarizer(
-  pool: Pool,
-  log: Logger,
-  config: Config,
-  llm: LLMCaller,
-) {
+export function createPreSummarizer(pool: Pool, log: Logger, config: Config, llm: LLMCaller) {
   async function run(): Promise<number> {
     // PS-020: Atomically claim items as 'processing' to prevent race with main summarize pipeline
     // PS-022: ORDER BY created_at ASC for deterministic processing order
@@ -138,17 +130,12 @@ export function createPreSummarizer(
       [batchId],
     );
 
-    const eligible = rows.filter(item => !shouldSkip(item));
+    const eligible = rows.filter((item) => !shouldSkip(item));
 
     // Set skipped items (that were claimed) back to 'ready'
-    const skippedIds = rows
-      .filter(item => shouldSkip(item))
-      .map(item => item.id);
+    const skippedIds = rows.filter((item) => shouldSkip(item)).map((item) => item.id);
     if (skippedIds.length > 0) {
-      await pool.query(
-        `UPDATE items SET status = 'ready' WHERE id = ANY($1::text[])`,
-        [skippedIds],
-      );
+      await pool.query(`UPDATE items SET status = 'ready' WHERE id = ANY($1::text[])`, [skippedIds]);
     }
 
     if (eligible.length === 0) {
@@ -189,9 +176,7 @@ export function createPreSummarizer(
             updateAnchors.push(batch[i].content.slice(0, 800));
           } else {
             failedIds.push(batch[i].id);
-            log.warn(
-              `pre-summarize: parse failure for item ${batch[i].id}, keeping original`,
-            );
+            log.warn(`pre-summarize: parse failure for item ${batch[i].id}, keeping original`);
           }
         }
 
@@ -217,7 +202,7 @@ export function createPreSummarizer(
         log.error(`pre-summarize: LLM call failed for batch, keeping originals: ${message}`);
         // PS-020: On LLM error, release all batch items back to 'ready'
         // IP-004: Increment retry_count to prevent indefinite retries (livelock)
-        const batchIds = batch.map(item => item.id);
+        const batchIds = batch.map((item) => item.id);
         await pool.query(
           `UPDATE items SET retry_count = retry_count + 1, status = 'ready' WHERE id = ANY($1::text[])`,
           [batchIds],

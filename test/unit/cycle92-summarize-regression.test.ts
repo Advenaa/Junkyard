@@ -10,23 +10,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync(
-  new URL('../../src/process/summarize.ts', import.meta.url),
-  'utf-8',
-);
+const src = readFileSync(new URL('../../src/process/summarize.ts', import.meta.url), 'utf-8');
 
 describe('SM-010: ProcessedChunk itemCount plumbing', () => {
   it('defines ProcessedChunk interface or type with parsed and itemCount', () => {
-    const match = src.match(
-      /(?:interface|type)\s+ProcessedChunk\b[^}]*\bparsed\b.*\bitemCount\b.*}/s,
-    );
+    const match = src.match(/(?:interface|type)\s+ProcessedChunk\b[^}]*\bparsed\b.*\bitemCount\b.*}/s);
     assert.ok(match, 'ProcessedChunk definition with parsed + itemCount fields must exist');
   });
 
   it('processChunk returns ProcessedChunk[]', () => {
-    const match = src.match(
-      /async\s+function\s+processChunk\b[^)]*\):\s*Promise<ProcessedChunk\[\]>/s,
-    );
+    const match = src.match(/async\s+function\s+processChunk\b[^)]*\):\s*Promise<ProcessedChunk\[\]>/s);
     assert.ok(match, 'processChunk must have return type Promise<ProcessedChunk[]>');
   });
 

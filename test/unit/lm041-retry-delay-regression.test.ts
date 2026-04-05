@@ -13,12 +13,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import {
-  createLLM,
-  extractRetryAfter,
-  type LLMCallParams,
-  type LLMTestOverrides,
-} from '../../src/llm.js';
+import { createLLM, extractRetryAfter, type LLMCallParams, type LLMTestOverrides } from '../../src/llm.js';
 
 // ── Mock Helpers ──────────────────────────────────────────────────────
 
@@ -87,9 +82,7 @@ function defaultParams(overrides: Partial<LLMCallParams> = {}): LLMCallParams {
 
 // ── Source-level structural test ──────────────────────────────────────
 
-const llmSrc = readFileSync(
-  new URL('../../src/llm.ts', import.meta.url), 'utf-8',
-);
+const llmSrc = readFileSync(new URL('../../src/llm.ts', import.meta.url), 'utf-8');
 
 describe('LM-041 — 429 delay formula is structurally correct (no sub-minimum jitter)', () => {
   it('delay formula uses retryAfter * 1000 as the base (additive jitter only)', () => {
@@ -126,19 +119,16 @@ describe('LM-041 — 429 retry delay is always >= retryAfter * 1000 (runtime)', 
     const sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount === 1) throw makeErrorWithRetryAfter(retryAfterSec);
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount === 1) throw makeErrorWithRetryAfter(retryAfterSec);
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 1, 'should have slept once');
@@ -155,19 +145,16 @@ describe('LM-041 — 429 retry delay is always >= retryAfter * 1000 (runtime)', 
     const sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount === 1) throw makeErrorWithStatus(429, 'rate limited');
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount === 1) throw makeErrorWithStatus(429, 'rate limited');
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 1);
@@ -183,19 +170,16 @@ describe('LM-041 — 429 retry delay is always >= retryAfter * 1000 (runtime)', 
     const sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount <= 3) throw makeErrorWithRetryAfter(retryAfterSec);
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount <= 3) throw makeErrorWithRetryAfter(retryAfterSec);
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 3, 'should have slept 3 times (3 retries)');
@@ -215,30 +199,21 @@ describe('LM-041 — 429 retry delay is always >= retryAfter * 1000 (runtime)', 
     const sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount === 1) throw makeErrorWithRetryAfter(retryAfterSec);
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount === 1) throw makeErrorWithRetryAfter(retryAfterSec);
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 1);
-    assert.ok(
-      sleepCalls[0]! >= minimumDelayMs,
-      `delay ${sleepCalls[0]} must be >= minimum ${minimumDelayMs}`,
-    );
-    assert.ok(
-      sleepCalls[0]! < maxDelayMs,
-      `delay ${sleepCalls[0]} must be < maximum ${maxDelayMs}`,
-    );
+    assert.ok(sleepCalls[0]! >= minimumDelayMs, `delay ${sleepCalls[0]} must be >= minimum ${minimumDelayMs}`);
+    assert.ok(sleepCalls[0]! < maxDelayMs, `delay ${sleepCalls[0]} must be < maximum ${maxDelayMs}`);
   });
 
   it('small retryAfter values still produce delay >= retryAfter * 1000', async () => {
@@ -247,19 +222,16 @@ describe('LM-041 — 429 retry delay is always >= retryAfter * 1000 (runtime)', 
     const sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount === 1) throw makeErrorWithRetryAfter(retryAfterSec);
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount === 1) throw makeErrorWithRetryAfter(retryAfterSec);
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 1);

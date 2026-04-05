@@ -41,16 +41,12 @@ describe('CH-017: semantic_search truncates each result body to 300 chars', () =
     const wrapNonceIndex = src.indexOf("wrapNonce('search_result'", sliceIndex);
     assert.ok(
       wrapNonceIndex !== -1 && wrapNonceIndex > sliceIndex,
-      'wrapNonce(\'search_result\', ...) must appear AFTER .slice(0, 300) — truncation before wrapping',
+      "wrapNonce('search_result', ...) must appear AFTER .slice(0, 300) — truncation before wrapping",
     );
   });
 
   it('uses truncatedBody (or similar) variable between slice and wrapNonce', () => {
-    assert.match(
-      src,
-      /truncatedBody/,
-      'tools.ts should use a truncatedBody variable for the sliced content',
-    );
+    assert.match(src, /truncatedBody/, 'tools.ts should use a truncatedBody variable for the sliced content');
   });
 });
 
@@ -69,11 +65,7 @@ describe('CH-010: semantic_search displays created_at as YYYY-MM-DD', () => {
   });
 
   it('creates a Date from epochMs via new Date(epochMs)', () => {
-    assert.match(
-      src,
-      /new\s+Date\(epochMs\)/,
-      'tools.ts must create a Date from epochMs for ISO conversion',
-    );
+    assert.match(src, /new\s+Date\(epochMs\)/, 'tools.ts must create a Date from epochMs for ISO conversion');
   });
 
   it('result line includes "date:" with the converted dateStr (not raw epoch)', () => {

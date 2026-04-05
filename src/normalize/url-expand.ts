@@ -2,17 +2,7 @@ import dns from 'node:dns';
 import net from 'node:net';
 import { validateUrl } from '../url-validator.js';
 
-const SHORT_HOSTS = new Set([
-  't.co',
-  'bit.ly',
-  'goo.gl',
-  'tinyurl.com',
-  'ow.ly',
-  'is.gd',
-  'buff.ly',
-  'adf.ly',
-  'j.mp',
-]);
+const SHORT_HOSTS = new Set(['t.co', 'bit.ly', 'goo.gl', 'tinyurl.com', 'ow.ly', 'is.gd', 'buff.ly', 'adf.ly', 'j.mp']);
 
 const MAX_REDIRECTS = 5;
 
@@ -26,9 +16,7 @@ const MAX_REDIRECTS = 5;
  *
  * The FINAL resolved URL must always go through the full `validateUrl()`.
  */
-async function validateIntermediateHop(
-  parsed: URL,
-): Promise<{ valid: boolean; resolvedIp?: string }> {
+async function validateIntermediateHop(parsed: URL): Promise<{ valid: boolean; resolvedIp?: string }> {
   // Reject non-standard ports (allow 80 for HTTP, 443 for HTTPS, or default)
   if (parsed.port !== '') {
     const portNum = Number(parsed.port);
@@ -64,7 +52,9 @@ async function validateIntermediateHop(
       const parts = ip.split('.').map(Number);
       const [a, b] = parts;
       if (
-        a === 0 || a === 10 || a === 127 ||
+        a === 0 ||
+        a === 10 ||
+        a === 127 ||
         (a === 172 && b >= 16 && b <= 31) ||
         (a === 192 && b === 168) ||
         (a === 169 && b === 254)
@@ -74,8 +64,10 @@ async function validateIntermediateHop(
     } else if (net.isIPv6(ip)) {
       const normalized = ip.toLowerCase();
       if (
-        normalized === '::1' || normalized === '::' ||
-        normalized.startsWith('fc') || normalized.startsWith('fd') ||
+        normalized === '::1' ||
+        normalized === '::' ||
+        normalized.startsWith('fc') ||
+        normalized.startsWith('fd') ||
         normalized.startsWith('fe80')
       ) {
         return { valid: false };
@@ -157,9 +149,7 @@ export async function expandUrl(url: string): Promise<string> {
         if (validation.resolvedIp) {
           const pinned = new URL(current);
           pinnedHost = pinned.hostname;
-          pinned.hostname = net.isIPv6(validation.resolvedIp)
-            ? `[${validation.resolvedIp}]`
-            : validation.resolvedIp;
+          pinned.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
           pinnedFetchUrl = pinned.href;
         }
       } else {
@@ -177,9 +167,7 @@ export async function expandUrl(url: string): Promise<string> {
         if (hopCheck.resolvedIp) {
           const pinned = new URL(current);
           pinnedHost = pinned.hostname;
-          pinned.hostname = net.isIPv6(hopCheck.resolvedIp)
-            ? `[${hopCheck.resolvedIp}]`
-            : hopCheck.resolvedIp;
+          pinned.hostname = net.isIPv6(hopCheck.resolvedIp) ? `[${hopCheck.resolvedIp}]` : hopCheck.resolvedIp;
           pinnedFetchUrl = pinned.href;
         }
       }

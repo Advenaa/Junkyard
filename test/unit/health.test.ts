@@ -38,11 +38,13 @@ function fakeConfig(overrides: Partial<Config> = {}): Config {
  * based on the SQL text. By default all queries return empty rows
  * or zero counts so that health checks pass.
  */
-function createMockPool(overrides: {
-  queryFn?: (text: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
-  totalCount?: number;
-  idleCount?: number;
-} = {}) {
+function createMockPool(
+  overrides: {
+    queryFn?: (text: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+    totalCount?: number;
+    idleCount?: number;
+  } = {},
+) {
   const defaultQuery = async (_text: string, _params?: unknown[]) => {
     if (_text.includes('SELECT 1')) {
       return { rows: [{ '?column?': 1 }] };
@@ -79,7 +81,10 @@ describe('health monitor', () => {
 
       assert.ok(dbCheck, 'db_connectivity check should exist');
       assert.equal(dbCheck.status, 'ok');
-      assert.ok(dbCheck.message?.includes('DB responsive'), `Expected message containing "DB responsive", got: ${dbCheck.message}`);
+      assert.ok(
+        dbCheck.message?.includes('DB responsive'),
+        `Expected message containing "DB responsive", got: ${dbCheck.message}`,
+      );
     });
 
     it('returns critical when pool.query throws', async () => {
@@ -98,7 +103,10 @@ describe('health monitor', () => {
 
       assert.ok(dbCheck, 'db_connectivity check should exist');
       assert.equal(dbCheck.status, 'critical');
-      assert.ok(dbCheck.message?.includes('connection refused'), `Expected message containing "connection refused", got: ${dbCheck.message}`);
+      assert.ok(
+        dbCheck.message?.includes('connection refused'),
+        `Expected message containing "connection refused", got: ${dbCheck.message}`,
+      );
     });
   });
 
@@ -192,12 +200,14 @@ describe('health monitor', () => {
           }
           if (text.includes('LEFT JOIN source_state')) {
             return {
-              rows: [{
-                label: 'stale-discord',
-                poll_interval: 60, // 60 seconds
-                last_fetched_at: Date.now() - 300_000, // 5 minutes ago = 5x the interval (> 3x threshold)
-                status: 'active',
-              }],
+              rows: [
+                {
+                  label: 'stale-discord',
+                  poll_interval: 60, // 60 seconds
+                  last_fetched_at: Date.now() - 300_000, // 5 minutes ago = 5x the interval (> 3x threshold)
+                  status: 'active',
+                },
+              ],
             };
           }
           if (text.includes("status = 'disabled'")) {

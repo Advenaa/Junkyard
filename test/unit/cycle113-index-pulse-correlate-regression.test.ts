@@ -42,9 +42,7 @@ describe('SD-016: advisory lock prevents onDaily / catch-up race', () => {
 
     // Find the next top-level async function after onDaily to bound the search
     const afterOnDaily = indexSrc.indexOf('async function onHealthCheck()', onDailyStart);
-    const onDailyBody = afterOnDaily !== -1
-      ? indexSrc.slice(onDailyStart, afterOnDaily)
-      : indexSrc.slice(onDailyStart);
+    const onDailyBody = afterOnDaily !== -1 ? indexSrc.slice(onDailyStart, afterOnDaily) : indexSrc.slice(onDailyStart);
 
     assert.ok(
       onDailyBody.includes('pg_try_advisory_lock(42424243)'),
@@ -62,9 +60,10 @@ describe('SD-016: advisory lock prevents onDaily / catch-up race', () => {
 
     // Bound by the next section comment or end of file
     const afterHealthCheck = indexSrc.indexOf('// ── 5.', onHealthCheckStart);
-    const onHealthCheckBody = afterHealthCheck !== -1
-      ? indexSrc.slice(onHealthCheckStart, afterHealthCheck)
-      : indexSrc.slice(onHealthCheckStart);
+    const onHealthCheckBody =
+      afterHealthCheck !== -1
+        ? indexSrc.slice(onHealthCheckStart, afterHealthCheck)
+        : indexSrc.slice(onHealthCheckStart);
 
     assert.ok(
       onHealthCheckBody.includes('pg_try_advisory_lock(42424243)'),
@@ -88,10 +87,7 @@ describe('SD-012: pulse uses alias-aware entity lookup', () => {
   });
 
   it('WHERE clause uses ea.alias = ANY', () => {
-    assert.ok(
-      pulseSrc.includes('ea.alias = ANY'),
-      'Expected ea.alias = ANY in src/process/pulse.ts',
-    );
+    assert.ok(pulseSrc.includes('ea.alias = ANY'), 'Expected ea.alias = ANY in src/process/pulse.ts');
   });
 });
 
@@ -99,10 +95,7 @@ describe('SD-012: pulse uses alias-aware entity lookup', () => {
 
 describe('SD-015: correlation cutoff uses >= instead of >', () => {
   it('CORRELATION_SQL uses em.created_at >= $1', () => {
-    assert.ok(
-      correlateSrc.includes('em.created_at >= $1'),
-      'Expected em.created_at >= $1 in src/process/correlate.ts',
-    );
+    assert.ok(correlateSrc.includes('em.created_at >= $1'), 'Expected em.created_at >= $1 in src/process/correlate.ts');
   });
 
   it('CORRELATION_SQL does NOT use em.created_at > $1 (strict greater-than)', () => {

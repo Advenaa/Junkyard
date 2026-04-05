@@ -111,10 +111,10 @@ program
             last_fetched_at: number | null;
             last_id: string | null;
             status: string;
-          }>(
-            'SELECT last_fetched_at, last_id, status FROM source_state WHERE source = $1 AND source_id = $2',
-            [src.source, src.source_id],
-          );
+          }>('SELECT last_fetched_at, last_id, status FROM source_state WHERE source = $1 AND source_id = $2', [
+            src.source,
+            src.source_id,
+          ]);
 
           const state = stateRows[0];
 
@@ -162,21 +162,14 @@ program
               );
             }
           } catch (err: unknown) {
-            log.error(
-              { err, source: src.source, sourceId: src.source_id },
-              'source poll failed',
-            );
+            log.error({ err, source: src.source, sourceId: src.source_id }, 'source poll failed');
             // Increment error count in source_state
             await pool.query(
               `INSERT INTO source_state (source, source_id, error_count, last_error, status)
                VALUES ($2, $3, 1, $1, 'active')
                ON CONFLICT (source, source_id)
                DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
-              [
-                err instanceof Error ? err.message : String(err),
-                src.source,
-                src.source_id,
-              ],
+              [err instanceof Error ? err.message : String(err), src.source, src.source_id],
             );
           }
         });
@@ -204,12 +197,7 @@ program
 
       for (const row of sourcesWithReady.rows) {
         try {
-          const result = await summarizer.runBatch(
-            row.source,
-            row.source_id,
-            row.min_ts,
-            row.max_ts,
-          );
+          const result = await summarizer.runBatch(row.source, row.source_id, row.min_ts, row.max_ts);
 
           if (result.summaryCount > 0) {
             log.info(
@@ -234,10 +222,7 @@ program
             }
           }
         } catch (err: unknown) {
-          log.error(
-            { err, source: row.source, sourceId: row.source_id },
-            'summarizer batch failed',
-          );
+          log.error({ err, source: row.source, sourceId: row.source_id }, 'summarizer batch failed');
         }
       }
 
@@ -268,14 +253,24 @@ program
 
     async function onDaily(): Promise<void> {
       let reportRow = null;
-      try { await embedPipeline.run(); } catch (err: unknown) { log.error({ err }, 'embed pipeline failed'); }
-      try { await narrativeDetector.detectNarratives(); } catch (err: unknown) { log.error({ err }, 'narrative detection failed'); }
+      try {
+        await embedPipeline.run();
+      } catch (err: unknown) {
+        log.error({ err }, 'embed pipeline failed');
+      }
+      try {
+        await narrativeDetector.detectNarratives();
+      } catch (err: unknown) {
+        log.error({ err }, 'narrative detection failed');
+      }
       // Sentiment rollup: compute daily momentum before synthesis uses it
       try {
         const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
         await sentimentTracker.runDaily(todayStr, timezone);
-      } catch (err: unknown) { log.error({ err }, 'sentiment rollup failed'); }
+      } catch (err: unknown) {
+        log.error({ err }, 'sentiment rollup failed');
+      }
       // Advisory lock prevents health-check catch-up from running synthesis concurrently
       const { rows: lockRows } = await pool.query<{ acquired: boolean }>(
         'SELECT pg_try_advisory_lock(42424243) AS acquired',
@@ -284,22 +279,40 @@ program
         log.info('Daily synthesis advisory lock held (catch-up in progress?), skipping');
       } else {
         try {
-          try { reportRow = await synthesizer.runDaily(); } catch (err: unknown) { log.error({ err }, 'daily synthesis failed'); }
+          try {
+            reportRow = await synthesizer.runDaily();
+          } catch (err: unknown) {
+            log.error({ err }, 'daily synthesis failed');
+          }
         } finally {
           await pool.query('SELECT pg_advisory_unlock(42424243)').catch(() => {});
         }
       }
-      try { await decayManager.runDecay(); } catch (err: unknown) { log.error({ err }, 'decay failed'); }
+      try {
+        await decayManager.runDecay();
+      } catch (err: unknown) {
+        log.error({ err }, 'decay failed');
+      }
       // delivery only if report succeeded
       if (reportRow) {
         try {
           await delivery.deliver(reportRow);
-        } catch (err: unknown) { log.error({ err }, 'daily delivery failed'); }
+        } catch (err: unknown) {
+          log.error({ err }, 'daily delivery failed');
+        }
       }
       // Run backup after daily synthesis
-      try { await backup.run(); } catch (err: unknown) { log.error({ err }, 'backup failed'); }
+      try {
+        await backup.run();
+      } catch (err: unknown) {
+        log.error({ err }, 'backup failed');
+      }
       // Run retention cleanup
-      try { await retention.run(); } catch (err: unknown) { log.error({ err }, 'retention failed'); }
+      try {
+        await retention.run();
+      } catch (err: unknown) {
+        log.error({ err }, 'retention failed');
+      }
     }
 
     async function onHealthCheck(): Promise<void> {
@@ -315,7 +328,12 @@ program
         const totalMinutes = dh * 60 + dm + bufferMinutes;
         const catchUpHours = Math.floor(totalMinutes / 60) % 24;
         const catchUpTime = `${String(catchUpHours).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`;
-        const nowLocal = new Date().toLocaleString('en-US', { timeZone: timezone, hour12: false, hour: '2-digit', minute: '2-digit' });
+        const nowLocal = new Date().toLocaleString('en-US', {
+          timeZone: timezone,
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+        });
         const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
         if (nowLocal >= catchUpTime) {
           const { rows } = await pool.query<{ exists: boolean }>(
@@ -379,7 +397,11 @@ program
 
     // ── 7. Load vector cache (must complete before server accepts requests) ──
     await vectorCache.load();
-    try { await healthMonitor.check(); } catch (err) { log.warn({ err }, 'Initial health check failed'); }
+    try {
+      await healthMonitor.check();
+    } catch (err) {
+      log.warn({ err }, 'Initial health check failed');
+    }
 
     // ── 8. Start server ───────────────────────────────────────────────
     const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);

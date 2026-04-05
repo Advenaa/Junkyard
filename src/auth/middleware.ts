@@ -10,44 +10,27 @@ declare module 'fastify' {
   }
 }
 
-type PreHandler = (
-  request: FastifyRequest,
-  reply: FastifyReply,
-) => Promise<void>;
+type PreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
 
-export function requireAuth(
-  pool: Pool,
-  config: Config,
-  sessionManager: SessionManager,
-): PreHandler {
+export function requireAuth(pool: Pool, config: Config, sessionManager: SessionManager): PreHandler {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     // 1. Check session cookie
-    const sessionId = request.unsignCookie(
-      (request.cookies?.['podders_session'] as string) ?? '',
-    );
+    const sessionId = request.unsignCookie((request.cookies?.['podders_session'] as string) ?? '');
 
     if (sessionId.valid && sessionId.value) {
       const requestIp = request.ip ?? '';
-      const requestUA =
-        (request.headers['user-agent'] as string | undefined) ?? '';
-      const session = await sessionManager.validate(
-        sessionId.value,
-        requestIp,
-        requestUA,
-      );
+      const requestUA = (request.headers['user-agent'] as string | undefined) ?? '';
+      const session = await sessionManager.validate(sessionId.value, requestIp, requestUA);
       if (session) {
         // Look up username from DB
-        const userResult = await pool.query<{ username: string }>(
-          `SELECT username FROM users WHERE discord_id = $1`,
-          [session.discordId],
-        );
+        const userResult = await pool.query<{ username: string }>(`SELECT username FROM users WHERE discord_id = $1`, [
+          session.discordId,
+        ]);
 
         const username = userResult.rows[0]?.username ?? 'unknown';
 
         // Admin override from config (additive — bootstrap admins always admin regardless of DB)
-        const role = config.adminUserIds.includes(session.discordId)
-          ? 'admin'
-          : session.role;
+        const role = config.adminUserIds.includes(session.discordId) ? 'admin' : session.role;
 
         // Blocked users are rejected at the API layer — destroy session (AU-031)
         if (role === 'blocked') {
@@ -75,10 +58,7 @@ export function requireAuth(
         const providedBuf = Buffer.from(providedKey, 'utf8');
         const expectedBuf = Buffer.from(config.apiKey, 'utf8');
 
-        if (
-          providedBuf.length === expectedBuf.length &&
-          crypto.timingSafeEqual(providedBuf, expectedBuf)
-        ) {
+        if (providedBuf.length === expectedBuf.length && crypto.timingSafeEqual(providedBuf, expectedBuf)) {
           request.user = {
             discordId: 'api-key',
             username: 'api',
@@ -94,10 +74,7 @@ export function requireAuth(
   };
 }
 
-export async function requireAdmin(
-  request: FastifyRequest,
-  reply: FastifyReply,
-): Promise<void> {
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   if (!request.user || request.user.role !== 'admin') {
     reply.status(403).send({ error: 'Forbidden: admin access required' });
     return;

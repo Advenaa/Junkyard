@@ -24,7 +24,9 @@ describe('CD-002: PATCH /sources/:source/:sourceId', () => {
 
   it('route requires admin access', () => {
     // Find the PATCH /sources route block and check for requireAdmin
-    const block = src.match(/app\.patch\(\s*['"]\/api\/v1\/sources\/:source\/:sourceId['"][^)]*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s);
+    const block = src.match(
+      /app\.patch\(\s*['"]\/api\/v1\/sources\/:source\/:sourceId['"][^)]*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s,
+    );
     assert.ok(block, 'PATCH /sources route must have preHandler');
     assert.ok(block![1].includes('requireAdmin'), 'PATCH /sources must require admin');
   });
@@ -43,7 +45,9 @@ describe('CD-003: PATCH /users/:discordId', () => {
   });
 
   it('route requires admin access', () => {
-    const block = src.match(/app\.patch\(\s*['"]\/api\/v1\/users\/:discordId['"][^)]*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s);
+    const block = src.match(
+      /app\.patch\(\s*['"]\/api\/v1\/users\/:discordId['"][^)]*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s,
+    );
     assert.ok(block, 'PATCH /users route must have preHandler');
     assert.ok(block![1].includes('requireAdmin'), 'PATCH /users must require admin');
   });
@@ -75,7 +79,9 @@ describe('CD-005: POST /api/v1/config/test-webhook', () => {
   });
 
   it('route requires admin access', () => {
-    const block = src.match(/app\.post\(\s*['"]\/api\/v1\/config\/test-webhook['"][^)]*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s);
+    const block = src.match(
+      /app\.post\(\s*['"]\/api\/v1\/config\/test-webhook['"][^)]*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s,
+    );
     assert.ok(block, 'POST /config/test-webhook route must have preHandler');
     assert.ok(block![1].includes('requireAdmin'), 'POST /config/test-webhook must require admin');
   });
@@ -89,7 +95,11 @@ describe('CD-012: getAllSourcesWithState query', () => {
   const src = readSrc('src/db/queries.ts');
 
   it('exports getAllSourcesWithState function', () => {
-    assert.match(src, /export\s+(async\s+)?function\s+getAllSourcesWithState/, 'getAllSourcesWithState must be exported');
+    assert.match(
+      src,
+      /export\s+(async\s+)?function\s+getAllSourcesWithState/,
+      'getAllSourcesWithState must be exported',
+    );
   });
 
   it('query uses LEFT JOIN source_state', () => {
@@ -144,36 +154,61 @@ describe('AE-002: Migration 13 BIGINT', () => {
   });
 
   it('alters sources.added_at to BIGINT', () => {
-    assert.match(src, /ALTER\s+TABLE\s+sources\s+ALTER\s+COLUMN\s+added_at\s+TYPE\s+BIGINT/i,
-      'sources.added_at must be widened to BIGINT');
+    assert.match(
+      src,
+      /ALTER\s+TABLE\s+sources\s+ALTER\s+COLUMN\s+added_at\s+TYPE\s+BIGINT/i,
+      'sources.added_at must be widened to BIGINT',
+    );
   });
 
   it('alters items.timestamp to BIGINT', () => {
-    assert.match(src, /ALTER\s+TABLE\s+items\s+ALTER\s+COLUMN\s+timestamp\s+TYPE\s+BIGINT/i,
-      'items.timestamp must be widened to BIGINT');
+    assert.match(
+      src,
+      /ALTER\s+TABLE\s+items\s+ALTER\s+COLUMN\s+timestamp\s+TYPE\s+BIGINT/i,
+      'items.timestamp must be widened to BIGINT',
+    );
   });
 
   it('alters items.created_at to BIGINT', () => {
-    assert.match(src, /ALTER\s+TABLE\s+items\s+ALTER\s+COLUMN\s+created_at\s+TYPE\s+BIGINT/i,
-      'items.created_at must be widened to BIGINT');
+    assert.match(
+      src,
+      /ALTER\s+TABLE\s+items\s+ALTER\s+COLUMN\s+created_at\s+TYPE\s+BIGINT/i,
+      'items.created_at must be widened to BIGINT',
+    );
   });
 
   it('alters sessions.expires_at to BIGINT', () => {
-    assert.match(src, /ALTER\s+TABLE\s+sessions\s+ALTER\s+COLUMN\s+expires_at\s+TYPE\s+BIGINT/i,
-      'sessions.expires_at must be widened to BIGINT');
+    assert.match(
+      src,
+      /ALTER\s+TABLE\s+sessions\s+ALTER\s+COLUMN\s+expires_at\s+TYPE\s+BIGINT/i,
+      'sessions.expires_at must be widened to BIGINT',
+    );
   });
 
   it('alters reports.created_at to BIGINT', () => {
-    assert.match(src, /ALTER\s+TABLE\s+reports\s+ALTER\s+COLUMN\s+created_at\s+TYPE\s+BIGINT/i,
-      'reports.created_at must be widened to BIGINT');
+    assert.match(
+      src,
+      /ALTER\s+TABLE\s+reports\s+ALTER\s+COLUMN\s+created_at\s+TYPE\s+BIGINT/i,
+      'reports.created_at must be widened to BIGINT',
+    );
   });
 
   it('covers all major tables with epoch-ms columns', () => {
     const tables = [
-      'sources', 'source_state', 'source_rate_history', 'items',
-      'summaries', 'entities', 'entity_mentions', 'reports',
-      'users', 'sessions', 'llm_usage', 'health_events',
-      'narratives', 'embeddings',
+      'sources',
+      'source_state',
+      'source_rate_history',
+      'items',
+      'summaries',
+      'entities',
+      'entity_mentions',
+      'reports',
+      'users',
+      'sessions',
+      'llm_usage',
+      'health_events',
+      'narratives',
+      'embeddings',
     ];
     for (const table of tables) {
       const pattern = new RegExp(`ALTER\\s+TABLE\\s+${table}\\s+ALTER\\s+COLUMN\\s+\\w+\\s+TYPE\\s+BIGINT`, 'i');

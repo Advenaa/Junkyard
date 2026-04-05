@@ -1,9 +1,6 @@
-import { distance } from "fastest-levenshtein";
+import { distance } from 'fastest-levenshtein';
 
-export function deduplicateEvents(
-  events: string[],
-  threshold = 0.85,
-): string[] {
+export function deduplicateEvents(events: string[], threshold = 0.85): string[] {
   const accepted: string[] = [];
 
   for (const event of events) {

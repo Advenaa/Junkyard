@@ -14,31 +14,31 @@ interface InjectionPattern {
 
 const PATTERNS: readonly InjectionPattern[] = [
   {
-    name: "ignore-previous",
+    name: 'ignore-previous',
     regex: /ignore\s+(all\s+)?previous|ignore\s+above/i,
   },
   {
-    name: "role-assumption",
+    name: 'role-assumption',
     regex: /you\s+are\s+(now|a)\b/i,
   },
   {
-    name: "system-prefix",
+    name: 'system-prefix',
     regex: /^system:/im,
   },
   {
-    name: "xml-closing-tag",
+    name: 'xml-closing-tag',
     regex: /<\/(?:system|user|assistant|human|instruction|prompt|scraped_content|tool_call|tool_result)[^>]*>/i,
   },
   {
-    name: "llama-inst-marker",
+    name: 'llama-inst-marker',
     regex: /\[\/?\s*INST\s*\]/i,
   },
   {
-    name: "chatml-marker",
+    name: 'chatml-marker',
     regex: /<\|im_(?:start|end)\|>/i,
   },
   {
-    name: "claude-role-marker",
+    name: 'claude-role-marker',
     regex: /^(?:Human|Assistant):\s*(?:ignore|forget|override|disregard|you\s+are|system|<\/?\w)/im,
   },
 ] as const;
@@ -77,7 +77,7 @@ const BIDI_RE = /[\u202A-\u202E\u2066-\u2069]/g;
  * then removing all characters in the Combining Diacritical Marks block.
  */
 function stripDiacritics(text: string): string {
-  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
 /**
@@ -92,9 +92,9 @@ function stripDiacritics(text: string): string {
  *  Does NOT strip diacritics — accented characters are preserved in stored content.
  *  Diacritic stripping is only done inside detectInjection() for scanning purposes. */
 export function sanitizeContent(content: string): string {
-  let s = content.normalize("NFKC");
-  s = s.replace(ZERO_WIDTH_RE, "");
-  s = s.replace(BIDI_RE, "");
+  let s = content.normalize('NFKC');
+  s = s.replace(ZERO_WIDTH_RE, '');
+  s = s.replace(BIDI_RE, '');
   return s;
 }
 
@@ -102,12 +102,29 @@ export function sanitizeContent(content: string): string {
 
 /** Map common Cyrillic/Greek lookalikes to their ASCII Latin equivalents. */
 const HOMOGLYPH_MAP: Record<string, string> = {
-  '\u0430': 'a', '\u0435': 'e', '\u043E': 'o', '\u0440': 'p',
-  '\u0441': 'c', '\u0443': 'y', '\u0445': 'x', '\u0456': 'i',
-  '\u0410': 'a', '\u0415': 'e', '\u041E': 'o', '\u0420': 'p',
-  '\u0421': 'c', '\u0423': 'y', '\u0425': 'x', '\u0406': 'i',
-  '\u03B1': 'a', '\u03B5': 'e', '\u03BF': 'o', '\u03C1': 'p',
-  '\u03BA': 'k', '\u03BD': 'v', '\u03C5': 'u',
+  '\u0430': 'a',
+  '\u0435': 'e',
+  '\u043E': 'o',
+  '\u0440': 'p',
+  '\u0441': 'c',
+  '\u0443': 'y',
+  '\u0445': 'x',
+  '\u0456': 'i',
+  '\u0410': 'a',
+  '\u0415': 'e',
+  '\u041E': 'o',
+  '\u0420': 'p',
+  '\u0421': 'c',
+  '\u0423': 'y',
+  '\u0425': 'x',
+  '\u0406': 'i',
+  '\u03B1': 'a',
+  '\u03B5': 'e',
+  '\u03BF': 'o',
+  '\u03C1': 'p',
+  '\u03BA': 'k',
+  '\u03BD': 'v',
+  '\u03C5': 'u',
 };
 
 /** Replace homoglyph characters with ASCII equivalents for scanning. */

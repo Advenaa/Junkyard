@@ -16,9 +16,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const llmSrc = readFileSync(
-  new URL('../../src/llm.ts', import.meta.url), 'utf-8',
-);
+const llmSrc = readFileSync(new URL('../../src/llm.ts', import.meta.url), 'utf-8');
 
 // ── LM-020 — extractHttpStatus ───────────────────────────────────────
 
@@ -33,22 +31,16 @@ describe('LM-020 — extractHttpStatus checks structured properties first', () =
     const fnBody = nextFnIdx > -1 ? afterFn.slice(0, nextFnIdx) : afterFn;
 
     const statusPropIdx = fnBody.indexOf("record['status']");
-    assert.ok(statusPropIdx > -1, 'must check record[\'status\'] property');
+    assert.ok(statusPropIdx > -1, "must check record['status'] property");
 
     const statusCodePropIdx = fnBody.indexOf("record['statusCode']");
-    assert.ok(statusCodePropIdx > -1, 'must check record[\'statusCode\'] property');
+    assert.ok(statusCodePropIdx > -1, "must check record['statusCode'] property");
 
     const regexIdx = fnBody.indexOf('.exec(msg)');
     assert.ok(regexIdx > -1, 'must have regex fallback with .exec(msg)');
 
-    assert.ok(
-      statusPropIdx < regexIdx,
-      'status property check must come BEFORE the regex fallback',
-    );
-    assert.ok(
-      statusCodePropIdx < regexIdx,
-      'statusCode property check must come BEFORE the regex fallback',
-    );
+    assert.ok(statusPropIdx < regexIdx, 'status property check must come BEFORE the regex fallback');
+    assert.ok(statusCodePropIdx < regexIdx, 'statusCode property check must come BEFORE the regex fallback');
   });
 });
 
@@ -80,10 +72,7 @@ describe('LM-025 — sanitizeForPrompt escapes & before <>', () => {
     const nextFnIdx = afterFn.indexOf('\n  function ', 1);
     const fnBody = nextFnIdx > -1 ? afterFn.slice(0, nextFnIdx) : afterFn;
 
-    assert.ok(
-      fnBody.includes("'&amp;'") || fnBody.includes('"&amp;"'),
-      'sanitizeForPrompt must replace & with &amp;',
-    );
+    assert.ok(fnBody.includes("'&amp;'") || fnBody.includes('"&amp;"'), 'sanitizeForPrompt must replace & with &amp;');
   });
 
   it('& replacement comes BEFORE < replacement (line ordering)', () => {
@@ -100,10 +89,7 @@ describe('LM-025 — sanitizeForPrompt escapes & before <>', () => {
     const ltIdx = fnBody.indexOf('/</g');
     assert.ok(ltIdx > -1, 'must have /</g replacement');
 
-    assert.ok(
-      ampIdx < ltIdx,
-      '& replacement must come BEFORE < replacement so pre-existing &lt; becomes &amp;lt;',
-    );
+    assert.ok(ampIdx < ltIdx, '& replacement must come BEFORE < replacement so pre-existing &lt; becomes &amp;lt;');
   });
 
   it('still replaces < with &lt; and > with &gt;', () => {
@@ -114,13 +100,7 @@ describe('LM-025 — sanitizeForPrompt escapes & before <>', () => {
     const nextFnIdx = afterFn.indexOf('\n  function ', 1);
     const fnBody = nextFnIdx > -1 ? afterFn.slice(0, nextFnIdx) : afterFn;
 
-    assert.ok(
-      fnBody.includes("'&lt;'") || fnBody.includes('"&lt;"'),
-      'sanitizeForPrompt must replace < with &lt;',
-    );
-    assert.ok(
-      fnBody.includes("'&gt;'") || fnBody.includes('"&gt;"'),
-      'sanitizeForPrompt must replace > with &gt;',
-    );
+    assert.ok(fnBody.includes("'&lt;'") || fnBody.includes('"&lt;"'), 'sanitizeForPrompt must replace < with &lt;');
+    assert.ok(fnBody.includes("'&gt;'") || fnBody.includes('"&gt;"'), 'sanitizeForPrompt must replace > with &gt;');
   });
 });

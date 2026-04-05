@@ -38,12 +38,7 @@ export function createConversationManager(): ConversationManager {
     return entry.messages.slice(-MAX_MESSAGES);
   }
 
-  function add(
-    conversationId: string,
-    userId: string,
-    role: 'user' | 'assistant',
-    content: string,
-  ): void {
+  function add(conversationId: string, userId: string, role: 'user' | 'assistant', content: string): void {
     let entry = store.get(conversationId);
     if (!entry) {
       // Check total cap

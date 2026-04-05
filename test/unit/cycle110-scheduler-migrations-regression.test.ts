@@ -12,21 +12,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const schedulerSrc = readFileSync(
-  new URL('../../src/scheduler.ts', import.meta.url), 'utf-8',
-);
+const schedulerSrc = readFileSync(new URL('../../src/scheduler.ts', import.meta.url), 'utf-8');
 
-const migrationsSrc = readFileSync(
-  new URL('../../src/db/migrations.ts', import.meta.url), 'utf-8',
-);
+const migrationsSrc = readFileSync(new URL('../../src/db/migrations.ts', import.meta.url), 'utf-8');
 
 // ── SC-012 — refreshDailyCron builds config before stopping old cron ─────
 
 describe('SC-012: refreshDailyCron build-before-stop ordering', () => {
   // Extract the refreshDailyCron function body
-  const fnMatch = schedulerSrc.match(
-    /async function refreshDailyCron\b[\s\S]*?^\s{2}\}/m,
-  );
+  const fnMatch = schedulerSrc.match(/async function refreshDailyCron\b[\s\S]*?^\s{2}\}/m);
 
   it('refreshDailyCron function exists', () => {
     assert.ok(fnMatch, 'refreshDailyCron function not found in scheduler.ts');
@@ -47,10 +41,7 @@ describe('SC-012: refreshDailyCron build-before-stop ordering', () => {
 
   it('has shuttingDown guard', () => {
     const body = fnMatch![0];
-    assert.ok(
-      body.includes('shuttingDown'),
-      'refreshDailyCron must check shuttingDown before proceeding',
-    );
+    assert.ok(body.includes('shuttingDown'), 'refreshDailyCron must check shuttingDown before proceeding');
   });
 });
 
@@ -58,9 +49,7 @@ describe('SC-012: refreshDailyCron build-before-stop ordering', () => {
 
 describe('MG-013: schema_version query uses ORDER BY DESC LIMIT 1', () => {
   // Find the SELECT from schema_version
-  const selectMatch = migrationsSrc.match(
-    /SELECT\s+version\s+FROM\s+schema_version\b[^`]*/i,
-  );
+  const selectMatch = migrationsSrc.match(/SELECT\s+version\s+FROM\s+schema_version\b[^`]*/i);
 
   it('SELECT from schema_version exists', () => {
     assert.ok(selectMatch, 'SELECT version FROM schema_version not found in migrations.ts');
@@ -74,9 +63,6 @@ describe('MG-013: schema_version query uses ORDER BY DESC LIMIT 1', () => {
   });
 
   it('contains LIMIT 1', () => {
-    assert.ok(
-      /LIMIT\s+1/i.test(selectMatch![0]),
-      'schema_version query must include LIMIT 1',
-    );
+    assert.ok(/LIMIT\s+1/i.test(selectMatch![0]), 'schema_version query must include LIMIT 1');
   });
 });

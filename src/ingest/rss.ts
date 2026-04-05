@@ -144,7 +144,8 @@ export async function pollFeed(
 
       const batchResults = await Promise.allSettled(
         batch.map(async (item) => {
-          const author = item.creator ?? (item as Record<string, unknown>)['dc:creator'] as string ?? feed.title ?? 'Unknown';
+          const author =
+            item.creator ?? ((item as Record<string, unknown>)['dc:creator'] as string) ?? feed.title ?? 'Unknown';
           let content = item.contentSnippet ?? item.title ?? '';
 
           // RS-001: When contentSnippet is missing, extract text from item.content (full HTML)
@@ -206,9 +207,7 @@ export async function pollFeed(
       }
     }
 
-    const newestGuid = filtered.length > 0
-      ? filtered[filtered.length - 1]!._guid
-      : lastId;
+    const newestGuid = filtered.length > 0 ? filtered[filtered.length - 1]!._guid : lastId;
 
     return { items, lastId: newestGuid };
   } catch (err: unknown) {

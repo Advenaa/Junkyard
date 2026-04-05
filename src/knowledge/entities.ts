@@ -50,12 +50,7 @@ interface EntityManager {
   ): Promise<void>;
 }
 
-export function createEntityManager(
-  pool: Pool,
-  log: Logger,
-  config: Config,
-  llm: LLM,
-): EntityManager {
+export function createEntityManager(pool: Pool, log: Logger, config: Config, llm: LLM): EntityManager {
   async function resolveEntities(
     entities: ExtractedEntity[],
     source: string,
@@ -151,14 +146,14 @@ export function createEntityManager(
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
                 [ulid(), match.entityId, source, summaryId, null, 1, now, language ?? null],
               );
-              log.info({ entityId: match.entityId, alias: canonical }, 'reactivated archived entity via Tier 2 co-occurrence');
+              log.info(
+                { entityId: match.entityId, alias: canonical },
+                'reactivated archived entity via Tier 2 co-occurrence',
+              );
             }
             resolvedIds.push(match.entityId);
             entityIdMap.set(entity, match.entityId);
-            log.info(
-              { name: canonical, entityId: match.entityId },
-              `Tier 2 resolved: ${canonical}`,
-            );
+            log.info({ name: canonical, entityId: match.entityId }, `Tier 2 resolved: ${canonical}`);
           } else {
             stillUnresolved.push(entity);
           }
@@ -221,9 +216,7 @@ export function createEntityManager(
 
         if (disambiguated) {
           for (const item of disambiguated) {
-            const matchedEntity = stillUnresolved.find(
-              (e) => normalizeAlias(e.name) === normalizeAlias(item.name),
-            );
+            const matchedEntity = stillUnresolved.find((e) => normalizeAlias(e.name) === normalizeAlias(item.name));
             if (!matchedEntity) continue;
 
             // Create new entity
@@ -250,10 +243,7 @@ export function createEntityManager(
               [canonical, item.context_key, entityId],
             );
 
-            log.info(
-              { name: canonical, entityId, contextKey: item.context_key },
-              `Tier 3 resolved: ${canonical}`,
-            );
+            log.info({ name: canonical, entityId, contextKey: item.context_key }, `Tier 3 resolved: ${canonical}`);
           }
 
           // Handle entities not returned by partial LLM response
@@ -281,10 +271,7 @@ export function createEntityManager(
               [canonical, entityId],
             );
 
-            log.info(
-              { name: canonical, entityId },
-              `Tier 3 fallback (partial LLM response): ${canonical}`,
-            );
+            log.info({ name: canonical, entityId }, `Tier 3 fallback (partial LLM response): ${canonical}`);
           }
         } else {
           // Fallback: create entities without LLM disambiguation
@@ -340,9 +327,7 @@ export function createEntityManager(
         }
 
         updateIds.push(entityId);
-        updateWeights.push(
-          Math.log(1 + entity.mentionCount) * sourceWeight,
-        );
+        updateWeights.push(Math.log(1 + entity.mentionCount) * sourceWeight);
 
         mentionRows.push({
           id: ulid(),
@@ -358,14 +343,8 @@ export function createEntityManager(
         const aliasParams: unknown[] = [];
         for (let i = 0; i < aliasTuples.length; i++) {
           const offset = i * 3;
-          aliasValues.push(
-            `($${offset + 1}, $${offset + 2}, $${offset + 3})`,
-          );
-          aliasParams.push(
-            aliasTuples[i].alias,
-            '',
-            aliasTuples[i].entityId,
-          );
+          aliasValues.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
+          aliasParams.push(aliasTuples[i].alias, '', aliasTuples[i].entityId);
         }
         await client.query(
           `INSERT INTO entity_aliases (alias, context_key, entity_id)
@@ -419,10 +398,7 @@ export function createEntityManager(
 
       await client.query('COMMIT');
 
-      log.info(
-        { count: entities.length, source, summaryId },
-        `Resolved ${entities.length} entities from ${source}`,
-      );
+      log.info({ count: entities.length, source, summaryId }, `Resolved ${entities.length} entities from ${source}`);
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

@@ -71,7 +71,9 @@ function capturingLog() {
     },
     error: () => {},
     debug: () => {},
-    child: function () { return this; },
+    child: function () {
+      return this;
+    },
   } as never;
   return { log, registered, warnMessages };
 }
@@ -114,7 +116,9 @@ describe('withMutex', () => {
     const { withMutex } = createScheduler(deps);
 
     let callCount = 0;
-    const job = async () => { callCount++; };
+    const job = async () => {
+      callCount++;
+    };
 
     await withMutex('seq-job', job);
     await withMutex('seq-job', job);
@@ -129,8 +133,12 @@ describe('withMutex', () => {
 
     let secondRan = false;
 
-    const failingJob = async () => { throw new Error('boom'); };
-    const succeedingJob = async () => { secondRan = true; };
+    const failingJob = async () => {
+      throw new Error('boom');
+    };
+    const succeedingJob = async () => {
+      secondRan = true;
+    };
 
     // First call throws internally (caught by withMutex)
     await withMutex('err-job', failingJob);
@@ -163,10 +171,7 @@ describe('withMutex', () => {
     };
 
     // Concurrent calls on different keys should both run
-    await Promise.all([
-      withMutex('key-a', jobA),
-      withMutex('key-b', jobB),
-    ]);
+    await Promise.all([withMutex('key-a', jobA), withMutex('key-b', jobB)]);
 
     assert.ok(order.includes('A-start'), 'job A should start');
     assert.ok(order.includes('A-end'), 'job A should finish');
@@ -180,7 +185,9 @@ describe('withMutex', () => {
     const scheduler = createScheduler(deps);
 
     let ran = false;
-    const job = async () => { ran = true; };
+    const job = async () => {
+      ran = true;
+    };
 
     // Trigger shutdown state
     await scheduler.stop();
@@ -341,10 +348,7 @@ describe('graceful shutdown', () => {
 
 describe('SD-005: onDaily runs embed + narratives before synthesis', () => {
   it('embedPipeline.run() and narrativeDetector.detectNarratives() precede synthesizer.runDaily() in source', () => {
-    const source = readFileSync(
-      new URL('../../src/index.ts', import.meta.url),
-      'utf-8',
-    );
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
 
     // Extract the onDaily function body
     const onDailyStart = source.indexOf('async function onDaily()');
@@ -382,12 +386,7 @@ describe('cron registration', () => {
     await scheduler.start();
 
     const jobNames = registered.map((r) => r.job).sort();
-    assert.deepEqual(jobNames, [
-      'daily-synthesis',
-      'health-monitor',
-      'market-pulse',
-      'source-poll-tick',
-    ]);
+    assert.deepEqual(jobNames, ['daily-synthesis', 'health-monitor', 'market-pulse', 'source-poll-tick']);
 
     await scheduler.stop();
   });

@@ -15,12 +15,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { detectInjection } from '../../src/normalize/instruct-detector.js';
 
-const normalizeSrc = readFileSync(
-  new URL('../../src/normalize/index.ts', import.meta.url), 'utf-8',
-);
-const urlExpandSrc = readFileSync(
-  new URL('../../src/normalize/url-expand.ts', import.meta.url), 'utf-8',
-);
+const normalizeSrc = readFileSync(new URL('../../src/normalize/index.ts', import.meta.url), 'utf-8');
+const urlExpandSrc = readFileSync(new URL('../../src/normalize/url-expand.ts', import.meta.url), 'utf-8');
 
 // ── NP-032 — Injection re-scan on translation output ────────────────
 
@@ -68,39 +64,22 @@ describe('NP-032 — injection re-scan on translation output', () => {
 
 describe('NP-029 — translate msa/zlm Malay variants', () => {
   it('ACCEPTED_LANGS includes msa and zlm', () => {
-    assert.ok(
-      normalizeSrc.includes("'msa'"),
-      'ACCEPTED_LANGS should include msa',
-    );
-    assert.ok(
-      normalizeSrc.includes("'zlm'"),
-      'ACCEPTED_LANGS should include zlm',
-    );
+    assert.ok(normalizeSrc.includes("'msa'"), 'ACCEPTED_LANGS should include msa');
+    assert.ok(normalizeSrc.includes("'zlm'"), 'ACCEPTED_LANGS should include zlm');
   });
 
   it('translation gate triggers for msa', () => {
-    assert.ok(
-      normalizeSrc.includes("lang === 'msa'"),
-      'translation condition should check for msa',
-    );
+    assert.ok(normalizeSrc.includes("lang === 'msa'"), 'translation condition should check for msa');
   });
 
   it('translation gate triggers for zlm', () => {
-    assert.ok(
-      normalizeSrc.includes("lang === 'zlm'"),
-      'translation condition should check for zlm',
-    );
+    assert.ok(normalizeSrc.includes("lang === 'zlm'"), 'translation condition should check for zlm');
   });
 
   it('msa and zlm appear in the same if-condition as ind', () => {
     // Find the translation gate line
-    const gateMatch = normalizeSrc.match(
-      /if\s*\(lang === 'ind'.*?lang === 'msa'.*?lang === 'zlm'.*?\)/s,
-    );
-    assert.ok(
-      gateMatch,
-      'translation gate should include ind, msa, and zlm in the same if-condition',
-    );
+    const gateMatch = normalizeSrc.match(/if\s*\(lang === 'ind'.*?lang === 'msa'.*?lang === 'zlm'.*?\)/s);
+    assert.ok(gateMatch, 'translation gate should include ind, msa, and zlm in the same if-condition');
   });
 });
 
@@ -132,17 +111,11 @@ describe('NP-033 — claude-role-marker requires injection follow-up keywords', 
 
 describe('NP-037 — HTTP intermediary hops in URL expansion', () => {
   it('tracks lastHttps variable for fallback', () => {
-    assert.ok(
-      urlExpandSrc.includes('lastHttps'),
-      'should declare and use lastHttps variable',
-    );
+    assert.ok(urlExpandSrc.includes('lastHttps'), 'should declare and use lastHttps variable');
   });
 
   it('tracks consecutiveHttpHops counter', () => {
-    assert.ok(
-      urlExpandSrc.includes('consecutiveHttpHops'),
-      'should declare and use consecutiveHttpHops variable',
-    );
+    assert.ok(urlExpandSrc.includes('consecutiveHttpHops'), 'should declare and use consecutiveHttpHops variable');
   });
 
   it('allows http: protocol in addition to https:', () => {
@@ -162,23 +135,14 @@ describe('NP-037 — HTTP intermediary hops in URL expansion', () => {
 
     assert.ok(httpsBlockIdx > -1, 'should find https protocol check');
     assert.ok(resetIdx > -1, 'should reset consecutiveHttpHops to 0 on HTTPS hop');
-    assert.ok(
-      resetIdx > httpsBlockIdx,
-      'consecutiveHttpHops reset must follow the HTTPS protocol check',
-    );
+    assert.ok(resetIdx > httpsBlockIdx, 'consecutiveHttpHops reset must follow the HTTPS protocol check');
   });
 
   it('increments consecutiveHttpHops on HTTP hop', () => {
-    assert.ok(
-      urlExpandSrc.includes('consecutiveHttpHops++'),
-      'should increment consecutiveHttpHops on HTTP hop',
-    );
+    assert.ok(urlExpandSrc.includes('consecutiveHttpHops++'), 'should increment consecutiveHttpHops on HTTP hop');
   });
 
   it('bails after 2 consecutive HTTP hops', () => {
-    assert.ok(
-      urlExpandSrc.includes('consecutiveHttpHops >= 2'),
-      'should bail out after 2 consecutive HTTP hops',
-    );
+    assert.ok(urlExpandSrc.includes('consecutiveHttpHops >= 2'), 'should bail out after 2 consecutive HTTP hops');
   });
 });

@@ -2,15 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const preSummarizeSrc = readFileSync(
-  new URL('../../src/pre-summarize/index.ts', import.meta.url),
-  'utf-8',
-);
+const preSummarizeSrc = readFileSync(new URL('../../src/pre-summarize/index.ts', import.meta.url), 'utf-8');
 
-const settingsSrc = readFileSync(
-  new URL('../../dashboard/src/pages/Settings.tsx', import.meta.url),
-  'utf-8',
-);
+const settingsSrc = readFileSync(new URL('../../dashboard/src/pages/Settings.tsx', import.meta.url), 'utf-8');
 
 describe('IP-012 — Urgent long articles are size-aware in shouldSkip', () => {
   it('URGENCY_KEYWORDS array still exists', () => {
@@ -26,10 +20,7 @@ describe('IP-012 — Urgent long articles are size-aware in shouldSkip', () => {
 
   it('urgent AND short items are skipped (return true)', () => {
     // The line must return true when urgent AND within 8000 limit
-    assert.match(
-      preSummarizeSrc,
-      /if\s*\(\s*isUrgent\s*&&\s*item\.content\.length\s*<=\s*8000\s*\)\s*return\s+true/,
-    );
+    assert.match(preSummarizeSrc, /if\s*\(\s*isUrgent\s*&&\s*item\.content\.length\s*<=\s*8000\s*\)\s*return\s+true/);
   });
 
   it('urgent AND very long items fall through (no early return)', () => {
@@ -53,10 +44,6 @@ describe('DA-002 — StatusBadge uses stateStatus in Settings.tsx', () => {
   it('does NOT use s.status directly as StatusBadge prop', () => {
     // The old broken pattern: <StatusBadge status={s.status} />
     const brokenPattern = /StatusBadge\s+status=\{s\.status\s*\}/.test(settingsSrc);
-    assert.equal(
-      brokenPattern,
-      false,
-      'StatusBadge must use s.stateStatus, not s.status directly',
-    );
+    assert.equal(brokenPattern, false, 'StatusBadge must use s.stateStatus, not s.status directly');
   });
 });

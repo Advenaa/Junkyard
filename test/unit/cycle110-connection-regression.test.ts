@@ -7,17 +7,10 @@ import { readFileSync } from 'node:fs';
 // ---------------------------------------------------------------------------
 
 describe('QR-001: BIGINT type parser (structural)', () => {
-  const src = readFileSync(
-    new URL('../../src/db/connection.ts', import.meta.url),
-    'utf-8',
-  );
+  const src = readFileSync(new URL('../../src/db/connection.ts', import.meta.url), 'utf-8');
 
   it('imports pg from "pg"', () => {
-    assert.match(
-      src,
-      /import\s+pg\s+from\s+['"]pg['"]/,
-      'connection.ts must import pg from "pg"',
-    );
+    assert.match(src, /import\s+pg\s+from\s+['"]pg['"]/, 'connection.ts must import pg from "pg"');
   });
 
   it('calls pg.types.setTypeParser with OID 20', () => {
@@ -28,10 +21,7 @@ describe('QR-001: BIGINT type parser (structural)', () => {
   });
 
   it('parser function calls parseInt to convert string to number', () => {
-    assert.ok(
-      src.includes('parseInt('),
-      'BIGINT type parser must use parseInt to convert string values to numbers',
-    );
+    assert.ok(src.includes('parseInt('), 'BIGINT type parser must use parseInt to convert string values to numbers');
   });
 
   it('setTypeParser is called BEFORE new pg.Pool', () => {

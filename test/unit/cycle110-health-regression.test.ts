@@ -12,9 +12,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const healthSrc = readFileSync(
-  new URL('../../src/health.ts', import.meta.url), 'utf-8',
-);
+const healthSrc = readFileSync(new URL('../../src/health.ts', import.meta.url), 'utf-8');
 
 // ── HE-010 — Response body consumed on non-ok webhook ────────────────
 
@@ -37,10 +35,7 @@ describe('HE-010: response body consumed on non-ok webhook', () => {
     // The section between "if (response.ok)" and the retry delay should
     // contain at least two body cancellations (ok path + non-ok path)
     const cancelCount = (healthSrc.match(/response\.body\?\.cancel\(\)/g) || []).length;
-    assert.ok(
-      cancelCount >= 2,
-      `Expected at least 2 body cancel calls (ok + non-ok paths), found ${cancelCount}`,
-    );
+    assert.ok(cancelCount >= 2, `Expected at least 2 body cancel calls (ok + non-ok paths), found ${cancelCount}`);
   });
 });
 
@@ -55,17 +50,11 @@ describe('HE-011: Health event dedup matches on category only (atomic via HM-021
   });
 
   it('dedup filters on category', () => {
-    assert.ok(
-      /category\s*=\s*\$2/.test(healthSrc),
-      'Dedup subquery must filter on category',
-    );
+    assert.ok(/category\s*=\s*\$2/.test(healthSrc), 'Dedup subquery must filter on category');
   });
 
   it('dedup filters on acknowledged = false', () => {
-    assert.ok(
-      /acknowledged\s*=\s*false/.test(healthSrc),
-      'Dedup subquery must filter on acknowledged = false',
-    );
+    assert.ok(/acknowledged\s*=\s*false/.test(healthSrc), 'Dedup subquery must filter on acknowledged = false');
   });
 
   it('does NOT filter on message in the dedup SQL', () => {

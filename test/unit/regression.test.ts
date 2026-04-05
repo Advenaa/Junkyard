@@ -19,17 +19,24 @@ describe('AU-021: POST /sources requires admin', () => {
 
   it('POST /api/v1/sources route includes requireAdmin in preHandler', () => {
     // Match the route definition: app.post('/api/v1/sources', { preHandler: [..., requireAdmin], ...
-    const postSourcesPattern = /app\.post\(\s*['"]\/api\/v1\/sources['"]\s*,\s*\{[^}]*preHandler\s*:\s*\[[^\]]*requireAdmin[^\]]*\]/s;
+    const postSourcesPattern =
+      /app\.post\(\s*['"]\/api\/v1\/sources['"]\s*,\s*\{[^}]*preHandler\s*:\s*\[[^\]]*requireAdmin[^\]]*\]/s;
     assert.match(src, postSourcesPattern, 'POST /api/v1/sources must have requireAdmin in preHandler array');
   });
 
   it('requireAdmin is imported from auth/middleware', () => {
-    assert.match(src, /import\s*\{[^}]*requireAdmin[^}]*\}\s*from\s*['"]\.\/auth\/middleware/, 'requireAdmin must be imported from auth/middleware');
+    assert.match(
+      src,
+      /import\s*\{[^}]*requireAdmin[^}]*\}\s*from\s*['"]\.\/auth\/middleware/,
+      'requireAdmin must be imported from auth/middleware',
+    );
   });
 
   it('GET /api/v1/sources does NOT require admin (viewer access)', () => {
     // The GET route should have authPreHandler but NOT requireAdmin
-    const getSourcesMatch = src.match(/app\.get\(\s*['"]\/api\/v1\/sources['"]\s*,\s*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s);
+    const getSourcesMatch = src.match(
+      /app\.get\(\s*['"]\/api\/v1\/sources['"]\s*,\s*\{[^}]*preHandler\s*:\s*\[([^\]]*)\]/s,
+    );
     assert.ok(getSourcesMatch, 'GET /api/v1/sources route must exist');
     const preHandlerContent = getSourcesMatch![1];
     assert.ok(!preHandlerContent.includes('requireAdmin'), 'GET /api/v1/sources should NOT require admin');
@@ -45,11 +52,19 @@ describe('TW-006: Twitter halt persistence', () => {
 
   it('does not use in-memory "let halted" variable', () => {
     // Ensure there is no `let halted` pattern — halt state must be DB-backed
-    assert.doesNotMatch(src, /let\s+halted\b/, 'must not have in-memory "let halted" variable — halt state must be persisted to DB');
+    assert.doesNotMatch(
+      src,
+      /let\s+halted\b/,
+      'must not have in-memory "let halted" variable — halt state must be persisted to DB',
+    );
   });
 
   it('haltAllTwitterSources updates source_state table', () => {
-    assert.match(src, /UPDATE\s+source_state\s+SET\s+status\s*=\s*'halted'/s, 'haltAllTwitterSources must UPDATE source_state to halted');
+    assert.match(
+      src,
+      /UPDATE\s+source_state\s+SET\s+status\s*=\s*'halted'/s,
+      'haltAllTwitterSources must UPDATE source_state to halted',
+    );
   });
 
   it('haltAllTwitterSources writes to source = twitter rows', () => {
@@ -90,7 +105,7 @@ describe('FE-012: 401 handler returns never-resolving promise', () => {
   it('401 branch does NOT throw an error', () => {
     // Extract the 401 handling block: from the 401 check to the next `if` or `return`
     const lines = src.split('\n');
-    const start401 = lines.findIndex(l => l.includes('401'));
+    const start401 = lines.findIndex((l) => l.includes('401'));
     assert.ok(start401 >= 0, '401 check must exist');
 
     // Collect lines from the 401 check until the next top-level if/return (the non-ok check)
@@ -102,7 +117,11 @@ describe('FE-012: 401 handler returns never-resolving promise', () => {
     }
     const block401 = block401Lines.join('\n');
 
-    assert.doesNotMatch(block401, /throw\s+new\s+Error/, '401 handler must NOT throw — it should return a never-resolving promise to prevent cascading errors');
+    assert.doesNotMatch(
+      block401,
+      /throw\s+new\s+Error/,
+      '401 handler must NOT throw — it should return a never-resolving promise to prevent cascading errors',
+    );
   });
 
   it('redirects to /login on 401', () => {

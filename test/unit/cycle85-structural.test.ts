@@ -25,11 +25,7 @@ describe('EP-001: embed() accepts taskType parameter', () => {
 
   it('embed function signature includes optional taskType parameter', () => {
     // Match: async function embed(text: string, taskType: TaskType = TaskType.RETRIEVAL_DOCUMENT)
-    assert.match(
-      src,
-      /async\s+function\s+embed\s*\([^)]*taskType\s*[:\?]/,
-      'embed() must accept a taskType parameter',
-    );
+    assert.match(src, /async\s+function\s+embed\s*\([^)]*taskType\s*[:\?]/, 'embed() must accept a taskType parameter');
   });
 
   it('embed defaults to RETRIEVAL_DOCUMENT when taskType is not provided', () => {
@@ -111,11 +107,7 @@ describe('EP-001: embed-pipeline.ts uses default RETRIEVAL_DOCUMENT (not RETRIEV
   });
 
   it('uses embedBatch (not single embed) for pipeline indexing', () => {
-    assert.match(
-      src,
-      /embedBatch/,
-      'embed-pipeline.ts should use embedBatch for efficient batch indexing',
-    );
+    assert.match(src, /embedBatch/, 'embed-pipeline.ts should use embedBatch for efficient batch indexing');
   });
 });
 
@@ -159,15 +151,17 @@ describe('LM-012: pre-summarize does NOT double-sanitize before wrapWithNonce', 
     for (let i = bodyStart; i < src.length; i++) {
       if (src[i] === '{') depth++;
       if (src[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     assert.ok(fnEnd > bodyStart, 'Could not find end of formatBatchContent');
     const fnBody = src.slice(fnStart, fnEnd + 1);
 
     // wrapWithNonce should be called on item.content directly (may be via llm.wrapWithNonce)
     assert.ok(
-      fnBody.includes('wrapWithNonce(item.content)') ||
-      fnBody.includes('.wrapWithNonce(item.content)'),
+      fnBody.includes('wrapWithNonce(item.content)') || fnBody.includes('.wrapWithNonce(item.content)'),
       'formatBatchContent must call wrapWithNonce directly on item.content (no pre-sanitization)',
     );
   });
@@ -201,17 +195,12 @@ describe('LM-012: process/summarize.ts does NOT double-sanitize before wrapWithN
     const fnBody = src.slice(fnStart, src.indexOf('\n  async function', fnStart + 1));
 
     assert.ok(
-      fnBody.includes('wrapWithNonce(userContent)') ||
-      fnBody.includes('wrapWithNonce(userContent,'),
+      fnBody.includes('wrapWithNonce(userContent)') || fnBody.includes('wrapWithNonce(userContent,'),
       'callAndParse must call wrapWithNonce on userContent directly',
     );
   });
 
   it('LLM interface in summarize.ts declares wrapWithNonce', () => {
-    assert.match(
-      src,
-      /wrapWithNonce\s*\(\s*content\s*:\s*string\s*\)/,
-      'LLM interface must include wrapWithNonce',
-    );
+    assert.match(src, /wrapWithNonce\s*\(\s*content\s*:\s*string\s*\)/, 'LLM interface must include wrapWithNonce');
   });
 });

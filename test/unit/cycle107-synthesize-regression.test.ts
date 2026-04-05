@@ -26,26 +26,19 @@ const src = readSrc('src/process/synthesize.ts');
 
 describe('SY-006: quiet-day report generation', () => {
   it('sets quietDay variable when rows.length === 0', () => {
-    assert.ok(
-      src.includes('const quietDay = rows.length === 0'),
-      'must set quietDay when rows.length === 0',
-    );
+    assert.ok(src.includes('const quietDay = rows.length === 0'), 'must set quietDay when rows.length === 0');
   });
 
   it('passes quietDay as the last parameter to buildDailyUserMessage', () => {
     assert.match(
       src,
-      /buildDailyUserMessage\([^)]*,\s*quietDay\s*\)/,
+      /buildDailyUserMessage\([\s\S]*?,\s*quietDay,?\s*\)/,
       'buildDailyUserMessage call must end with quietDay parameter',
     );
   });
 
   it('includes <quiet_day> XML tag in buildDailyUserMessage when quietDay is true', () => {
-    assert.match(
-      src,
-      /<quiet_day>/,
-      'buildDailyUserMessage must emit a <quiet_day> XML tag for quiet days',
-    );
+    assert.match(src, /<quiet_day>/, 'buildDailyUserMessage must emit a <quiet_day> XML tag for quiet days');
   });
 
   it('skips correlator on quiet days', () => {
@@ -79,19 +72,11 @@ describe('SY-001: narratives consumed by synthesis', () => {
   });
 
   it('includes <narrative_context> XML block in buildDailyUserMessage', () => {
-    assert.match(
-      src,
-      /<narrative_context>/,
-      'buildDailyUserMessage must include a <narrative_context> XML block',
-    );
+    assert.match(src, /<narrative_context>/, 'buildDailyUserMessage must include a <narrative_context> XML block');
   });
 
   it('defines the NarrativeContext interface', () => {
-    assert.match(
-      src,
-      /interface\s+NarrativeContext\s*\{/,
-      'NarrativeContext interface must be defined',
-    );
+    assert.match(src, /interface\s+NarrativeContext\s*\{/, 'NarrativeContext interface must be defined');
   });
 
   it('passes narratives to buildDailyUserMessage', () => {
@@ -117,10 +102,7 @@ describe('SY-001: narratives consumed by synthesis', () => {
 
 describe('SY-003: stale momentum data warning', () => {
   it('has SY-003 comment in the source', () => {
-    assert.ok(
-      src.includes('SY-003'),
-      'SY-003 comment must exist in the source',
-    );
+    assert.ok(src.includes('SY-003'), 'SY-003 comment must exist in the source');
   });
 
   it('compares latestDate with todayStr using toLocaleDateString(en-CA)', () => {
@@ -129,22 +111,12 @@ describe('SY-003: stale momentum data warning', () => {
       /toLocaleDateString\(\s*'en-CA'\s*\)/,
       'must use toLocaleDateString("en-CA") for date comparison',
     );
-    assert.match(
-      src,
-      /latestDate\s*!==\s*todayStr/,
-      'must compare latestDate !== todayStr to detect staleness',
-    );
+    assert.match(src, /latestDate\s*!==\s*todayStr/, 'must compare latestDate !== todayStr to detect staleness');
   });
 
   it('stale note includes "momentum data is from" and "rollup may have failed"', () => {
-    assert.ok(
-      src.includes('momentum data is from'),
-      'stale note must mention "momentum data is from"',
-    );
-    assert.ok(
-      src.includes('rollup may have failed'),
-      'stale note must mention "rollup may have failed"',
-    );
+    assert.ok(src.includes('momentum data is from'), 'stale note must mention "momentum data is from"');
+    assert.ok(src.includes('rollup may have failed'), 'stale note must mention "rollup may have failed"');
   });
 });
 
@@ -154,10 +126,7 @@ describe('SY-003: stale momentum data warning', () => {
 
 describe('SM-008: entity name-to-ID matching with alias fallback', () => {
   it('has SM-008 comment in the source', () => {
-    assert.ok(
-      src.includes('SM-008'),
-      'SM-008 comment must exist in the source',
-    );
+    assert.ok(src.includes('SM-008'), 'SM-008 comment must exist in the source');
   });
 
   it('entity ID query uses LEFT JOIN entity_aliases ea ON ea.entity_id = e.id', () => {
@@ -177,10 +146,6 @@ describe('SM-008: entity name-to-ID matching with alias fallback', () => {
   });
 
   it('computes normalizedNames from entityNames.map', () => {
-    assert.match(
-      src,
-      /normalizedNames\s*=\s*entityNames\.map\(/,
-      'must compute normalizedNames via entityNames.map()',
-    );
+    assert.match(src, /normalizedNames\s*=\s*entityNames\.map\(/, 'must compute normalizedNames via entityNames.map()');
   });
 });

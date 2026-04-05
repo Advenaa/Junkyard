@@ -12,12 +12,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const queriesSrc = readFileSync(
-  new URL('../../src/db/queries.ts', import.meta.url), 'utf-8',
-);
-const indexSrc = readFileSync(
-  new URL('../../src/index.ts', import.meta.url), 'utf-8',
-);
+const queriesSrc = readFileSync(new URL('../../src/db/queries.ts', import.meta.url), 'utf-8');
+const indexSrc = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
 
 describe('SP-003 — recoverStaleProcessing exists and is exported', () => {
   it('exports an async function named recoverStaleProcessing', () => {
@@ -29,7 +25,7 @@ describe('SP-003 — recoverStaleProcessing exists and is exported', () => {
 
   it('imports decodeTime from ulid for ULID timestamp extraction', () => {
     assert.ok(
-      queriesSrc.includes("decodeTime") && queriesSrc.includes("from 'ulid'"),
+      queriesSrc.includes('decodeTime') && queriesSrc.includes("from 'ulid'"),
       'queries.ts must import decodeTime from ulid',
     );
   });
@@ -62,24 +58,15 @@ describe('SP-003 — recoverStaleProcessing recovery logic', () => {
       fnBody.includes('retry_count >= maxRetries'),
       'must check retry_count >= maxRetries to identify exhausted items',
     );
-    assert.ok(
-      fnBody.includes("status = 'failed'"),
-      'exhausted items must be set to failed status',
-    );
+    assert.ok(fnBody.includes("status = 'failed'"), 'exhausted items must be set to failed status');
   });
 
   it('resets stale items to ready with retry_count incremented', () => {
     const fnStart = queriesSrc.indexOf('export async function recoverStaleProcessing');
     const fnBody = queriesSrc.slice(fnStart);
 
-    assert.ok(
-      fnBody.includes("status = 'ready'"),
-      'stale items must be reset to ready status',
-    );
-    assert.ok(
-      fnBody.includes('retry_count = retry_count + 1'),
-      'stale items must have retry_count incremented',
-    );
+    assert.ok(fnBody.includes("status = 'ready'"), 'stale items must be reset to ready status');
+    assert.ok(fnBody.includes('retry_count = retry_count + 1'), 'stale items must have retry_count incremented');
   });
 
   it('wraps updates in a transaction (BEGIN/COMMIT pattern)', () => {
@@ -90,10 +77,7 @@ describe('SP-003 — recoverStaleProcessing recovery logic', () => {
 
     assert.ok(beginIdx > -1, 'must call BEGIN to start transaction');
     assert.ok(commitIdx > -1, 'must call COMMIT to end transaction');
-    assert.ok(
-      commitIdx > beginIdx,
-      'COMMIT must appear after BEGIN',
-    );
+    assert.ok(commitIdx > beginIdx, 'COMMIT must appear after BEGIN');
   });
 
   it('handles malformed ULIDs gracefully by setting claimedAt = 0 in catch block', () => {
@@ -105,19 +89,13 @@ describe('SP-003 — recoverStaleProcessing recovery logic', () => {
 
     assert.ok(decodeIdx > -1, 'must call decodeTime');
     assert.ok(catchIdx > decodeIdx, 'must have catch block after decodeTime call');
-    assert.ok(
-      fallbackIdx > catchIdx,
-      'catch block must set claimedAt = 0 for malformed ULIDs',
-    );
+    assert.ok(fallbackIdx > catchIdx, 'catch block must set claimedAt = 0 for malformed ULIDs');
   });
 });
 
 describe('SP-003 — wiring in src/index.ts', () => {
   it('imports recoverStaleProcessing from db/queries', () => {
-    assert.ok(
-      indexSrc.includes('recoverStaleProcessing'),
-      'index.ts must import recoverStaleProcessing',
-    );
+    assert.ok(indexSrc.includes('recoverStaleProcessing'), 'index.ts must import recoverStaleProcessing');
     assert.match(
       indexSrc,
       /import\s*\{[^}]*recoverStaleProcessing[^}]*\}\s*from\s*['"]\.\/db\/queries/,
@@ -132,9 +110,6 @@ describe('SP-003 — wiring in src/index.ts', () => {
     const afterHealthCheck = indexSrc.slice(healthCheckIdx);
     // Find the end of onHealthCheck — look for the next top-level function or closing pattern
     const callIdx = afterHealthCheck.indexOf('recoverStaleProcessing(');
-    assert.ok(
-      callIdx > -1,
-      'recoverStaleProcessing must be called inside onHealthCheck',
-    );
+    assert.ok(callIdx > -1, 'recoverStaleProcessing must be called inside onHealthCheck');
   });
 });

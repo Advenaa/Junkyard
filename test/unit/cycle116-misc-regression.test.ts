@@ -64,10 +64,7 @@ describe('AU-035: sessions.ts has deleteAllForUser method', () => {
   const src = readSrc('src/auth/sessions.ts');
 
   it('defines deleteAllForUser function/method', () => {
-    assert.ok(
-      /deleteAllForUser\s*\(/.test(src),
-      'sessions.ts must define a deleteAllForUser method',
-    );
+    assert.ok(/deleteAllForUser\s*\(/.test(src), 'sessions.ts must define a deleteAllForUser method');
   });
 
   it('deleteAllForUser contains DELETE FROM sessions', () => {
@@ -94,9 +91,7 @@ describe('NP-040: url-expand.ts has validateIntermediateHop without HTTPS requir
 
   it('does not enforce HTTPS-only in validateIntermediateHop', () => {
     // Extract the function body (from declaration to the next top-level function or export)
-    const fnMatch = src.match(
-      /function\s+validateIntermediateHop[\s\S]*?^}/m,
-    );
+    const fnMatch = src.match(/function\s+validateIntermediateHop[\s\S]*?^}/m);
     assert.ok(fnMatch, 'could not extract validateIntermediateHop body');
     const fnBody = fnMatch[0];
     // Must not reject based on protocol being http
@@ -119,9 +114,6 @@ describe('LM-032: handler.ts wraps translated query with nonce', () => {
     const nonceIdx = src.indexOf('llm.wrapWithNonce(');
     assert.ok(translateIdx > -1, 'handler.ts must contain Indonesian detection block');
     assert.ok(nonceIdx > -1, 'handler.ts must call llm.wrapWithNonce()');
-    assert.ok(
-      nonceIdx > translateIdx,
-      'llm.wrapWithNonce() must appear after the Indonesian translation block',
-    );
+    assert.ok(nonceIdx > translateIdx, 'llm.wrapWithNonce() must appear after the Indonesian translation block');
   });
 });

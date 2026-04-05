@@ -16,25 +16,15 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const chatHandler = readFileSync(
-  new URL('../../src/chat/handler.ts', import.meta.url), 'utf-8',
-);
+const chatHandler = readFileSync(new URL('../../src/chat/handler.ts', import.meta.url), 'utf-8');
 
-const chatTools = readFileSync(
-  new URL('../../src/chat/tools.ts', import.meta.url), 'utf-8',
-);
+const chatTools = readFileSync(new URL('../../src/chat/tools.ts', import.meta.url), 'utf-8');
 
-const indexSrc = readFileSync(
-  new URL('../../src/index.ts', import.meta.url), 'utf-8',
-);
+const indexSrc = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
 
-const schedulerSrc = readFileSync(
-  new URL('../../src/scheduler.ts', import.meta.url), 'utf-8',
-);
+const schedulerSrc = readFileSync(new URL('../../src/scheduler.ts', import.meta.url), 'utf-8');
 
-const preSummarizeSrc = readFileSync(
-  new URL('../../src/pre-summarize/index.ts', import.meta.url), 'utf-8',
-);
+const preSummarizeSrc = readFileSync(new URL('../../src/pre-summarize/index.ts', import.meta.url), 'utf-8');
 
 // ── CQ-002 — Tool result truncation in chat handler ───────────────────
 
@@ -70,10 +60,7 @@ describe('CQ-002 — Tool result truncation', () => {
   });
 
   it('calls truncateToolResult inside the tool execution loop', () => {
-    assert.ok(
-      chatHandler.includes('truncateToolResult'),
-      'handler should call truncateToolResult on each tool result',
-    );
+    assert.ok(chatHandler.includes('truncateToolResult'), 'handler should call truncateToolResult on each tool result');
   });
 
   it('tracks totalToolResultChars in the tool loop', () => {
@@ -95,10 +82,7 @@ describe('CQ-002 — Tool result truncation', () => {
 
 describe('CQ-010 — ALLOWED_TABLES allowlist in chat tools', () => {
   it('defines ALLOWED_TABLES mapping', () => {
-    assert.ok(
-      chatTools.includes('ALLOWED_TABLES'),
-      'tools should define ALLOWED_TABLES for SQL table validation',
-    );
+    assert.ok(chatTools.includes('ALLOWED_TABLES'), 'tools should define ALLOWED_TABLES for SQL table validation');
   });
 
   it('ALLOWED_TABLES has summary key', () => {
@@ -116,19 +100,13 @@ describe('CQ-010 — ALLOWED_TABLES allowlist in chat tools', () => {
   });
 
   it('guards against invalid type with ALLOWED_TABLES lookup', () => {
-    assert.ok(
-      chatTools.includes('if (!table)'),
-      'should guard against invalid type when table lookup fails',
-    );
+    assert.ok(chatTools.includes('if (!table)'), 'should guard against invalid type when table lookup fails');
   });
 
   it('SQL query uses validated table variable, not raw type', () => {
     // The SELECT query should interpolate `table` (the validated value), not `type`
     const selectMatch = chatTools.match(/SELECT.*FROM \$\{table\}/);
-    assert.ok(
-      selectMatch,
-      'SQL query should use ${table} (validated via ALLOWED_TABLES), not raw type parameter',
-    );
+    assert.ok(selectMatch, 'SQL query should use ${table} (validated via ALLOWED_TABLES), not raw type parameter');
   });
 });
 
@@ -136,17 +114,11 @@ describe('CQ-010 — ALLOWED_TABLES allowlist in chat tools', () => {
 
 describe('LC-001 — vectorCache.load() before startServer()', () => {
   it('vectorCache.load() appears in index.ts', () => {
-    assert.ok(
-      indexSrc.includes('vectorCache.load()'),
-      'index.ts should call vectorCache.load()',
-    );
+    assert.ok(indexSrc.includes('vectorCache.load()'), 'index.ts should call vectorCache.load()');
   });
 
   it('startServer() appears in index.ts', () => {
-    assert.ok(
-      indexSrc.includes('startServer('),
-      'index.ts should call startServer()',
-    );
+    assert.ok(indexSrc.includes('startServer('), 'index.ts should call startServer()');
   });
 
   it('vectorCache.load() appears before startServer() in source order', () => {
@@ -165,10 +137,7 @@ describe('LC-001 — vectorCache.load() before startServer()', () => {
 
 describe('LC-005 — shuttingDown guard in refreshDailyCron', () => {
   it('refreshDailyCron function exists in scheduler', () => {
-    assert.ok(
-      schedulerSrc.includes('refreshDailyCron'),
-      'scheduler should define refreshDailyCron',
-    );
+    assert.ok(schedulerSrc.includes('refreshDailyCron'), 'scheduler should define refreshDailyCron');
   });
 
   it('shuttingDown guard is at the top of refreshDailyCron body', () => {
@@ -193,10 +162,7 @@ describe('LC-005 — shuttingDown guard in refreshDailyCron', () => {
 
 describe('IP-001 — Pre-summarize sets batch_id', () => {
   it('generates a ULID batch_id', () => {
-    assert.ok(
-      preSummarizeSrc.includes('ulid()'),
-      'pre-summarize should generate a ULID for batch_id',
-    );
+    assert.ok(preSummarizeSrc.includes('ulid()'), 'pre-summarize should generate a ULID for batch_id');
   });
 
   it('claim UPDATE query includes batch_id', () => {
@@ -209,10 +175,7 @@ describe('IP-001 — Pre-summarize sets batch_id', () => {
     assert.ok(claimEnd > -1, 'claim query should have RETURNING clause');
     const claimQuery = preSummarizeSrc.slice(claimStart, claimEnd);
 
-    assert.ok(
-      claimQuery.includes('batch_id'),
-      'claim query should set batch_id alongside status = processing',
-    );
+    assert.ok(claimQuery.includes('batch_id'), 'claim query should set batch_id alongside status = processing');
   });
 });
 

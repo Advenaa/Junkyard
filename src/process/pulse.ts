@@ -50,12 +50,14 @@ Rules:
 const ParsedSummaryBodySchema = z.object({
   summary: z.string(),
   urgency: z.string(),
-  entities: z.array(z.object({
-    name: z.string(),
-    type: z.string(),
-    sentiment: z.number(),
-    mentionCount: z.number(),
-  })),
+  entities: z.array(
+    z.object({
+      name: z.string(),
+      type: z.string(),
+      sentiment: z.number(),
+      mentionCount: z.number(),
+    }),
+  ),
   keyEvents: z.array(z.string()),
   confidence: z.number(),
 });
@@ -78,11 +80,7 @@ interface DriftFlag {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function parseSummaryBody(body: string): ParsedSummaryBody | null {
@@ -159,7 +157,14 @@ interface DivergenceTracker {
 
 // ── Factory ──────────────────────────────────────────────────────────
 
-export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, sentimentTracker: SentimentTracker, divergenceTracker: DivergenceTracker) {
+export function createPulse(
+  pool: Pool,
+  log: Logger,
+  config: Config,
+  llm: LLM,
+  sentimentTracker: SentimentTracker,
+  divergenceTracker: DivergenceTracker,
+) {
   /**
    * Get the prior pulse report (most recent pulse).
    */
@@ -189,10 +194,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
   /**
    * Detect entities with significant sentiment drift between windows.
    */
-  function detectDrift(
-    currentEntities: Map<string, number>,
-    priorEntities: EntitySentimentEntry[],
-  ): DriftFlag[] {
+  function detectDrift(currentEntities: Map<string, number>, priorEntities: EntitySentimentEntry[]): DriftFlag[] {
     const flags: DriftFlag[] = [];
     const priorMap = new Map<string, number>();
     for (const entry of priorEntities) {
@@ -220,11 +222,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
   /**
    * Determine maxTokens based on summary count and urgency levels.
    */
-  function computeMaxTokens(
-    summaryCount: number,
-    hasBreaking: boolean,
-    hasElevated: boolean,
-  ): number {
+  function computeMaxTokens(summaryCount: number, hasBreaking: boolean, hasElevated: boolean): number {
     if (summaryCount > 10 || hasBreaking) return 1500;
     if (summaryCount >= 4 || hasElevated) return 800;
     return 500;
@@ -246,9 +244,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
       parts.push(`<prior_pulse_tldr>${priorTldr}</prior_pulse_tldr>`);
     }
 
-    const summaryBlocks = summaries.map(
-      (s) => `[${s.source}] (${s.urgency}) ${s.summary}\nEntities: ${s.entities}`,
-    );
+    const summaryBlocks = summaries.map((s) => `[${s.source}] (${s.urgency}) ${s.summary}\nEntities: ${s.entities}`);
     parts.push(`<summaries>\n${summaryBlocks.join('\n\n')}\n</summaries>`);
 
     if (driftFlags.length > 0) {
@@ -267,18 +263,15 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
         const sign = momVal > 0 ? '+' : '';
         return `${escapeXml(m.entityName)}: avg=${m.avgSentiment.toFixed(2)}, momentum=${sign}${momVal.toFixed(2)} (${m.trend}), mentions=${m.mentionCount}`;
       });
-      parts.push(
-        `<sentiment_momentum>\n${momentumLines.join('\n')}\n</sentiment_momentum>`,
-      );
+      parts.push(`<sentiment_momentum>\n${momentumLines.join('\n')}\n</sentiment_momentum>`);
     }
 
     if (divergence.length > 0) {
-      const divergenceLines = divergence.map((d) =>
-        `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
+      const divergenceLines = divergence.map(
+        (d) =>
+          `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
       );
-      parts.push(
-        `<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`,
-      );
+      parts.push(`<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`);
     }
 
     return parts.join('\n\n');
@@ -331,9 +324,7 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
       if (urgency === 'breaking') hasBreaking = true;
       if (urgency === 'elevated') hasElevated = true;
 
-      const entityStr = parsed.entities
-        .map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`)
-        .join(', ');
+      const entityStr = parsed.entities.map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`).join(', ');
 
       parsedSummaries.push({
         summary: parsed.summary,
@@ -388,18 +379,19 @@ export function createPulse(pool: Pool, log: Logger, config: Config, llm: LLM, s
 
     // Fetch sentiment momentum for mentioned entities
     const entityNames = [...currentEntitySentiment.keys()];
-    const entityIdRows = entityNames.length > 0
-      ? (await pool.query<{ id: string }>(
-          `SELECT DISTINCT e.id FROM entities e
+    const entityIdRows =
+      entityNames.length > 0
+        ? (
+            await pool.query<{ id: string }>(
+              `SELECT DISTINCT e.id FROM entities e
            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
            WHERE LOWER(e.name) = ANY($1) OR ea.alias = ANY($1)`,
-          [entityNames],
-        )).rows
-      : [];
+              [entityNames],
+            )
+          ).rows
+        : [];
     const entityIds = entityIdRows.map((r) => r.id);
-    const momentum = entityIds.length > 0
-      ? await sentimentTracker.getMomentumContext(entityIds)
-      : [];
+    const momentum = entityIds.length > 0 ? await sentimentTracker.getMomentumContext(entityIds) : [];
 
     log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for pulse');
 

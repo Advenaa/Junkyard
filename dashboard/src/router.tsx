@@ -18,19 +18,33 @@ export function AppRouter() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route element={<ProtectedRoute />}>
-              <Route element={<><Header /><main className="max-w-5xl mx-auto"><Outlet /></main></>}>
+              <Route
+                element={
+                  <>
+                    <Header />
+                    <main className="max-w-5xl mx-auto">
+                      <Outlet />
+                    </main>
+                  </>
+                }
+              >
                 <Route path="/" element={<ReportView />} />
                 <Route path="/reports" element={<ReportList />} />
                 <Route path="/reports/:id" element={<ReportView />} />
                 <Route path="/feed" element={<Feed />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/settings" element={<Settings />} />
-                <Route path="*" element={
-                  <div className="flex flex-col items-center justify-center py-20 text-text-secondary">
-                    <h1 className="text-2xl font-bold mb-2">Page not found</h1>
-                    <a href="/" className="text-accent hover:underline">Go to dashboard</a>
-                  </div>
-                } />
+                <Route
+                  path="*"
+                  element={
+                    <div className="flex flex-col items-center justify-center py-20 text-text-secondary">
+                      <h1 className="text-2xl font-bold mb-2">Page not found</h1>
+                      <a href="/" className="text-accent hover:underline">
+                        Go to dashboard
+                      </a>
+                    </div>
+                  }
+                />
               </Route>
             </Route>
           </Routes>

@@ -48,11 +48,7 @@ function canonicalizeIPv6(ip: string): string {
   if (bestLen >= 2) {
     const before = normalized.slice(0, bestStart);
     const after = normalized.slice(bestStart + bestLen);
-    return (
-      (before.length > 0 ? before.join(':') : '') +
-      '::' +
-      (after.length > 0 ? after.join(':') : '')
-    );
+    return (before.length > 0 ? before.join(':') : '') + '::' + (after.length > 0 ? after.join(':') : '');
   }
 
   return normalized.join(':');
@@ -84,9 +80,7 @@ function isPrivateIp(ip: string): boolean {
 
     // Check for IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
     // These encode an IPv4 address inside IPv6 — extract and check the IPv4 part.
-    const v4MappedMatch = normalized.match(
-      /^(?:0{0,4}:){0,4}(?:0{0,4}:)?ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/,
-    );
+    const v4MappedMatch = normalized.match(/^(?:0{0,4}:){0,4}(?:0{0,4}:)?ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
     if (v4MappedMatch) {
       return isPrivateIp(v4MappedMatch[1]);
     }
@@ -120,9 +114,7 @@ export interface UrlValidationResult {
   resolvedIp?: string;
 }
 
-export async function validateUrl(
-  url: string,
-): Promise<UrlValidationResult> {
+export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // 1. Parse URL
   let parsed: URL;
   try {
@@ -190,7 +182,9 @@ export async function validateUrl(
 export async function fetchValidated(
   url: string,
   init?: { signal?: AbortSignal; headers?: Record<string, string> },
-): Promise<{ response: Response; validation: UrlValidationResult } | { response: null; validation: UrlValidationResult }> {
+): Promise<
+  { response: Response; validation: UrlValidationResult } | { response: null; validation: UrlValidationResult }
+> {
   const validation = await validateUrl(url);
   if (!validation.valid || !validation.resolvedIp) {
     return { response: null, validation };

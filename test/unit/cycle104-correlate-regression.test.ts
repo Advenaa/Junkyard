@@ -18,10 +18,7 @@ describe('CO-001 — Trust weight queried per (source, source_id) pair', () => {
 
   it('trust weight SQL does NOT use source = ANY', () => {
     // Extract the trust weight query block
-    const trustBlock = correlateSrc.slice(
-      correlateSrc.indexOf('// CO-001'),
-      correlateSrc.indexOf('const trustMap'),
-    );
+    const trustBlock = correlateSrc.slice(correlateSrc.indexOf('// CO-001'), correlateSrc.indexOf('const trustMap'));
     assert.ok(trustBlock.length > 0, 'CO-001 trust weight block must exist');
     assert.ok(
       !trustBlock.includes('source = ANY'),
@@ -33,26 +30,16 @@ describe('CO-001 — Trust weight queried per (source, source_id) pair', () => {
     // The trustMap must be keyed by `${r.source}:${r.source_id}`
     assert.match(
       correlateSrc,
-      /trustMap.*new Map\(trustRows\.map\(r => \[`\$\{r\.source\}:\$\{r\.source_id\}`/,
+      /trustMap\s*=\s*new Map\(\s*\n?\s*trustRows\.map\(\(?r\)?\s*=>\s*\[`\$\{r\.source\}:\$\{r\.source_id\}`/,
       'trustMap key must use `${r.source}:${r.source_id}` format',
     );
   });
 
   it('trust weight lookup iterates unique source_ids and picks highest (CO-011)', () => {
     // CO-011: The lookup collects ALL unique source_ids and picks the highest trust weight
-    assert.ok(
-      correlateSrc.includes('uniqueSourceIds'),
-      'Trust lookup must iterate unique source_ids',
-    );
-    assert.ok(
-      correlateSrc.includes('bestTrustWeight'),
-      'Trust lookup must track the best trust weight',
-    );
-    assert.match(
-      correlateSrc,
-      /trustMap\.get\(/,
-      'Trust lookup must call trustMap.get()',
-    );
+    assert.ok(correlateSrc.includes('uniqueSourceIds'), 'Trust lookup must iterate unique source_ids');
+    assert.ok(correlateSrc.includes('bestTrustWeight'), 'Trust lookup must track the best trust weight');
+    assert.match(correlateSrc, /trustMap\.get\(/, 'Trust lookup must call trustMap.get()');
   });
 
   it('sourcePairSet builds keys as source:source_id', () => {
@@ -68,24 +55,12 @@ describe('CO-001 — Trust weight queried per (source, source_id) pair', () => {
 
 describe('CO-003 — json_agg mentions runtime validation', () => {
   it('checks if mentions is a string and attempts JSON.parse', () => {
-    assert.match(
-      correlateSrc,
-      /typeof mentions === 'string'/,
-      'Must check if mentions is a string',
-    );
-    assert.match(
-      correlateSrc,
-      /JSON\.parse\(mentions\)/,
-      'Must attempt JSON.parse on string mentions',
-    );
+    assert.match(correlateSrc, /typeof mentions === 'string'/, 'Must check if mentions is a string');
+    assert.match(correlateSrc, /JSON\.parse\(mentions\)/, 'Must attempt JSON.parse on string mentions');
   });
 
   it('checks Array.isArray(mentions) after parse', () => {
-    assert.match(
-      correlateSrc,
-      /Array\.isArray\(mentions\)/,
-      'Must validate mentions is an array via Array.isArray',
-    );
+    assert.match(correlateSrc, /Array\.isArray\(mentions\)/, 'Must validate mentions is an array via Array.isArray');
   });
 
   it('skips rows with unparseable string mentions', () => {
@@ -94,16 +69,8 @@ describe('CO-003 — json_agg mentions runtime validation', () => {
     assert.ok(parseIdx > 0, 'JSON.parse(mentions) must exist');
 
     const afterParse = correlateSrc.slice(parseIdx, parseIdx + 300);
-    assert.match(
-      afterParse,
-      /catch/,
-      'Must have a catch block after JSON.parse',
-    );
-    assert.match(
-      afterParse,
-      /continue/,
-      'Must continue (skip row) on parse failure',
-    );
+    assert.match(afterParse, /catch/, 'Must have a catch block after JSON.parse');
+    assert.match(afterParse, /continue/, 'Must continue (skip row) on parse failure');
   });
 
   it('skips rows where mentions is not an array', () => {
@@ -111,19 +78,11 @@ describe('CO-003 — json_agg mentions runtime validation', () => {
     assert.ok(arrayCheckIdx > 0, '!Array.isArray(mentions) check must exist');
 
     const afterCheck = correlateSrc.slice(arrayCheckIdx, arrayCheckIdx + 200);
-    assert.match(
-      afterCheck,
-      /continue/,
-      'Must continue (skip row) when mentions is not an array',
-    );
+    assert.match(afterCheck, /continue/, 'Must continue (skip row) when mentions is not an array');
   });
 
   it('CO-003 comment marks the validation block', () => {
-    assert.match(
-      correlateSrc,
-      /CO-003.*Runtime validation/i,
-      'CO-003 comment must mark the validation block',
-    );
+    assert.match(correlateSrc, /CO-003.*Runtime validation/i, 'CO-003 comment must mark the validation block');
   });
 });
 
@@ -156,17 +115,13 @@ describe('CO-006 — Flash trigger passes min_ts cutoff to correlator.run()', ()
   });
 
   it('run() accepts optional cutoff parameter', () => {
-    assert.match(
-      correlateSrc,
-      /async function run\(cutoff\?.*\)/,
-      'run() must accept an optional cutoff parameter',
-    );
+    assert.match(correlateSrc, /async function run\(cutoff\?.*\)/, 'run() must accept an optional cutoff parameter');
   });
 
   it('effectiveCutoff falls back to 24h when cutoff is undefined', () => {
     assert.match(
       correlateSrc,
-      /cutoff \?\? \(Date\.now\(\) - 24 \* 60 \* 60 \* 1000\)/,
+      /cutoff \?\? Date\.now\(\) - 24 \* 60 \* 60 \* 1000/,
       'Must fallback to 24h window when no cutoff provided',
     );
   });

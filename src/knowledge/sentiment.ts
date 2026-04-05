@@ -62,10 +62,7 @@ function dateToEpochMsBounds(dateString: string, timezone: string): { startMs: n
 }
 
 /** Classify momentum + day-over-day change into a human-readable trend. */
-function classifyTrend(
-  momentum: number | null,
-  yesterdayMomentum: number | null,
-): Trend {
+function classifyTrend(momentum: number | null, yesterdayMomentum: number | null): Trend {
   if (momentum === null) return 'stable';
 
   if (momentum > 0.15) return 'accelerating';
@@ -196,14 +193,9 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
         const priorAvg = window?.prior_avg ?? null;
 
         // Momentum = recent_avg - prior_avg; null if no prior history
-        const momentum =
-          priorAvg !== null && priorAvg !== undefined
-            ? recentAvg - priorAvg
-            : null;
+        const momentum = priorAvg !== null && priorAvg !== undefined ? recentAvg - priorAvg : null;
 
-        placeholders.push(
-          `($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4})`,
-        );
+        placeholders.push(`($${paramIdx}, $${paramIdx + 1}, $${paramIdx + 2}, $${paramIdx + 3}, $${paramIdx + 4})`);
         upsertValues.push(agg.entity_id, dateString, agg.avg_sentiment, mentionCount, momentum);
         paramIdx += 5;
       }
@@ -244,7 +236,7 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
       await runDailyCore(dateString, timezone);
     } catch (firstErr) {
       log.warn({ err: firstErr, date: dateString }, 'Sentiment rollup failed, retrying once after 2s');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
       await runDailyCore(dateString, timezone); // Let it throw on second failure
     }
   }

@@ -14,22 +14,29 @@ function makePool(rows: Record<string, unknown>[] = []) {
 
 function makeLogger(): any {
   const calls: Record<string, unknown[][]> = {};
-  return new Proxy({}, {
-    get(_target, prop) {
-      const name = String(prop);
-      if (name === 'calls') return calls;
-      if (!calls[name]) calls[name] = [];
-      return (...args: unknown[]) => { calls[name]!.push(args); };
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        const name = String(prop);
+        if (name === 'calls') return calls;
+        if (!calls[name]) calls[name] = [];
+        return (...args: unknown[]) => {
+          calls[name]!.push(args);
+        };
+      },
     },
-  });
+  );
 }
 
-function makeEmbedder(overrides: Partial<{
-  isAvailable: () => boolean;
-  embedBatch: (texts: string[]) => Promise<any[]>;
-  prepareText: (text: string, type: string) => string;
-  vectorToBytes: (v: Float32Array) => Buffer;
-}> = {}) {
+function makeEmbedder(
+  overrides: Partial<{
+    isAvailable: () => boolean;
+    embedBatch: (texts: string[]) => Promise<any[]>;
+    prepareText: (text: string, type: string) => string;
+    vectorToBytes: (v: Float32Array) => Buffer;
+  }> = {},
+) {
   return {
     isAvailable: () => true,
     embedBatch: async (texts: string[]) =>

@@ -81,10 +81,7 @@ const NON_RESUMABLE_CLOSE_CODES: ReadonlySet<number> = new Set([4007, 4008, 1000
 const MAX_BACKOFF_MS = 60_000;
 const MAX_CONSECUTIVE_ERRORS = 20;
 
-const DISCORD_CDN_HOSTS: ReadonlySet<string> = new Set([
-  'cdn.discordapp.com',
-  'media.discordapp.net',
-]);
+const DISCORD_CDN_HOSTS: ReadonlySet<string> = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
 
 function isValidDiscordUrl(url: string): boolean {
   try {
@@ -109,9 +106,7 @@ const IDENTIFY_PROPERTIES = {
   client_build_number: 291963,
 } as const;
 
-const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg',
-]);
+const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,7 +116,7 @@ async function getDiscordChannels(pool: Pool): Promise<string[]> {
   const { rows } = await pool.query<{ source_id: string }>(
     "SELECT source_id FROM sources WHERE source = 'discord' AND enabled = true",
   );
-  return rows.map(r => r.source_id);
+  return rows.map((r) => r.source_id);
 }
 
 function isImageAttachment(attachment: MessageAttachment): boolean {
@@ -384,10 +379,7 @@ class TokenConnection {
     });
 
     ws.on('close', (code: number, reason: Buffer) => {
-      this.log.warn(
-        { tokenIndex: this.tokenIndex, code, reason: reason.toString() },
-        'gateway socket closed',
-      );
+      this.log.warn({ tokenIndex: this.tokenIndex, code, reason: reason.toString() }, 'gateway socket closed');
       this.clearHeartbeat();
       this.handleClose(code);
     });
@@ -449,10 +441,7 @@ class TokenConnection {
 
   private handleInvalidSession(d: unknown): void {
     const resumable = d === true;
-    this.log.warn(
-      { tokenIndex: this.tokenIndex, resumable },
-      'received INVALID SESSION',
-    );
+    this.log.warn({ tokenIndex: this.tokenIndex, resumable }, 'received INVALID SESSION');
 
     if (resumable) {
       this.closeAndResume();
@@ -580,10 +569,7 @@ class TokenConnection {
           'message dropped due to queue overflow',
         );
       } else {
-        this.log.error(
-          { tokenIndex: this.tokenIndex, messageId: d.id, err },
-          'onMessage callback failed',
-        );
+        this.log.error({ tokenIndex: this.tokenIndex, messageId: d.id, err }, 'onMessage callback failed');
       }
     }
   }
@@ -695,10 +681,7 @@ class TokenConnection {
     if (this.checkCircuitBreaker()) return;
 
     if (FATAL_CLOSE_CODES.has(code)) {
-      this.log.error(
-        { tokenIndex: this.tokenIndex, code },
-        'fatal close code — disabling token',
-      );
+      this.log.error({ tokenIndex: this.tokenIndex, code }, 'fatal close code — disabling token');
       this.state.status = 'disabled';
       this.state.sessionId = null;
       this.state.lastSeq = null;
@@ -747,19 +730,13 @@ class TokenConnection {
 
     // Only reset backoff if the connection was stable for at least 30s
     const STABLE_THRESHOLD_MS = 30_000;
-    if (
-      this.state.connectedAt !== null &&
-      Date.now() - this.state.connectedAt > STABLE_THRESHOLD_MS
-    ) {
+    if (this.state.connectedAt !== null && Date.now() - this.state.connectedAt > STABLE_THRESHOLD_MS) {
       this.reconnectAttempt = 0;
     }
 
     this.reconnectAttempt += 1;
     const delay = backoffMs(this.reconnectAttempt);
-    this.log.info(
-      { tokenIndex: this.tokenIndex, delay, attempt: this.reconnectAttempt },
-      'resuming after backoff',
-    );
+    this.log.info({ tokenIndex: this.tokenIndex, delay, attempt: this.reconnectAttempt }, 'resuming after backoff');
     await sleep(delay);
     if (this.destroyed) return;
     const url = this.state.resumeUrl ?? GATEWAY_URL;

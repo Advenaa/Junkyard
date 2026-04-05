@@ -35,16 +35,10 @@ describe('CF-010 — Config change triggers scheduler rebuild', () => {
 
   it('index.ts passes a callback that calls refreshDailyCron', () => {
     // The createServer call in index.ts should wire up scheduler.refreshDailyCron
-    assert.ok(
-      indexSrc.includes('refreshDailyCron'),
-      'createServer call in index.ts should reference refreshDailyCron',
-    );
+    assert.ok(indexSrc.includes('refreshDailyCron'), 'createServer call in index.ts should reference refreshDailyCron');
     // Verify it's passed as an argument to createServer (call may contain nested parens)
     const callSite = indexSrc.match(/createServer\([\s\S]*?refreshDailyCron[\s\S]*?\);/);
-    assert.ok(
-      callSite,
-      'refreshDailyCron should be passed within the createServer() call arguments',
-    );
+    assert.ok(callSite, 'refreshDailyCron should be passed within the createServer() call arguments');
   });
 });
 
@@ -63,10 +57,7 @@ describe('CF-011 — digest_time and timezone validated on PATCH', () => {
   });
 
   it('timezone is validated using Intl.DateTimeFormat', () => {
-    assert.ok(
-      serverSrc.includes('Intl.DateTimeFormat'),
-      'timezone should be validated via Intl.DateTimeFormat',
-    );
+    assert.ok(serverSrc.includes('Intl.DateTimeFormat'), 'timezone should be validated via Intl.DateTimeFormat');
     // Confirm timeZone option is passed
     assert.ok(
       serverSrc.includes('timeZone'),
@@ -76,8 +67,9 @@ describe('CF-011 — digest_time and timezone validated on PATCH', () => {
 
   it('both validations return 400 on failure', () => {
     // Extract the PATCH /config handler region (from the route registration to the next route)
-    const patchStart = serverSrc.indexOf("app.patch('/api/v1/config'");
-    assert.ok(patchStart !== -1, 'PATCH /api/v1/config route should exist');
+    const patchMatch = serverSrc.match(/app\.patch\(\s*\n?\s*'\/api\/v1\/config'/);
+    assert.ok(patchMatch && patchMatch.index !== undefined, 'PATCH /api/v1/config route should exist');
+    const patchStart = patchMatch.index;
     const patchRegion = serverSrc.slice(patchStart, patchStart + 2000);
 
     // Count 400 responses — should have at least 2 (one for digest_time, one for timezone)
@@ -101,10 +93,7 @@ describe('HM-020 — checkSourceSilence handles NULL last_fetched_at', () => {
     // The code should check for falsy last_fetched_at and push to silent, not skip with continue
     // Look for: if (!row.last_fetched_at) followed by silent.push, not continue
     const nullCheck = healthSrc.match(/if\s*\(\s*!row\.last_fetched_at\s*\)\s*\{[\s\S]*?silent\.push/);
-    assert.ok(
-      nullCheck,
-      'Sources with NULL last_fetched_at should be pushed to the silent array',
-    );
+    assert.ok(nullCheck, 'Sources with NULL last_fetched_at should be pushed to the silent array');
 
     // Ensure the null-check block does NOT just continue (skip the source)
     const nullBlock = healthSrc.match(/if\s*\(\s*!row\.last_fetched_at\s*\)\s*\{([^}]*)\}/);
@@ -116,9 +105,6 @@ describe('HM-020 — checkSourceSilence handles NULL last_fetched_at', () => {
   });
 
   it('HM-020 comment exists in the health check code', () => {
-    assert.ok(
-      healthSrc.includes('HM-020'),
-      'health.ts should contain the HM-020 ticket reference comment',
-    );
+    assert.ok(healthSrc.includes('HM-020'), 'health.ts should contain the HM-020 ticket reference comment');
   });
 });

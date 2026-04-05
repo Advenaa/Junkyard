@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  chunkByTokens,
-  estimateTokens,
-  CHUNK_TOKEN_BUDGET,
-} from '../../src/process/chunk.js';
+import { chunkByTokens, estimateTokens, CHUNK_TOKEN_BUDGET } from '../../src/process/chunk.js';
 
 type Item = { content: string };
 

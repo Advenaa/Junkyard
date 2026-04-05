@@ -59,8 +59,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'keyword_search',
-    description:
-      'Look up an entity by name/alias for mentions, sentiment, and history.',
+    description: 'Look up an entity by name/alias for mentions, sentiment, and history.',
     parameters: {
       type: 'object',
       properties: {
@@ -112,10 +111,7 @@ function truncateToolResult(result: string, limit: number): string {
   return result.slice(0, limit) + '\n...[truncated]';
 }
 
-function buildToolResultMessage(
-  toolName: string,
-  result: string,
-): string {
+function buildToolResultMessage(toolName: string, result: string): string {
   return `<tool_result name="${toolName}">\n${result}\n</tool_result>`;
 }
 
@@ -180,11 +176,7 @@ export function createChatHandler(
     cleanupInterval.unref();
   }
 
-  async function handle(
-    query: string,
-    conversationId: string,
-    userId: string,
-  ): Promise<ChatResult> {
+  async function handle(query: string, conversationId: string, userId: string): Promise<ChatResult> {
     if (!checkUserBudget(userId)) {
       return { response: 'You have reached your daily query limit. Please try again tomorrow.', toolsUsed: [] };
     }
@@ -222,7 +214,10 @@ export function createChatHandler(
           processedQuery = wrapped;
           queryWrapped = true; // CH-020
         } else {
-          log.warn({ conversationId, translatedLength: translated?.length }, 'Translation result invalid, re-embedding original Indonesian query');
+          log.warn(
+            { conversationId, translatedLength: translated?.length },
+            'Translation result invalid, re-embedding original Indonesian query',
+          );
           // Re-embed the original Indonesian query so semantic search still works.
           // processedQuery stays as original query — the LLM and tools will handle it.
           processedQuery = query;
@@ -300,18 +295,22 @@ export function createChatHandler(
         // Check total tool result budget before executing more tools
         if (totalToolResultChars >= MAX_TOTAL_TOOL_RESULT_CHARS) {
           budgetExhausted = true;
-          log.warn({ conversationId, totalToolResultChars }, 'chat: tool result budget exhausted, skipping remaining calls');
+          log.warn(
+            { conversationId, totalToolResultChars },
+            'chat: tool result budget exhausted, skipping remaining calls',
+          );
           toolResults.push(
-            buildToolResultMessage(call.name, 'Skipped: tool result budget exhausted. Work with the data you already have.'),
+            buildToolResultMessage(
+              call.name,
+              'Skipped: tool result budget exhausted. Work with the data you already have.',
+            ),
           );
           continue;
         }
 
         const tool = toolMap.get(call.name);
         if (!tool) {
-          toolResults.push(
-            buildToolResultMessage(call.name, `Error: unknown tool "${call.name}"`),
-          );
+          toolResults.push(buildToolResultMessage(call.name, `Error: unknown tool "${call.name}"`));
           continue;
         }
 
@@ -333,12 +332,13 @@ export function createChatHandler(
           toolFailures.set(call.name, failures);
           if (failures >= 2) {
             toolResults.push(
-              buildToolResultMessage(call.name, `Error: tool "${call.name}" has failed ${failures} times and is temporarily unavailable. Use a different approach.`),
+              buildToolResultMessage(
+                call.name,
+                `Error: tool "${call.name}" has failed ${failures} times and is temporarily unavailable. Use a different approach.`,
+              ),
             );
           } else {
-            toolResults.push(
-              buildToolResultMessage(call.name, `Error: ${errMsg}`),
-            );
+            toolResults.push(buildToolResultMessage(call.name, `Error: ${errMsg}`));
           }
         }
       }
@@ -347,7 +347,10 @@ export function createChatHandler(
       messages.push({ role: 'assistant', content: result.content });
       const toolResultsText = toolResults.join('\n\n');
       if (budgetExhausted) {
-        messages.push({ role: 'user', content: `${toolResultsText}\n\n[System: Tool result budget reached. Do NOT call more tools. Produce your final answer now using the data you already have.]` });
+        messages.push({
+          role: 'user',
+          content: `${toolResultsText}\n\n[System: Tool result budget reached. Do NOT call more tools. Produce your final answer now using the data you already have.]`,
+        });
       } else {
         messages.push({ role: 'user', content: toolResultsText });
       }

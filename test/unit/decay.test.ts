@@ -1,10 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DECAY_FACTOR,
-  ARCHIVE_THRESHOLD,
-  ARCHIVE_STALE_DAYS,
-} from '../../src/knowledge/decay.js';
+import { DECAY_FACTOR, ARCHIVE_THRESHOLD, ARCHIVE_STALE_DAYS } from '../../src/knowledge/decay.js';
 
 describe('Decay constants', () => {
   it('exports DECAY_FACTOR as 0.95', () => {

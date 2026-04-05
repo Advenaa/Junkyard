@@ -28,10 +28,7 @@ describe('VE-010 — cosineSimilarity dimension guard', () => {
     // Find the closing brace of the function (next export or end)
     const nextExport = vectorCacheSrc.indexOf('\nexport ', fnStart + 1);
     const nextFunction = vectorCacheSrc.indexOf('\nfunction ', fnStart + 1);
-    const end = Math.min(
-      nextExport === -1 ? Infinity : nextExport,
-      nextFunction === -1 ? Infinity : nextFunction,
-    );
+    const end = Math.min(nextExport === -1 ? Infinity : nextExport, nextFunction === -1 ? Infinity : nextFunction);
     return vectorCacheSrc.slice(fnStart, end === Infinity ? undefined : end);
   }
 
@@ -141,48 +138,29 @@ describe('IP-015 — Entity resolution failure keeps summary', () => {
   const block = extractEntityResolutionBlock();
 
   it('resolveEntities is wrapped in a try/catch', () => {
-    assert.match(
-      block,
-      /try\s*\{/,
-      'resolveEntities must be wrapped in a try block',
-    );
-    assert.ok(
-      block.includes('catch'),
-      'resolveEntities must have a catch block',
-    );
+    assert.match(block, /try\s*\{/, 'resolveEntities must be wrapped in a try block');
+    assert.ok(block.includes('catch'), 'resolveEntities must have a catch block');
   });
 
   it('catch block logs a warning (not error)', () => {
     // The catch block should use log.warn, not log.error
     const catchSection = block.slice(block.indexOf('catch'));
-    assert.ok(
-      catchSection.includes('log.warn'),
-      'Entity resolution catch block must log a warning via log.warn',
-    );
+    assert.ok(catchSection.includes('log.warn'), 'Entity resolution catch block must log a warning via log.warn');
   });
 
   it('catch block does NOT delete the summary', () => {
     const catchSection = block.slice(block.indexOf('catch'));
-    assert.ok(
-      !catchSection.includes('deleteSummary'),
-      'Entity resolution catch block must NOT call deleteSummary',
-    );
+    assert.ok(!catchSection.includes('deleteSummary'), 'Entity resolution catch block must NOT call deleteSummary');
   });
 
   it('catch block does NOT re-throw the error', () => {
     const catchSection = block.slice(block.indexOf('catch'));
     // Check there's no throw statement in the catch block
-    assert.ok(
-      !catchSection.match(/\bthrow\b/),
-      'Entity resolution catch block must NOT re-throw the error',
-    );
+    assert.ok(!catchSection.match(/\bthrow\b/), 'Entity resolution catch block must NOT re-throw the error');
   });
 
   it('log message mentions keeping the summary', () => {
     const catchSection = block.slice(block.indexOf('catch'));
-    assert.ok(
-      catchSection.includes('keeping summary'),
-      'Entity resolution warning must mention keeping the summary',
-    );
+    assert.ok(catchSection.includes('keeping summary'), 'Entity resolution warning must mention keeping the summary');
   });
 });

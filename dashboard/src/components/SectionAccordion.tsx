@@ -1,6 +1,14 @@
 import { useState } from 'react';
 
-export function SectionAccordion({ title, body, defaultOpen = false }: { title: string; body: string; defaultOpen?: boolean }) {
+export function SectionAccordion({
+  title,
+  body,
+  defaultOpen = false,
+}: {
+  title: string;
+  body: string;
+  defaultOpen?: boolean;
+}) {
   const [open, setOpen] = useState(defaultOpen);
 
   return (

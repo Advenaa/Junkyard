@@ -56,10 +56,7 @@ describe('EL-005: Resurrection creates entity_mentions record', () => {
   it('Tier 1 resurrection inserts into entity_mentions', () => {
     // The INSERT INTO entity_mentions must appear near the Tier 1 resurrection UPDATE
     const tier1Section = src.split('Tier 2')[0];
-    assert.ok(
-      tier1Section.includes("status === 'archived'"),
-      'Tier 1 must check for archived status',
-    );
+    assert.ok(tier1Section.includes("status === 'archived'"), 'Tier 1 must check for archived status');
     assert.ok(
       tier1Section.includes('INSERT INTO entity_mentions'),
       'Tier 1 resurrection must INSERT INTO entity_mentions to record the mention',
@@ -88,11 +85,7 @@ describe('EL-007: CoinGecko seeding retries on failure', () => {
   const src = readSrc('src/knowledge/seed.ts');
 
   it('defines a retry count constant and attempt loop', () => {
-    assert.match(
-      src,
-      /MAX_RETRIES\s*=\s*\d+/,
-      'Must define a MAX_RETRIES constant',
-    );
+    assert.match(src, /MAX_RETRIES\s*=\s*\d+/, 'Must define a MAX_RETRIES constant');
     assert.match(
       src,
       /for\s*\(\s*let\s+attempt\s*=\s*1;\s*attempt\s*<=\s*MAX_RETRIES/,
@@ -101,15 +94,7 @@ describe('EL-007: CoinGecko seeding retries on failure', () => {
   });
 
   it('sleeps between retries with exponential backoff', () => {
-    assert.match(
-      src,
-      /setTimeout\(resolve,\s*\w+\)/,
-      'Must use setTimeout for delay between retries',
-    );
-    assert.match(
-      src,
-      /2\s*\*\*\s*\(attempt\s*-\s*1\)/,
-      'Must use exponential backoff (2 ** (attempt - 1))',
-    );
+    assert.match(src, /setTimeout\(resolve,\s*\w+\)/, 'Must use setTimeout for delay between retries');
+    assert.match(src, /2\s*\*\*\s*\(attempt\s*-\s*1\)/, 'Must use exponential backoff (2 ** (attempt - 1))');
   });
 });

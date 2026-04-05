@@ -17,11 +17,56 @@ interface CoinGeckoEntry {
  * does NOT return market_cap_rank, so we use a hardcoded set instead.
  */
 const TOP_SYMBOLS = new Set([
-  'btc', 'eth', 'usdt', 'usdc', 'bnb', 'xrp', 'sol', 'ada', 'doge', 'trx',
-  'ton', 'link', 'avax', 'shib', 'dot', 'bch', 'dai', 'ltc', 'leo', 'uni',
-  'near', 'apt', 'matic', 'atom', 'icp', 'xlm', 'etc', 'vet', 'fil', 'hbar',
-  'arb', 'op', 'mkr', 'aave', 'grt', 'algo', 'ftm', 'inj', 'rune', 'theta',
-  'axs', 'sand', 'mana', 'ldo', 'snx', 'crv', 'ape', 'comp', 'sushi', 'yfi',
+  'btc',
+  'eth',
+  'usdt',
+  'usdc',
+  'bnb',
+  'xrp',
+  'sol',
+  'ada',
+  'doge',
+  'trx',
+  'ton',
+  'link',
+  'avax',
+  'shib',
+  'dot',
+  'bch',
+  'dai',
+  'ltc',
+  'leo',
+  'uni',
+  'near',
+  'apt',
+  'matic',
+  'atom',
+  'icp',
+  'xlm',
+  'etc',
+  'vet',
+  'fil',
+  'hbar',
+  'arb',
+  'op',
+  'mkr',
+  'aave',
+  'grt',
+  'algo',
+  'ftm',
+  'inj',
+  'rune',
+  'theta',
+  'axs',
+  'sand',
+  'mana',
+  'ldo',
+  'snx',
+  'crv',
+  'ape',
+  'comp',
+  'sushi',
+  'yfi',
 ]);
 
 const INDONESIAN_ENTITIES = [
@@ -29,11 +74,7 @@ const INDONESIAN_ENTITIES = [
     name: 'OJK',
     fullName: 'Otoritas Jasa Keuangan',
     type: 'company' as const,
-    aliases: [
-      'ojk',
-      'otoritas jasa keuangan',
-      'indonesia financial services authority',
-    ],
+    aliases: ['ojk', 'otoritas jasa keuangan', 'indonesia financial services authority'],
   },
   {
     name: 'Bappebti',
@@ -51,13 +92,7 @@ const INDONESIAN_ENTITIES = [
     name: 'BEI',
     fullName: 'Bursa Efek Indonesia',
     type: 'company' as const,
-    aliases: [
-      'bei',
-      'idx',
-      'bursa efek indonesia',
-      'indonesia stock exchange',
-      'ihsg',
-    ],
+    aliases: ['bei', 'idx', 'bursa efek indonesia', 'indonesia stock exchange', 'ihsg'],
   },
   {
     name: 'Indodax',
@@ -98,10 +133,9 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const response = await fetch(
-          'https://api.coingecko.com/api/v3/coins/list',
-          { signal: AbortSignal.timeout(30_000) },
-        );
+        const response = await fetch('https://api.coingecko.com/api/v3/coins/list', {
+          signal: AbortSignal.timeout(30_000),
+        });
 
         if (!response.ok) {
           throw new Error(`CoinGecko API returned ${response.status}`);
@@ -188,9 +222,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         // Top-100 tokens get empty context_key for their symbol (most likely match).
         // Others get a contextualized key so multiple entities can share the same
         // symbol without the first-seeded winning arbitrarily.
-        const symbolContextKey = TOP_SYMBOLS.has(symbolAlias)
-          ? ''
-          : `coingecko:${coin.id}`;
+        const symbolContextKey = TOP_SYMBOLS.has(symbolAlias) ? '' : `coingecko:${coin.id}`;
 
         // Name and CoinGecko slug aliases always use empty context_key
         // (they are already unique enough).
@@ -199,9 +231,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         for (const alias of plainAliases) {
           if (!alias) continue;
           const offset = aliasIdx * 3;
-          aliasPlaceholders.push(
-            `($${offset + 1}, $${offset + 2}, $${offset + 3})`,
-          );
+          aliasPlaceholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
           aliasValues.push(alias, '', entityId);
           aliasIdx++;
         }
@@ -209,9 +239,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         // Insert symbol alias separately with its context_key
         if (symbolAlias && !plainAliases.has(symbolAlias)) {
           const offset = aliasIdx * 3;
-          aliasPlaceholders.push(
-            `($${offset + 1}, $${offset + 2}, $${offset + 3})`,
-          );
+          aliasPlaceholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
           aliasValues.push(symbolAlias, symbolContextKey, entityId);
           aliasIdx++;
         }
@@ -247,10 +275,10 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
         [newId, name, entity.type, now],
       );
 
-      const fetchResult = await pool.query<{ id: string }>(
-        'SELECT id FROM entities WHERE name = $1 AND type = $2',
-        [name, entity.type],
-      );
+      const fetchResult = await pool.query<{ id: string }>('SELECT id FROM entities WHERE name = $1 AND type = $2', [
+        name,
+        entity.type,
+      ]);
 
       if (fetchResult.rows.length === 0) continue;
 

@@ -77,12 +77,7 @@ function defaultParams(overrides: Partial<LLMCallParams> = {}): LLMCallParams {
 }
 
 function makeLLM(completeFn: LLMTestOverrides['completeFn']) {
-  return createLLM(
-    makePool() as never,
-    makeLog() as never,
-    makeConfig() as never,
-    { completeFn, sleepFn: noopSleep },
-  );
+  return createLLM(makePool() as never, makeLog() as never, makeConfig() as never, { completeFn, sleepFn: noopSleep });
 }
 
 // ── parseModel ────────────────────────────────────────────────────────
@@ -274,9 +269,9 @@ describe('estimateTokens', () => {
 
   it('estimates tokens as ceil(length / 4)', () => {
     assert.equal(llm.estimateTokens('hello'), 2); // 5 / 4 = 1.25 → 2
-    assert.equal(llm.estimateTokens('hi'), 1);     // 2 / 4 = 0.5 → 1
-    assert.equal(llm.estimateTokens('abcd'), 1);   // 4 / 4 = 1 → 1
-    assert.equal(llm.estimateTokens('abcde'), 2);  // 5 / 4 = 1.25 → 2
+    assert.equal(llm.estimateTokens('hi'), 1); // 2 / 4 = 0.5 → 1
+    assert.equal(llm.estimateTokens('abcd'), 1); // 4 / 4 = 1 → 1
+    assert.equal(llm.estimateTokens('abcde'), 2); // 5 / 4 = 1.25 → 2
   });
 
   it('returns 0 for empty string', () => {
@@ -574,19 +569,16 @@ describe('call — sleep is called on retries', () => {
     let sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount <= 1) throw makeErrorWithStatus(429, 'rate limited 429');
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount <= 1) throw makeErrorWithStatus(429, 'rate limited 429');
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 1);
@@ -597,19 +589,16 @@ describe('call — sleep is called on retries', () => {
     let sleepCalls: number[] = [];
     let callCount = 0;
 
-    const llm = createLLM(
-      makePool() as never,
-      makeLog() as never,
-      makeConfig() as never,
-      {
-        completeFn: async () => {
-          callCount++;
-          if (callCount <= 2) throw makeErrorWithStatus(500, 'server error 500');
-          return makeResponse('ok');
-        },
-        sleepFn: async (ms: number) => { sleepCalls.push(ms); },
+    const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
+      completeFn: async () => {
+        callCount++;
+        if (callCount <= 2) throw makeErrorWithStatus(500, 'server error 500');
+        return makeResponse('ok');
       },
-    );
+      sleepFn: async (ms: number) => {
+        sleepCalls.push(ms);
+      },
+    });
 
     await llm.call(defaultParams());
     assert.equal(sleepCalls.length, 2);

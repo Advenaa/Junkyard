@@ -7,10 +7,7 @@ import { readFileSync } from 'node:fs';
 // ---------------------------------------------------------------------------
 
 describe('CF-001: pool idle client error handler (structural)', () => {
-  const src = readFileSync(
-    new URL('../../src/db/connection.ts', import.meta.url),
-    'utf-8',
-  );
+  const src = readFileSync(new URL('../../src/db/connection.ts', import.meta.url), 'utf-8');
 
   it('registers a pool.on("error") handler', () => {
     assert.ok(
@@ -20,10 +17,7 @@ describe('CF-001: pool idle client error handler (structural)', () => {
   });
 
   it('error handler logs but does not call process.exit', () => {
-    assert.ok(
-      !src.includes('process.exit'),
-      'connection.ts must NOT call process.exit — pool self-heals',
-    );
+    assert.ok(!src.includes('process.exit'), 'connection.ts must NOT call process.exit — pool self-heals');
   });
 
   it('error handler logs but does not rethrow', () => {
@@ -33,14 +27,10 @@ describe('CF-001: pool idle client error handler (structural)', () => {
 
     // Find the closing of the error handler (next pool.on or return statement)
     const nextSection = src.indexOf('pool.on(', errorStart + 1);
-    const handlerBody = nextSection > -1
-      ? src.slice(errorStart, nextSection)
-      : src.slice(errorStart, src.indexOf('return pool'));
+    const handlerBody =
+      nextSection > -1 ? src.slice(errorStart, nextSection) : src.slice(errorStart, src.indexOf('return pool'));
 
-    assert.ok(
-      !handlerBody.includes('throw '),
-      'error handler must not rethrow — it should only log',
-    );
+    assert.ok(!handlerBody.includes('throw '), 'error handler must not rethrow — it should only log');
   });
 
   it('logs the error message via console.error', () => {

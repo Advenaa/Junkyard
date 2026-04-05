@@ -8,7 +8,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 export function Login() {
   const [params] = useSearchParams();
   const error = params.get('error');
-  const message = error ? ERROR_MESSAGES[error] ?? 'An error occurred' : null;
+  const message = error ? (ERROR_MESSAGES[error] ?? 'An error occurred') : null;
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
@@ -20,9 +20,7 @@ export function Login() {
         >
           Sign in with Discord
         </a>
-        {message && (
-          <p className="mt-6 text-accent-red text-sm font-body">{message}</p>
-        )}
+        {message && <p className="mt-6 text-accent-red text-sm font-body">{message}</p>}
       </div>
     </div>
   );

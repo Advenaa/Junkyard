@@ -113,7 +113,8 @@ describe('pollFeed', () => {
     const item1 = makeFeedItem({
       title: 'Article One',
       link: 'https://example.com/1',
-      contentSnippet: 'First article content that is definitely long enough to avoid extraction being triggered by the length check.',
+      contentSnippet:
+        'First article content that is definitely long enough to avoid extraction being triggered by the length check.',
       isoDate: now.toISOString(),
       creator: 'Alice',
       guid: 'guid-1',
@@ -122,7 +123,8 @@ describe('pollFeed', () => {
     const item2 = makeFeedItem({
       title: 'Article Two',
       link: 'https://example.com/2',
-      contentSnippet: 'Second article content that is also long enough so we do not trigger the article extraction path in the code.',
+      contentSnippet:
+        'Second article content that is also long enough so we do not trigger the article extraction path in the code.',
       isoDate: new Date(now.getTime() + 1000).toISOString(),
       creator: 'Bob',
       guid: 'guid-2',
@@ -237,7 +239,9 @@ describe('pollFeed', () => {
     const errors: unknown[] = [];
     const errorLog: Logger = {
       ...noopLog,
-      error: (...args: unknown[]) => { errors.push(args); },
+      error: (...args: unknown[]) => {
+        errors.push(args);
+      },
     } as unknown as Logger;
 
     const pollFeed = await loadPollFeed();

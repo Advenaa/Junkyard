@@ -24,15 +24,9 @@ export function ToolUsageIndicator({ tools, collapsed: initialCollapsed }: ToolU
 
   if (collapsed) {
     return (
-      <button
-        onClick={() => setCollapsed(false)}
-        className="flex gap-1.5 mt-1.5"
-      >
+      <button onClick={() => setCollapsed(false)} className="flex gap-1.5 mt-1.5">
         {tools.map((tool) => (
-          <span
-            key={tool}
-            className="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-text-secondary"
-          >
+          <span key={tool} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-text-secondary">
             {tool}
           </span>
         ))}

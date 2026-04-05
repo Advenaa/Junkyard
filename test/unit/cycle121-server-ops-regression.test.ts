@@ -29,10 +29,7 @@ describe('SR-009 — webhook test truncates response detail', () => {
   it('slice appears in the webhook test error handling path', () => {
     // The slice should be near a Webhook returned status message
     const webhookErrorBlock = server.match(/Webhook returned.*\.slice\(0,\s*200\)/s);
-    assert.ok(
-      webhookErrorBlock,
-      'Expected .slice(0, 200) to appear near the webhook error response path',
-    );
+    assert.ok(webhookErrorBlock, 'Expected .slice(0, 200) to appear near the webhook error response path');
   });
 });
 
@@ -46,10 +43,7 @@ describe('SR-002 — PATCH /sources has source enum in params schema', () => {
 
     const enumValues = patchBlock[1];
     for (const source of ['discord', 'twitter', 'rss', 'news']) {
-      assert.ok(
-        enumValues.includes(`'${source}'`),
-        `Expected '${source}' in PATCH /sources params enum`,
-      );
+      assert.ok(enumValues.includes(`'${source}'`), `Expected '${source}' in PATCH /sources params enum`);
     }
   });
 });
@@ -101,9 +95,6 @@ describe('OP-002 — retention has embedding iteration cap', () => {
 
   it('loop condition checks iterations against the cap', () => {
     const loopGuard = retention.match(/iterations\s*<\s*MAX_EMBEDDING_ITERATIONS/);
-    assert.ok(
-      loopGuard,
-      'Expected loop to check iterations < MAX_EMBEDDING_ITERATIONS',
-    );
+    assert.ok(loopGuard, 'Expected loop to check iterations < MAX_EMBEDDING_ITERATIONS');
   });
 });

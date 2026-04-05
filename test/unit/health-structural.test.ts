@@ -32,15 +32,18 @@ describe('HM-001: cost spike timezone fix', () => {
     for (let i = afterStart; i < source.length; i++) {
       if (source[i] === '{') depth++;
       if (source[i] === '}') depth--;
-      if (depth === 0) { fnEnd = i; break; }
+      if (depth === 0) {
+        fnEnd = i;
+        break;
+      }
     }
     assert.ok(fnEnd > fnStart, 'Could not find end of checkCostSpike');
     const fnBody = source.slice(fnStart, fnEnd + 1);
 
     assert.ok(
       fnBody.includes("getAppConfig(pool, 'timezone')") ||
-      fnBody.includes('getAppConfig(pool, "timezone")') ||
-      fnBody.includes('getAppConfig(pool, `timezone`)'),
+        fnBody.includes('getAppConfig(pool, "timezone")') ||
+        fnBody.includes('getAppConfig(pool, `timezone`)'),
       'checkCostSpike must read timezone from getAppConfig',
     );
   });
@@ -76,10 +79,10 @@ describe('HM-001: cost spike timezone fix', () => {
 
   it('imports getAppConfig from db/queries', () => {
     assert.ok(
-      source.includes("import { getAppConfig }") ||
-      source.includes("import {getAppConfig}") ||
-      // might be a named import among others
-      /import\s*\{[^}]*getAppConfig[^}]*\}/.test(source),
+      source.includes('import { getAppConfig }') ||
+        source.includes('import {getAppConfig}') ||
+        // might be a named import among others
+        /import\s*\{[^}]*getAppConfig[^}]*\}/.test(source),
       'health.ts must import getAppConfig',
     );
     assert.ok(
@@ -111,9 +114,12 @@ describe('HM-003: pool exhaustion hardcodes >= 10 (open issue)', () => {
     const fnStart = source.indexOf('function checkDbPoolExhaustion');
     assert.ok(fnStart !== -1, 'checkDbPoolExhaustion must exist');
 
-    const fnBody = source.slice(fnStart, source.indexOf('\n  async function', fnStart + 1) === -1
-      ? source.indexOf('\n  function', fnStart + 1)
-      : source.indexOf('\n  async function', fnStart + 1));
+    const fnBody = source.slice(
+      fnStart,
+      source.indexOf('\n  async function', fnStart + 1) === -1
+        ? source.indexOf('\n  function', fnStart + 1)
+        : source.indexOf('\n  async function', fnStart + 1),
+    );
 
     const hardcoded = fnBody.includes('>= 10') || fnBody.includes('>=10');
 
