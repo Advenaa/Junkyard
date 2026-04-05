@@ -7,9 +7,9 @@ module.exports = {
     cwd: '/root/podders',
     env_file: '.env',
     max_memory_restart: '512M',
-    restart_delay: 5000,
+    restart_delay: 30000,
     kill_timeout: 60000,
-    max_restarts: 10,
+    max_restarts: 5,
     min_uptime: 10000,
   }],
 };

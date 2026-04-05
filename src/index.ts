@@ -389,7 +389,12 @@ program
 
     // ── 9. Start background services ──────────────────────────────────
     await scheduler.start();
-    await discordAdapter.connect();
+
+    // Gate Discord behind a successful server start — prevents burning
+    // Discord rate limits during crash loops (config errors, DB failures, etc.)
+    discordAdapter.connect().catch((err: unknown) => {
+      log.error({ err }, 'Discord gateway connection failed — will retry on next health check');
+    });
 
     log.info('podders v2 started');
 
