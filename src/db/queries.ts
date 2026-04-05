@@ -97,14 +97,6 @@ export interface EmbeddingRow {
   created_at: number;
 }
 
-export interface SentimentDailyRow {
-  entity_id: string;
-  date: string;
-  avg_sentiment: number;
-  mention_count: number;
-  momentum: number | null;
-}
-
 // ── Items ───────────────────────────────────────────────────────────────
 
 export async function insertItem(
@@ -512,23 +504,6 @@ export async function upsertSentimentDaily(
        momentum = EXCLUDED.momentum`,
     [entityId, date, avgSentiment, mentionCount, momentum],
   );
-}
-
-export async function getSentimentMomentum(
-  pool: Pool,
-  entityIds: string[],
-  days: number,
-): Promise<SentimentDailyRow[]> {
-  const { rows } = await pool.query<SentimentDailyRow>(
-    `SELECT entity_id, date, avg_sentiment, mention_count, momentum
-     FROM entity_sentiment_daily
-     WHERE entity_id = ANY($1)
-       AND date >= (CURRENT_DATE - ($2 || ' days')::interval)::text
-     ORDER BY entity_id, date DESC
-     LIMIT 5000`,
-    [entityIds, days],
-  );
-  return rows;
 }
 
 // ── Regional Divergence ───────────────────────────────────────────────

@@ -305,7 +305,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
             throw err;
           }
           const retryAfter = extractRetryAfter(err) ?? 60;
-          const delayMs = retryAfter * 1000 * (0.5 + Math.random());
+          const delayMs = retryAfter * 1000 + Math.random() * retryAfter * 500;
           log.warn(
             { stage: params.stage, retryAfter, delayMs: Math.round(delayMs), attempt },
             'LLM rate limited (429), waiting',
@@ -323,7 +323,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
             );
             throw err;
           }
-          const overloadDelayMs = 30_000 * (0.5 + Math.random());
+          const overloadDelayMs = 30_000 + Math.random() * 15_000;
           log.warn(
             { stage: params.stage, delayMs: Math.round(overloadDelayMs), attempt },
             'LLM overloaded (529), backing off',

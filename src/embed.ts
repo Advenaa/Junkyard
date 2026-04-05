@@ -184,6 +184,10 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     }
 
     const vector = new Float32Array(result.embedding.values);
+    if (vector.length !== DIMENSIONS) {
+      log.warn({ expected: DIMENSIONS, got: vector.length, model: MODEL_NAME }, 'embed: unexpected vector dimensions');
+      throw new Error(`embed: expected ${DIMENSIONS} dimensions but got ${vector.length}`);
+    }
     const inputTokens = estimateTokens(text);
 
     await insertLlmUsage(pool, {
@@ -247,6 +251,10 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         for (let j = 0; j < chunk.length; j++) {
           if (j < batchResult.embeddings.length) {
             const vector = new Float32Array(batchResult.embeddings[j].values);
+            if (vector.length !== DIMENSIONS) {
+              log.warn({ expected: DIMENSIONS, got: vector.length, model: MODEL_NAME, batchIndex: j }, 'embedBatch: unexpected vector dimensions');
+              throw new Error(`embedBatch: expected ${DIMENSIONS} dimensions but got ${vector.length}`);
+            }
             results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
             totalInputTokens += estimateTokens(chunk[j]);
           } else {
