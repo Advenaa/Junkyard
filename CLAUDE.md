@@ -101,6 +101,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 - **Webhook test** — `POST /api/v1/config/test-webhook` with `{ url }`. Admin-only. SSRF-validated, DNS-pinned delivery, 15s timeout.
 - **Health monitor** — DB-down sends alert webhook directly (bypasses DB insert). Checks halted sources. Cost spike query is timezone-aware via `app_config.timezone`. Pool exhaustion uses dynamic `pool.options.max`.
 - **Overlap guard** — each cron job has a `running` mutex. If a job fires while the previous run is in-flight, skip and log warning.
+- **Backward-compatible migrations only** — migrations must not break the currently running code. ADD COLUMN, ADD INDEX, and widen types are safe. DROP COLUMN, rename, and CHECK constraint tightening must be split across two deploys (first deploy stops using the old schema, second deploy removes it).
 
 ## Environment Variables
 

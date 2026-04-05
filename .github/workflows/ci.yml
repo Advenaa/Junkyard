@@ -120,11 +120,49 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
           script: |
+            set -euo pipefail
             cd ~/podders
-            git pull origin main
+
+            OLD_HASH=$(git rev-parse HEAD)
+            echo "Current: $OLD_HASH"
+
+            git fetch origin main
+            git reset --hard origin/main
+
             npm ci --production=false
             cd dashboard && npm ci && cd ..
-            npm run build
-            npx pm2 restart podders || npx pm2 start dist/index.js --name podders -- run
-            npx pm2 save
+
+            if ! npm run build; then
+              echo "BUILD FAILED — rolling back to $OLD_HASH"
+              git checkout "$OLD_HASH"
+              npm ci --production=false
+              cd dashboard && npm ci && cd ..
+              npm run build
+              exit 1
+            fi
+
+            if ! node dist/index.js migrate; then
+              echo "MIGRATION FAILED — rolling back to $OLD_HASH"
+              git checkout "$OLD_HASH"
+              npm ci --production=false
+              cd dashboard && npm ci && cd ..
+              npm run build
+              exit 1
+            fi
+
+            pm2 restart ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
+            pm2 save
+
+            for i in $(seq 1 6); do
+              if curl -sf http://localhost:3000/api/v1/status > /dev/null 2>&1; then
+                echo "Health check passed"
+                echo "Deployed: $(git rev-parse --short HEAD)"
+                exit 0
+              fi
+              sleep 5
+            done
+
+            echo "HEALTH CHECK FAILED"
+            exit 1
