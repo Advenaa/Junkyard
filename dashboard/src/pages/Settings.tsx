@@ -98,6 +98,14 @@ function SourcesTab() {
   const [editLabel, setEditLabel] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
 
+  // Discord browser state
+  const [guilds, setGuilds] = useState<Array<{ id: string; name: string; icon: string | null }>>([]);
+  const [channels, setChannels] = useState<Array<{ id: string; name: string; type: number; position: number; parentId: string | null }>>([]);
+  const [selectedGuild, setSelectedGuild] = useState<{ id: string; name: string } | null>(null);
+  const [browseLoading, setBrowseLoading] = useState(false);
+  const [browseError, setBrowseError] = useState<string | null>(null);
+  const [browseOpen, setBrowseOpen] = useState(false);
+
   useEffect(() => {
     apiFetch<{ sources: Source[] }>('/sources')
       .then((res) => setSources(res.sources))
@@ -105,13 +113,76 @@ function SourcesTab() {
       .finally(() => setLoading(false));
   }, []);
 
+  const resetBrowseState = () => {
+    setGuilds([]);
+    setChannels([]);
+    setSelectedGuild(null);
+    setBrowseOpen(false);
+    setBrowseError(null);
+  };
+
   const openModal = () => {
     setAddSource('discord');
     setAddSourceId('');
     setAddLabel('');
     setAddPollInterval(300);
     setAddError(null);
+    resetBrowseState();
     setModalOpen(true);
+  };
+
+  const handleSourceTypeChange = (value: string) => {
+    setAddSource(value);
+    resetBrowseState();
+  };
+
+  const fetchGuilds = async () => {
+    setBrowseLoading(true);
+    setBrowseError(null);
+    setChannels([]);
+    setSelectedGuild(null);
+    try {
+      const res = await apiFetch<{ guilds: Array<{ id: string; name: string; icon: string | null }> }>('/discord/guilds');
+      setGuilds(res.guilds);
+      if (res.guilds.length === 0) {
+        setBrowseError('No servers found.');
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setBrowseError(err.message);
+      } else {
+        setBrowseError('Failed to fetch servers.');
+      }
+    } finally {
+      setBrowseLoading(false);
+    }
+  };
+
+  const fetchChannels = async (guild: { id: string; name: string }) => {
+    setSelectedGuild(guild);
+    setBrowseLoading(true);
+    setBrowseError(null);
+    try {
+      const res = await apiFetch<{ channels: Array<{ id: string; name: string; type: number; position: number; parentId: string | null }> }>(`/discord/guilds/${guild.id}/channels`);
+      setChannels(res.channels);
+      if (res.channels.length === 0) {
+        setBrowseError('No text channels found in this server.');
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setBrowseError(err.message);
+      } else {
+        setBrowseError('Failed to fetch channels.');
+      }
+    } finally {
+      setBrowseLoading(false);
+    }
+  };
+
+  const selectChannel = (channel: { id: string; name: string }) => {
+    setAddSourceId(channel.id);
+    setAddLabel(`#${channel.name}`);
+    setBrowseOpen(false);
   };
 
   const handleAddSource = async (e: React.FormEvent) => {
@@ -238,7 +309,7 @@ function SourcesTab() {
           <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Source Type</label>
           <select
             value={addSource}
-            onChange={(e) => setAddSource(e.target.value)}
+            onChange={(e) => handleSourceTypeChange(e.target.value)}
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
           >
             <option value="discord">discord</option>
@@ -247,6 +318,88 @@ function SourcesTab() {
             <option value="news">news</option>
           </select>
         </div>
+        {/* Discord channel browser */}
+        {addSource === 'discord' && (
+          <div className="space-y-1.5">
+            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Browse Channels</label>
+            {!browseOpen ? (
+              <button
+                type="button"
+                onClick={() => { setBrowseOpen(true); fetchGuilds(); }}
+                className="w-full px-4 py-2.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors text-left"
+              >
+                Browse Servers...
+              </button>
+            ) : (
+              <div className="bg-surface-raised border border-border rounded-lg overflow-hidden">
+                {/* Header with back/close */}
+                <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+                  {selectedGuild ? (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedGuild(null); setChannels([]); setBrowseError(null); }}
+                      className="text-accent text-sm font-body hover:opacity-80 transition-opacity"
+                    >
+                      &larr; {selectedGuild.name}
+                    </button>
+                  ) : (
+                    <span className="text-text-secondary text-sm font-body">Select a server</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setBrowseOpen(false)}
+                    className="text-text-secondary hover:text-text-primary text-sm transition-colors"
+                  >
+                    &times;
+                  </button>
+                </div>
+
+                {/* Loading state */}
+                {browseLoading && (
+                  <div className="px-4 py-6 text-center text-text-secondary text-sm font-body">Loading...</div>
+                )}
+
+                {/* Error state */}
+                {browseError && !browseLoading && (
+                  <div className="px-4 py-4 text-red-400 text-sm font-body">{browseError}</div>
+                )}
+
+                {/* Guild list */}
+                {!browseLoading && !browseError && !selectedGuild && guilds.length > 0 && (
+                  <div className="max-h-[200px] overflow-y-auto">
+                    {guilds.map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => fetchChannels(g)}
+                        className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
+                      >
+                        {g.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Channel list */}
+                {!browseLoading && !browseError && selectedGuild && channels.length > 0 && (
+                  <div className="max-h-[200px] overflow-y-auto">
+                    {channels.map((ch) => (
+                      <button
+                        key={ch.id}
+                        type="button"
+                        onClick={() => selectChannel(ch)}
+                        className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
+                      >
+                        <span className="text-text-secondary">#</span>{ch.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-1.5">
           <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Source ID</label>
           <input
