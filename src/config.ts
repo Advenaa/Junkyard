@@ -44,9 +44,9 @@ function commaSplit(raw: string | undefined): string[] {
 }
 
 function validateModelId(id: string, name: string): void {
-  if (!/^[a-zA-Z0-9][\w.\-/]{2,100}$/.test(id)) {
+  if (!/^[a-zA-Z0-9][\w.\-/:]{2,100}$/.test(id)) {
     throw new Error(
-      `Invalid model ID for ${name}: "${id}" — must be 3-101 chars, alphanumeric/hyphens/dots/underscores/slashes`
+      `Invalid model ID for ${name}: "${id}" — must be 3-101 chars, alphanumeric/hyphens/dots/underscores/slashes/colons`
     );
   }
 }
