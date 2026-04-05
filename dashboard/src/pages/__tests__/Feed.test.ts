@@ -7,7 +7,7 @@ describe('normalizeFeedItem', () => {
     source: 'discord',
     author: 'user1',
     content: 'hello',
-    timestamp: '2026-01-01T00:00:00Z',
+    timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
     engagement: null,
   };
 
@@ -56,27 +56,27 @@ describe('formatTime', () => {
   });
 
   it('returns "Just now" for timestamps less than a minute ago', () => {
-    const ts = new Date('2026-01-15T11:59:30Z').toISOString();
+    const ts = new Date('2026-01-15T11:59:30Z').getTime();
     expect(formatTime(ts)).toBe('Just now');
   });
 
   it('returns minutes ago for timestamps under an hour', () => {
-    const ts = new Date('2026-01-15T11:45:00Z').toISOString();
+    const ts = new Date('2026-01-15T11:45:00Z').getTime();
     expect(formatTime(ts)).toBe('15m ago');
   });
 
   it('returns hours ago for timestamps under a day', () => {
-    const ts = new Date('2026-01-15T09:00:00Z').toISOString();
+    const ts = new Date('2026-01-15T09:00:00Z').getTime();
     expect(formatTime(ts)).toBe('3h ago');
   });
 
   it('returns days ago for timestamps over a day', () => {
-    const ts = new Date('2026-01-13T12:00:00Z').toISOString();
+    const ts = new Date('2026-01-13T12:00:00Z').getTime();
     expect(formatTime(ts)).toBe('2d ago');
   });
 
   it('returns 1m ago at exactly 60 seconds', () => {
-    const ts = new Date('2026-01-15T11:59:00Z').toISOString();
+    const ts = new Date('2026-01-15T11:59:00Z').getTime();
     expect(formatTime(ts)).toBe('1m ago');
   });
 });

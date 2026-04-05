@@ -197,20 +197,20 @@ describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
   it('checks for halted status', () => {
     const patchStart = getPatchSourcesStart();
 
-    const handlerBody = src.slice(patchStart, patchStart + 2000);
+    const handlerBody = src.slice(patchStart, patchStart + 3000);
     assert.ok(handlerBody.includes("=== 'halted'"), 'PATCH handler must check if current status is halted');
   });
 
   it('returns 409 when source is halted and trying to enable', () => {
     const patchStart = getPatchSourcesStart();
-    const handlerBody = src.slice(patchStart, patchStart + 2000);
+    const handlerBody = src.slice(patchStart, patchStart + 3000);
 
     assert.ok(handlerBody.includes('409'), 'PATCH handler must send 409 status code for halted sources');
   });
 
   it('includes last_error in 409 response', () => {
     const patchStart = getPatchSourcesStart();
-    const handlerBody = src.slice(patchStart, patchStart + 2000);
+    const handlerBody = src.slice(patchStart, patchStart + 3000);
 
     assert.ok(
       handlerBody.includes('lastError') && handlerBody.includes('last_error'),
@@ -220,7 +220,7 @@ describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
 
   it('queries source_state table for current status', () => {
     const patchStart = getPatchSourcesStart();
-    const handlerBody = src.slice(patchStart, patchStart + 2000);
+    const handlerBody = src.slice(patchStart, patchStart + 3000);
 
     assert.ok(
       handlerBody.includes('source_state') && handlerBody.includes('status'),

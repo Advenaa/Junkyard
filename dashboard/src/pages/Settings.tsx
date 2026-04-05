@@ -27,6 +27,11 @@ interface PipelineStatus {
   costToday: number;
 }
 
+interface HealthResponse {
+  status: 'ok' | 'degraded' | 'error';
+  checks: Record<string, unknown>;
+}
+
 interface Config {
   webhookUrl: string | null;
   digestTime: string | null;
@@ -67,6 +72,8 @@ function SourcesTab() {
   const [addLabel, setAddLabel] = useState('');
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState('');
 
   useEffect(() => {
     apiFetch<{ sources: Source[] }>('/sources')
@@ -134,8 +141,12 @@ function SourcesTab() {
             : src,
         ),
       );
-    } catch {
-      setError(`Failed to toggle source "${s.label}".`);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('409')) {
+        setError(`Cannot re-enable "${s.label}" — source is halted. Fix the underlying issue first.`);
+      } else {
+        setError(`Failed to toggle source "${s.label}".`);
+      }
     }
   };
 
@@ -148,6 +159,33 @@ function SourcesTab() {
     } catch {
       setError(`Failed to delete source "${s.label}".`);
     }
+  };
+
+  const startEditLabel = (s: Source) => {
+    setEditingKey(`${s.source}-${s.sourceId}`);
+    setEditLabel(s.label);
+  };
+
+  const saveLabel = async (s: Source) => {
+    const trimmed = editLabel.trim();
+    setEditingKey(null);
+    if (!trimmed || trimmed === s.label) return;
+    setError(null);
+    try {
+      await apiFetch(`/sources/${s.source}/${s.sourceId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ label: trimmed }),
+      });
+      setSources((prev) =>
+        prev.map((src) => (src.source === s.source && src.sourceId === s.sourceId ? { ...src, label: trimmed } : src)),
+      );
+    } catch {
+      setError(`Failed to update label for "${s.label}".`);
+    }
+  };
+
+  const cancelEditLabel = () => {
+    setEditingKey(null);
   };
 
   const addSourceButton = (
@@ -275,7 +313,29 @@ function SourcesTab() {
                   className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
                 >
                   <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.source}</td>
-                  <td className="px-4 py-3 text-text-primary font-body">{s.label}</td>
+                  <td className="px-4 py-3 text-text-primary font-body">
+                    {editingKey === `${s.source}-${s.sourceId}` ? (
+                      <input
+                        autoFocus
+                        value={editLabel}
+                        onChange={(e) => setEditLabel(e.target.value)}
+                        onBlur={() => saveLabel(s)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveLabel(s);
+                          if (e.key === 'Escape') cancelEditLabel();
+                        }}
+                        className="w-full bg-background border border-accent rounded px-2 py-0.5 text-text-primary text-sm font-body focus:outline-none"
+                      />
+                    ) : (
+                      <span
+                        onDoubleClick={() => startEditLabel(s)}
+                        className="cursor-default"
+                        title="Double-click to edit"
+                      >
+                        {s.label}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={s.stateStatus ?? 'unknown'} />
                     {s.lastError && <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>}
@@ -294,9 +354,13 @@ function SourcesTab() {
                       </button>
                       <button
                         onClick={() => toggleSource(s)}
+                        disabled={s.stateStatus === 'halted'}
                         className={`relative w-10 h-5 rounded-full transition-colors ${
-                          isActive ? 'bg-accent-green' : 'bg-border'
-                        }`}
+                          isActive ? 'bg-accent-green' : s.stateStatus === 'halted' ? 'bg-accent-red/50' : 'bg-border'
+                        } disabled:cursor-not-allowed`}
+                        title={
+                          s.stateStatus === 'halted' ? 'Source is halted — fix the underlying issue first' : undefined
+                        }
                       >
                         <span
                           className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
@@ -466,6 +530,7 @@ function PipelineTab() {
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
 
   useEffect(() => {
     apiFetch<PipelineStatus>('/status')
@@ -474,12 +539,48 @@ function PipelineTab() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    fetch('/api/v1/health')
+      .then((r) => r.json())
+      .then((data: HealthResponse) => setHealth(data))
+      .catch(() => {
+        /* health is best-effort */
+      });
+  }, []);
+
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
   if (!status)
     return <p className="text-red-400 text-sm font-body py-4">{error ?? 'Failed to load pipeline status.'}</p>;
 
+  const healthColor =
+    health?.status === 'ok'
+      ? 'bg-accent-green/20 text-accent-green'
+      : health?.status === 'degraded'
+        ? 'bg-yellow-500/20 text-yellow-400'
+        : health?.status === 'error'
+          ? 'bg-accent-red/20 text-accent-red'
+          : '';
+
   return (
     <div className="space-y-6">
+      {/* System Health */}
+      {health && (
+        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">System Health</h3>
+            <span className={`px-2 py-0.5 rounded text-xs font-mono ${healthColor}`}>{health.status}</span>
+          </div>
+          <div className="divide-y divide-border">
+            {Object.entries(health.checks).map(([key, value]) => (
+              <div key={key} className="flex items-center justify-between px-4 py-3">
+                <span className="text-text-primary text-sm font-body">{key}</span>
+                <span className="text-text-secondary text-sm font-mono">{String(value)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Pipeline Counters */}
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary px-4 py-3 border-b border-border">

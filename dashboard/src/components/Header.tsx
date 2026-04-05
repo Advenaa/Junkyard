@@ -40,6 +40,14 @@ export function Header() {
             Chat
           </NavLink>
           <NavLink
+            to="/search"
+            className={({ isActive }) =>
+              `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`
+            }
+          >
+            Search
+          </NavLink>
+          <NavLink
             to="/settings"
             className={({ isActive }) =>
               `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`
@@ -96,6 +104,13 @@ export function Header() {
             className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}
           >
             Chat
+          </NavLink>
+          <NavLink
+            to="/search"
+            onClick={() => setMenuOpen(false)}
+            className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}
+          >
+            Search
           </NavLink>
           <NavLink
             to="/settings"

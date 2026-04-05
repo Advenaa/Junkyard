@@ -128,7 +128,7 @@ export async function createServer(
       whereClause = `WHERE type = $${params.length}`;
     }
     const { rows: reports } = await pool.query<ReportRow>(
-      `SELECT * FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT id, date, type, tldr, sentiment, delivery_status, created_at FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       params,
     );
     const countParams: unknown[] = [];
@@ -186,13 +186,19 @@ export async function createServer(
             source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
             sourceId: { type: 'string', minLength: 1, maxLength: 255 },
             label: { type: 'string', maxLength: 255 },
+            poll_interval: { type: 'integer', minimum: 60, maximum: 86400 },
           },
           additionalProperties: false,
         },
       },
     },
     async (request, reply) => {
-      const { source, sourceId, label } = request.body as { source?: string; sourceId?: string; label?: string };
+      const { source, sourceId, label, poll_interval } = request.body as {
+        source?: string;
+        sourceId?: string;
+        label?: string;
+        poll_interval?: number;
+      };
       if (!source || !sourceId) {
         return reply.code(400).send({ error: 'source and sourceId are required' });
       }
@@ -204,6 +210,13 @@ export async function createServer(
       }
       try {
         await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
+        if (poll_interval != null) {
+          await pool.query(`UPDATE sources SET poll_interval = $1 WHERE source = $2 AND source_id = $3`, [
+            poll_interval,
+            source,
+            sourceId,
+          ]);
+        }
       } catch (err: unknown) {
         if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
           return reply.code(409).send({ error: 'Source already exists' });
@@ -465,9 +478,10 @@ export async function createServer(
       schema: {
         body: {
           type: 'object',
-          required: ['enabled'],
           properties: {
             enabled: { type: 'boolean' },
+            label: { type: 'string', maxLength: 255 },
+            poll_interval: { type: 'integer', minimum: 60, maximum: 86400 },
           },
           additionalProperties: false,
         },
@@ -483,7 +497,11 @@ export async function createServer(
     },
     async (request, reply) => {
       const { source, sourceId } = request.params as { source: string; sourceId: string };
-      const { enabled } = request.body as { enabled: boolean };
+      const { enabled, label, poll_interval } = request.body as {
+        enabled?: boolean;
+        label?: string;
+        poll_interval?: number;
+      };
 
       // Check current status — block re-enabling halted sources (CR-001)
       const { rows: stateRows } = await pool.query<{ status: string; last_error: string | null }>(
@@ -493,20 +511,43 @@ export async function createServer(
       if (stateRows.length === 0) {
         return reply.code(404).send({ error: 'Source not found' });
       }
-      const currentStatus = stateRows[0].status;
-      if (currentStatus === 'halted' && enabled) {
-        return reply.code(409).send({
-          error: 'Source is halted — fix the underlying issue before re-enabling',
-          lastError: stateRows[0].last_error,
-        });
+
+      // Update label if provided
+      if (label != null) {
+        await pool.query(`UPDATE sources SET label = $1 WHERE source = $2 AND source_id = $3`, [
+          label,
+          source,
+          sourceId,
+        ]);
       }
 
-      const newStatus = enabled ? 'active' : 'disabled';
-      await pool.query(`UPDATE source_state SET status = $1 WHERE source = $2 AND source_id = $3`, [
-        newStatus,
-        source,
-        sourceId,
-      ]);
+      // Update poll_interval if provided
+      if (poll_interval != null) {
+        await pool.query(`UPDATE sources SET poll_interval = $1 WHERE source = $2 AND source_id = $3`, [
+          poll_interval,
+          source,
+          sourceId,
+        ]);
+      }
+
+      // Update enabled status if provided
+      let newStatus = stateRows[0].status;
+      if (enabled != null) {
+        const currentStatus = stateRows[0].status;
+        if (currentStatus === 'halted' && enabled) {
+          return reply.code(409).send({
+            error: 'Source is halted — fix the underlying issue before re-enabling',
+            lastError: stateRows[0].last_error,
+          });
+        }
+        newStatus = enabled ? 'active' : 'disabled';
+        await pool.query(`UPDATE source_state SET status = $1 WHERE source = $2 AND source_id = $3`, [
+          newStatus,
+          source,
+          sourceId,
+        ]);
+      }
+
       return { source, sourceId, status: newStatus };
     },
   );

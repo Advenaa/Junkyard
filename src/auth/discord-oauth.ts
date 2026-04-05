@@ -157,9 +157,7 @@ export function registerOAuthRoutes(
         { discordId: discordUser.id, username: discordUser.username },
         'Unknown user attempted login — invite-only',
       );
-      return reply.status(403).send({
-        error: 'Access denied. This instance is invite-only.',
-      });
+      return reply.redirect('/login?error=unauthorized');
     }
 
     // 6. Role resolution
@@ -168,6 +166,12 @@ export function registerOAuthRoutes(
       role = 'admin';
     } else {
       role = existingUser.rows[0]?.role ?? 'viewer';
+    }
+
+    // 6b. Block check — reject before creating session (PD-041)
+    if (role === 'blocked') {
+      log.warn({ discordId: discordUser.id }, 'Blocked user attempted login');
+      return reply.redirect('/login?error=blocked');
     }
 
     // 7. Upsert user

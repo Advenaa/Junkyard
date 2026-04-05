@@ -14,7 +14,7 @@ interface FeedItemRaw {
   source: string;
   author: string;
   content: string;
-  timestamp: string;
+  timestamp: number;
   attachments: string | string[] | null;
   engagement: Record<string, number> | null;
 }
@@ -24,7 +24,7 @@ interface FeedItem {
   source: string;
   author: string;
   content: string;
-  timestamp: string;
+  timestamp: number;
   attachments: string[];
   engagement: Record<string, number> | null;
 }
@@ -43,8 +43,8 @@ export function normalizeFeedItem(raw: FeedItemRaw): FeedItem {
   return { ...raw, attachments };
 }
 
-export function formatTime(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
+export function formatTime(ts: number): string {
+  const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;

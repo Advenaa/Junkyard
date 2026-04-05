@@ -9,6 +9,7 @@ import { ReportList } from './pages/ReportList';
 import { Settings } from './pages/Settings';
 import { Feed } from './pages/Feed';
 import { Chat } from './pages/Chat';
+import { Search } from './pages/Search';
 
 export function AppRouter() {
   return (
@@ -33,6 +34,7 @@ export function AppRouter() {
                 <Route path="/reports/:id" element={<ReportView />} />
                 <Route path="/feed" element={<Feed />} />
                 <Route path="/chat" element={<Chat />} />
+                <Route path="/search" element={<Search />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route
                   path="*"
