@@ -111,8 +111,9 @@ async function withRetry<T>(
 // ── Public API ─────────────────────────────────────────────────────────
 
 export function createEmbedder(config: Config, pool: Pool, log: Logger) {
-  const available = Boolean(config.geminiApiKey);
-  const genAI = available ? new GoogleGenerativeAI(config.geminiApiKey) : null;
+  const geminiKey = config.geminiApiKey ?? config.googleApiKey;
+  const available = Boolean(geminiKey);
+  const genAI = available ? new GoogleGenerativeAI(geminiKey!) : null;
   const model = genAI ? genAI.getGenerativeModel({ model: MODEL_NAME }) : null;
 
   // ── Daily quota tracking (in-memory, resets each calendar day) ──────

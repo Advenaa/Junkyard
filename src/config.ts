@@ -3,8 +3,10 @@ import dotenv from 'dotenv';
 import { ulid } from 'ulid';
 
 export interface Config {
-  anthropicApiKey: string;
-  geminiApiKey: string;
+  anthropicApiKey: string | null;
+  openaiApiKey: string | null;
+  googleApiKey: string | null;
+  geminiApiKey: string | null;
   databaseUrl: string;
   discordClientId: string | null;
   discordClientSecret: string | null;
@@ -51,9 +53,24 @@ function validateModelId(id: string, name: string): void {
 export function loadConfig(): Config {
   dotenv.config();
 
-  const anthropicApiKey = requireEnv('ANTHROPIC_API_KEY');
-  const geminiApiKey = requireEnv('GEMINI_API_KEY');
+  const anthropicApiKey = process.env['ANTHROPIC_API_KEY'] || null;
+  const openaiApiKey = process.env['OPENAI_API_KEY'] || null;
+  const googleApiKey = process.env['GOOGLE_API_KEY'] || null;
+  const geminiApiKey = process.env['GEMINI_API_KEY'] || null;
   const databaseUrl = requireEnv('DATABASE_URL');
+
+  // At least one LLM provider key is required
+  if (!anthropicApiKey && !openaiApiKey && !googleApiKey) {
+    throw new Error(
+      'At least one LLM provider API key is required: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY'
+    );
+  }
+
+  if (!geminiApiKey && !googleApiKey) {
+    console.warn(
+      'WARNING: Neither GEMINI_API_KEY nor GOOGLE_API_KEY set — embeddings will be disabled'
+    );
+  }
 
   if (!/^postgres(ql)?:\/\//.test(databaseUrl)) {
     throw new Error(
@@ -136,6 +153,8 @@ export function loadConfig(): Config {
 
   const secrets: string[] = [
     anthropicApiKey,
+    openaiApiKey,
+    googleApiKey,
     geminiApiKey,
     databaseUrl,
     discordClientSecret,
@@ -148,6 +167,8 @@ export function loadConfig(): Config {
 
   return Object.freeze({
     anthropicApiKey,
+    openaiApiKey,
+    googleApiKey,
     geminiApiKey,
     databaseUrl,
     discordClientId,

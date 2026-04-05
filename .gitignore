@@ -1,4 +1,5 @@
 .env
+.oauth-codex.json
 node_modules/
 dist/
 data/

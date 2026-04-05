@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { complete, getModel } from '@mariozechner/pi-ai';
+import { refreshOpenAICodexToken } from '@mariozechner/pi-ai/oauth';
 import type {
   Context,
   KnownProvider,
@@ -11,6 +13,53 @@ import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import { insertLlmUsage } from './db/queries.js';
 import type { Logger } from './logger.js';
+
+// ── OAuth Codex credentials ──────────────────────────────────────────
+
+interface CodexCredentials {
+  access: string;
+  refresh: string;
+  expires: number;
+  accountId?: string;
+}
+
+const OAUTH_FILE = '.oauth-codex.json';
+const REFRESH_BUFFER_MS = 5 * 60 * 1000; // refresh 5 min before expiry
+
+let _codexCreds: CodexCredentials | null = null;
+
+function loadCodexCredentials(): CodexCredentials | null {
+  if (_codexCreds) return _codexCreds;
+  try {
+    const raw = readFileSync(OAUTH_FILE, 'utf-8');
+    _codexCreds = JSON.parse(raw) as CodexCredentials;
+    return _codexCreds;
+  } catch {
+    return null;
+  }
+}
+
+async function getCodexApiKey(log: Logger): Promise<string | undefined> {
+  const creds = loadCodexCredentials();
+  if (!creds) return undefined;
+
+  if (Date.now() < creds.expires - REFRESH_BUFFER_MS) {
+    return creds.access;
+  }
+
+  // Token expired or about to expire — refresh
+  try {
+    log.info('Refreshing OpenAI Codex OAuth token...');
+    const refreshed = await refreshOpenAICodexToken(creds.refresh);
+    _codexCreds = refreshed as CodexCredentials;
+    writeFileSync(OAUTH_FILE, JSON.stringify(refreshed, null, 2));
+    log.info('OpenAI Codex OAuth token refreshed');
+    return refreshed.access;
+  } catch (err) {
+    log.error({ err }, 'Failed to refresh OpenAI Codex token — re-login required');
+    return creds.access; // try stale token as last resort
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -199,9 +248,11 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const effectiveTemperature = params.temperature ?? STAGE_TEMPERATURES[params.stage] ?? 0.5;
+        const codexKey = provider === 'openai-codex' ? await getCodexApiKey(log) : undefined;
         const response = await (_complete as typeof complete)(model, context, {
           maxTokens: params.maxTokens,
           temperature: effectiveTemperature,
+          ...(codexKey ? { apiKey: codexKey } : {}),
         });
 
         // L8: error stopReason with refusal-like message
