@@ -14,6 +14,8 @@ export function Header() {
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-6">
           <NavLink to="/reports" className={({ isActive }) => `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>Reports</NavLink>
+          <NavLink to="/feed" className={({ isActive }) => `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>Feed</NavLink>
+          <NavLink to="/chat" className={({ isActive }) => `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>Chat</NavLink>
           <NavLink to="/settings" className={({ isActive }) => `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>Settings</NavLink>
           {user && (<>
             <span className="text-text-secondary text-sm">{user.username}</span>
@@ -41,6 +43,8 @@ export function Header() {
       {menuOpen && (
         <nav className="md:hidden mt-3 pt-3 border-t border-border flex flex-col gap-3">
           <NavLink to="/reports" onClick={() => setMenuOpen(false)} className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}>Reports</NavLink>
+          <NavLink to="/feed" onClick={() => setMenuOpen(false)} className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}>Feed</NavLink>
+          <NavLink to="/chat" onClick={() => setMenuOpen(false)} className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}>Chat</NavLink>
           <NavLink to="/settings" onClick={() => setMenuOpen(false)} className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}>Settings</NavLink>
           {user && (<>
             <span className="text-text-secondary text-sm py-2">{user.username}</span>

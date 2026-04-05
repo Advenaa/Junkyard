@@ -283,20 +283,22 @@ describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => 
   });
 
   it('toggle button visual state is driven by stateStatus', () => {
-    const buttonArea = src.slice(src.indexOf('toggleSource(s)'));
+    // The button area uses a computed `isActive` variable derived from stateStatus
+    const mapArea = src.slice(src.indexOf('sources.map'));
     assert.ok(
-      buttonArea.includes("s.stateStatus === 'active'"),
-      'Toggle button visual state must use s.stateStatus, not s.enabled',
+      mapArea.includes("stateStatus == null || s.stateStatus === 'active'") ||
+      mapArea.includes("s.stateStatus === 'active'"),
+      'Toggle button visual state must derive from stateStatus, not s.enabled',
     );
   });
 
   it('optimistic state update sets stateStatus, not enabled', () => {
-    const setSourcesStart = src.indexOf('setSources((prev)');
-    assert.ok(setSourcesStart !== -1, 'setSources call must exist in toggleSource');
+    const toggleFnStart = src.indexOf('const toggleSource');
+    assert.ok(toggleFnStart !== -1, 'toggleSource function must exist');
 
-    const updateBody = src.slice(setSourcesStart, setSourcesStart + 300);
+    const toggleBody = src.slice(toggleFnStart, toggleFnStart + 600);
     assert.ok(
-      updateBody.includes('stateStatus:'),
+      toggleBody.includes('stateStatus:'),
       'Optimistic update must set stateStatus field',
     );
   });

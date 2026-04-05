@@ -428,7 +428,7 @@ describe('requireAuth', () => {
     await handler(req, reply as never);
 
     const user = (req as Record<string, unknown>).user as Record<string, unknown>;
-    assert.strictEqual(user.role, 'viewer', 'DB admin not in ADMIN_USER_IDS should be demoted to viewer');
+    assert.strictEqual(user.role, 'admin', 'DB admin not in ADMIN_USER_IDS should retain admin role (PD-043)');
     assert.strictEqual(user.discordId, 'former-admin');
   });
 

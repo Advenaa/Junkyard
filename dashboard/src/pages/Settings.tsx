@@ -3,6 +3,7 @@ import { apiFetch } from '../lib/api';
 import { useAuth } from '../components/AuthProvider';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
+import { Modal } from '../components/Modal';
 
 type Tab = 'sources' | 'delivery' | 'pipeline' | 'users';
 
@@ -60,6 +61,12 @@ function SourcesTab() {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [addSource, setAddSource] = useState('discord');
+  const [addSourceId, setAddSourceId] = useState('');
+  const [addLabel, setAddLabel] = useState('');
+  const [addError, setAddError] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     apiFetch<{ sources: Source[] }>('/sources')
@@ -68,9 +75,53 @@ function SourcesTab() {
       .finally(() => setLoading(false));
   }, []);
 
+  const openModal = () => {
+    setAddSource('discord');
+    setAddSourceId('');
+    setAddLabel('');
+    setAddError(null);
+    setModalOpen(true);
+  };
+
+  const handleAddSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdding(true);
+    setAddError(null);
+    try {
+      const created = await apiFetch<Source>('/sources', {
+        method: 'POST',
+        body: JSON.stringify({ source: addSource, sourceId: addSourceId, label: addLabel || undefined }),
+      });
+      const newSource: Source = {
+        source: created.source ?? addSource,
+        sourceId: created.sourceId ?? addSourceId,
+        label: created.label ?? addLabel ?? addSourceId,
+        enabled: created.enabled ?? true,
+        pollInterval: created.pollInterval ?? 300000,
+        lastFetchedAt: created.lastFetchedAt ?? null,
+        errorCount: created.errorCount ?? 0,
+        lastError: created.lastError ?? null,
+        status: created.status ?? 'ready',
+        stateStatus: created.stateStatus ?? 'active',
+      };
+      setSources((prev) => [...prev, newSource]);
+      setModalOpen(false);
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes('409')) {
+        setAddError('Source already exists.');
+      } else if (err instanceof Error) {
+        setAddError(err.message);
+      } else {
+        setAddError('Failed to add source.');
+      }
+    } finally {
+      setAdding(false);
+    }
+  };
+
   const toggleSource = async (s: Source) => {
     setError(null);
-    const isActive = s.stateStatus === 'active';
+    const isActive = s.stateStatus == null || s.stateStatus === 'active';
     try {
       await apiFetch(`/sources/${s.source}/${s.sourceId}`, {
         method: 'PATCH',
@@ -88,6 +139,84 @@ function SourcesTab() {
     }
   };
 
+  const addSourceButton = (
+    <button
+      onClick={openModal}
+      className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity"
+    >
+      Add Source
+    </button>
+  );
+
+  const addSourceModal = (
+    <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Source">
+      <form onSubmit={handleAddSource} className="space-y-4">
+        {addError && <p className="text-red-400 text-sm font-body">{addError}</p>}
+        <div className="space-y-1.5">
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+            Source Type
+          </label>
+          <select
+            value={addSource}
+            onChange={(e) => setAddSource(e.target.value)}
+            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+          >
+            <option value="discord">discord</option>
+            <option value="twitter">twitter</option>
+            <option value="rss">rss</option>
+            <option value="news">news</option>
+          </select>
+        </div>
+        <div className="space-y-1.5">
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+            Source ID
+          </label>
+          <input
+            type="text"
+            required
+            value={addSourceId}
+            onChange={(e) => setAddSourceId(e.target.value)}
+            placeholder={
+              addSource === 'rss' ? 'https://example.com/feed.xml' :
+              addSource === 'discord' ? 'Channel ID' :
+              addSource === 'twitter' ? 'Username or list' :
+              'Source identifier'
+            }
+            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+            Label <span className="normal-case text-text-secondary/60">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={addLabel}
+            onChange={(e) => setAddLabel(e.target.value)}
+            placeholder="Display name"
+            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+          />
+        </div>
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={() => setModalOpen(false)}
+            className="px-4 py-2 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={adding || !addSourceId.trim()}
+            className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {adding ? 'Adding...' : 'Add Source'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+
   if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
 
   if (sources.length === 0 && error) {
@@ -96,16 +225,24 @@ function SourcesTab() {
 
   if (sources.length === 0) {
     return (
-      <EmptyState
-        title="No sources configured"
-        description="Add your first source to start collecting market intelligence."
-      />
+      <>
+        {addSourceModal}
+        <div className="text-center py-16">
+          <p className="text-text-secondary text-lg">No sources configured</p>
+          <p className="text-text-secondary/60 mt-2 text-sm">Add your first source to start collecting market intelligence.</p>
+          <div className="mt-6">{addSourceButton}</div>
+        </div>
+      </>
     );
   }
 
   return (
     <div className="space-y-2">
-      {error && <p className="text-red-400 text-sm font-body">{error}</p>}
+      {addSourceModal}
+      <div className="flex items-center justify-between">
+        {error ? <p className="text-red-400 text-sm font-body">{error}</p> : <span />}
+        {addSourceButton}
+      </div>
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead>
@@ -118,38 +255,41 @@ function SourcesTab() {
             </tr>
           </thead>
           <tbody>
-            {sources.map((s) => (
-              <tr
-                key={`${s.source}-${s.sourceId}`}
-                className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
-              >
-                <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.source}</td>
-                <td className="px-4 py-3 text-text-primary font-body">{s.label}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={s.stateStatus ?? 'unknown'} />
-                  {s.lastError && (
-                    <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-text-secondary font-mono text-xs">
-                  {formatRelativeTime(s.lastFetchedAt)}
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => toggleSource(s)}
-                    className={`relative w-10 h-5 rounded-full transition-colors ${
-                      s.stateStatus === 'active' ? 'bg-accent-green' : 'bg-border'
-                    }`}
-                  >
-                    <span
-                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                        s.stateStatus === 'active' ? 'left-5' : 'left-0.5'
+            {sources.map((s) => {
+              const isActive = s.stateStatus == null || s.stateStatus === 'active';
+              return (
+                <tr
+                  key={`${s.source}-${s.sourceId}`}
+                  className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
+                >
+                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.source}</td>
+                  <td className="px-4 py-3 text-text-primary font-body">{s.label}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={s.stateStatus ?? 'unknown'} />
+                    {s.lastError && (
+                      <p className="text-accent-red text-xs mt-1 font-body">{s.lastError}</p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-text-secondary font-mono text-xs">
+                    {formatRelativeTime(s.lastFetchedAt)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button
+                      onClick={() => toggleSource(s)}
+                      className={`relative w-10 h-5 rounded-full transition-colors ${
+                        isActive ? 'bg-accent-green' : 'bg-border'
                       }`}
-                    />
-                  </button>
-                </td>
-              </tr>
-            ))}
+                    >
+                      <span
+                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          isActive ? 'left-5' : 'left-0.5'
+                        }`}
+                      />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

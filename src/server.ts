@@ -203,6 +203,12 @@ export async function createServer(
       }
       throw err;
     }
+    await pool.query(
+      `INSERT INTO source_state (source, source_id, status, error_count)
+       VALUES ($1, $2, 'active', 0)
+       ON CONFLICT (source, source_id) DO NOTHING`,
+      [source, sourceId],
+    );
     const { rows } = await pool.query<SourceRow>(
       `SELECT * FROM sources WHERE source = $1 AND source_id = $2`,
       [source, sourceId],

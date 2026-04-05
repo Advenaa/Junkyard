@@ -44,12 +44,10 @@ export function requireAuth(
 
         const username = userResult.rows[0]?.username ?? 'unknown';
 
-        // Admin override from config
+        // Admin override from config (additive — bootstrap admins always admin regardless of DB)
         const role = config.adminUserIds.includes(session.discordId)
           ? 'admin'
-          : session.role === 'admin'
-            ? 'viewer'  // Revoke admin if not in ADMIN_USER_IDS
-            : session.role;
+          : session.role;
 
         // Blocked users are rejected at the API layer — destroy session (AU-031)
         if (role === 'blocked') {
