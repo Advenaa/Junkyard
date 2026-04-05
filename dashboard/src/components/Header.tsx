@@ -16,7 +16,8 @@ export function Header() {
           <NavLink to="/reports" className={({ isActive }) => `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>Reports</NavLink>
           <NavLink to="/settings" className={({ isActive }) => `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`}>Settings</NavLink>
           {user && (
-            <button onClick={logout} className="text-text-secondary hover:text-text-primary text-sm">{user.username}</button>
+            <span className="text-text-secondary text-sm">{user.username}</span>
+            <button onClick={logout} className="text-text-tertiary hover:text-text-primary text-sm">Logout</button>
           )}
         </nav>
 
@@ -42,7 +43,8 @@ export function Header() {
           <NavLink to="/reports" onClick={() => setMenuOpen(false)} className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}>Reports</NavLink>
           <NavLink to="/settings" onClick={() => setMenuOpen(false)} className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}>Settings</NavLink>
           {user && (
-            <button onClick={logout} className="text-text-secondary text-sm text-left py-2">{user.username} (logout)</button>
+            <span className="text-text-secondary text-sm py-2">{user.username}</span>
+            <button onClick={logout} className="text-text-tertiary hover:text-text-primary text-sm text-left py-2">Logout</button>
           )}
         </nav>
       )}
