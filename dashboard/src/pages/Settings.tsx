@@ -37,6 +37,7 @@ interface Config {
   digestTime: string | null;
   timezone: string | null;
   publicUrl: string | null;
+  apiKey: string | null;
 }
 
 interface UserRecord {
@@ -394,13 +395,14 @@ function DeliveryTab() {
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<{ digestTime?: string; timezone?: string; webhookUrl?: string }>('/config')
+    apiFetch<{ digestTime?: string; timezone?: string; webhookUrl?: string; apiKey?: string }>('/config')
       .then((res) => {
         const mapped: Config = {
           webhookUrl: res.webhookUrl ?? '',
           digestTime: res.digestTime ?? '09:00',
           timezone: res.timezone ?? 'Asia/Jakarta',
           publicUrl: null,
+          apiKey: res.apiKey ?? null,
         };
         setConfig(mapped);
         setWebhookUrl(res.webhookUrl ?? '');
@@ -519,6 +521,107 @@ function DeliveryTab() {
           </button>
         </div>
         {testResult && <p className="text-sm text-text-secondary font-body">{testResult}</p>}
+      </div>
+
+      {/* API Access (PD-031) */}
+      <ApiAccessSection apiKey={config.apiKey} />
+    </div>
+  );
+}
+
+/* ── API Access Section ── */
+
+function ApiAccessSection({ apiKey }: { apiKey: string | null }) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const maskedKey = apiKey ? `${'*'.repeat(Math.max(0, apiKey.length - 4))}${apiKey.slice(-4)}` : null;
+
+  const copyKey = async () => {
+    if (!apiKey) return;
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: select text for manual copy
+    }
+  };
+
+  const endpoints = [
+    { method: 'GET', path: '/api/v1/reports', desc: 'List reports' },
+    { method: 'GET', path: '/api/v1/search?q=...', desc: 'Search summaries' },
+    { method: 'POST', path: '/api/v1/chat', desc: 'Chat with knowledge base' },
+    { method: 'GET', path: '/api/v1/sources', desc: 'List sources' },
+    { method: 'GET', path: '/api/v1/status', desc: 'Pipeline status' },
+  ];
+
+  return (
+    <div className="bg-surface border border-border rounded-lg p-6 space-y-4">
+      <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">API Access</h3>
+      <p className="text-sm text-text-secondary font-body">
+        Use the API key for programmatic access. All API key requests have admin privileges.
+      </p>
+
+      {/* API Key display */}
+      {apiKey ? (
+        <div className="space-y-2">
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">API Key</label>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 bg-background border border-border rounded-lg px-4 py-2.5 text-sm font-mono text-text-primary select-all overflow-x-auto">
+              {revealed ? apiKey : maskedKey}
+            </code>
+            <button
+              onClick={() => setRevealed((r) => !r)}
+              className="px-3 py-2.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-xs font-mono hover:text-text-primary transition-colors shrink-0"
+              title={revealed ? 'Hide API key' : 'Reveal API key'}
+            >
+              {revealed ? 'Hide' : 'Show'}
+            </button>
+            <button
+              onClick={copyKey}
+              className="px-3 py-2.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-xs font-mono hover:text-text-primary transition-colors shrink-0"
+              title="Copy API key"
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-text-secondary/60 font-body italic">
+          API key is only visible to admin users. Check the server logs or .env for the key.
+        </p>
+      )}
+
+      {/* Auth header format */}
+      <div className="space-y-2">
+        <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Authorization Header</label>
+        <code className="block bg-background border border-border rounded-lg px-4 py-2.5 text-sm font-mono text-text-primary">
+          Authorization: Bearer {'<your-api-key>'}
+        </code>
+      </div>
+
+      {/* Available endpoints */}
+      <div className="space-y-2">
+        <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Endpoints</label>
+        <div className="bg-background border border-border rounded-lg overflow-hidden">
+          {endpoints.map((ep) => (
+            <div
+              key={`${ep.method}-${ep.path}`}
+              className="flex items-center gap-3 px-4 py-2 border-b border-border last:border-b-0"
+            >
+              <span
+                className={`font-mono text-xs font-bold w-10 shrink-0 ${
+                  ep.method === 'GET' ? 'text-accent-green' : 'text-accent'
+                }`}
+              >
+                {ep.method}
+              </span>
+              <code className="font-mono text-xs text-text-primary">{ep.path}</code>
+              <span className="text-text-secondary text-xs font-body ml-auto shrink-0">{ep.desc}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

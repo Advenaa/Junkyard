@@ -8,6 +8,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   toolsUsed?: string[];
+  retryQuery?: string;
 }
 
 interface ChatResponse {
@@ -17,6 +18,21 @@ interface ChatResponse {
 
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function parseErrorMessage(err: unknown): string {
+  if (err instanceof TypeError && err.message === 'Failed to fetch') {
+    return 'Network error. Check your connection.';
+  }
+  if (err instanceof Error) {
+    const match = err.message.match(/API (\d+):/);
+    if (match) {
+      const status = Number(match[1]);
+      if (status === 429) return "You're sending messages too quickly. Please wait a moment.";
+      if (status >= 500) return 'The server encountered an error. Try again.';
+    }
+  }
+  return 'Something went wrong. Please try again.';
 }
 
 export function Chat() {
@@ -29,6 +45,8 @@ export function Chat() {
   });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [retryQuery, setRetryQuery] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const [conversationId, setConversationId] = useState(() => {
     return sessionStorage.getItem('podders-chat-conversation-id') ?? generateId();
   });
@@ -53,44 +71,67 @@ export function Chat() {
   }, [conversationId]);
 
   useEffect(() => {
+    if (!loading) {
+      setElapsed(0);
+      return;
+    }
+    const start = Date.now();
+    setElapsed(0);
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [loading]);
+
+  useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
-  const send = useCallback(async () => {
-    const query = input.trim();
-    if (!query || loading) return;
+  const send = useCallback(
+    async (overrideQuery?: string) => {
+      const query = overrideQuery ?? input.trim();
+      if (!query || loading) return;
 
-    const requestConversationId = conversationId;
+      const requestConversationId = conversationId;
+      const isRetry = !!overrideQuery;
 
-    setInput('');
-    setMessages((prev) => [...prev, { id: generateId(), role: 'user', content: query }]);
-    setLoading(true);
-
-    try {
-      const data = await apiFetch<ChatResponse>('/chat', {
-        method: 'POST',
-        body: JSON.stringify({ query, conversationId: requestConversationId }),
-      });
-      if (conversationIdRef.current !== requestConversationId) return;
-      setMessages((prev) => [
-        ...prev,
-        { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed },
-      ]);
-    } catch (err) {
-      if (conversationIdRef.current !== requestConversationId) return;
-      setMessages((prev) => [
-        ...prev,
-        { id: generateId(), role: 'assistant', content: 'Something went wrong. Please try again.' },
-      ]);
-    } finally {
-      if (conversationIdRef.current === requestConversationId) {
-        setLoading(false);
+      if (!isRetry) {
+        setInput('');
+        setMessages((prev) => [...prev, { id: generateId(), role: 'user', content: query }]);
       }
-    }
-  }, [input, loading, conversationId]);
+      setRetryQuery(null);
+      setLoading(true);
+
+      try {
+        const data = await apiFetch<ChatResponse>('/chat', {
+          method: 'POST',
+          body: JSON.stringify({ query, conversationId: requestConversationId }),
+        });
+        if (conversationIdRef.current !== requestConversationId) return;
+        setRetryQuery(null);
+        setMessages((prev) => [
+          ...prev,
+          { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed },
+        ]);
+      } catch (err) {
+        if (conversationIdRef.current !== requestConversationId) return;
+        const errorMessage = parseErrorMessage(err);
+        setRetryQuery(query);
+        setMessages((prev) => [
+          ...prev,
+          { id: generateId(), role: 'assistant', content: errorMessage, retryQuery: query },
+        ]);
+      } finally {
+        if (conversationIdRef.current === requestConversationId) {
+          setLoading(false);
+        }
+      }
+    },
+    [input, loading, conversationId],
+  );
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -103,6 +144,7 @@ export function Chat() {
     setMessages([]);
     setConversationId(generateId());
     setInput('');
+    setRetryQuery(null);
     sessionStorage.removeItem('podders-chat-messages');
     sessionStorage.removeItem('podders-chat-conversation-id');
     textareaRef.current?.focus();
@@ -130,9 +172,31 @@ export function Chat() {
           </div>
         )}
         {messages.map((msg) => (
-          <ChatMessage key={msg.id} role={msg.role} content={msg.content} toolsUsed={msg.toolsUsed} />
+          <div key={msg.id}>
+            <ChatMessage role={msg.role} content={msg.content} toolsUsed={msg.toolsUsed} />
+            {msg.retryQuery && (
+              <div className="flex justify-start pl-10 -mt-1 mb-2">
+                <button
+                  onClick={() => send(msg.retryQuery)}
+                  disabled={loading}
+                  className="text-xs px-3 py-1.5 rounded bg-surface-raised text-accent hover:text-accent/80 border border-border disabled:opacity-40 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
         ))}
-        {loading && <ChatMessage role="assistant" content="" loading />}
+        {loading && (
+          <div>
+            <ChatMessage role="assistant" content="" loading />
+            <div className="pl-10 -mt-1 mb-2 text-xs text-text-secondary">
+              {elapsed < 10
+                ? `Analyzing... (${elapsed}s)`
+                : `Complex queries take longer — searching and cross-referencing data... (${elapsed}s)`}
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </ChatPanel>
 
@@ -150,7 +214,7 @@ export function Chat() {
             className="flex-1 resize-none overflow-y-auto bg-surface-raised text-text-primary placeholder:text-text-secondary text-sm rounded-lg px-4 py-2.5 border border-border focus:border-accent focus:outline-none"
           />
           <button
-            onClick={send}
+            onClick={() => send()}
             disabled={loading || !input.trim()}
             aria-label="Send message"
             className="px-4 py-2.5 min-h-[44px] rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40 transition-opacity"

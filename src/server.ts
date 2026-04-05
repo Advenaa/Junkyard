@@ -239,13 +239,15 @@ export async function createServer(
   );
 
   // --- Config ---
-  app.get('/api/v1/config', { preHandler: [authPreHandler] }, async () => {
+  app.get('/api/v1/config', { preHandler: [authPreHandler] }, async (request) => {
     const [digestTime, timezone, webhookUrl] = await Promise.all([
       getAppConfig(pool, 'digest_time'),
       getAppConfig(pool, 'timezone'),
       getAppConfig(pool, 'webhook_url'),
     ]);
-    return { digestTime, timezone, webhookUrl };
+    // Only expose API key to admin users (PD-031)
+    const apiKey = request.user?.role === 'admin' ? config.apiKey : undefined;
+    return { digestTime, timezone, webhookUrl, apiKey };
   });
 
   app.patch(
