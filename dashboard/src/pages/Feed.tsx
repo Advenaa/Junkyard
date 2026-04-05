@@ -59,6 +59,7 @@ const MAX_ITEMS = 500;
 
 export function Feed() {
   const [sources, setSources] = useState<FeedSource[]>([]);
+  const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [selectedSource, setSelectedSource] = useState<string>('');
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,11 +81,15 @@ export function Feed() {
       .then((res) => {
         const discordSources = res.sources.filter((s) => s.source === 'discord');
         setSources(discordSources);
+        setSourcesLoaded(true);
         if (discordSources.length > 0 && !selectedSource) {
           setSelectedSource(discordSources[0].sourceId);
         }
       })
-      .catch(() => setError('Failed to load sources.'));
+      .catch(() => {
+        setSourcesLoaded(true);
+        setError('Failed to load sources.');
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchItems = useCallback(
@@ -171,6 +176,18 @@ export function Feed() {
       setLoadingMore(false);
     }
   };
+
+  if (sourcesLoaded && sources.length === 0 && !error) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <h1 className="font-heading text-2xl text-text-primary mb-6">Raw Feed</h1>
+        <EmptyState
+          title="No Discord sources configured"
+          description="Add a Discord source in Settings to view raw messages here."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">

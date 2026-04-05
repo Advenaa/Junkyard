@@ -77,9 +77,9 @@ export function registerOAuthRoutes(
 
   // --- GET /api/v1/auth/discord/callback ---
   app.get<{
-    Querystring: { code?: string; state?: string };
+    Querystring: { code?: string; state?: string; error?: string; error_description?: string };
   }>('/api/v1/auth/discord/callback', async (request, reply) => {
-    const { code, state } = request.query;
+    const { code, state, error } = request.query;
 
     if (!config.discordClientId || !config.discordClientSecret || !config.publicUrl) {
       return reply.status(503).send({ error: 'Discord OAuth is not configured' });
@@ -101,8 +101,13 @@ export function registerOAuthRoutes(
     }
     consumedStates.add(state);
 
+    if (error) {
+      log.warn({ error }, 'Discord OAuth denied by user');
+      return reply.redirect(`/login?error=${error === 'access_denied' ? 'denied' : 'oauth_error'}`);
+    }
+
     if (!code) {
-      return reply.status(400).send({ error: 'Missing authorization code' });
+      return reply.redirect('/login?error=missing_code');
     }
 
     // 2. Exchange code for token

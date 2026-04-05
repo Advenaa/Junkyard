@@ -71,6 +71,7 @@ function SourcesTab() {
   const [addSource, setAddSource] = useState('discord');
   const [addSourceId, setAddSourceId] = useState('');
   const [addLabel, setAddLabel] = useState('');
+  const [addPollInterval, setAddPollInterval] = useState(300);
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -87,6 +88,7 @@ function SourcesTab() {
     setAddSource('discord');
     setAddSourceId('');
     setAddLabel('');
+    setAddPollInterval(300);
     setAddError(null);
     setModalOpen(true);
   };
@@ -98,7 +100,12 @@ function SourcesTab() {
     try {
       const created = await apiFetch<Source>('/sources', {
         method: 'POST',
-        body: JSON.stringify({ source: addSource, sourceId: addSourceId, label: addLabel || undefined }),
+        body: JSON.stringify({
+          source: addSource,
+          sourceId: addSourceId,
+          label: addLabel || undefined,
+          poll_interval: addPollInterval,
+        }),
       });
       const newSource: Source = {
         source: created.source ?? addSource,
@@ -246,6 +253,25 @@ function SourcesTab() {
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
           />
         </div>
+        <div className="space-y-1.5">
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Poll Interval</label>
+          <select
+            value={addPollInterval}
+            onChange={(e) => setAddPollInterval(Number(e.target.value))}
+            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+          >
+            <option value={60}>1 minute</option>
+            <option value={300}>5 minutes</option>
+            <option value={600}>10 minutes</option>
+            <option value={900}>15 minutes</option>
+            <option value={1800}>30 minutes</option>
+            <option value={3600}>1 hour</option>
+            <option value={7200}>2 hours</option>
+            <option value={14400}>4 hours</option>
+            <option value={43200}>12 hours</option>
+            <option value={86400}>24 hours</option>
+          </select>
+        </div>
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"
@@ -313,7 +339,14 @@ function SourcesTab() {
                   key={`${s.source}-${s.sourceId}`}
                   className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
                 >
-                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">{s.source}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-text-secondary">
+                    {s.source}
+                    <span className="ml-2 text-text-secondary/60">
+                      {s.pollInterval >= 3600
+                        ? `${Math.floor(s.pollInterval / 3600)}h`
+                        : `${Math.floor(s.pollInterval / 60)}m`}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-text-primary font-body">
                     {editingKey === `${s.source}-${s.sourceId}` ? (
                       <input
