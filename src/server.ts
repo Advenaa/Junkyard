@@ -210,6 +210,9 @@ export async function createServer(
           return reply.code(400).send({ error: `Invalid RSS feed URL: ${validation.reason}` });
         }
       }
+      if (source === 'discord' && !/^\d{17,20}$/.test(sourceId)) {
+        return reply.code(400).send({ error: 'Discord channel ID must be a 17-20 digit snowflake' });
+      }
       try {
         await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
         if (poll_interval != null) {
@@ -601,7 +604,7 @@ export async function createServer(
   // --- Discord server/channel discovery ---
   app.get('/api/v1/discord/guilds', { preHandler: [authPreHandler, requireAdmin] }, async () => {
     const guilds = await discordRest.getGuilds();
-    return { guilds };
+    return { guilds: guilds.map((g) => toCamelCase(g as unknown as Record<string, unknown>)) };
   });
 
   app.get<{ Params: { guildId: string } }>(
@@ -610,7 +613,7 @@ export async function createServer(
     async (request) => {
       const { guildId } = request.params;
       const channels = await discordRest.getChannels(guildId);
-      return { channels };
+      return { channels: channels.map((c) => toCamelCase(c as unknown as Record<string, unknown>)) };
     },
   );
 

@@ -93,4 +93,42 @@ describe('Discord discovery routes (server.ts)', () => {
     const routeBlock = src.slice(guildRouteIdx, guildRouteIdx + 200);
     assert.ok(routeBlock.includes('requireAdmin'), 'Guild route must require admin auth');
   });
+
+  it('guild route applies toCamelCase', () => {
+    const guildRouteIdx = src.indexOf("'/api/v1/discord/guilds'");
+    assert.ok(guildRouteIdx !== -1, 'Guild route must exist');
+    const routeBlock = src.slice(guildRouteIdx, guildRouteIdx + 300);
+    assert.ok(routeBlock.includes('toCamelCase'), 'Guild route must apply toCamelCase to response');
+  });
+
+  it('channel route applies toCamelCase', () => {
+    const channelRouteIdx = src.indexOf("'/api/v1/discord/guilds/:guildId/channels'");
+    assert.ok(channelRouteIdx !== -1, 'Channel route must exist');
+    const routeBlock = src.slice(channelRouteIdx, channelRouteIdx + 300);
+    assert.ok(routeBlock.includes('toCamelCase'), 'Channel route must apply toCamelCase to response');
+  });
+});
+
+// ==========================================================================
+// Discord snowflake validation on POST /sources
+// ==========================================================================
+
+describe('Discord snowflake validation (server.ts)', () => {
+  const src = readSrc('src/server.ts');
+
+  it('validates discord sourceId as snowflake pattern', () => {
+    // Must have a regex check for 17-20 digit snowflakes for discord sources
+    const snowflakeCheck = src.match(/source\s*===\s*'discord'.*\\d\{17,20\}/s);
+    assert.ok(snowflakeCheck, 'POST /sources must validate discord sourceId as 17-20 digit snowflake');
+  });
+
+  it('returns 400 for invalid discord snowflake', () => {
+    const postSourcesIdx = src.indexOf("'/api/v1/sources'");
+    assert.ok(postSourcesIdx !== -1, 'POST /sources route must exist');
+    const routeBlock = src.slice(postSourcesIdx, postSourcesIdx + 2000);
+    assert.ok(
+      routeBlock.includes('snowflake') || routeBlock.includes('17-20 digit'),
+      'Error message must mention snowflake format',
+    );
+  });
 });
