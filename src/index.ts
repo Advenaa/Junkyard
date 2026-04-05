@@ -145,6 +145,9 @@ program
               // Just update last_fetched_at to keep health monitor happy
               await updateSourceState(pool, src.source, src.source_id, now, lastId);
               return;
+            } else if (src.source === 'news') {
+              // News adapter is URL-based extraction, not poll-based — skip in poll loop
+              return;
             }
 
             // Normalize each item

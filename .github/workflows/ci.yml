@@ -48,7 +48,7 @@ jobs:
 
       - name: Lint
         run: npm run lint
-        continue-on-error: true  # Non-blocking until codebase passes lint clean
+        continue-on-error: true # Non-blocking until codebase passes lint clean
 
       - name: Format check
         run: npm run format:check
@@ -67,7 +67,7 @@ jobs:
     needs: build-and-test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    continue-on-error: true  # API keys may not be configured yet
+    continue-on-error: true # API keys may not be configured yet
 
     services:
       postgres:
@@ -155,13 +155,14 @@ jobs:
             pm2 restart ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
             pm2 save
 
-            for i in $(seq 1 6); do
+            for i in $(seq 1 12); do
               if curl -sf http://localhost:3000/api/v1/status > /dev/null 2>&1; then
-                echo "Health check passed"
+                echo "Health check passed (attempt $i)"
                 echo "Deployed: $(git rev-parse --short HEAD)"
                 exit 0
               fi
-              sleep 5
+              echo "Waiting for server to start (attempt $i/12)..."
+              sleep 10
             done
 
             echo "HEALTH CHECK FAILED"

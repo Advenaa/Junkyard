@@ -85,7 +85,7 @@ export function parseLabeledOutput(output: string, batchSize: number): (string |
   const results: (string | null)[] = new Array(batchSize).fill(null);
 
   for (let i = 1; i <= batchSize; i++) {
-    const labelPattern = new RegExp(`\\[${i}\\]\\s*([\\s\\S]*?)(?=\\[${i + 1}\\]|$)`);
+    const labelPattern = new RegExp(`\\[${i}\\]\\s*([\\s\\S]*?)(?=\\[\\d+\\]|$)`);
     const match = output.match(labelPattern);
     if (match) {
       const text = match[1].trim();
@@ -130,12 +130,14 @@ export function createPreSummarizer(pool: Pool, log: Logger, config: Config, llm
       [batchId],
     );
 
+    // Urgency/density heuristics require JS (regex, keyword matching) — can't push into SQL WHERE.
+    // Claim-then-filter trades a small release overhead for race-safe atomic claiming.
     const eligible = rows.filter((item) => !shouldSkip(item));
 
     // Set skipped items (that were claimed) back to 'ready'
     const skippedIds = rows.filter((item) => shouldSkip(item)).map((item) => item.id);
     if (skippedIds.length > 0) {
-      await pool.query(`UPDATE items SET status = 'ready' WHERE id = ANY($1::text[])`, [skippedIds]);
+      await pool.query(`UPDATE items SET status = 'ready', batch_id = NULL WHERE id = ANY($1::text[])`, [skippedIds]);
     }
 
     if (eligible.length === 0) {
