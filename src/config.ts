@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
 import dotenv from 'dotenv';
 import { ulid } from 'ulid';
 
@@ -59,10 +60,11 @@ export function loadConfig(): Config {
   const geminiApiKey = process.env['GEMINI_API_KEY'] || null;
   const databaseUrl = requireEnv('DATABASE_URL');
 
-  // At least one LLM provider key is required
-  if (!anthropicApiKey && !openaiApiKey && !googleApiKey) {
+  // At least one LLM provider is required (API key or OAuth credentials)
+  const hasCodexOAuth = existsSync('.oauth-codex.json');
+  if (!anthropicApiKey && !openaiApiKey && !googleApiKey && !hasCodexOAuth) {
     throw new Error(
-      'At least one LLM provider API key is required: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY'
+      'At least one LLM provider is required: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or .oauth-codex.json'
     );
   }
 
