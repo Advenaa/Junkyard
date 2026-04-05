@@ -17,6 +17,11 @@ import {
   insertSource,
   getAppConfig,
   setAppConfig,
+  getDiscordTokens,
+  insertDiscordToken,
+  deleteDiscordToken,
+  updateDiscordTokenStatus,
+  updateDiscordTokenLabel,
   type ReportRow,
   type SummaryRow,
   type SourceRow,
@@ -25,6 +30,7 @@ import {
 import net from 'node:net';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
+import { encryptToken, decryptToken, getEncryptionKey } from './crypto/token-encrypt.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
@@ -614,6 +620,126 @@ export async function createServer(
       const { guildId } = request.params;
       const channels = await discordRest.getChannels(guildId);
       return { channels: channels.map((c) => toCamelCase(c as unknown as Record<string, unknown>)) };
+    },
+  );
+
+  // --- Discord token management ---
+  app.get('/api/v1/discord/tokens', { preHandler: [authPreHandler, requireAdmin] }, async (_request, reply) => {
+    const encKey = getEncryptionKey();
+    if (!encKey) {
+      return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
+    }
+    const rows = await getDiscordTokens(pool);
+    const tokens = rows.map((row) => {
+      // Mask the token — show first 10 chars only
+      let maskedToken = '***';
+      try {
+        const plain = decryptToken({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
+        maskedToken = plain.slice(0, 10) + '...' + plain.slice(-4);
+      } catch {
+        maskedToken = '[decryption failed]';
+      }
+      return {
+        id: row.id,
+        maskedToken,
+        label: row.label,
+        status: row.status,
+        addedAt: row.added_at,
+        lastUsedAt: row.last_used_at,
+      };
+    });
+    return { tokens };
+  });
+
+  app.post(
+    '/api/v1/discord/tokens',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['token'],
+          properties: {
+            token: { type: 'string', minLength: 1, maxLength: 500 },
+            label: { type: 'string', maxLength: 100 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const encKey = getEncryptionKey();
+      if (!encKey) {
+        return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
+      }
+      const { token, label } = request.body as { token: string; label?: string };
+      const { ulid } = await import('ulid');
+      const id = ulid();
+      const encrypted = encryptToken(token, encKey);
+      await insertDiscordToken(pool, id, encrypted.ciphertext, encrypted.iv, encrypted.authTag, label ?? null, Date.now());
+      reply.code(201);
+      return { id, label: label ?? null, status: 'active', addedAt: Date.now() };
+    },
+  );
+
+  app.delete<{ Params: { tokenId: string } }>(
+    '/api/v1/discord/tokens/:tokenId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['tokenId'],
+          properties: {
+            tokenId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const deleted = await deleteDiscordToken(pool, tokenId);
+      if (!deleted) {
+        return reply.code(404).send({ error: 'Token not found' });
+      }
+      reply.code(204).send();
+    },
+  );
+
+  app.patch<{ Params: { tokenId: string } }>(
+    '/api/v1/discord/tokens/:tokenId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            label: { type: 'string', maxLength: 100 },
+            status: { type: 'string', enum: ['active', 'disabled'] },
+          },
+          additionalProperties: false,
+        },
+        params: {
+          type: 'object',
+          required: ['tokenId'],
+          properties: {
+            tokenId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { tokenId } = request.params;
+      const body = request.body as { label?: string; status?: string };
+      if (body.label != null) {
+        const updated = await updateDiscordTokenLabel(pool, tokenId, body.label);
+        if (!updated) return reply.code(404).send({ error: 'Token not found' });
+      }
+      if (body.status != null) {
+        const updated = await updateDiscordTokenStatus(pool, tokenId, body.status);
+        if (!updated) return reply.code(404).send({ error: 'Token not found' });
+      }
+      return { ok: true };
     },
   );
 

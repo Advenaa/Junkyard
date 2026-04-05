@@ -445,6 +445,22 @@ const migrations: Migration[] = [
     // embeddings
     await client.query(`ALTER TABLE embeddings ALTER COLUMN created_at TYPE BIGINT`);
   },
+
+  // Migration 14: Create discord_tokens table for UI-managed token storage
+  async (client) => {
+    await client.query(`
+      CREATE TABLE discord_tokens (
+        id TEXT PRIMARY KEY,
+        encrypted_token TEXT NOT NULL,
+        iv TEXT NOT NULL,
+        auth_tag TEXT NOT NULL,
+        label TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+        added_at BIGINT NOT NULL,
+        last_used_at BIGINT
+      )
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
