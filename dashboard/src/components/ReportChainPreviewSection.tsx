@@ -73,7 +73,12 @@ function buildPreviewBody(
   body: string | null | undefined,
   fallback?: string,
 ): string | null {
-  const candidate = typeof tldr === 'string' && tldr.trim().length > 0 ? tldr : typeof body === 'string' && body.trim().length > 0 ? body : fallback;
+  const candidate =
+    typeof tldr === 'string' && tldr.trim().length > 0
+      ? tldr
+      : typeof body === 'string' && body.trim().length > 0
+        ? body
+        : fallback;
   if (!candidate) return null;
   return candidate.trim().replace(/\s+/g, ' ');
 }
@@ -117,9 +122,13 @@ function loadCachedExpandedChains(
       return {
         previewRootIds: cachedPreviewRootIds ?? previewRootIds,
         previewSummary:
-          parsed && typeof parsed === 'object' && typeof parsed.previewSummary === 'string' ? parsed.previewSummary : undefined,
+          parsed && typeof parsed === 'object' && typeof parsed.previewSummary === 'string'
+            ? parsed.previewSummary
+            : undefined,
         previewBody:
-          parsed && typeof parsed === 'object' && typeof parsed.previewBody === 'string' ? parsed.previewBody : undefined,
+          parsed && typeof parsed === 'object' && typeof parsed.previewBody === 'string'
+            ? parsed.previewBody
+            : undefined,
         expandedChains: cachedChains,
       };
     }
@@ -191,7 +200,9 @@ export function ReportChainPreviewSection({
   const [currentPreviewSummary, setCurrentPreviewSummary] = useState<string | null>(
     buildChainPreviewSummary(chainDrilldowns[0], previewSummary),
   );
-  const [currentPreviewBody, setCurrentPreviewBody] = useState<string | null>(buildPreviewBody(null, null, previewBody));
+  const [currentPreviewBody, setCurrentPreviewBody] = useState<string | null>(
+    buildPreviewBody(null, null, previewBody),
+  );
   const [remainingHiddenCount, setRemainingHiddenCount] = useState(hiddenActiveChainCount);
   const [loadingChains, setLoadingChains] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -210,8 +221,14 @@ export function ReportChainPreviewSection({
         ? buildChainPreviewSummary(cachedChains[0], cachedState?.previewSummary)
         : buildChainPreviewSummary(chainDrilldowns[0], previewSummary),
     );
-    setCurrentPreviewBody(canReuseCachedChains ? buildPreviewBody(null, null, cachedState?.previewBody) : buildPreviewBody(null, null, previewBody));
-    setRemainingHiddenCount(canReuseCachedChains ? Math.max(0, hiddenActiveChainCount - cachedOverflowCount) : hiddenActiveChainCount);
+    setCurrentPreviewBody(
+      canReuseCachedChains
+        ? buildPreviewBody(null, null, cachedState?.previewBody)
+        : buildPreviewBody(null, null, previewBody),
+    );
+    setRemainingHiddenCount(
+      canReuseCachedChains ? Math.max(0, hiddenActiveChainCount - cachedOverflowCount) : hiddenActiveChainCount,
+    );
     setLoadingChains(false);
     setLoadError(null);
     setLoadErrorMode(null);
@@ -284,7 +301,13 @@ export function ReportChainPreviewSection({
       const expandedChains = res.report.chainDrilldowns ?? chainDrilldowns;
       const nextPreviewSummary = buildChainPreviewSummary(expandedChains[0], res.report.eventChains?.[0]);
       const nextPreviewBody = buildPreviewBody(res.report.tldr, res.report.body, previewBody);
-      saveCachedExpandedChains(reportId, chainDrilldowns, expandedChains, nextPreviewSummary ?? undefined, nextPreviewBody ?? undefined);
+      saveCachedExpandedChains(
+        reportId,
+        chainDrilldowns,
+        expandedChains,
+        nextPreviewSummary ?? undefined,
+        nextPreviewBody ?? undefined,
+      );
       setVisibleChains(expandedChains);
       setCurrentPreviewSummary(nextPreviewSummary);
       setCurrentPreviewBody(nextPreviewBody);
@@ -381,7 +404,9 @@ export function ReportChainPreviewSection({
           disabled={loadingChains}
           className="inline-flex text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-accent hover:underline disabled:opacity-60"
         >
-          {loadingChains ? `Loading ${getHiddenChainsLabel(remainingHiddenCount)}...` : `Show ${getHiddenChainsLabel(remainingHiddenCount)}`}
+          {loadingChains
+            ? `Loading ${getHiddenChainsLabel(remainingHiddenCount)}...`
+            : `Show ${getHiddenChainsLabel(remainingHiddenCount)}`}
         </button>
       )}
       {canCollapseChains && (

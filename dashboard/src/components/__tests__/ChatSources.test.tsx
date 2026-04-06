@@ -151,10 +151,22 @@ describe('ChatSources', () => {
     await user.click(screen.getByRole('button', { name: 'Show related citations for Daily 2026-04-06' }));
     await user.click(screen.getByRole('button', { name: 'Show related citations for Summary summary-1' }));
 
-    expect(screen.getByRole('link', { name: /Daily 2026-04-06/i })).toHaveAttribute('href', '/reports/report-1?chain=chain-root-1');
-    expect(screen.getByRole('link', { name: /Daily 2026-04-08/i })).toHaveAttribute('href', '/reports/report-3?chain=chain-root-1');
-    expect(screen.getByRole('link', { name: /Summary summary-1/i })).toHaveAttribute('href', '/summaries/summary-1?chain=event-root-1');
-    expect(screen.getByRole('link', { name: /Summary summary-3/i })).toHaveAttribute('href', '/summaries/summary-3?chain=event-root-1');
+    expect(screen.getByRole('link', { name: /Daily 2026-04-06/i })).toHaveAttribute(
+      'href',
+      '/reports/report-1?chain=chain-root-1',
+    );
+    expect(screen.getByRole('link', { name: /Daily 2026-04-08/i })).toHaveAttribute(
+      'href',
+      '/reports/report-3?chain=chain-root-1',
+    );
+    expect(screen.getByRole('link', { name: /Summary summary-1/i })).toHaveAttribute(
+      'href',
+      '/summaries/summary-1?chain=event-root-1',
+    );
+    expect(screen.getByRole('link', { name: /Summary summary-3/i })).toHaveAttribute(
+      'href',
+      '/summaries/summary-3?chain=event-root-1',
+    );
     expect(screen.getAllByText('Lead cite')).toHaveLength(2);
     expect(screen.getByText('Later report snippet')).toBeInTheDocument();
     expect(screen.getByText('Related summary snippet')).toBeInTheDocument();
@@ -218,7 +230,10 @@ describe('ChatSources', () => {
 
     await user.click(screen.getByRole('button', { name: 'Show related citations for Daily 2026-04-06' }));
 
-    expect(screen.getByRole('link', { name: /Daily 2026-04-06/i })).toHaveAttribute('href', '/reports/report-1?chain=chain-root-1');
+    expect(screen.getByRole('link', { name: /Daily 2026-04-06/i })).toHaveAttribute(
+      'href',
+      '/reports/report-1?chain=chain-root-1',
+    );
     expect(screen.getByRole('link', { name: /Daily 2026-04-06/i })).toHaveTextContent('Lead cite');
 
     await user.click(screen.getByRole('button', { name: 'Make Daily 2026-04-08 the lead citation' }));

@@ -166,10 +166,7 @@ describe('ReportList', () => {
       throw new Error(`Unhandled fetch ${path.pathname}${path.search}`);
     });
 
-    vi.stubGlobal(
-      'fetch',
-      fetchMock,
-    );
+    vi.stubGlobal('fetch', fetchMock);
 
     render(
       <MemoryRouter initialEntries={['/reports']}>
@@ -228,7 +225,9 @@ describe('ReportList', () => {
       screen.getByText('Bitcoin exploit chain: refreshed active chains moved the lead story to Chainlink.'),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: /Chainlink took over the preview focus after the refreshed active-chain pull/i }),
+      screen.getByRole('link', {
+        name: /Chainlink took over the preview focus after the refreshed active-chain pull/i,
+      }),
     ).toHaveAttribute('href', '/reports/report-1?chain=chain-root-4');
     expect(screen.getByRole('button', { name: 'Active stories · 5' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Lead chain · Chainlink · legal' })).toHaveAttribute(
@@ -259,7 +258,9 @@ describe('ReportList', () => {
       screen.getByText('Bitcoin exploit chain: audit follow-up kept the remediation story active.'),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: /Bitcoin held gains while traders watched follow-up risk around a live exploit story/i }),
+      screen.getByRole('link', {
+        name: /Bitcoin held gains while traders watched follow-up risk around a live exploit story/i,
+      }),
     ).toHaveAttribute('href', '/reports/report-1?chain=chain-root-1');
     expect(screen.getByRole('button', { name: 'Active stories · 2' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Lead chain · Bitcoin · governance' })).toHaveAttribute(

@@ -276,12 +276,9 @@ describe('useRawItemView', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { result, rerender } = renderHook(
-      (props: { itemId: string; contextSize: number }) => useRawItemView(props),
-      {
-        initialProps: { itemId: 'item-1', contextSize: 3 },
-      },
-    );
+    const { result, rerender } = renderHook((props: { itemId: string; contextSize: number }) => useRawItemView(props), {
+      initialProps: { itemId: 'item-1', contextSize: 3 },
+    });
 
     await waitFor(() => {
       expect(result.current.routeState).toBe('ready');
@@ -500,12 +497,9 @@ describe('useRawItemView', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const { result, rerender } = renderHook(
-      (props: { itemId: string; contextSize: number }) => useRawItemView(props),
-      {
-        initialProps: { itemId: 'item-1', contextSize: 3 },
-      },
-    );
+    const { result, rerender } = renderHook((props: { itemId: string; contextSize: number }) => useRawItemView(props), {
+      initialProps: { itemId: 'item-1', contextSize: 3 },
+    });
 
     await waitFor(() => {
       expect(result.current.routeState).toBe('ready');

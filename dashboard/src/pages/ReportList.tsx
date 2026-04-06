@@ -41,7 +41,9 @@ export function ReportList() {
   const [visibleChainCountOverrides, setVisibleChainCountOverrides] = useState<Record<string, number>>({});
   const [storyChipActionOverrides, setStoryChipActionOverrides] = useState<Record<string, ReportChainToggleAction>>({});
   const [storyChipToggleRequests, setStoryChipToggleRequests] = useState<Record<string, number>>({});
-  const [refreshChipActionOverrides, setRefreshChipActionOverrides] = useState<Record<string, ReportChainRefreshAction>>({});
+  const [refreshChipActionOverrides, setRefreshChipActionOverrides] = useState<
+    Record<string, ReportChainRefreshAction>
+  >({});
   const [refreshChipRequests, setRefreshChipRequests] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -96,20 +98,23 @@ export function ReportList() {
     });
   }, []);
 
-  const updateLeadChainLabel = useCallback((reportId: string, fallbackLabel: string | null, nextLabel: string | null) => {
-    if (!nextLabel) return;
+  const updateLeadChainLabel = useCallback(
+    (reportId: string, fallbackLabel: string | null, nextLabel: string | null) => {
+      if (!nextLabel) return;
 
-    setLeadChainLabelOverrides((prev) => {
-      if (nextLabel === fallbackLabel) {
-        if (!(reportId in prev)) return prev;
-        const next = { ...prev };
-        delete next[reportId];
-        return next;
-      }
-      if (prev[reportId] === nextLabel) return prev;
-      return { ...prev, [reportId]: nextLabel };
-    });
-  }, []);
+      setLeadChainLabelOverrides((prev) => {
+        if (nextLabel === fallbackLabel) {
+          if (!(reportId in prev)) return prev;
+          const next = { ...prev };
+          delete next[reportId];
+          return next;
+        }
+        if (prev[reportId] === nextLabel) return prev;
+        return { ...prev, [reportId]: nextLabel };
+      });
+    },
+    [],
+  );
 
   const updateLeadChainHref = useCallback((reportId: string, fallbackHref: string | null, nextHref: string | null) => {
     if (!nextHref) return;
@@ -126,20 +131,23 @@ export function ReportList() {
     });
   }, []);
 
-  const updateFocusedReportHref = useCallback((reportId: string, fallbackHref: string | null, nextHref: string | null) => {
-    if (!nextHref) return;
+  const updateFocusedReportHref = useCallback(
+    (reportId: string, fallbackHref: string | null, nextHref: string | null) => {
+      if (!nextHref) return;
 
-    setFocusedReportHrefOverrides((prev) => {
-      if (nextHref === fallbackHref) {
-        if (!(reportId in prev)) return prev;
-        const next = { ...prev };
-        delete next[reportId];
-        return next;
-      }
-      if (prev[reportId] === nextHref) return prev;
-      return { ...prev, [reportId]: nextHref };
-    });
-  }, []);
+      setFocusedReportHrefOverrides((prev) => {
+        if (nextHref === fallbackHref) {
+          if (!(reportId in prev)) return prev;
+          const next = { ...prev };
+          delete next[reportId];
+          return next;
+        }
+        if (prev[reportId] === nextHref) return prev;
+        return { ...prev, [reportId]: nextHref };
+      });
+    },
+    [],
+  );
 
   const updateVisibleChainCount = useCallback((reportId: string, fallbackCount: number, nextCount: number) => {
     setVisibleChainCountOverrides((prev) => {
@@ -260,7 +268,8 @@ export function ReportList() {
             const leadChainLabel = leadChainLabelOverrides[report.id] ?? fallbackLeadChainLabel;
             const fallbackLeadChainHref = buildLeadChainHref(activeChains[0]);
             const leadChainHref = leadChainHrefOverrides[report.id] ?? fallbackLeadChainHref;
-            const fallbackFocusedReportHref = buildLeadReportHref(report.id, activeChains[0]) ?? `/reports/${report.id}`;
+            const fallbackFocusedReportHref =
+              buildLeadReportHref(report.id, activeChains[0]) ?? `/reports/${report.id}`;
             const focusedReportHref = focusedReportHrefOverrides[report.id] ?? fallbackFocusedReportHref;
             const visibleChainCount = visibleChainCountOverrides[report.id] ?? activeChains.length;
             const fallbackStoryChipAction = getReportChainToggleAction({
@@ -286,8 +295,8 @@ export function ReportList() {
                     <div className="flex items-center gap-3 flex-wrap">
                       <TypeBadge type={report.type} />
                       <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
-                      {visibleChainCount > 0 && (
-                        storyChipAction.mode === 'none' ? (
+                      {visibleChainCount > 0 &&
+                        (storyChipAction.mode === 'none' ? (
                           <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
                             Active stories · {visibleChainCount}
                           </span>
@@ -301,8 +310,7 @@ export function ReportList() {
                           >
                             {getReportChainStoryChipLabel(visibleChainCount, storyChipAction)}
                           </button>
-                        )
-                      )}
+                        ))}
                       {leadChainLabel && leadChainHref && (
                         <Link
                           to={leadChainHref}
@@ -371,10 +379,18 @@ export function ReportList() {
                       updateFocusedReportHref(report.id, fallbackFocusedReportHref, nextHref)
                     }
                     onPreviewBodyChange={(nextBody) => updateReportPreviewBody(report.id, report.tldr, nextBody)}
-                    onLeadChainLabelChange={(nextLabel) => updateLeadChainLabel(report.id, fallbackLeadChainLabel, nextLabel)}
-                    onLeadChainHrefChange={(nextHref) => updateLeadChainHref(report.id, fallbackLeadChainHref, nextHref)}
-                    onVisibleChainCountChange={(nextCount) => updateVisibleChainCount(report.id, activeChains.length, nextCount)}
-                    onHeaderStoryActionChange={(nextAction) => updateStoryChipAction(report.id, fallbackStoryChipAction, nextAction)}
+                    onLeadChainLabelChange={(nextLabel) =>
+                      updateLeadChainLabel(report.id, fallbackLeadChainLabel, nextLabel)
+                    }
+                    onLeadChainHrefChange={(nextHref) =>
+                      updateLeadChainHref(report.id, fallbackLeadChainHref, nextHref)
+                    }
+                    onVisibleChainCountChange={(nextCount) =>
+                      updateVisibleChainCount(report.id, activeChains.length, nextCount)
+                    }
+                    onHeaderStoryActionChange={(nextAction) =>
+                      updateStoryChipAction(report.id, fallbackStoryChipAction, nextAction)
+                    }
                     onHeaderRefreshActionChange={(nextAction) =>
                       updateRefreshChipAction(report.id, fallbackRefreshChipAction, nextAction)
                     }

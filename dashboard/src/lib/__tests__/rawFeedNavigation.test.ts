@@ -29,9 +29,9 @@ describe('rawFeedNavigation', () => {
   });
 
   it('builds item-based focused feed hrefs only for supported sources', () => {
-    expect(
-      buildRawFeedFocusHrefForItem({ id: 'item-1', source: 'discord', sourceId: 'guild:1234' }),
-    ).toBe('/feed?sourceId=guild%3A1234&itemId=item-1');
+    expect(buildRawFeedFocusHrefForItem({ id: 'item-1', source: 'discord', sourceId: 'guild:1234' })).toBe(
+      '/feed?sourceId=guild%3A1234&itemId=item-1',
+    );
     expect(buildRawFeedFocusHrefForItem({ id: 'item-2', source: 'rss', sourceId: 'feed-1' })).toBeNull();
   });
 

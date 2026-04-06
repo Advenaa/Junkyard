@@ -314,7 +314,10 @@ describe('Feed', () => {
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/cited-message')).toBe(true);
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/item-before')).toBe(true);
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/item-after')).toBe(true);
-    expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute('href', '/feed?sourceId=guild%3Abeta');
+    expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute(
+      'href',
+      '/feed?sourceId=guild%3Abeta',
+    );
     expect(screen.getByRole('link', { name: 'Previous in source' })).toHaveAttribute(
       'href',
       '/feed?sourceId=guild%3Abeta&itemId=item-before',
@@ -333,7 +336,9 @@ describe('Feed', () => {
     await user.click(screen.getByRole('button', { name: 'Show more context' }));
 
     await screen.findByText('An even earlier setup message now appears after expanding the context window.');
-    expect(screen.getByText('A much later follow-up is also visible after expanding the context window.')).toBeInTheDocument();
+    expect(
+      screen.getByText('A much later follow-up is also visible after expanding the context window.'),
+    ).toBeInTheDocument();
     expect(screen.getByText('Up to 5 before and after')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show more context' })).not.toBeInTheDocument();
 

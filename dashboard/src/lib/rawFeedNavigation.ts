@@ -20,7 +20,7 @@ export function supportsRawFeedNavigation(source: string): boolean {
 }
 
 function normalizeRawRouteContextSize(contextSize?: number): number | null {
-  return Number.isInteger(contextSize) && (contextSize ?? 0) > 0 ? contextSize ?? null : null;
+  return Number.isInteger(contextSize) && (contextSize ?? 0) > 0 ? (contextSize ?? null) : null;
 }
 
 function appendRawRouteContextSize(params: URLSearchParams, contextSize?: number) {
@@ -36,11 +36,7 @@ export function readRawRouteContextSize(rawValue: string | null, defaultSize: nu
   return Math.min(parsed, maxSize);
 }
 
-export function toRawRouteContextParam(
-  currentSize: number,
-  defaultSize: number,
-  maxSize: number,
-): number | undefined {
+export function toRawRouteContextParam(currentSize: number, defaultSize: number, maxSize: number): number | undefined {
   const normalizedCurrentSize = normalizeRawRouteContextSize(currentSize);
   if (normalizedCurrentSize === null || normalizedCurrentSize <= defaultSize) {
     return undefined;
@@ -89,8 +85,6 @@ export function buildRawFeedSourceHrefForItem(item: Pick<RawFeedItemTarget, 'sou
 
 export function isFocusedRawFeedActive(state: RawFeedFocusState): boolean {
   return (
-    state.focusedItemId.length > 0 &&
-    state.selectedSource === state.requestedSourceId &&
-    !state.focusedItemVisible
+    state.focusedItemId.length > 0 && state.selectedSource === state.requestedSourceId && !state.focusedItemVisible
   );
 }

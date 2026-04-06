@@ -7,12 +7,7 @@ interface RawCitationPanelHeaderProps {
   className?: string;
 }
 
-export function RawCitationPanelHeader({
-  title,
-  description,
-  aside,
-  className,
-}: RawCitationPanelHeaderProps) {
+export function RawCitationPanelHeader({ title, description, aside, className }: RawCitationPanelHeaderProps) {
   return (
     <div className={className ?? 'flex items-start justify-between gap-4 flex-wrap'}>
       <div>

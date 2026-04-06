@@ -76,7 +76,10 @@ describe('FocusedRawFeedPanel', () => {
 
     expect(screen.getByText('Focused Citation')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open raw item' })).toHaveAttribute('href', '/items/item-focus');
-    expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute('href', '/feed?sourceId=guild%3Abeta');
+    expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute(
+      'href',
+      '/feed?sourceId=guild%3Abeta',
+    );
     expect(screen.getByText('Earlier neighbor')).toBeInTheDocument();
     expect(screen.getByText('Focused citation body')).toBeInTheDocument();
     expect(screen.getByText('Later neighbor')).toBeInTheDocument();

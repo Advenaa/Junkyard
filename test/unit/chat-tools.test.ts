@@ -265,7 +265,10 @@ describe('semantic_search', () => {
     const result = await search.execute({ query: 'bitcoin narratives', type: 'report' });
 
     assert.ok(result.includes('Type: daily | Date: 2026-04-06'), 'should include report metadata');
-    assert.ok(result.includes('Focused report chain: chainRoot=chain-root-1'), 'should include focused report route metadata');
+    assert.ok(
+      result.includes('Focused report chain: chainRoot=chain-root-1'),
+      'should include focused report route metadata',
+    );
     assert.ok(
       result.includes('TLDR: Bitcoin held gains while traders tracked two active narratives.'),
       'should include tldr',
@@ -317,7 +320,10 @@ describe('semantic_search', () => {
 
     const result = await search.execute({ query: 'governance response', type: 'summary' });
 
-    assert.ok(result.includes('Focused summary chain: chainRoot=event-root-1'), 'should include focused summary metadata');
+    assert.ok(
+      result.includes('Focused summary chain: chainRoot=event-root-1'),
+      'should include focused summary metadata',
+    );
     assert.ok(
       result.includes('Governance discussion accelerated around the exploit response.'),
       'should include summary content after metadata',

@@ -118,8 +118,16 @@ function ReportChainPreviewHarness({
       <p>{currentPreviewBody ?? ''}</p>
       <p>{currentLeadChainLabel ?? ''}</p>
       {currentLeadChainHref ? <a href={currentLeadChainHref}>Lead chain route</a> : <p>No lead chain route</p>}
-      {currentFocusedReportHref ? <a href={currentFocusedReportHref}>Focused report route</a> : <p>No focused report route</p>}
-      <p>{currentStoryAction.controlLabel ? `Header action · ${currentStoryAction.controlLabel}` : 'Header action · none'}</p>
+      {currentFocusedReportHref ? (
+        <a href={currentFocusedReportHref}>Focused report route</a>
+      ) : (
+        <p>No focused report route</p>
+      )}
+      <p>
+        {currentStoryAction.controlLabel
+          ? `Header action · ${currentStoryAction.controlLabel}`
+          : 'Header action · none'}
+      </p>
       <button
         type="button"
         onClick={() => setToggleVisibleChainsRequest((prev) => (prev ?? 0) + 1)}
@@ -127,7 +135,11 @@ function ReportChainPreviewHarness({
       >
         Header active stories
       </button>
-      <p>{currentRefreshAction.controlLabel ? `Header refresh · ${currentRefreshAction.controlLabel}` : 'Header refresh · none'}</p>
+      <p>
+        {currentRefreshAction.controlLabel
+          ? `Header refresh · ${currentRefreshAction.controlLabel}`
+          : 'Header refresh · none'}
+      </p>
       <button
         type="button"
         onClick={() => setRefreshVisibleChainsRequest((prev) => (prev ?? 0) + 1)}
@@ -560,7 +572,9 @@ describe('ReportChainPreviewSection', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Bitcoin exploit chain: audit follow-up kept the remediation story active.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Bitcoin exploit chain: audit follow-up kept the remediation story active.'),
+    ).toBeInTheDocument();
     expect(
       screen.getByText('Bitcoin held gains while traders watched follow-up risk around a live exploit story.'),
     ).toBeInTheDocument();
@@ -714,7 +728,9 @@ describe('ReportChainPreviewSection', () => {
       'href',
       '/summaries/summary-18?chain=chain-root-4',
     );
-    expect(screen.getByText('Chainlink took over the preview focus after the refreshed active-chain pull.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Chainlink took over the preview focus after the refreshed active-chain pull.'),
+    ).toBeInTheDocument();
   });
 
   it('publishes a loading label to the header while refresh is pending', async () => {

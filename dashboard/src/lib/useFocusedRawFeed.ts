@@ -75,15 +75,7 @@ export function useFocusedRawFeed({
   });
 
   useEffect(() => {
-    if (!focusedRawFeedActive) {
-      setFocusedContext(null);
-      setFocusedContextLoading(false);
-      setLoadedContextSize(null);
-      setFocusedContextError(null);
-      return;
-    }
-
-    if (loading) return;
+    if (!focusedRawFeedActive || loading) return;
 
     if (focusedContext?.item.id === focusedItemId && loadedContextSize === contextSize) {
       return;
@@ -91,14 +83,18 @@ export function useFocusedRawFeed({
 
     const isSameFocusedItem = focusedContext?.item.id === focusedItemId;
     let cancelled = false;
-    if (!isSameFocusedItem) {
-      setFocusedContext(null);
-    }
-    setFocusedContextError(null);
-    setFocusedContextLoading(true);
+    const loadFocusedContext = async () => {
+      await Promise.resolve();
+      if (cancelled) return;
 
-    apiFetch<RawSourceItemContextResponse>(`/items/${focusedItemId}?context=${contextSize}`)
-      .then((response) => {
+      if (!isSameFocusedItem) {
+        setFocusedContext(null);
+      }
+      setFocusedContextError(null);
+      setFocusedContextLoading(true);
+
+      try {
+        const response = await apiFetch<RawSourceItemContextResponse>(`/items/${focusedItemId}?context=${contextSize}`);
         if (cancelled) return;
 
         const normalizedContext = normalizeFocusedRawFeedContext(response);
@@ -112,8 +108,7 @@ export function useFocusedRawFeed({
         setFocusedContext(normalizedContext);
         setFocusedContextLoading(false);
         setLoadedContextSize(contextSize);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
         if (!isSameFocusedItem) {
           setFocusedContext(null);
@@ -121,22 +116,36 @@ export function useFocusedRawFeed({
         }
         setFocusedContextLoading(false);
         setFocusedContextError(isSameFocusedItem ? DEFAULT_FOCUSED_EXPANSION_ERROR : DEFAULT_FOCUSED_CONTEXT_ERROR);
-      });
+      }
+    };
+    void loadFocusedContext();
 
     return () => {
       cancelled = true;
     };
-  }, [contextSize, focusedContext?.item.id, focusedItemId, focusedRawFeedActive, loadedContextSize, loading, retryNonce, selectedSource]);
+  }, [
+    contextSize,
+    focusedContext?.item.id,
+    focusedItemId,
+    focusedRawFeedActive,
+    loadedContextSize,
+    loading,
+    retryNonce,
+    selectedSource,
+  ]);
 
+  const activeFocusedContext = focusedRawFeedActive ? focusedContext : null;
+  const activeFocusedContextError = focusedRawFeedActive ? focusedContextError : null;
+  const activeFocusedContextLoading = focusedRawFeedActive ? focusedContextLoading : false;
   const focusedGapLabel =
-    focusedContext && items.length > 0
-      ? formatFocusedRawFeedGapLabel(focusedContext.item.timestamp, items[0]!.timestamp)
+    activeFocusedContext && items.length > 0
+      ? formatFocusedRawFeedGapLabel(activeFocusedContext.item.timestamp, items[0]!.timestamp)
       : DEFAULT_GAP_LABEL;
 
   return {
-    focusedContext,
-    focusedContextError,
-    focusedContextLoading,
+    focusedContext: activeFocusedContext,
+    focusedContextError: activeFocusedContextError,
+    focusedContextLoading: activeFocusedContextLoading,
     focusedGapLabel,
     focusedItemVisible,
     focusedRawFeedActive,

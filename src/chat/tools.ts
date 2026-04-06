@@ -116,15 +116,17 @@ function selectFocusedSummaryChain(rows: SummaryEventWithChainRow[]): SummaryEve
 
   if (candidates.length === 0) return null;
 
-  return candidates.sort((left, right) => {
-    if (right.chain_event_count !== left.chain_event_count) {
-      return right.chain_event_count - left.chain_event_count;
-    }
-    if (left.chain_position !== right.chain_position) {
-      return left.chain_position - right.chain_position;
-    }
-    return left.event_time - right.event_time;
-  })[0] ?? null;
+  return (
+    candidates.sort((left, right) => {
+      if (right.chain_event_count !== left.chain_event_count) {
+        return right.chain_event_count - left.chain_event_count;
+      }
+      if (left.chain_position !== right.chain_position) {
+        return left.chain_position - right.chain_position;
+      }
+      return left.event_time - right.event_time;
+    })[0] ?? null
+  );
 }
 
 function formatFocusedSummaryChain(chain: SummaryEventWithChainRow | null): string | null {
@@ -132,12 +134,15 @@ function formatFocusedSummaryChain(chain: SummaryEventWithChainRow | null): stri
   return `Focused summary chain: chainRoot=${chain.chain_root_id} | entity=${chain.entity_name} | eventType=${chain.event_type}`;
 }
 
-function formatReportSearchPreview(row: {
-  body: string;
-  tldr?: string | null;
-  date?: string | null;
-  type?: string | null;
-}, focusedChain?: ReportChainDrilldownRow | null): string {
+function formatReportSearchPreview(
+  row: {
+    body: string;
+    tldr?: string | null;
+    date?: string | null;
+    type?: string | null;
+  },
+  focusedChain?: ReportChainDrilldownRow | null,
+): string {
   const lines: string[] = [];
 
   if (row.type || row.date) {

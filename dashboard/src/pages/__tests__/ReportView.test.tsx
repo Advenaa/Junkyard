@@ -168,7 +168,10 @@ describe('ReportView', () => {
       'Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.',
     );
     expect(screen.getByRole('link', { name: 'Show all chains' })).toHaveAttribute('href', '/reports/report-1');
-    expect(screen.getByRole('link', { name: 'Focus chain' })).toHaveAttribute('href', '/reports/report-1?chain=chain-root-1');
+    expect(screen.getByRole('link', { name: 'Focus chain' })).toHaveAttribute(
+      'href',
+      '/reports/report-1?chain=chain-root-1',
+    );
 
     const summaryLinks = screen.getAllByRole('link', { name: 'Open latest linked summary' });
     expect(summaryLinks[0]).toHaveAttribute('href', '/summaries/summary-12?chain=chain-root-2');

@@ -17,15 +17,8 @@ import {
 } from '../lib/rawFeedNavigation';
 import { buildRawItemDetailActions } from '../lib/rawMessageActions';
 import { buildRawMessageFooterMeta, formatAbsoluteDateTime } from '../lib/rawMessages';
-import {
-  DEFAULT_FOCUSED_RAW_FEED_CONTEXT_SIZE,
-  MAX_FOCUSED_RAW_FEED_CONTEXT_SIZE,
-} from '../lib/useFocusedRawFeed';
-import {
-  DEFAULT_RAW_ITEM_CONTEXT_SIZE,
-  MAX_RAW_ITEM_CONTEXT_SIZE,
-  useRawItemView,
-} from '../lib/useRawItemView';
+import { DEFAULT_FOCUSED_RAW_FEED_CONTEXT_SIZE, MAX_FOCUSED_RAW_FEED_CONTEXT_SIZE } from '../lib/useFocusedRawFeed';
+import { DEFAULT_RAW_ITEM_CONTEXT_SIZE, MAX_RAW_ITEM_CONTEXT_SIZE, useRawItemView } from '../lib/useRawItemView';
 
 const RAW_ITEM_CONTEXT_DIVIDER_LABEL = 'Nearby source context continues below';
 const RAW_ITEM_CITATION_DESCRIPTION =
@@ -104,7 +97,9 @@ export function ItemView() {
         <RawItemHeader
           source={item.source}
           timestampLabel={formatDateTime(item.timestamp)}
-          previousHref={previousItem ? buildRawItemHref(previousItem.id, { contextSize: rawItemContextSize }) : undefined}
+          previousHref={
+            previousItem ? buildRawItemHref(previousItem.id, { contextSize: rawItemContextSize }) : undefined
+          }
           nextHref={nextItem ? buildRawItemHref(nextItem.id, { contextSize: rawItemContextSize }) : undefined}
         />
 
@@ -113,10 +108,7 @@ export function ItemView() {
           timestampLabel={formatDateTime(item.timestamp)}
           content={item.content}
           attachments={item.attachments}
-          badges={[
-            { label: 'Focused item', tone: 'accent' },
-            { label: item.status },
-          ]}
+          badges={[{ label: 'Focused item', tone: 'accent' }, { label: item.status }]}
           highlighted
           footerMeta={buildRawMessageFooterMeta(item)}
           actions={buildRawItemDetailActions(item, { feedContextSize: focusedFeedContextSize })}

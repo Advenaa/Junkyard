@@ -204,9 +204,13 @@ describe('Search', () => {
     );
     expect(screen.getByText('Active chains | 3 stories')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show fewer chains' })).toBeInTheDocument();
-    expect(screen.getByText('Bridge exploit chain: refreshed chain focus shifted to macro spillover.')).toBeInTheDocument();
     expect(
-      screen.getByRole('link', { name: /Macro spillover took over the refreshed report preview after the latest chain pull/i }),
+      screen.getByText('Bridge exploit chain: refreshed chain focus shifted to macro spillover.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', {
+        name: /Macro spillover took over the refreshed report preview after the latest chain pull/i,
+      }),
     ).toHaveAttribute('href', '/reports/report-1?chain=chain-root-3');
     expect(screen.getByRole('button', { name: 'Active stories · 3' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Lead chain · Macro · macro' })).toHaveAttribute(

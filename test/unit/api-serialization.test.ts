@@ -364,10 +364,7 @@ describe('CD-013 — feed endpoint parses attachments (server.ts source)', () =>
     assert.ok(feedStart !== -1);
     // Scan forward to find the handler body (up to next app. route or end)
     const feedSlice = source.slice(feedStart, feedStart + 2000);
-    assert.ok(
-      feedSlice.includes('parseItemRecord'),
-      'feed endpoint must serialize rows through parseItemRecord',
-    );
+    assert.ok(feedSlice.includes('parseItemRecord'), 'feed endpoint must serialize rows through parseItemRecord');
   });
 
   it('parseItemRecord defaults null/undefined attachments to an empty array', () => {
@@ -403,9 +400,7 @@ describe('CD-016 — items/:id parses attachments (server.ts source)', () => {
     assert.ok(itemStart !== -1);
     const itemSlice = source.slice(itemStart, itemStart + 3000);
     assert.ok(
-      itemSlice.includes('context: { type: \'integer\'') &&
-        itemSlice.includes('older:') &&
-        itemSlice.includes('newer:'),
+      itemSlice.includes("context: { type: 'integer'") && itemSlice.includes('older:') && itemSlice.includes('newer:'),
       'items/:id endpoint must accept a context query and return older/newer neighboring items',
     );
   });

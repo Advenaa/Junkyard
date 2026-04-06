@@ -100,10 +100,7 @@ describe('PR-003: Feed empty state for no Discord sources', () => {
   });
 
   it('shows guidance when no Discord sources exist', () => {
-    assert.ok(
-      src.includes('RawFeedNoSources'),
-      'Feed must render the extracted no-sources guidance component',
-    );
+    assert.ok(src.includes('RawFeedNoSources'), 'Feed must render the extracted no-sources guidance component');
     assert.ok(
       noSourcesSrc.includes('No Discord sources') ||
         noSourcesSrc.includes('no Discord sources') ||

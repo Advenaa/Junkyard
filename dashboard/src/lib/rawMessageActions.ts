@@ -105,22 +105,35 @@ export function buildRawFeedSequenceActions(
   return [
     ...(previousItemId
       ? [
-          buildRawFeedFocusAction(sourceId, previousItemId, {
-            label: 'Previous in source',
-          }, routeOptions),
+          buildRawFeedFocusAction(
+            sourceId,
+            previousItemId,
+            {
+              label: 'Previous in source',
+            },
+            routeOptions,
+          ),
         ]
       : []),
     ...(nextItemId
       ? [
-          buildRawFeedFocusAction(sourceId, nextItemId, {
-            label: 'Next in source',
-          }, routeOptions),
+          buildRawFeedFocusAction(
+            sourceId,
+            nextItemId,
+            {
+              label: 'Next in source',
+            },
+            routeOptions,
+          ),
         ]
       : []),
   ];
 }
 
-export function buildRawFeedMessageActions(itemId: string, routeOptions: RawMessageRouteOptions = {}): RawMessageCardAction[] {
+export function buildRawFeedMessageActions(
+  itemId: string,
+  routeOptions: RawMessageRouteOptions = {},
+): RawMessageCardAction[] {
   return [buildOpenRawItemAction(itemId, {}, routeOptions)];
 }
 
@@ -146,28 +159,46 @@ export function buildFocusedRawFeedPrimaryActions(
   ];
 }
 
-export function buildRawItemContextActions(item: RawItemTarget, routeOptions: RawMessageRouteOptions = {}): RawMessageCardAction[] {
+export function buildRawItemContextActions(
+  item: RawItemTarget,
+  routeOptions: RawMessageRouteOptions = {},
+): RawMessageCardAction[] {
   return [
-    ...buildRawFeedFocusActionForItem(item, {
-      label: 'View in feed',
-      tone: 'accent',
-      ariaLabel: `View raw feed around ${item.id}`,
-    }, routeOptions),
+    ...buildRawFeedFocusActionForItem(
+      item,
+      {
+        label: 'View in feed',
+        tone: 'accent',
+        ariaLabel: `View raw feed around ${item.id}`,
+      },
+      routeOptions,
+    ),
     ...(item.url ? [buildOpenSourceLinkAction(item.url)] : []),
-    buildOpenRawItemAction(item.id, {
-      label: 'Open item',
-      tone: 'muted',
-      ariaLabel: `Open raw item ${item.id}`,
-    }, routeOptions),
+    buildOpenRawItemAction(
+      item.id,
+      {
+        label: 'Open item',
+        tone: 'muted',
+        ariaLabel: `Open raw item ${item.id}`,
+      },
+      routeOptions,
+    ),
   ];
 }
 
-export function buildRawItemDetailActions(item: RawItemTarget, routeOptions: RawMessageRouteOptions = {}): RawMessageCardAction[] {
+export function buildRawItemDetailActions(
+  item: RawItemTarget,
+  routeOptions: RawMessageRouteOptions = {},
+): RawMessageCardAction[] {
   return [
-    ...buildRawFeedFocusActionForItem(item, {
-      label: 'View in focused feed',
-      tone: 'accent',
-    }, routeOptions),
+    ...buildRawFeedFocusActionForItem(
+      item,
+      {
+        label: 'View in focused feed',
+        tone: 'accent',
+      },
+      routeOptions,
+    ),
     ...buildRawFeedSourceActionForItem(item, {
       label: 'Resume live feed',
       tone: 'muted',

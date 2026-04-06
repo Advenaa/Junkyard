@@ -100,7 +100,9 @@ export function Search() {
   const [visibleChainCountOverrides, setVisibleChainCountOverrides] = useState<Record<string, number>>({});
   const [storyChipActionOverrides, setStoryChipActionOverrides] = useState<Record<string, ReportChainToggleAction>>({});
   const [storyChipToggleRequests, setStoryChipToggleRequests] = useState<Record<string, number>>({});
-  const [refreshChipActionOverrides, setRefreshChipActionOverrides] = useState<Record<string, ReportChainRefreshAction>>({});
+  const [refreshChipActionOverrides, setRefreshChipActionOverrides] = useState<
+    Record<string, ReportChainRefreshAction>
+  >({});
   const [refreshChipRequests, setRefreshChipRequests] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,20 +123,23 @@ export function Search() {
     });
   }, []);
 
-  const updateLeadChainLabel = useCallback((reportId: string, fallbackLabel: string | null, nextLabel: string | null) => {
-    if (!nextLabel) return;
+  const updateLeadChainLabel = useCallback(
+    (reportId: string, fallbackLabel: string | null, nextLabel: string | null) => {
+      if (!nextLabel) return;
 
-    setLeadChainLabelOverrides((prev) => {
-      if (nextLabel === fallbackLabel) {
-        if (!(reportId in prev)) return prev;
-        const next = { ...prev };
-        delete next[reportId];
-        return next;
-      }
-      if (prev[reportId] === nextLabel) return prev;
-      return { ...prev, [reportId]: nextLabel };
-    });
-  }, []);
+      setLeadChainLabelOverrides((prev) => {
+        if (nextLabel === fallbackLabel) {
+          if (!(reportId in prev)) return prev;
+          const next = { ...prev };
+          delete next[reportId];
+          return next;
+        }
+        if (prev[reportId] === nextLabel) return prev;
+        return { ...prev, [reportId]: nextLabel };
+      });
+    },
+    [],
+  );
 
   const updateLeadChainHref = useCallback((reportId: string, fallbackHref: string | null, nextHref: string | null) => {
     if (!nextHref) return;
@@ -151,20 +156,23 @@ export function Search() {
     });
   }, []);
 
-  const updateFocusedReportHref = useCallback((reportId: string, fallbackHref: string | null, nextHref: string | null) => {
-    if (!nextHref) return;
+  const updateFocusedReportHref = useCallback(
+    (reportId: string, fallbackHref: string | null, nextHref: string | null) => {
+      if (!nextHref) return;
 
-    setFocusedReportHrefOverrides((prev) => {
-      if (nextHref === fallbackHref) {
-        if (!(reportId in prev)) return prev;
-        const next = { ...prev };
-        delete next[reportId];
-        return next;
-      }
-      if (prev[reportId] === nextHref) return prev;
-      return { ...prev, [reportId]: nextHref };
-    });
-  }, []);
+      setFocusedReportHrefOverrides((prev) => {
+        if (nextHref === fallbackHref) {
+          if (!(reportId in prev)) return prev;
+          const next = { ...prev };
+          delete next[reportId];
+          return next;
+        }
+        if (prev[reportId] === nextHref) return prev;
+        return { ...prev, [reportId]: nextHref };
+      });
+    },
+    [],
+  );
 
   const updateVisibleChainCount = useCallback((reportId: string, fallbackCount: number, nextCount: number) => {
     setVisibleChainCountOverrides((prev) => {
@@ -322,7 +330,9 @@ export function Search() {
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <SourceBadge source={result.source ?? 'summary'} />
-                        {result.sourceId && <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>}
+                        {result.sourceId && (
+                          <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>
+                        )}
                       </div>
                       <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
                     </div>
@@ -332,14 +342,15 @@ export function Search() {
               );
             }
 
-            const activeChains = isReportResult(result) ? result.chainDrilldowns ?? [] : [];
-            const hiddenActiveChainCount = isReportResult(result) ? result.hiddenActiveChainCount ?? 0 : 0;
-            const previewBody = isReportResult(result) ? previewBodyOverrides[result.id] ?? result.body : result.body;
+            const activeChains = isReportResult(result) ? (result.chainDrilldowns ?? []) : [];
+            const hiddenActiveChainCount = isReportResult(result) ? (result.hiddenActiveChainCount ?? 0) : 0;
+            const previewBody = isReportResult(result) ? (previewBodyOverrides[result.id] ?? result.body) : result.body;
             const fallbackLeadChainLabel = buildLeadChainLabel(activeChains[0]);
             const leadChainLabel = leadChainLabelOverrides[result.id] ?? fallbackLeadChainLabel;
             const fallbackLeadChainHref = buildLeadChainHref(activeChains[0]);
             const leadChainHref = leadChainHrefOverrides[result.id] ?? fallbackLeadChainHref;
-            const fallbackFocusedReportHref = buildLeadReportHref(result.id, activeChains[0]) ?? `/reports/${result.id}`;
+            const fallbackFocusedReportHref =
+              buildLeadReportHref(result.id, activeChains[0]) ?? `/reports/${result.id}`;
             const focusedReportHref = focusedReportHrefOverrides[result.id] ?? fallbackFocusedReportHref;
             const visibleChainCount = visibleChainCountOverrides[result.id] ?? activeChains.length;
             const fallbackStoryChipAction = getReportChainToggleAction({
@@ -366,8 +377,8 @@ export function Search() {
                       <TypeBadge type={result.reportType ?? 'report'} />
                       <span className="text-text-secondary text-xs font-mono uppercase tracking-wider">report</span>
                       {result.date && <span className="text-text-secondary text-xs font-mono">{result.date}</span>}
-                      {visibleChainCount > 0 && (
-                        storyChipAction.mode === 'none' ? (
+                      {visibleChainCount > 0 &&
+                        (storyChipAction.mode === 'none' ? (
                           <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
                             Active stories · {visibleChainCount}
                           </span>
@@ -381,8 +392,7 @@ export function Search() {
                           >
                             {getReportChainStoryChipLabel(visibleChainCount, storyChipAction)}
                           </button>
-                        )
-                      )}
+                        ))}
                       {leadChainLabel && leadChainHref && (
                         <Link
                           to={leadChainHref}
@@ -409,7 +419,10 @@ export function Search() {
                     </div>
                     <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
                   </div>
-                  <Link to={focusedReportHref} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm">
+                  <Link
+                    to={focusedReportHref}
+                    className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm"
+                  >
                     <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(previewBody, 200)}</p>
                     {activeChains.length === 0 && result.eventChains && result.eventChains.length > 0 && (
                       <p className="text-xs font-body text-text-secondary leading-relaxed">
@@ -432,10 +445,18 @@ export function Search() {
                       updateFocusedReportHref(result.id, fallbackFocusedReportHref, nextHref)
                     }
                     onPreviewBodyChange={(nextBody) => updateReportPreviewBody(result.id, result.body, nextBody)}
-                    onLeadChainLabelChange={(nextLabel) => updateLeadChainLabel(result.id, fallbackLeadChainLabel, nextLabel)}
-                    onLeadChainHrefChange={(nextHref) => updateLeadChainHref(result.id, fallbackLeadChainHref, nextHref)}
-                    onVisibleChainCountChange={(nextCount) => updateVisibleChainCount(result.id, activeChains.length, nextCount)}
-                    onHeaderStoryActionChange={(nextAction) => updateStoryChipAction(result.id, fallbackStoryChipAction, nextAction)}
+                    onLeadChainLabelChange={(nextLabel) =>
+                      updateLeadChainLabel(result.id, fallbackLeadChainLabel, nextLabel)
+                    }
+                    onLeadChainHrefChange={(nextHref) =>
+                      updateLeadChainHref(result.id, fallbackLeadChainHref, nextHref)
+                    }
+                    onVisibleChainCountChange={(nextCount) =>
+                      updateVisibleChainCount(result.id, activeChains.length, nextCount)
+                    }
+                    onHeaderStoryActionChange={(nextAction) =>
+                      updateStoryChipAction(result.id, fallbackStoryChipAction, nextAction)
+                    }
                     onHeaderRefreshActionChange={(nextAction) =>
                       updateRefreshChipAction(result.id, fallbackRefreshChipAction, nextAction)
                     }

@@ -297,55 +297,57 @@ export function SummaryView() {
               const isFocusedChainEvent = event.chain?.rootId === focusedChainRootId;
 
               return (
-              <div
-                key={`${event.entityName}:${event.eventType}:${index}`}
-                className={`px-4 py-3 space-y-1 ${isFocusedChainEvent ? 'bg-accent/5 ring-1 ring-inset ring-accent/30' : ''}`}
-              >
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
-                    {event.eventType} | {event.entityName}
-                    {isFocusedChainEvent ? (
-                      <span className="ml-2 rounded bg-accent/15 px-2 py-0.5 text-[10px] text-accent">Focused chain</span>
+                <div
+                  key={`${event.entityName}:${event.eventType}:${index}`}
+                  className={`px-4 py-3 space-y-1 ${isFocusedChainEvent ? 'bg-accent/5 ring-1 ring-inset ring-accent/30' : ''}`}
+                >
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
+                      {event.eventType} | {event.entityName}
+                      {isFocusedChainEvent ? (
+                        <span className="ml-2 rounded bg-accent/15 px-2 py-0.5 text-[10px] text-accent">
+                          Focused chain
+                        </span>
+                      ) : null}
+                    </div>
+                    {typeof event.eventTime === 'number' ? (
+                      <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+                        {formatDateTime(event.eventTime)}
+                      </div>
                     ) : null}
                   </div>
-                  {typeof event.eventTime === 'number' ? (
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
-                      {formatDateTime(event.eventTime)}
+                  <div className="text-sm text-text-primary font-body leading-relaxed">{event.description}</div>
+                  {event.chain ? (
+                    <div className="space-y-2">
+                      <div className="text-xs text-text-secondary font-body leading-relaxed">
+                        {formatLinkedChainLabel(event.chain.position, event.chain.eventCount)}
+                        {' | '}
+                        {event.chain.eventTypes.join(' -> ')}
+                        {' | '}
+                        {formatRange(event.chain.firstEventTime, event.chain.latestEventTime)}
+                      </div>
+                      {(event.chain.previousSummary || event.chain.nextSummary) && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {event.chain.previousSummary ? (
+                            <ChainSummaryLink
+                              label="Previous summary in chain"
+                              summary={event.chain.previousSummary}
+                              chainRootId={event.chain.rootId}
+                            />
+                          ) : null}
+                          {event.chain.nextSummary ? (
+                            <ChainSummaryLink
+                              label="Next summary in chain"
+                              summary={event.chain.nextSummary}
+                              chainRootId={event.chain.rootId}
+                            />
+                          ) : null}
+                        </div>
+                      )}
                     </div>
                   ) : null}
                 </div>
-                <div className="text-sm text-text-primary font-body leading-relaxed">{event.description}</div>
-                {event.chain ? (
-                  <div className="space-y-2">
-                    <div className="text-xs text-text-secondary font-body leading-relaxed">
-                      {formatLinkedChainLabel(event.chain.position, event.chain.eventCount)}
-                      {' | '}
-                      {event.chain.eventTypes.join(' -> ')}
-                      {' | '}
-                      {formatRange(event.chain.firstEventTime, event.chain.latestEventTime)}
-                    </div>
-                    {(event.chain.previousSummary || event.chain.nextSummary) && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {event.chain.previousSummary ? (
-                          <ChainSummaryLink
-                            label="Previous summary in chain"
-                            summary={event.chain.previousSummary}
-                            chainRootId={event.chain.rootId}
-                          />
-                        ) : null}
-                        {event.chain.nextSummary ? (
-                          <ChainSummaryLink
-                            label="Next summary in chain"
-                            summary={event.chain.nextSummary}
-                            chainRootId={event.chain.rootId}
-                          />
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            );
+              );
             })}
           </div>
         </div>

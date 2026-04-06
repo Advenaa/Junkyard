@@ -242,7 +242,8 @@ describe('createChatHandler sources', () => {
         if (params.stage === 'chat' && chatCall === 0) {
           chatCall++;
           return {
-            content: '<tool_call>{"name":"semantic_search","args":{"query":"Show me the governance summary details","type":"summary"}}</tool_call>',
+            content:
+              '<tool_call>{"name":"semantic_search","args":{"query":"Show me the governance summary details","type":"summary"}}</tool_call>',
           };
         }
 

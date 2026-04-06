@@ -174,12 +174,14 @@ function extractSummaryEntities(value: unknown): Array<Record<string, unknown>> 
 function extractReportEntityNames(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
 
-  return [...new Set(
-    value
-      .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
-      .map((entry) => (typeof entry.name === 'string' ? entry.name.trim() : ''))
-      .filter((name) => name.length > 0),
-  )];
+  return [
+    ...new Set(
+      value
+        .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+        .map((entry) => (typeof entry.name === 'string' ? entry.name.trim() : ''))
+        .filter((name) => name.length > 0),
+    ),
+  ];
 }
 
 function extractSummaryEvents(value: unknown): Array<Record<string, unknown>> {
@@ -247,7 +249,10 @@ function serializeSummaryEventRows(rows: SummaryEventWithChainRow[]): Array<Reco
             latestEventTime: row.chain_latest_event_time,
             eventTypes: row.chain_event_types,
             previousSummary:
-              row.previous_summary_id && row.previous_event_type && row.previous_event_description && row.previous_event_time
+              row.previous_summary_id &&
+              row.previous_event_type &&
+              row.previous_event_description &&
+              row.previous_event_time
                 ? {
                     summaryId: row.previous_summary_id,
                     eventType: row.previous_event_type,
@@ -646,7 +651,8 @@ export async function createServer(
         summary.confidence = typeof parsed.confidence === 'number' ? parsed.confidence : null;
         summary.keyEvents = extractStringArrayField(parsed.keyEvents ?? parsed.key_events, 5);
         summary.entities = extractSummaryEntities(parsed.entities);
-        summary.events = persistedSummaryEvents.length > 0 ? persistedSummaryEvents : extractSummaryEvents(parsed.events);
+        summary.events =
+          persistedSummaryEvents.length > 0 ? persistedSummaryEvents : extractSummaryEvents(parsed.events);
       } else {
         summary.text = row.body;
         summary.confidence = null;
@@ -917,7 +923,9 @@ export async function createServer(
                 const eventChains = extractStringArrayField(parsed?.eventChains ?? parsed?.event_chains, 1);
                 if (eventChains.length > 0) {
                   report.eventChains = eventChains;
-                  const reportEntityNames = extractReportEntityNames(parsed?.entitySentiment ?? parsed?.entity_sentiment);
+                  const reportEntityNames = extractReportEntityNames(
+                    parsed?.entitySentiment ?? parsed?.entity_sentiment,
+                  );
                   const previewChainRows = await getRecentReportChainDrilldowns(
                     pool,
                     reportEntityNames,

@@ -42,29 +42,23 @@ export function useRawItemView({ itemId, contextSize = DEFAULT_RAW_ITEM_CONTEXT_
   const hasLoadedSameItem = loadedItemId === itemId && item !== null;
 
   useEffect(() => {
-    if (!itemId) {
-      setItem(null);
-      setContextItems(createEmptyContext());
-      setLoadedItemId('');
-      setLoadedContextSize(null);
-      setContextLoading(false);
-      setContextError(null);
-      setError(null);
-      return;
-    }
+    if (!itemId) return;
 
-    if (hasLoadedSameItem && loadedContextSize === contextSize && !contextError) {
-      setContextLoading(false);
+    if (hasLoadedSameItem && loadedContextSize === contextSize) {
       return;
     }
 
     let cancelled = false;
-    setContextLoading(true);
-    setContextError(null);
-    setError(null);
+    const loadItemView = async () => {
+      await Promise.resolve();
+      if (cancelled) return;
 
-    apiFetch<RawSourceItemContextResponse>(`/items/${itemId}?context=${contextSize}`)
-      .then((response) => {
+      setContextLoading(true);
+      setContextError(null);
+      setError(null);
+
+      try {
+        const response = await apiFetch<RawSourceItemContextResponse>(`/items/${itemId}?context=${contextSize}`);
         if (cancelled) return;
 
         setItem(normalizeRawSourceItem(response.item));
@@ -73,8 +67,7 @@ export function useRawItemView({ itemId, contextSize = DEFAULT_RAW_ITEM_CONTEXT_
         setLoadedContextSize(contextSize);
         setContextLoading(false);
         setError(null);
-      })
-      .catch((err: Error) => {
+      } catch (err) {
         if (cancelled) return;
 
         if (!hasLoadedSameItem) {
@@ -82,13 +75,15 @@ export function useRawItemView({ itemId, contextSize = DEFAULT_RAW_ITEM_CONTEXT_
           setContextItems(createEmptyContext());
           setLoadedItemId(itemId);
           setLoadedContextSize(null);
-          setError(err.message);
+          setError(err instanceof Error ? err.message : 'Failed to load raw item.');
         } else {
           setContextError(DEFAULT_RAW_ITEM_CONTEXT_ERROR);
         }
 
         setContextLoading(false);
-      });
+      }
+    };
+    void loadItemView();
 
     return () => {
       cancelled = true;
@@ -96,19 +91,32 @@ export function useRawItemView({ itemId, contextSize = DEFAULT_RAW_ITEM_CONTEXT_
   }, [contextSize, hasLoadedSameItem, itemId, loadedContextSize, retryNonce]);
 
   const loading = itemId.length > 0 && loadedItemId !== itemId;
-  const activeItem = loadedItemId === itemId ? item : null;
-  const activeContextItems = loadedItemId === itemId ? contextItems : createEmptyContext();
-  const activeError = loadedItemId === itemId ? error : null;
-  const routeState: RawItemViewRouteState = loading ? 'loading' : activeError ? 'error' : activeItem ? 'ready' : 'not_found';
+  const isActiveItem = itemId.length > 0 && loadedItemId === itemId;
+  const activeItem = isActiveItem ? item : null;
+  const activeContextItems = isActiveItem ? contextItems : createEmptyContext();
+  const activeContextError = isActiveItem ? contextError : null;
+  const pendingExpandedContext = hasLoadedSameItem && loadedContextSize !== contextSize && activeContextError === null;
+  const activeContextLoading = itemId.length > 0 && (contextLoading || pendingExpandedContext);
+  const activeError = isActiveItem ? error : null;
+  const routeState: RawItemViewRouteState = loading
+    ? 'loading'
+    : activeError
+      ? 'error'
+      : activeItem
+        ? 'ready'
+        : 'not_found';
 
   return {
     item: activeItem,
     contextItems: activeContextItems,
-    contextError,
-    contextLoading,
+    contextError: activeContextError,
+    contextLoading: activeContextLoading,
     error: activeError,
     loading,
     routeState,
-    retryContext: () => setRetryNonce((current) => current + 1),
+    retryContext: () => {
+      setContextError(null);
+      setRetryNonce((current) => current + 1);
+    },
   };
 }

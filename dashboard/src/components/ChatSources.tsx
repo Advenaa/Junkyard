@@ -98,10 +98,7 @@ function getLeadIndex(source: DisplayChatSource, selectedLeadIndex?: number): nu
 
 function buildDisplaySource(source: DisplayChatSource, leadIndex: number): DisplayChatSource {
   const leadSource = source.relatedSources[leadIndex] ?? source.relatedSources[0] ?? source;
-  const orderedSources = [
-    leadSource,
-    ...source.relatedSources.filter((_, sourceIndex) => sourceIndex !== leadIndex),
-  ];
+  const orderedSources = [leadSource, ...source.relatedSources.filter((_, sourceIndex) => sourceIndex !== leadIndex)];
 
   return {
     ...source,

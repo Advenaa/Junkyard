@@ -37,7 +37,9 @@ export function RawMessageContextSection<T extends RawMessageContextItemBase>({
     <div className="space-y-3">
       <div className={`flex items-center gap-3 flex-wrap ${getCountLabel ? 'justify-between' : ''}`}>
         <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">{title}</div>
-        {getCountLabel && <span className="font-mono text-[10px] text-text-secondary">{getCountLabel(items.length)}</span>}
+        {getCountLabel && (
+          <span className="font-mono text-[10px] text-text-secondary">{getCountLabel(items.length)}</span>
+        )}
       </div>
       <div className="space-y-3">
         {items.map((item) => (

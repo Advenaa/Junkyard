@@ -577,7 +577,9 @@ export async function getRecentReportChainDrilldowns(
   sinceTime: number,
   limit = 5,
 ): Promise<ReportChainDrilldownRow[]> {
-  const normalizedNames = [...new Set(entityNames.map((name) => name.trim().toLowerCase()).filter((name) => name.length > 0))];
+  const normalizedNames = [
+    ...new Set(entityNames.map((name) => name.trim().toLowerCase()).filter((name) => name.length > 0)),
+  ];
   if (normalizedNames.length === 0) {
     return [];
   }

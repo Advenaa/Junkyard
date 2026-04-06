@@ -54,10 +54,6 @@ export function Feed() {
     reload,
   } = useRawFeedStream({ requestedSourceId });
 
-  if (sourcesLoaded && sources.length === 0 && !error) {
-    return <RawFeedNoSources />;
-  }
-
   const {
     focusedContext,
     focusedContextError,
@@ -73,6 +69,10 @@ export function Feed() {
     loading,
     contextSize: focusedContextSize,
   });
+
+  if (sourcesLoaded && sources.length === 0 && !error) {
+    return <RawFeedNoSources />;
+  }
 
   function expandFocusedContext() {
     const nextSearchParams = new URLSearchParams(searchParams);

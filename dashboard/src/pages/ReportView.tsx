@@ -181,7 +181,7 @@ export function ReportView() {
 
   const focusedChainId = searchParams.get('chain');
   const allChains = report.chainDrilldowns ?? [];
-  const focusedChain = focusedChainId ? allChains.find((chain) => chain.rootId === focusedChainId) ?? null : null;
+  const focusedChain = focusedChainId ? (allChains.find((chain) => chain.rootId === focusedChainId) ?? null) : null;
   const focusedChainIndex = focusedChain ? allChains.findIndex((chain) => chain.rootId === focusedChain.rootId) : -1;
   const focusedChainSummary =
     focusedChainIndex >= 0 && report.eventChains[focusedChainIndex] ? report.eventChains[focusedChainIndex] : null;
@@ -236,7 +236,9 @@ export function ReportView() {
                   }`}
                 >
                   {isFocusedSummary && (
-                    <div className="font-mono text-[10px] uppercase tracking-wider text-accent">Focused chain summary</div>
+                    <div className="font-mono text-[10px] uppercase tracking-wider text-accent">
+                      Focused chain summary
+                    </div>
                   )}
                   <div>{chain}</div>
                 </div>
@@ -279,12 +281,15 @@ export function ReportView() {
                     <div className="space-y-1">
                       <div className="text-sm font-body text-text-primary">{chain.entityName}</div>
                       <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
-                        {chain.eventCount} linked event{chain.eventCount !== 1 ? 's' : ''} | {chain.eventTypes.join(' -> ')}
+                        {chain.eventCount} linked event{chain.eventCount !== 1 ? 's' : ''} |{' '}
+                        {chain.eventTypes.join(' -> ')}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       {isFocused ? (
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-accent">Focused chain</span>
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-accent">
+                          Focused chain
+                        </span>
                       ) : allChains.length > 1 ? (
                         <Link
                           to={buildFocusedReportHref(report.id, chain.rootId)}
@@ -307,7 +312,9 @@ export function ReportView() {
                   <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
                     Latest event | {chain.latestEventType} | {formatDateTime(chain.latestEventTime)}
                   </div>
-                  <div className="text-sm font-body text-text-primary leading-relaxed">{chain.latestEventDescription}</div>
+                  <div className="text-sm font-body text-text-primary leading-relaxed">
+                    {chain.latestEventDescription}
+                  </div>
                 </div>
               );
             })}

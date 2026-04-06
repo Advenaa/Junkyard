@@ -182,9 +182,7 @@ describe('ItemView', () => {
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/source')).toBe(true);
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/context-earlier')).toBe(true);
     expect(
-      screen
-        .getAllByRole('img')
-        .some((image) => image.getAttribute('src') === 'https://cdn.example.com/image.png'),
+      screen.getAllByRole('img').some((image) => image.getAttribute('src') === 'https://cdn.example.com/image.png'),
     ).toBe(true);
 
     await user.click(screen.getByRole('button', { name: 'Show more context' }));
@@ -384,45 +382,45 @@ describe('ItemView', () => {
                 status: 'processed',
                 createdAt: Date.UTC(2026, 3, 6, 8, 1, 0),
               },
-                context: {
-                  older: [
-                    ...(contextSize === '6'
-                      ? [
-                          {
-                            id: 'item-oldest',
-                            source: 'discord',
-                            sourceId: 'guild:1234',
-                            author: 'eve',
-                            content: 'The first alert landed before the patch thread started.',
-                            timestamp: Date.UTC(2026, 3, 6, 7, 50, 0),
-                            url: null,
-                            engagement: 0,
-                            attachments: null,
-                            originalLanguage: 'eng',
-                            translated: false,
-                            filterReason: null,
-                            status: 'processed',
-                            createdAt: Date.UTC(2026, 3, 6, 7, 50, 30),
-                          },
-                        ]
-                      : []),
-                    {
-                      id: 'item-older',
-                      source: 'discord',
-                      sourceId: 'guild:1234',
-                      author: 'bob',
-                      content: 'Earlier reports said the first patch draft was almost ready.',
-                      timestamp: Date.UTC(2026, 3, 6, 7, 56, 0),
-                      url: null,
-                      engagement: 0,
-                      attachments: null,
-                      originalLanguage: 'eng',
-                      translated: false,
-                      filterReason: null,
-                      status: 'processed',
-                      createdAt: Date.UTC(2026, 3, 6, 7, 56, 30),
-                    },
-                  ],
+              context: {
+                older: [
+                  ...(contextSize === '6'
+                    ? [
+                        {
+                          id: 'item-oldest',
+                          source: 'discord',
+                          sourceId: 'guild:1234',
+                          author: 'eve',
+                          content: 'The first alert landed before the patch thread started.',
+                          timestamp: Date.UTC(2026, 3, 6, 7, 50, 0),
+                          url: null,
+                          engagement: 0,
+                          attachments: null,
+                          originalLanguage: 'eng',
+                          translated: false,
+                          filterReason: null,
+                          status: 'processed',
+                          createdAt: Date.UTC(2026, 3, 6, 7, 50, 30),
+                        },
+                      ]
+                    : []),
+                  {
+                    id: 'item-older',
+                    source: 'discord',
+                    sourceId: 'guild:1234',
+                    author: 'bob',
+                    content: 'Earlier reports said the first patch draft was almost ready.',
+                    timestamp: Date.UTC(2026, 3, 6, 7, 56, 0),
+                    url: null,
+                    engagement: 0,
+                    attachments: null,
+                    originalLanguage: 'eng',
+                    translated: false,
+                    filterReason: null,
+                    status: 'processed',
+                    createdAt: Date.UTC(2026, 3, 6, 7, 56, 30),
+                  },
+                ],
                 newer: [],
               },
             }),

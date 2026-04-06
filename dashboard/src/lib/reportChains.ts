@@ -33,10 +33,7 @@ export function buildLeadChainHref(chain: ReportChainDrilldown | null | undefine
   return buildSummaryChainHref(chain.latestSummaryId, chain.rootId);
 }
 
-export function buildLeadReportHref(
-  reportId: string,
-  chain: ReportChainDrilldown | null | undefined,
-): string | null {
+export function buildLeadReportHref(reportId: string, chain: ReportChainDrilldown | null | undefined): string | null {
   if (!chain) return null;
   return buildFocusedReportHref(reportId, chain.rootId);
 }
@@ -123,7 +120,13 @@ export function getReportChainRefreshAction({
   const canRefresh = visibleChainCount > previewChainCount && hiddenActiveChainCount === 0;
   return {
     visible: canRefresh,
-    controlLabel: canRefresh ? (loading ? 'Refreshing stories...' : retry ? 'Retry refresh stories' : 'Refresh stories') : null,
+    controlLabel: canRefresh
+      ? loading
+        ? 'Refreshing stories...'
+        : retry
+          ? 'Retry refresh stories'
+          : 'Refresh stories'
+      : null,
     disabled: loading,
   };
 }
@@ -135,10 +138,7 @@ export function areReportChainRefreshActionsEqual(
   return left.visible === right.visible && left.controlLabel === right.controlLabel && left.disabled === right.disabled;
 }
 
-export function getReportChainStoryChipLabel(
-  visibleChainCount: number,
-  action: ReportChainToggleAction,
-): string {
+export function getReportChainStoryChipLabel(visibleChainCount: number, action: ReportChainToggleAction): string {
   if (action.mode === 'expand' && action.preferActionLabel && action.controlLabel) {
     return action.controlLabel;
   }

@@ -15,11 +15,7 @@ function navLinkClass(): string {
   return 'text-xs font-mono uppercase tracking-wider text-accent hover:underline';
 }
 
-export function RawCitationNavLinks({
-  links,
-  metaLabel,
-  align = 'start',
-}: RawCitationNavLinksProps) {
+export function RawCitationNavLinks({ links, metaLabel, align = 'start' }: RawCitationNavLinksProps) {
   if (links.length === 0 && !metaLabel) {
     return null;
   }

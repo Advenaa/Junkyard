@@ -1,7 +1,4 @@
-import {
-  buildFocusedRawFeedContextActions,
-  buildFocusedRawFeedPrimaryActions,
-} from '../lib/rawMessageActions';
+import { buildFocusedRawFeedContextActions, buildFocusedRawFeedPrimaryActions } from '../lib/rawMessageActions';
 import { buildRawFeedFocusHref, buildRawFeedSourceHref, buildRawItemHref } from '../lib/rawFeedNavigation';
 import { buildRawMessageFooterMeta, formatAbsoluteDateTime } from '../lib/rawMessages';
 import type { FocusedRawFeedContext } from '../lib/useFocusedRawFeed';
@@ -61,7 +58,12 @@ export function FocusedRawFeedPanel({
             <RawCitationNavLinks
               links={[
                 ...(focusedContext
-                  ? [{ href: buildRawItemHref(focusedContext.item.id, { contextSize: itemContextSize }), label: 'Open raw item' }]
+                  ? [
+                      {
+                        href: buildRawItemHref(focusedContext.item.id, { contextSize: itemContextSize }),
+                        label: 'Open raw item',
+                      },
+                    ]
                   : []),
                 ...(requestedSourceId
                   ? [{ href: buildRawFeedSourceHref(requestedSourceId), label: 'Resume live feed' }]
@@ -112,7 +114,9 @@ export function FocusedRawFeedPanel({
                   : undefined
               }
               nextHref={
-                nextItem ? buildRawFeedFocusHref(selectedSource, nextItem.id, { contextSize: feedContextSize }) : undefined
+                nextItem
+                  ? buildRawFeedFocusHref(selectedSource, nextItem.id, { contextSize: feedContextSize })
+                  : undefined
               }
             />
             <RawMessageContextSection
@@ -135,10 +139,7 @@ export function FocusedRawFeedPanel({
               timestampLabel={formatTimestamp(focusedContext.item.timestamp)}
               content={focusedContext.item.content}
               attachments={focusedContext.item.attachments}
-              badges={[
-                { label: 'Focused citation', tone: 'accent' },
-                { label: focusedContext.item.status },
-              ]}
+              badges={[{ label: 'Focused citation', tone: 'accent' }, { label: focusedContext.item.status }]}
               highlighted
               footerMeta={buildRawMessageFooterMeta({ attachments: focusedContext.item.attachments })}
               actions={buildFocusedRawFeedPrimaryActions(focusedContext.item, { itemContextSize })}
