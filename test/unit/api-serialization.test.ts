@@ -150,16 +150,19 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/reports applies toCamelCase to report rows', () => {
     // Find the reports endpoint handler
     const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
     assert.ok(reportsEndpoint !== -1, 'reports endpoint must exist');
+    assert.ok(reportIdEndpoint !== -1, 'reports/:id endpoint must exist');
 
     // Look for toCamelCase usage in the vicinity (within the handler)
-    const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1200);
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
     assert.ok(handlerSlice.includes('toCamelCase'), 'GET /api/v1/reports must apply toCamelCase to its response rows');
   });
 
   it('reports endpoint uses .map pattern with toCamelCase', () => {
     const reportsEndpoint = source.indexOf("'/api/v1/reports'");
-    const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1200);
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
     assert.ok(
       handlerSlice.includes('.map(') && handlerSlice.includes('toCamelCase'),
       'GET /api/v1/reports should map rows through toCamelCase',
@@ -168,16 +171,54 @@ describe('toCamelCase — structural (server.ts source)', () => {
 
   it('GET /api/v1/reports parses body JSON for event chain previews', () => {
     const reportsEndpoint = source.indexOf("'/api/v1/reports'");
-    const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1800);
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
     assert.ok(
-      handlerSlice.includes('getReportEventChainPreview') && source.includes('function parseReportBody'),
+      handlerSlice.includes('parseReportBody') && source.includes('function parseReportBody'),
       'GET /api/v1/reports must parse body JSON, directly or via a shared helper, to expose event chain previews',
+    );
+  });
+
+  it('GET /api/v1/reports can attach active chain drilldowns to report previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('getRecentReportChainDrilldowns'),
+      'GET /api/v1/reports should load recent chain drilldowns for report previews when event chain text is present',
+    );
+    assert.ok(
+      handlerSlice.includes('report.chainDrilldowns'),
+      'GET /api/v1/reports should expose active chain drilldowns on report preview payloads',
+    );
+    assert.ok(
+      handlerSlice.includes('extractReportEntityNames'),
+      'GET /api/v1/reports should derive preview drilldowns from parsed report entity names',
+    );
+  });
+
+  it('GET /api/v1/reports can expose exact hidden active chain counts beyond the preview cap', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.hiddenActiveChainCount'),
+      'GET /api/v1/reports should expose an exact hidden-chain count when extra active chains are omitted from preview payloads',
+    );
+    assert.ok(
+      handlerSlice.includes('report.hasMoreActiveChains'),
+      'GET /api/v1/reports should expose an overflow flag when extra active chains are hidden by the preview cap',
+    );
+    assert.ok(
+      handlerSlice.includes('getReportPreviewChains'),
+      'GET /api/v1/reports should compute preview drilldowns plus exact hidden counts through the shared preview helper',
     );
   });
 
   it('GET /api/v1/reports selects body so previews can be derived', () => {
     const reportsEndpoint = source.indexOf("'/api/v1/reports'");
-    const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1200);
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
     assert.ok(handlerSlice.includes('body FROM reports'), 'GET /api/v1/reports must select body for preview parsing');
   });
 
@@ -198,10 +239,58 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for event chain previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 3200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 4200);
     assert.ok(
-      handlerSlice.includes('getReportEventChainPreview') && handlerSlice.includes("result_type: 'report'"),
+      handlerSlice.includes('parseReportBody') && handlerSlice.includes("result_type: 'report'"),
       'GET /api/v1/search must attach report event chain previews to report search hits',
+    );
+  });
+
+  it('GET /api/v1/search can attach active chain drilldowns to report hits', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5000);
+    assert.ok(
+      handlerSlice.includes('getRecentReportChainDrilldowns'),
+      'GET /api/v1/search should load recent chain drilldowns for report hits when event chain text is present',
+    );
+    assert.ok(
+      handlerSlice.includes('report.chainDrilldowns'),
+      'GET /api/v1/search should expose active chain drilldowns on report search hits',
+    );
+    assert.ok(
+      handlerSlice.includes('extractReportEntityNames'),
+      'GET /api/v1/search should derive report-hit drilldowns from parsed report entity names',
+    );
+  });
+
+  it('GET /api/v1/search can expose exact hidden active chain counts beyond the preview cap', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
+    assert.ok(
+      handlerSlice.includes('report.hiddenActiveChainCount'),
+      'GET /api/v1/search should expose an exact hidden-chain count when extra active chains are omitted from report-hit previews',
+    );
+    assert.ok(
+      handlerSlice.includes('report.hasMoreActiveChains'),
+      'GET /api/v1/search should expose an overflow flag when extra active chains are hidden by the preview cap',
+    );
+    assert.ok(
+      handlerSlice.includes('getReportPreviewChains'),
+      'GET /api/v1/search should compute preview drilldowns plus exact hidden counts through the shared preview helper',
+    );
+  });
+});
+
+describe('Event-chain preview SQL — structural (queries.ts source)', () => {
+  it('getRecentReportChainDrilldowns returns total_chain_count for exact preview overflow labels', () => {
+    const fnStart = queriesSource.indexOf('export async function getRecentReportChainDrilldowns');
+    assert.ok(fnStart !== -1, 'queries.ts must export getRecentReportChainDrilldowns');
+    const fnSlice = queriesSource.slice(fnStart, fnStart + 2200);
+    assert.ok(
+      fnSlice.includes('COUNT(*) OVER ()::int AS total_chain_count'),
+      'getRecentReportChainDrilldowns should return total_chain_count so preview surfaces can show exact hidden-chain counts',
     );
   });
 });
@@ -260,23 +349,33 @@ describe('CD-013 — feed endpoint parses attachments (server.ts source)', () =>
     assert.ok(source.includes("'/api/v1/feed/:sourceId'"), 'feed endpoint must be defined');
   });
 
-  it('feed response handling includes JSON.parse for attachments', () => {
+  it('defines a shared parseItemRecord helper for attachment parsing', () => {
+    const helperStart = source.indexOf('function parseItemRecord');
+    assert.ok(helperStart !== -1, 'server.ts must define parseItemRecord for item serialization');
+    const helperSlice = source.slice(helperStart, helperStart + 500);
+    assert.ok(
+      helperSlice.includes('JSON.parse') && helperSlice.includes('attachments'),
+      'parseItemRecord must JSON.parse the attachments column',
+    );
+  });
+
+  it('feed response handling uses parseItemRecord for attachments', () => {
     const feedStart = source.indexOf("'/api/v1/feed/:sourceId'");
     assert.ok(feedStart !== -1);
     // Scan forward to find the handler body (up to next app. route or end)
     const feedSlice = source.slice(feedStart, feedStart + 2000);
     assert.ok(
-      feedSlice.includes('JSON.parse') && feedSlice.includes('attachments'),
-      'feed endpoint must JSON.parse the attachments column',
+      feedSlice.includes('parseItemRecord'),
+      'feed endpoint must serialize rows through parseItemRecord',
     );
   });
 
-  it('defaults null/undefined attachments to an empty array', () => {
-    const feedStart = source.indexOf("'/api/v1/feed/:sourceId'");
-    assert.ok(feedStart !== -1);
-    const feedSlice = source.slice(feedStart, feedStart + 2000);
+  it('parseItemRecord defaults null/undefined attachments to an empty array', () => {
+    const helperStart = source.indexOf('function parseItemRecord');
+    assert.ok(helperStart !== -1);
+    const feedSlice = source.slice(helperStart, helperStart + 500);
     // Should have a fallback to [] for null attachments — e.g. ?? [] or || []
-    assert.ok(feedSlice.includes('[]'), 'feed endpoint must default null attachments to an empty array ([])');
+    assert.ok(feedSlice.includes('[]'), 'parseItemRecord must default null attachments to an empty array ([])');
   });
 });
 
@@ -289,21 +388,26 @@ describe('CD-016 — items/:id parses attachments (server.ts source)', () => {
     assert.ok(source.includes("'/api/v1/items/:id'"), 'items/:id endpoint must be defined');
   });
 
-  it('items/:id response handling includes JSON.parse for attachments', () => {
+  it('items/:id uses parseItemRecord for attachment parsing', () => {
     const itemStart = source.indexOf("'/api/v1/items/:id'");
     assert.ok(itemStart !== -1);
-    const itemSlice = source.slice(itemStart, itemStart + 1200);
+    const itemSlice = source.slice(itemStart, itemStart + 2400);
     assert.ok(
-      itemSlice.includes('JSON.parse') && itemSlice.includes('attachments'),
-      'items/:id endpoint must JSON.parse the attachments column',
+      itemSlice.includes('parseItemRecord(itemRow)') || itemSlice.includes('parseItemRecord(row)'),
+      'items/:id endpoint must serialize rows through parseItemRecord',
     );
   });
 
-  it('defaults null/undefined attachments to an empty array', () => {
+  it('items/:id supports nearby context lookups', () => {
     const itemStart = source.indexOf("'/api/v1/items/:id'");
     assert.ok(itemStart !== -1);
-    const itemSlice = source.slice(itemStart, itemStart + 1200);
-    assert.ok(itemSlice.includes('[]'), 'items/:id endpoint must default null attachments to an empty array ([])');
+    const itemSlice = source.slice(itemStart, itemStart + 3000);
+    assert.ok(
+      itemSlice.includes('context: { type: \'integer\'') &&
+        itemSlice.includes('older:') &&
+        itemSlice.includes('newer:'),
+      'items/:id endpoint must accept a context query and return older/newer neighboring items',
+    );
   });
 });
 
@@ -345,6 +449,23 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
     const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
     assert.ok(handlerSlice.includes('eventChains'), 'reports/:id must extract eventChains from the parsed body');
+  });
+
+  it('can enrich reports/:id with persisted chain drilldowns', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 2600);
+    assert.ok(
+      handlerSlice.includes('getRecentReportChainDrilldowns'),
+      'reports/:id should load persisted chain drilldowns when report entity context is available',
+    );
+    assert.ok(
+      handlerSlice.includes('report.chainDrilldowns'),
+      'reports/:id should expose persisted chain drilldowns on the report payload',
+    );
+    assert.ok(
+      handlerSlice.includes('extractReportEntityNames'),
+      'reports/:id should derive chain drilldowns from parsed report entity names instead of brittle prompt-text matching',
+    );
   });
 
   it('extracts entitySentiment from parsed body', () => {
@@ -408,6 +529,32 @@ describe('CD-015 — summaries/:id parses body JSON (server.ts source)', () => {
     assert.ok(handlerSlice.includes('summary.keyEvents'), 'summaries/:id must extract keyEvents from the parsed body');
     assert.ok(handlerSlice.includes('summary.entities'), 'summaries/:id must extract entities from the parsed body');
     assert.ok(handlerSlice.includes('summary.events'), 'summaries/:id must extract events from the parsed body');
+  });
+
+  it('can enrich summary events with persisted chain context', () => {
+    const summaryIdStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(summaryIdStart, summaryIdStart + 2600);
+    assert.ok(
+      handlerSlice.includes('getSummaryEventsWithChainContext'),
+      'summaries/:id should load persisted summary events when chain context is available',
+    );
+    assert.ok(
+      handlerSlice.includes('persistedSummaryEvents.length > 0'),
+      'summaries/:id should gate persisted summary-event enrichment on actual query results',
+    );
+    assert.ok(
+      handlerSlice.includes('extractSummaryEvents(parsed.events)'),
+      'summaries/:id should prefer persisted summary events over parsed-body fallbacks when available',
+    );
+  });
+
+  it('serializes previous/next summary drilldowns for persisted event chains', () => {
+    const helperStart = source.indexOf('function serializeSummaryEventRows');
+    assert.ok(helperStart !== -1, 'server.ts must define serializeSummaryEventRows');
+    const helperSlice = source.slice(helperStart, helperStart + 1800);
+    assert.ok(helperSlice.includes('previousSummary'), 'persisted summary events should serialize previousSummary');
+    assert.ok(helperSlice.includes('nextSummary'), 'persisted summary events should serialize nextSummary');
+    assert.ok(helperSlice.includes('summaryId'), 'neighboring summary drilldowns should include summaryId');
   });
 
   it('wraps summary JSON parsing in a try/catch helper', () => {

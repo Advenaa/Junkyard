@@ -31,6 +31,9 @@ interface ChatSource {
   id: string;
   label: string;
   snippet: string;
+  dateLabel?: string;
+  chainRootId?: string;
+  chainLabel?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -149,6 +152,52 @@ function buildCitationLabel(type: 'report' | 'summary', id: string, rawSnippet: 
   return `Summary ${id.slice(0, 8)}`;
 }
 
+interface ChainCitationMetadata {
+  rootId: string;
+  label?: string;
+}
+
+function toTitleCase(value: string): string {
+  return value
+    .split(/[_-\s]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => part[0]!.toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function extractChainMetadata(rawSnippet: string): ChainCitationMetadata | null {
+  const line = rawSnippet.match(/^Focused (?:report|summary) chain:\s+([^\n]+)/im)?.[1];
+  if (!line) return null;
+
+  const fields = new Map<string, string>();
+  for (const segment of line.split('|')) {
+    const [rawKey, ...rawValue] = segment.split('=');
+    const key = rawKey?.trim();
+    const value = rawValue.join('=').trim();
+    if (key && value) {
+      fields.set(key, value);
+    }
+  }
+
+  const rootId = fields.get('chainRoot');
+  if (!rootId) return null;
+
+  const entity = fields.get('entity');
+  const eventType = fields.get('eventType');
+  const labelParts = [entity, eventType ? toTitleCase(eventType) : null].filter(
+    (part): part is string => !!part && part.length > 0,
+  );
+
+  return {
+    rootId,
+    label: labelParts.length > 0 ? labelParts.join(' · ') : undefined,
+  };
+}
+
+function stripCitationMetadata(rawSnippet: string): string {
+  return rawSnippet.replace(/^Focused (?:report|summary) chain:.*(?:\n|$)/gim, '').trim();
+}
+
 function extractReadRawSources(toolResult: string): ChatSource[] {
   const match = toolResult.match(
     /^Item\s+(\S+)\s+by\s+(.+?)\s+at\s+(.+?):\n<raw_content_[0-9a-f]{8}>([\s\S]*?)<\/raw_content_[0-9a-f]{8}>$/,
@@ -172,20 +221,36 @@ function extractReadRawSources(toolResult: string): ChatSource[] {
 function extractSemanticSearchSources(usageLabel: string, toolResult: string): ChatSource[] {
   const type: 'report' | 'summary' = usageLabel === 'semantic_search:report' ? 'report' : 'summary';
   const sources: ChatSource[] = [];
-  const blockRegex = /\[([^\]]+)\] \((?:[^)]*)\)\n<search_result_[0-9a-f]{8}>([\s\S]*?)<\/search_result_[0-9a-f]{8}>/g;
+  const blockRegex = /\[([^\]]+)\] \(([^)]*)\)\n<search_result_[0-9a-f]{8}>([\s\S]*?)<\/search_result_[0-9a-f]{8}>/g;
   let match: RegExpExecArray | null;
 
   while ((match = blockRegex.exec(toolResult)) !== null) {
     const id = match[1]?.trim();
-    const rawSnippet = match[2] ?? '';
-    const snippet = truncateSnippet(rawSnippet);
+    const metadata = match[2] ?? '';
+    const rawSnippet = match[3] ?? '';
+    const cleanedSnippet = stripCitationMetadata(rawSnippet);
+    const snippet = truncateSnippet(cleanedSnippet);
     if (!id || !snippet) continue;
-    sources.push({
+    const source: ChatSource = {
       type,
       id,
-      label: buildCitationLabel(type, id, rawSnippet),
+      label: buildCitationLabel(type, id, cleanedSnippet),
       snippet,
-    });
+    };
+    const dateLabel = metadata.match(/(?:^|,\s*)date:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i)?.[1];
+    if (dateLabel) {
+      source.dateLabel = dateLabel;
+    }
+    if (type === 'report' || type === 'summary') {
+      const chainMetadata = extractChainMetadata(rawSnippet);
+      if (chainMetadata) {
+        source.chainRootId = chainMetadata.rootId;
+        if (chainMetadata.label) {
+          source.chainLabel = chainMetadata.label;
+        }
+      }
+    }
+    sources.push(source);
   }
 
   return sources;

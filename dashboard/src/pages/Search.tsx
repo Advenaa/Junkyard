@@ -1,6 +1,20 @@
-import { useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { apiFetch } from '../lib/api';
+import type { ReportChainDrilldown } from '../lib/types';
+import {
+  areReportChainRefreshActionsEqual,
+  areReportChainToggleActionsEqual,
+  buildLeadChainHref,
+  buildLeadChainLabel,
+  buildLeadReportHref,
+  getReportChainRefreshAction,
+  getReportChainStoryChipLabel,
+  getReportChainToggleAction,
+  type ReportChainRefreshAction,
+  type ReportChainToggleAction,
+} from '../lib/reportChains';
+import { ReportChainPreviewSection } from '../components/ReportChainPreviewSection';
 import { EmptyState } from '../components/EmptyState';
 import { TypeBadge } from '../components/TypeBadge';
 
@@ -16,6 +30,9 @@ interface SearchResult {
   reportType?: 'daily' | 'flash' | 'pulse' | null;
   date?: string | null;
   eventChains?: string[];
+  chainDrilldowns?: ReportChainDrilldown[];
+  hasMoreActiveChains?: boolean;
+  hiddenActiveChainCount?: number;
 }
 
 interface SearchResponse {
@@ -76,9 +93,137 @@ export function Search() {
   const [days, setDays] = useState(30);
   const [scope, setScope] = useState<SearchScope>('all');
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [previewBodyOverrides, setPreviewBodyOverrides] = useState<Record<string, string>>({});
+  const [leadChainLabelOverrides, setLeadChainLabelOverrides] = useState<Record<string, string>>({});
+  const [leadChainHrefOverrides, setLeadChainHrefOverrides] = useState<Record<string, string>>({});
+  const [focusedReportHrefOverrides, setFocusedReportHrefOverrides] = useState<Record<string, string>>({});
+  const [visibleChainCountOverrides, setVisibleChainCountOverrides] = useState<Record<string, number>>({});
+  const [storyChipActionOverrides, setStoryChipActionOverrides] = useState<Record<string, ReportChainToggleAction>>({});
+  const [storyChipToggleRequests, setStoryChipToggleRequests] = useState<Record<string, number>>({});
+  const [refreshChipActionOverrides, setRefreshChipActionOverrides] = useState<Record<string, ReportChainRefreshAction>>({});
+  const [refreshChipRequests, setRefreshChipRequests] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
+
+  const updateReportPreviewBody = useCallback((reportId: string, fallbackBody: string, nextBody: string | null) => {
+    if (!nextBody) return;
+
+    setPreviewBodyOverrides((prev) => {
+      if (nextBody === fallbackBody) {
+        if (!(reportId in prev)) return prev;
+        const next = { ...prev };
+        delete next[reportId];
+        return next;
+      }
+      if (prev[reportId] === nextBody) return prev;
+      return { ...prev, [reportId]: nextBody };
+    });
+  }, []);
+
+  const updateLeadChainLabel = useCallback((reportId: string, fallbackLabel: string | null, nextLabel: string | null) => {
+    if (!nextLabel) return;
+
+    setLeadChainLabelOverrides((prev) => {
+      if (nextLabel === fallbackLabel) {
+        if (!(reportId in prev)) return prev;
+        const next = { ...prev };
+        delete next[reportId];
+        return next;
+      }
+      if (prev[reportId] === nextLabel) return prev;
+      return { ...prev, [reportId]: nextLabel };
+    });
+  }, []);
+
+  const updateLeadChainHref = useCallback((reportId: string, fallbackHref: string | null, nextHref: string | null) => {
+    if (!nextHref) return;
+
+    setLeadChainHrefOverrides((prev) => {
+      if (nextHref === fallbackHref) {
+        if (!(reportId in prev)) return prev;
+        const next = { ...prev };
+        delete next[reportId];
+        return next;
+      }
+      if (prev[reportId] === nextHref) return prev;
+      return { ...prev, [reportId]: nextHref };
+    });
+  }, []);
+
+  const updateFocusedReportHref = useCallback((reportId: string, fallbackHref: string | null, nextHref: string | null) => {
+    if (!nextHref) return;
+
+    setFocusedReportHrefOverrides((prev) => {
+      if (nextHref === fallbackHref) {
+        if (!(reportId in prev)) return prev;
+        const next = { ...prev };
+        delete next[reportId];
+        return next;
+      }
+      if (prev[reportId] === nextHref) return prev;
+      return { ...prev, [reportId]: nextHref };
+    });
+  }, []);
+
+  const updateVisibleChainCount = useCallback((reportId: string, fallbackCount: number, nextCount: number) => {
+    setVisibleChainCountOverrides((prev) => {
+      if (nextCount === fallbackCount) {
+        if (!(reportId in prev)) return prev;
+        const next = { ...prev };
+        delete next[reportId];
+        return next;
+      }
+      if (prev[reportId] === nextCount) return prev;
+      return { ...prev, [reportId]: nextCount };
+    });
+  }, []);
+
+  const updateStoryChipAction = useCallback(
+    (reportId: string, fallbackAction: ReportChainToggleAction, nextAction: ReportChainToggleAction) => {
+      setStoryChipActionOverrides((prev) => {
+        if (areReportChainToggleActionsEqual(nextAction, fallbackAction)) {
+          if (!(reportId in prev)) return prev;
+          const next = { ...prev };
+          delete next[reportId];
+          return next;
+        }
+        if (prev[reportId] && areReportChainToggleActionsEqual(prev[reportId], nextAction)) return prev;
+        return { ...prev, [reportId]: nextAction };
+      });
+    },
+    [],
+  );
+
+  const requestStoryChipToggle = useCallback((reportId: string) => {
+    setStoryChipToggleRequests((prev) => ({
+      ...prev,
+      [reportId]: (prev[reportId] ?? 0) + 1,
+    }));
+  }, []);
+
+  const updateRefreshChipAction = useCallback(
+    (reportId: string, fallbackAction: ReportChainRefreshAction, nextAction: ReportChainRefreshAction) => {
+      setRefreshChipActionOverrides((prev) => {
+        if (areReportChainRefreshActionsEqual(nextAction, fallbackAction)) {
+          if (!(reportId in prev)) return prev;
+          const next = { ...prev };
+          delete next[reportId];
+          return next;
+        }
+        if (prev[reportId] && areReportChainRefreshActionsEqual(prev[reportId], nextAction)) return prev;
+        return { ...prev, [reportId]: nextAction };
+      });
+    },
+    [],
+  );
+
+  const requestRefreshChip = useCallback((reportId: string) => {
+    setRefreshChipRequests((prev) => ({
+      ...prev,
+      [reportId]: (prev[reportId] ?? 0) + 1,
+    }));
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -166,42 +311,141 @@ export function Search() {
         <EmptyState title="No results found" description="Try different keywords or a wider time range." />
       ) : results.length > 0 ? (
         <div className="space-y-3">
-          {results.map((result) => (
-            <Link
-              key={result.id}
-              to={getResultHref(result)}
-              className="block bg-surface border border-border rounded-lg p-4 space-y-2 transition-colors hover:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/40"
-            >
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {isReportResult(result) ? (
-                    <>
+          {results.map((result) => {
+            if (!isReportResult(result)) {
+              return (
+                <div
+                  key={result.id}
+                  className="bg-surface border border-border rounded-lg overflow-hidden transition-colors hover:border-accent/50 focus-within:ring-2 focus-within:ring-accent/40"
+                >
+                  <Link to={getResultHref(result)} className="block p-4 space-y-2 focus:outline-none">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <SourceBadge source={result.source ?? 'summary'} />
+                        {result.sourceId && <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>}
+                      </div>
+                      <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
+                    </div>
+                    <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(result.body, 200)}</p>
+                  </Link>
+                </div>
+              );
+            }
+
+            const activeChains = isReportResult(result) ? result.chainDrilldowns ?? [] : [];
+            const hiddenActiveChainCount = isReportResult(result) ? result.hiddenActiveChainCount ?? 0 : 0;
+            const previewBody = isReportResult(result) ? previewBodyOverrides[result.id] ?? result.body : result.body;
+            const fallbackLeadChainLabel = buildLeadChainLabel(activeChains[0]);
+            const leadChainLabel = leadChainLabelOverrides[result.id] ?? fallbackLeadChainLabel;
+            const fallbackLeadChainHref = buildLeadChainHref(activeChains[0]);
+            const leadChainHref = leadChainHrefOverrides[result.id] ?? fallbackLeadChainHref;
+            const fallbackFocusedReportHref = buildLeadReportHref(result.id, activeChains[0]) ?? `/reports/${result.id}`;
+            const focusedReportHref = focusedReportHrefOverrides[result.id] ?? fallbackFocusedReportHref;
+            const visibleChainCount = visibleChainCountOverrides[result.id] ?? activeChains.length;
+            const fallbackStoryChipAction = getReportChainToggleAction({
+              previewChainCount: activeChains.length,
+              visibleChainCount: activeChains.length,
+              hiddenActiveChainCount,
+            });
+            const storyChipAction = storyChipActionOverrides[result.id] ?? fallbackStoryChipAction;
+            const fallbackRefreshChipAction = getReportChainRefreshAction({
+              previewChainCount: activeChains.length,
+              visibleChainCount: activeChains.length,
+              hiddenActiveChainCount,
+            });
+            const refreshChipAction = refreshChipActionOverrides[result.id] ?? fallbackRefreshChipAction;
+
+            return (
+              <div
+                key={result.id}
+                className="bg-surface border border-border rounded-lg overflow-hidden transition-colors hover:border-accent/50 focus-within:ring-2 focus-within:ring-accent/40"
+              >
+                <div className="p-4 space-y-2">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <TypeBadge type={result.reportType ?? 'report'} />
                       <span className="text-text-secondary text-xs font-mono uppercase tracking-wider">report</span>
                       {result.date && <span className="text-text-secondary text-xs font-mono">{result.date}</span>}
-                    </>
-                  ) : (
-                    <>
-                      <SourceBadge source={result.source ?? 'summary'} />
-                      {result.sourceId && (
-                        <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>
+                      {visibleChainCount > 0 && (
+                        storyChipAction.mode === 'none' ? (
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
+                            Active stories · {visibleChainCount}
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => requestStoryChipToggle(result.id)}
+                            disabled={storyChipAction.disabled}
+                            title={storyChipAction.controlLabel ?? undefined}
+                            className="font-mono text-[10px] uppercase tracking-wider text-text-secondary hover:text-accent hover:underline disabled:opacity-60"
+                          >
+                            {getReportChainStoryChipLabel(visibleChainCount, storyChipAction)}
+                          </button>
+                        )
                       )}
-                    </>
-                  )}
+                      {leadChainLabel && leadChainHref && (
+                        <Link
+                          to={leadChainHref}
+                          className="font-mono text-[10px] uppercase tracking-wider text-accent hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm"
+                        >
+                          Lead chain · {leadChainLabel}
+                        </Link>
+                      )}
+                      {leadChainLabel && !leadChainHref && (
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
+                          Lead chain · {leadChainLabel}
+                        </span>
+                      )}
+                      {refreshChipAction.visible && (
+                        <button
+                          type="button"
+                          onClick={() => requestRefreshChip(result.id)}
+                          disabled={refreshChipAction.disabled}
+                          className="font-mono text-[10px] uppercase tracking-wider text-text-secondary hover:text-accent hover:underline disabled:opacity-60"
+                        >
+                          {refreshChipAction.controlLabel ?? 'Refresh stories'}
+                        </button>
+                      )}
+                    </div>
+                    <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
+                  </div>
+                  <Link to={focusedReportHref} className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm">
+                    <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(previewBody, 200)}</p>
+                    {activeChains.length === 0 && result.eventChains && result.eventChains.length > 0 && (
+                      <p className="text-xs font-body text-text-secondary leading-relaxed">
+                        <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
+                          Event Chain
+                        </span>{' '}
+                        {result.eventChains[0]}
+                      </p>
+                    )}
+                  </Link>
                 </div>
-                <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
+                {activeChains.length > 0 && (
+                  <ReportChainPreviewSection
+                    reportId={result.id}
+                    chainDrilldowns={activeChains}
+                    hiddenActiveChainCount={hiddenActiveChainCount}
+                    previewSummary={result.eventChains?.[0]}
+                    previewBody={result.body}
+                    onFocusedReportHrefChange={(nextHref) =>
+                      updateFocusedReportHref(result.id, fallbackFocusedReportHref, nextHref)
+                    }
+                    onPreviewBodyChange={(nextBody) => updateReportPreviewBody(result.id, result.body, nextBody)}
+                    onLeadChainLabelChange={(nextLabel) => updateLeadChainLabel(result.id, fallbackLeadChainLabel, nextLabel)}
+                    onLeadChainHrefChange={(nextHref) => updateLeadChainHref(result.id, fallbackLeadChainHref, nextHref)}
+                    onVisibleChainCountChange={(nextCount) => updateVisibleChainCount(result.id, activeChains.length, nextCount)}
+                    onHeaderStoryActionChange={(nextAction) => updateStoryChipAction(result.id, fallbackStoryChipAction, nextAction)}
+                    onHeaderRefreshActionChange={(nextAction) =>
+                      updateRefreshChipAction(result.id, fallbackRefreshChipAction, nextAction)
+                    }
+                    toggleVisibleChainsRequest={storyChipToggleRequests[result.id]}
+                    refreshVisibleChainsRequest={refreshChipRequests[result.id]}
+                  />
+                )}
               </div>
-              <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(result.body, 200)}</p>
-              {isReportResult(result) && result.eventChains && result.eventChains.length > 0 && (
-                <p className="text-xs font-body text-text-secondary leading-relaxed">
-                  <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
-                    Event Chain
-                  </span>{' '}
-                  {result.eventChains[0]}
-                </p>
-              )}
-            </Link>
-          ))}
+            );
+          })}
         </div>
       ) : null}
     </div>

@@ -90,6 +90,7 @@ describe('PR-002: Poll interval surfaced in dashboard', () => {
 
 describe('PR-003: Feed empty state for no Discord sources', () => {
   const src = readSrc('dashboard/src/pages/Feed.tsx');
+  const noSourcesSrc = readSrc('dashboard/src/components/RawFeedNoSources.tsx');
 
   it('checks for empty sources after loading', () => {
     assert.ok(
@@ -100,7 +101,13 @@ describe('PR-003: Feed empty state for no Discord sources', () => {
 
   it('shows guidance when no Discord sources exist', () => {
     assert.ok(
-      src.includes('No Discord sources') || src.includes('no Discord sources') || src.includes('Add a Discord source'),
+      src.includes('RawFeedNoSources'),
+      'Feed must render the extracted no-sources guidance component',
+    );
+    assert.ok(
+      noSourcesSrc.includes('No Discord sources') ||
+        noSourcesSrc.includes('no Discord sources') ||
+        noSourcesSrc.includes('Add a Discord source'),
       'Must show guidance message for empty Discord sources',
     );
   });

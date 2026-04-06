@@ -29,8 +29,12 @@ import {
   updateCalendarEvent,
   deleteCalendarEvent,
   getSummaryById,
+  getSummaryEventsWithChainContext,
+  getRecentReportChainDrilldowns,
   type ReportRow,
   type SummaryRow,
+  type SummaryEventWithChainRow,
+  type ReportChainDrilldownRow,
   type SourceRow,
   type ItemRow,
   type CalendarEventRow,
@@ -79,12 +83,6 @@ function parseSummaryBody(body: string): Record<string, unknown> | null {
 function extractStringArrayField(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === 'string').slice(0, limit);
-}
-
-function getReportEventChainPreview(body: string, limit = 1): string[] {
-  const parsed = parseReportBody(body);
-  if (!parsed) return [];
-  return extractStringArrayField(parsed.eventChains ?? parsed.event_chains, limit);
 }
 
 function getSourceTargetFromRequest(
@@ -138,6 +136,20 @@ function getReportSearchPreview(tldr: string | null, body: string): string {
   return body;
 }
 
+function parseItemRecord(row: ItemRow): Record<string, unknown> {
+  const item = toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>);
+  if (typeof item.attachments === 'string') {
+    try {
+      item.attachments = JSON.parse(item.attachments);
+    } catch {
+      item.attachments = [];
+    }
+  } else if (item.attachments === null || item.attachments === undefined) {
+    item.attachments = [];
+  }
+  return item;
+}
+
 function extractSummaryEntities(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) return [];
 
@@ -157,6 +169,17 @@ function extractSummaryEntities(value: unknown): Array<Record<string, unknown>> 
             : 1,
       sentiment: typeof entry.sentiment === 'number' ? entry.sentiment : 0,
     }));
+}
+
+function extractReportEntityNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return [...new Set(
+    value
+      .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+      .map((entry) => (typeof entry.name === 'string' ? entry.name.trim() : ''))
+      .filter((name) => name.length > 0),
+  )];
 }
 
 function extractSummaryEvents(value: unknown): Array<Record<string, unknown>> {
@@ -181,6 +204,73 @@ function extractSummaryEvents(value: unknown): Array<Record<string, unknown>> {
     }))
     .filter((entry) => entry.description.length > 0);
 }
+
+function serializeReportChainDrilldowns(rows: ReportChainDrilldownRow[]): Array<Record<string, unknown>> {
+  return rows.map((row) => ({
+    rootId: row.chain_root_id,
+    entityName: row.entity_name,
+    eventCount: row.event_count,
+    firstEventTime: row.first_event_time,
+    latestEventTime: row.latest_event_time,
+    eventTypes: row.event_types,
+    latestSummaryId: row.latest_summary_id,
+    latestEventType: row.latest_event_type,
+    latestEventDescription: row.latest_event_description,
+  }));
+}
+
+function getReportPreviewChains(rows: ReportChainDrilldownRow[]): {
+  chainDrilldowns: Array<Record<string, unknown>>;
+  hiddenActiveChainCount: number;
+} {
+  const chainDrilldowns = serializeReportChainDrilldowns(rows);
+  const totalChainCount = rows[0]?.total_chain_count ?? chainDrilldowns.length;
+  return {
+    chainDrilldowns,
+    hiddenActiveChainCount: Math.max(totalChainCount - chainDrilldowns.length, 0),
+  };
+}
+
+function serializeSummaryEventRows(rows: SummaryEventWithChainRow[]): Array<Record<string, unknown>> {
+  return rows.map((row) => ({
+    entityName: row.entity_name,
+    eventType: row.event_type,
+    description: row.description,
+    eventTime: row.event_time,
+    chain:
+      row.chain_event_count > 1
+        ? {
+            rootId: row.chain_root_id,
+            position: row.chain_position,
+            eventCount: row.chain_event_count,
+            firstEventTime: row.chain_first_event_time,
+            latestEventTime: row.chain_latest_event_time,
+            eventTypes: row.chain_event_types,
+            previousSummary:
+              row.previous_summary_id && row.previous_event_type && row.previous_event_description && row.previous_event_time
+                ? {
+                    summaryId: row.previous_summary_id,
+                    eventType: row.previous_event_type,
+                    description: row.previous_event_description,
+                    eventTime: row.previous_event_time,
+                  }
+                : null,
+            nextSummary:
+              row.next_summary_id && row.next_event_type && row.next_event_description && row.next_event_time
+                ? {
+                    summaryId: row.next_summary_id,
+                    eventType: row.next_event_type,
+                    description: row.next_event_description,
+                    eventTime: row.next_event_time,
+                  }
+                : null,
+          }
+        : null,
+  }));
+}
+
+const REPORT_EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const REPORT_PREVIEW_CHAIN_DRILLDOWN_LIMIT = 2;
 
 interface UserRow {
   discord_id: string;
@@ -223,7 +313,14 @@ interface ChatHandler {
   ): Promise<{
     response: string;
     toolsUsed: string[];
-    sources: Array<{ type: 'report' | 'summary' | 'item'; id: string; label: string; snippet: string }>;
+    sources: Array<{
+      type: 'report' | 'summary' | 'item';
+      id: string;
+      label: string;
+      snippet: string;
+      chainRootId?: string;
+      chainLabel?: string;
+    }>;
   }>;
 }
 
@@ -466,17 +563,36 @@ export async function createServer(
       countParams,
     );
     return {
-      reports: reports.map((r) => {
-        const report = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
-        if (typeof r.body === 'string') {
-          const eventChains = getReportEventChainPreview(r.body, 1);
-          if (eventChains.length > 0) {
-            report.eventChains = eventChains;
+      reports: await Promise.all(
+        reports.map(async (r) => {
+          const report = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
+          if (typeof r.body === 'string') {
+            const parsed = parseReportBody(r.body);
+            const eventChains = extractStringArrayField(parsed?.eventChains ?? parsed?.event_chains, 1);
+            if (eventChains.length > 0) {
+              report.eventChains = eventChains;
+              const reportEntityNames = extractReportEntityNames(parsed?.entitySentiment ?? parsed?.entity_sentiment);
+              const previewChainRows = await getRecentReportChainDrilldowns(
+                pool,
+                reportEntityNames,
+                r.created_at,
+                r.created_at - REPORT_EVENT_CHAIN_LOOKBACK_MS,
+                REPORT_PREVIEW_CHAIN_DRILLDOWN_LIMIT,
+              );
+              const { chainDrilldowns, hiddenActiveChainCount } = getReportPreviewChains(previewChainRows);
+              if (hiddenActiveChainCount > 0) {
+                report.hasMoreActiveChains = true;
+                report.hiddenActiveChainCount = hiddenActiveChainCount;
+              }
+              if (chainDrilldowns.length > 0) {
+                report.chainDrilldowns = chainDrilldowns;
+              }
+            }
           }
-        }
-        delete report.body;
-        return report;
-      }),
+          delete report.body;
+          return report;
+        }),
+      ),
       total: parseInt(countRows[0].count, 10),
     };
   });
@@ -497,6 +613,18 @@ export async function createServer(
         report.eventChains = (parsed.eventChains ?? parsed.event_chains ?? []) as unknown[];
         report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
         report.sections = (parsed.sections ?? []) as unknown[];
+        const reportEntityNames = extractReportEntityNames(parsed.entitySentiment ?? parsed.entity_sentiment);
+        const reportChainDrilldowns = serializeReportChainDrilldowns(
+          await getRecentReportChainDrilldowns(
+            pool,
+            reportEntityNames,
+            rows[0].created_at,
+            rows[0].created_at - REPORT_EVENT_CHAIN_LOOKBACK_MS,
+          ),
+        );
+        if (reportChainDrilldowns.length > 0) {
+          report.chainDrilldowns = reportChainDrilldowns;
+        }
       }
     }
     return reply.send({ report });
@@ -509,6 +637,7 @@ export async function createServer(
       return reply.code(404).send({ error: 'Summary not found' });
     }
 
+    const persistedSummaryEvents = serializeSummaryEventRows(await getSummaryEventsWithChainContext(pool, id));
     const summary = toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>);
     if (typeof row.body === 'string') {
       const parsed = parseSummaryBody(row.body);
@@ -517,13 +646,13 @@ export async function createServer(
         summary.confidence = typeof parsed.confidence === 'number' ? parsed.confidence : null;
         summary.keyEvents = extractStringArrayField(parsed.keyEvents ?? parsed.key_events, 5);
         summary.entities = extractSummaryEntities(parsed.entities);
-        summary.events = extractSummaryEvents(parsed.events);
+        summary.events = persistedSummaryEvents.length > 0 ? persistedSummaryEvents : extractSummaryEvents(parsed.events);
       } else {
         summary.text = row.body;
         summary.confidence = null;
         summary.keyEvents = [];
         summary.entities = [];
-        summary.events = [];
+        summary.events = persistedSummaryEvents;
       }
     }
 
@@ -764,31 +893,50 @@ export async function createServer(
       const reportResults =
         scope === 'summary'
           ? []
-          : (
-              await pool.query<Pick<ReportRow, 'id' | 'date' | 'type' | 'body' | 'tldr' | 'created_at'>>(
-                `SELECT id, date, type, body, tldr, created_at
-                   FROM reports
-                  WHERE (COALESCE(tldr, '') ILIKE $1 OR body ILIKE $1)
-                    AND created_at > $2
-                  ORDER BY created_at DESC
-                  LIMIT $3`,
-                [likeQuery, cutoff, limit],
-              )
-            ).rows.map((row) => {
-              const report = toCamelCase<Record<string, unknown>>({
-                id: row.id,
-                date: row.date,
-                report_type: row.type,
-                body: getReportSearchPreview(row.tldr, row.body),
-                created_at: row.created_at,
-                result_type: 'report',
-              });
-              const eventChains = getReportEventChainPreview(row.body, 1);
-              if (eventChains.length > 0) {
-                report.eventChains = eventChains;
-              }
-              return report;
-            });
+          : await Promise.all(
+              (
+                await pool.query<Pick<ReportRow, 'id' | 'date' | 'type' | 'body' | 'tldr' | 'created_at'>>(
+                  `SELECT id, date, type, body, tldr, created_at
+                     FROM reports
+                    WHERE (COALESCE(tldr, '') ILIKE $1 OR body ILIKE $1)
+                      AND created_at > $2
+                    ORDER BY created_at DESC
+                    LIMIT $3`,
+                  [likeQuery, cutoff, limit],
+                )
+              ).rows.map(async (row) => {
+                const report = toCamelCase<Record<string, unknown>>({
+                  id: row.id,
+                  date: row.date,
+                  report_type: row.type,
+                  body: getReportSearchPreview(row.tldr, row.body),
+                  created_at: row.created_at,
+                  result_type: 'report',
+                });
+                const parsed = parseReportBody(row.body);
+                const eventChains = extractStringArrayField(parsed?.eventChains ?? parsed?.event_chains, 1);
+                if (eventChains.length > 0) {
+                  report.eventChains = eventChains;
+                  const reportEntityNames = extractReportEntityNames(parsed?.entitySentiment ?? parsed?.entity_sentiment);
+                  const previewChainRows = await getRecentReportChainDrilldowns(
+                    pool,
+                    reportEntityNames,
+                    row.created_at,
+                    row.created_at - REPORT_EVENT_CHAIN_LOOKBACK_MS,
+                    REPORT_PREVIEW_CHAIN_DRILLDOWN_LIMIT,
+                  );
+                  const { chainDrilldowns, hiddenActiveChainCount } = getReportPreviewChains(previewChainRows);
+                  if (hiddenActiveChainCount > 0) {
+                    report.hasMoreActiveChains = true;
+                    report.hiddenActiveChainCount = hiddenActiveChainCount;
+                  }
+                  if (chainDrilldowns.length > 0) {
+                    report.chainDrilldowns = chainDrilldowns;
+                  }
+                }
+                return report;
+              }),
+            );
 
       const results = [...summaryResults, ...reportResults]
         .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
@@ -799,27 +947,75 @@ export async function createServer(
   );
 
   // --- Raw feed ---
-  app.get('/api/v1/items/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const { rows } = await pool.query<ItemRow>('SELECT * FROM items WHERE id = $1 LIMIT 1', [id]);
+  app.get(
+    '/api/v1/items/:id',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            context: { type: 'integer', minimum: 0, maximum: 10 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const { context: rawContext } = request.query as { context?: number };
+      const context = Math.min(Math.max(rawContext ?? 0, 0), 10);
+      const { rows } = await pool.query<ItemRow>('SELECT * FROM items WHERE id = $1 LIMIT 1', [id]);
 
-    if (rows.length === 0) {
-      return reply.code(404).send({ error: 'Item not found' });
-    }
-
-    const item = toCamelCase<Record<string, unknown>>(rows[0] as unknown as Record<string, unknown>);
-    if (typeof item.attachments === 'string') {
-      try {
-        item.attachments = JSON.parse(item.attachments);
-      } catch {
-        item.attachments = [];
+      if (rows.length === 0) {
+        return reply.code(404).send({ error: 'Item not found' });
       }
-    } else if (item.attachments === null || item.attachments === undefined) {
-      item.attachments = [];
-    }
 
-    return { item };
-  });
+      const itemRow = rows[0];
+      const item = parseItemRecord(itemRow);
+
+      if (context === 0) {
+        return { item };
+      }
+
+      const [olderResult, newerResult] = await Promise.all([
+        pool.query<ItemRow>(
+          `SELECT * FROM items
+             WHERE source = $1
+               AND source_id = $2
+               AND (
+                 timestamp < $3
+                 OR (timestamp = $3 AND created_at < $4)
+                 OR (timestamp = $3 AND created_at = $4 AND id < $5)
+               )
+             ORDER BY timestamp DESC, created_at DESC, id DESC
+             LIMIT $6`,
+          [itemRow.source, itemRow.source_id, itemRow.timestamp, itemRow.created_at, itemRow.id, context],
+        ),
+        pool.query<ItemRow>(
+          `SELECT * FROM items
+             WHERE source = $1
+               AND source_id = $2
+               AND (
+                 timestamp > $3
+                 OR (timestamp = $3 AND created_at > $4)
+                 OR (timestamp = $3 AND created_at = $4 AND id > $5)
+               )
+             ORDER BY timestamp ASC, created_at ASC, id ASC
+             LIMIT $6`,
+          [itemRow.source, itemRow.source_id, itemRow.timestamp, itemRow.created_at, itemRow.id, context],
+        ),
+      ]);
+
+      return {
+        item,
+        context: {
+          older: olderResult.rows.reverse().map((row) => parseItemRecord(row)),
+          newer: newerResult.rows.map((row) => parseItemRecord(row)),
+        },
+      };
+    },
+  );
 
   app.get(
     '/api/v1/feed/:sourceId',
@@ -869,20 +1065,7 @@ export async function createServer(
       }
 
       const { rows: items } = await pool.query<ItemRow>(sql, params);
-      const parsed = items.map((r) => {
-        const camelRow = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
-        // Parse attachments JSON string to array
-        if (typeof camelRow.attachments === 'string') {
-          try {
-            camelRow.attachments = JSON.parse(camelRow.attachments);
-          } catch {
-            camelRow.attachments = [];
-          }
-        } else if (camelRow.attachments === null || camelRow.attachments === undefined) {
-          camelRow.attachments = [];
-        }
-        return camelRow;
-      });
+      const parsed = items.map((r) => parseItemRecord(r));
       return { items: parsed };
     },
   );

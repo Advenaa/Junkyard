@@ -46,6 +46,27 @@ describe('SummaryView', () => {
                     entityName: 'Solana',
                     eventType: 'governance',
                     description: 'Governance discussion accelerated around the exploit response.',
+                    eventTime: Date.UTC(2026, 3, 6, 8, 40, 0),
+                    chain: {
+                      rootId: 'event-root-1',
+                      position: 2,
+                      eventCount: 3,
+                      firstEventTime: Date.UTC(2026, 3, 5, 14, 0, 0),
+                      latestEventTime: Date.UTC(2026, 3, 7, 10, 30, 0),
+                      eventTypes: ['exploit', 'audit', 'governance'],
+                      previousSummary: {
+                        summaryId: 'summary-older',
+                        eventType: 'audit',
+                        description: 'Audit prep started after the first exploit disclosure.',
+                        eventTime: Date.UTC(2026, 3, 5, 18, 30, 0),
+                      },
+                      nextSummary: {
+                        summaryId: 'summary-newer',
+                        eventType: 'governance',
+                        description: 'The next summary tracked governance follow-through on the response.',
+                        eventTime: Date.UTC(2026, 3, 7, 10, 30, 0),
+                      },
+                    },
                   },
                 ],
               },
@@ -62,7 +83,7 @@ describe('SummaryView', () => {
     );
 
     render(
-      <MemoryRouter initialEntries={['/summaries/summary-1']}>
+      <MemoryRouter initialEntries={['/summaries/summary-1?chain=event-root-1']}>
         <Routes>
           <Route path="/summaries/:id" element={<SummaryView />} />
         </Routes>
@@ -75,5 +96,18 @@ describe('SummaryView', () => {
     expect(screen.getByText('Extracted Events')).toBeInTheDocument();
     expect(screen.getAllByText('Governance discussion accelerated around the exploit response.')).toHaveLength(2);
     expect(screen.getByText('Solana')).toBeInTheDocument();
+    expect(screen.getByText(/Event 2 of 3 in linked chain/)).toBeInTheDocument();
+    expect(screen.getByText(/exploit -> audit -> governance/)).toBeInTheDocument();
+    expect(screen.getByText(/Highlighting 1 linked event in this summary chain/)).toBeInTheDocument();
+    expect(screen.getByText('Audit prep started after the first exploit disclosure.')).toBeInTheDocument();
+    expect(screen.getByText('The next summary tracked governance follow-through on the response.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Previous summary in chain' })).toHaveAttribute(
+      'href',
+      '/summaries/summary-older?chain=event-root-1',
+    );
+    expect(screen.getByRole('link', { name: 'Next summary in chain' })).toHaveAttribute(
+      'href',
+      '/summaries/summary-newer?chain=event-root-1',
+    );
   });
 });

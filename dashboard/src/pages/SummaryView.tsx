@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch } from '../lib/api';
 import { EmptyState } from '../components/EmptyState';
 
@@ -15,6 +15,27 @@ interface SummaryEvent {
   entityName: string;
   eventType: string;
   description: string;
+  eventTime?: number | null;
+  chain?: {
+    previousSummary?: {
+      summaryId: string;
+      eventType: string;
+      description: string;
+      eventTime: number;
+    } | null;
+    nextSummary?: {
+      summaryId: string;
+      eventType: string;
+      description: string;
+      eventTime: number;
+    } | null;
+    rootId: string;
+    position: number;
+    eventCount: number;
+    firstEventTime: number;
+    latestEventTime: number;
+    eventTypes: string[];
+  } | null;
 }
 
 interface FullSummary {
@@ -78,12 +99,48 @@ function sentimentClass(sentiment: number): string {
   return 'text-text-secondary';
 }
 
+function formatLinkedChainLabel(position: number, eventCount: number): string {
+  return `Event ${position} of ${eventCount} in linked chain`;
+}
+
+function buildSummaryChainHref(summaryId: string, chainRootId: string): string {
+  const params = new URLSearchParams({ chain: chainRootId });
+  return `/summaries/${summaryId}?${params.toString()}`;
+}
+
+function ChainSummaryLink({
+  label,
+  summary,
+  chainRootId,
+}: {
+  label: string;
+  summary: NonNullable<NonNullable<SummaryEvent['chain']>['previousSummary']>;
+  chainRootId: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3 space-y-1">
+      <Link
+        to={buildSummaryChainHref(summary.summaryId, chainRootId)}
+        className="text-xs font-mono uppercase tracking-wider text-accent hover:underline"
+      >
+        {label}
+      </Link>
+      <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+        {summary.eventType} | {formatDateTime(summary.eventTime)}
+      </div>
+      <div className="text-sm text-text-primary font-body leading-relaxed">{summary.description}</div>
+    </div>
+  );
+}
+
 export function SummaryView() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const requestKey = id ?? '';
   const [summary, setSummary] = useState<FullSummary | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const focusedChainRootId = searchParams.get('chain')?.trim() ?? '';
 
   useEffect(() => {
     if (!id) {
@@ -130,6 +187,12 @@ export function SummaryView() {
       </div>
     );
   }
+
+  const focusedChainEventCount =
+    focusedChainRootId.length > 0
+      ? summary.events.filter((event) => event.chain?.rootId === focusedChainRootId).length
+      : 0;
+  const hasFocusedChain = focusedChainEventCount > 0;
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-8">
@@ -220,15 +283,70 @@ export function SummaryView() {
       {summary.events.length > 0 && (
         <div>
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Extracted Events</h2>
+          {hasFocusedChain ? (
+            <div className="mb-4 rounded-lg border border-accent/30 bg-accent/10 px-4 py-3 space-y-1">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-accent">Focused Chain</div>
+              <div className="text-sm text-text-primary font-body leading-relaxed">
+                Highlighting {focusedChainEventCount} linked event{focusedChainEventCount !== 1 ? 's' : ''} in this
+                summary chain so cross-summary navigation stays anchored to the same story.
+              </div>
+            </div>
+          ) : null}
           <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {summary.events.map((event, index) => (
-              <div key={`${event.entityName}:${event.eventType}:${index}`} className="px-4 py-3 space-y-1">
-                <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
-                  {event.eventType} | {event.entityName}
+            {summary.events.map((event, index) => {
+              const isFocusedChainEvent = event.chain?.rootId === focusedChainRootId;
+
+              return (
+              <div
+                key={`${event.entityName}:${event.eventType}:${index}`}
+                className={`px-4 py-3 space-y-1 ${isFocusedChainEvent ? 'bg-accent/5 ring-1 ring-inset ring-accent/30' : ''}`}
+              >
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
+                    {event.eventType} | {event.entityName}
+                    {isFocusedChainEvent ? (
+                      <span className="ml-2 rounded bg-accent/15 px-2 py-0.5 text-[10px] text-accent">Focused chain</span>
+                    ) : null}
+                  </div>
+                  {typeof event.eventTime === 'number' ? (
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+                      {formatDateTime(event.eventTime)}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="text-sm text-text-primary font-body leading-relaxed">{event.description}</div>
+                {event.chain ? (
+                  <div className="space-y-2">
+                    <div className="text-xs text-text-secondary font-body leading-relaxed">
+                      {formatLinkedChainLabel(event.chain.position, event.chain.eventCount)}
+                      {' | '}
+                      {event.chain.eventTypes.join(' -> ')}
+                      {' | '}
+                      {formatRange(event.chain.firstEventTime, event.chain.latestEventTime)}
+                    </div>
+                    {(event.chain.previousSummary || event.chain.nextSummary) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {event.chain.previousSummary ? (
+                          <ChainSummaryLink
+                            label="Previous summary in chain"
+                            summary={event.chain.previousSummary}
+                            chainRootId={event.chain.rootId}
+                          />
+                        ) : null}
+                        {event.chain.nextSummary ? (
+                          <ChainSummaryLink
+                            label="Next summary in chain"
+                            summary={event.chain.nextSummary}
+                            chainRootId={event.chain.rootId}
+                          />
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
       )}

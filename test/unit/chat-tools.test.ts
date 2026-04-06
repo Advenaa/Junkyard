@@ -169,7 +169,6 @@ describe('semantic_search', () => {
 
     await search.execute({ query: 'test' });
 
-    assert.equal(pool.calls.length, 1);
     // Verify parameterized query, not string interpolation of IDs
     assert.ok(pool.calls[0].text.includes('$1'), 'query should use $1 placeholder');
     assert.ok(pool.calls[0].text.includes('$2'), 'query should use $2 placeholder');
@@ -228,27 +227,45 @@ describe('semantic_search', () => {
 
   it('formats report hits with tldr and event chain context', async () => {
     const vectorResults: SearchResult[] = [{ targetId: 'report-1', score: 0.91 }];
-    const dbRows = [
-      {
-        id: 'report-1',
-        body: JSON.stringify({
-          eventChains: [
-            'Bitcoin exploit chain stayed active after the audit follow-up.',
-            'ETF rumor chain kept traders watching positioning into the close.',
-          ],
-        }),
-        created_at: '2026-04-06',
-        tldr: 'Bitcoin held gains while traders tracked two active narratives.',
-        date: '2026-04-06',
-        type: 'daily',
-      },
-    ];
-    const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
+    const pool = recordingPool([
+      [
+        {
+          id: 'report-1',
+          body: JSON.stringify({
+            eventChains: [
+              'Bitcoin exploit chain stayed active after the audit follow-up.',
+              'ETF rumor chain kept traders watching positioning into the close.',
+            ],
+            entitySentiment: [{ name: 'Bitcoin' }],
+          }),
+          created_at: Date.UTC(2026, 3, 6, 12, 0, 0),
+          tldr: 'Bitcoin held gains while traders tracked two active narratives.',
+          date: '2026-04-06',
+          type: 'daily',
+        },
+      ],
+      [
+        {
+          chain_root_id: 'chain-root-1',
+          entity_name: 'Bitcoin',
+          event_count: 3,
+          first_event_time: Date.UTC(2026, 3, 4, 8, 0, 0),
+          latest_event_time: Date.UTC(2026, 3, 6, 9, 30, 0),
+          event_types: ['exploit', 'audit', 'governance'],
+          latest_summary_id: 'summary-9',
+          latest_event_type: 'governance',
+          latest_event_description: 'Governance follow-through kept the remediation timeline active.',
+          total_chain_count: 1,
+        },
+      ],
+    ]);
+    const tools = createChatTools(pool, noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     const result = await search.execute({ query: 'bitcoin narratives', type: 'report' });
 
     assert.ok(result.includes('Type: daily | Date: 2026-04-06'), 'should include report metadata');
+    assert.ok(result.includes('Focused report chain: chainRoot=chain-root-1'), 'should include focused report route metadata');
     assert.ok(
       result.includes('TLDR: Bitcoin held gains while traders tracked two active narratives.'),
       'should include tldr',
@@ -257,6 +274,53 @@ describe('semantic_search', () => {
     assert.ok(
       result.includes('Bitcoin exploit chain stayed active after the audit follow-up.'),
       'should include the first event chain',
+    );
+  });
+
+  it('formats summary hits with focused chain metadata when persisted chain context exists', async () => {
+    const vectorResults: SearchResult[] = [{ targetId: 'summary-1', score: 0.88 }];
+    const pool = recordingPool([
+      [
+        {
+          id: 'summary-1',
+          body: 'Governance discussion accelerated around the exploit response.',
+          created_at: String(Date.UTC(2026, 3, 6, 9, 5, 0)),
+        },
+      ],
+      [
+        {
+          id: 'event-1',
+          entity_name: 'Solana',
+          event_type: 'governance',
+          description: 'Governance discussion accelerated around the exploit response.',
+          event_time: Date.UTC(2026, 3, 6, 8, 40, 0),
+          summary_id: 'summary-1',
+          chain_root_id: 'event-root-1',
+          chain_event_count: 3,
+          chain_position: 2,
+          chain_first_event_time: Date.UTC(2026, 3, 5, 14, 0, 0),
+          chain_latest_event_time: Date.UTC(2026, 3, 7, 10, 30, 0),
+          chain_event_types: ['exploit', 'audit', 'governance'],
+          previous_summary_id: 'summary-older',
+          previous_event_type: 'audit',
+          previous_event_description: 'Audit prep started after the first exploit disclosure.',
+          previous_event_time: Date.UTC(2026, 3, 5, 18, 30, 0),
+          next_summary_id: 'summary-newer',
+          next_event_type: 'governance',
+          next_event_description: 'The next summary tracked governance follow-through on the response.',
+          next_event_time: Date.UTC(2026, 3, 7, 10, 30, 0),
+        },
+      ],
+    ]);
+    const tools = createChatTools(pool, noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
+    const search = toolByName(tools, 'semantic_search');
+
+    const result = await search.execute({ query: 'governance response', type: 'summary' });
+
+    assert.ok(result.includes('Focused summary chain: chainRoot=event-root-1'), 'should include focused summary metadata');
+    assert.ok(
+      result.includes('Governance discussion accelerated around the exploit response.'),
+      'should include summary content after metadata',
     );
   });
 

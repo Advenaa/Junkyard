@@ -1,7 +1,14 @@
 import crypto from 'node:crypto';
 import { TaskType } from '@google/generative-ai';
 import type { Pool } from '../db/connection.js';
-import { getRecentEventChains, type EventChainRow } from '../db/queries.js';
+import {
+  getRecentEventChains,
+  getRecentReportChainDrilldowns,
+  getSummaryEventsWithChainContext,
+  type EventChainRow,
+  type ReportChainDrilldownRow,
+  type SummaryEventWithChainRow,
+} from '../db/queries.js';
 import { normalizeAlias } from '../knowledge/entities.js';
 import type { Logger } from '../logger.js';
 import type { VectorCache } from '../vector-cache.js';
@@ -27,6 +34,7 @@ export interface ChatTool {
 const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_KEYWORD_EVENT_CHAINS = 3;
 const MAX_REPORT_EVENT_CHAINS = 2;
+const REPORT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const REPORT_INTENT_PATTERNS = [
   /\btimeline\b/i,
   /\bongoing story\b/i,
@@ -74,12 +82,62 @@ function extractStringArray(value: unknown, limit: number): string[] {
   return value.filter((entry): entry is string => typeof entry === 'string').slice(0, limit);
 }
 
+function extractReportEntityNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  return [
+    ...new Set(
+      value
+        .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+        .map((entry) => (typeof entry.name === 'string' ? entry.name.trim() : ''))
+        .filter((name) => name.length > 0),
+    ),
+  ];
+}
+
+function toEpochMs(value: unknown): number | null {
+  const epochMs = Number(value);
+  return Number.isFinite(epochMs) && epochMs > 1e12 ? epochMs : null;
+}
+
+function formatFocusedReportChain(chain: ReportChainDrilldownRow | null): string | null {
+  if (!chain) return null;
+  return `Focused report chain: chainRoot=${chain.chain_root_id} | summaryId=${chain.latest_summary_id} | entity=${chain.entity_name} | eventType=${chain.latest_event_type}`;
+}
+
+function selectFocusedSummaryChain(rows: SummaryEventWithChainRow[]): SummaryEventWithChainRow | null {
+  const candidates = rows.filter(
+    (row) =>
+      typeof row.chain_root_id === 'string' &&
+      row.chain_root_id.length > 0 &&
+      typeof row.chain_event_count === 'number' &&
+      row.chain_event_count > 1,
+  );
+
+  if (candidates.length === 0) return null;
+
+  return candidates.sort((left, right) => {
+    if (right.chain_event_count !== left.chain_event_count) {
+      return right.chain_event_count - left.chain_event_count;
+    }
+    if (left.chain_position !== right.chain_position) {
+      return left.chain_position - right.chain_position;
+    }
+    return left.event_time - right.event_time;
+  })[0] ?? null;
+}
+
+function formatFocusedSummaryChain(chain: SummaryEventWithChainRow | null): string | null {
+  if (!chain) return null;
+  return `Focused summary chain: chainRoot=${chain.chain_root_id} | entity=${chain.entity_name} | eventType=${chain.event_type}`;
+}
+
 function formatReportSearchPreview(row: {
   body: string;
   tldr?: string | null;
   date?: string | null;
   type?: string | null;
-}): string {
+}, focusedChain?: ReportChainDrilldownRow | null): string {
   const lines: string[] = [];
 
   if (row.type || row.date) {
@@ -89,6 +147,11 @@ function formatReportSearchPreview(row: {
     if (header) {
       lines.push(header);
     }
+  }
+
+  const focusedChainLine = formatFocusedReportChain(focusedChain ?? null);
+  if (focusedChainLine) {
+    lines.push(focusedChainLine);
   }
 
   const tldr = row.tldr?.trim();
@@ -114,6 +177,34 @@ function formatReportSearchPreview(row: {
 function inferSemanticSearchType(query: string, requestedType?: 'summary' | 'report'): 'summary' | 'report' {
   if (requestedType) return requestedType;
   return REPORT_INTENT_PATTERNS.some((pattern) => pattern.test(query)) ? 'report' : 'summary';
+}
+
+async function getFocusedReportChain(
+  pool: Pool,
+  row: {
+    body: string;
+    created_at: string | number;
+  },
+): Promise<ReportChainDrilldownRow | null> {
+  const parsed = parseJsonObject(row.body);
+  const reportEntityNames = extractReportEntityNames(parsed?.entitySentiment ?? parsed?.entity_sentiment);
+  const createdAt = toEpochMs(row.created_at);
+  if (reportEntityNames.length === 0 || createdAt === null) {
+    return null;
+  }
+
+  const rows = await getRecentReportChainDrilldowns(
+    pool,
+    reportEntityNames,
+    createdAt,
+    createdAt - REPORT_CHAIN_LOOKBACK_MS,
+    1,
+  );
+  return rows[0] ?? null;
+}
+
+async function getFocusedSummaryChain(pool: Pool, summaryId: string): Promise<SummaryEventWithChainRow | null> {
+  return selectFocusedSummaryChain(await getSummaryEventsWithChainContext(pool, summaryId));
 }
 
 // ── Tool Factories ────────────────────────────────────────────────────
@@ -170,17 +261,50 @@ function createSemanticSearch(pool: Pool, log: Logger, vectorCache: VectorCache,
             }>(`SELECT id, body, created_at FROM ${table} WHERE id IN (${placeholders})`, ids);
 
       const contentMap = new Map<string, { content: string; createdAt: string }>();
-      for (const row of dbResult.rows) {
-        const content =
-          type === 'report'
-            ? formatReportSearchPreview(
-                row as { body: string; tldr?: string | null; date?: string | null; type?: string | null },
-              )
-            : row.body;
-        contentMap.set(row.id, {
-          content,
-          createdAt: row.created_at,
-        });
+      if (type === 'report') {
+        const reportRows = dbResult.rows as Array<{
+          id: string;
+          body: string;
+          created_at: string;
+          tldr: string | null;
+          date: string;
+          type: string;
+        }>;
+        const focusedChains = await Promise.all(
+          reportRows.map(async (row) => ({
+            id: row.id,
+            chain: await getFocusedReportChain(pool, row),
+          })),
+        );
+        const focusedChainMap = new Map(focusedChains.map((entry) => [entry.id, entry.chain]));
+
+        for (const row of reportRows) {
+          contentMap.set(row.id, {
+            content: formatReportSearchPreview(row, focusedChainMap.get(row.id) ?? null),
+            createdAt: row.created_at,
+          });
+        }
+      } else {
+        const summaryRows = dbResult.rows as Array<{
+          id: string;
+          body: string;
+          created_at: string;
+        }>;
+        const focusedChains = await Promise.all(
+          summaryRows.map(async (row) => ({
+            id: row.id,
+            chain: await getFocusedSummaryChain(pool, row.id),
+          })),
+        );
+        const focusedChainMap = new Map(focusedChains.map((entry) => [entry.id, entry.chain]));
+
+        for (const row of summaryRows) {
+          const focusedChainLine = formatFocusedSummaryChain(focusedChainMap.get(row.id) ?? null);
+          contentMap.set(row.id, {
+            content: focusedChainLine ? `${focusedChainLine}\n${row.body}` : row.body,
+            createdAt: row.created_at,
+          });
+        }
       }
 
       const lines: string[] = [];
