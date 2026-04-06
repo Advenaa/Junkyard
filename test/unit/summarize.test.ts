@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, stripCodeFences, verifyEntities } from '../../src/process/summarize.js';
+import { buildSystemPrompt, stripCodeFences, verifyEntities, verifyEvents } from '../../src/process/summarize.js';
 import { ChunkSummaryLLMSchema } from '../../src/process/schemas.js';
 import type { ChunkSummary } from '../../src/process/schemas.js';
 
@@ -24,6 +24,7 @@ function makeSummary(entities: ChunkSummary['entities']): ChunkSummary {
     confidence: 7,
     entities,
     keyEvents: [],
+    events: [],
   };
 }
 
@@ -111,10 +112,12 @@ describe('verifyEntities', () => {
     parsed.urgency = 'breaking';
     parsed.confidence = 9;
     parsed.keyEvents = ['Something happened'];
+    parsed.events = [{ entityName: 'Ghost', eventType: 'launch', description: 'Ghost launched a new feature.' }];
     const result = verifyEntities(parsed, 'No entities match here', noopLog, 'discord', 'chan1');
     assert.equal(result.urgency, 'breaking');
     assert.equal(result.confidence, 9);
     assert.deepStrictEqual(result.keyEvents, ['Something happened']);
+    assert.deepStrictEqual(result.events, [{ entityName: 'Ghost', eventType: 'launch', description: 'Ghost launched a new feature.' }]);
     assert.equal(result.entities.length, 0);
   });
 
@@ -136,6 +139,35 @@ describe('verifyEntities', () => {
     assert.ok(names.includes('Uniswap'));
     assert.ok(names.includes('Aave'));
     assert.ok(!names.includes('Phantom'));
+  });
+});
+
+describe('verifyEvents', () => {
+  it('keeps events whose entityName matches a verified entity canonical name', () => {
+    const parsed = makeSummary([
+      { name: 'Wormhole', aliases: ['wormhole'], type: 'project', mentionCount: 3, sentiment: -0.8 },
+    ]);
+    parsed.events = [{ entityName: 'Wormhole', eventType: 'exploit', description: 'Wormhole bridge exploited.' }];
+    const result = verifyEvents(parsed, noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.events, parsed.events);
+  });
+
+  it('keeps events whose entityName matches a verified entity alias', () => {
+    const parsed = makeSummary([
+      { name: 'Ethereum', aliases: ['ETH', '$ETH'], type: 'token', mentionCount: 8, sentiment: 0.2 },
+    ]);
+    parsed.events = [{ entityName: 'ETH', eventType: 'funding', description: 'ETH ecosystem funding round announced.' }];
+    const result = verifyEvents(parsed, noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.events, parsed.events);
+  });
+
+  it('drops events whose entityName does not match any verified entity', () => {
+    const parsed = makeSummary([
+      { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 4, sentiment: 0.4 },
+    ]);
+    parsed.events = [{ entityName: 'Wormhole', eventType: 'exploit', description: 'Wormhole exploited.' }];
+    const result = verifyEvents(parsed, noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.events, []);
   });
 });
 
@@ -168,6 +200,10 @@ describe('buildSystemPrompt', () => {
     assert.ok(prompt.includes('"type"'));
     assert.ok(prompt.includes('"mentionCount"'));
     assert.ok(prompt.includes('"sentiment"'));
+    assert.ok(prompt.includes('"events"'));
+    assert.ok(prompt.includes('"entityName"'));
+    assert.ok(prompt.includes('"eventType"'));
+    assert.ok(prompt.includes('"description"'));
   });
 
   it('contains few-shot examples (H-013 fix)', () => {
@@ -186,6 +222,12 @@ describe('buildSystemPrompt', () => {
       assert.ok(prompt.includes(`"${t}"`), `missing type "${t}" in prompt`);
     }
   });
+
+  it('contains structured event type enum values', () => {
+    for (const t of ['exploit', 'audit', 'governance', 'launch', 'partnership', 'funding', 'hack', 'legal']) {
+      assert.ok(prompt.includes(`"${t}"`) || prompt.includes(`"${t}`), `missing event type "${t}" in prompt`);
+    }
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -200,6 +242,7 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
       confidence: 7,
       entities: [{ name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 }],
       keyEvents: ['Something happened'],
+      events: [{ entityName: 'Ethereum', eventType: 'funding', description: 'Ethereum funding announced.' }],
     };
     const result = ChunkSummaryLLMSchema.safeParse(input);
     assert.ok(result.success);
@@ -250,6 +293,7 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
     assert.ok(result.success);
     assert.deepStrictEqual(result.data!.entities, []);
     assert.deepStrictEqual(result.data!.keyEvents, []);
+    assert.deepStrictEqual(result.data!.events, []);
   });
 
   it('clamps entities array to max 20', () => {

@@ -22,15 +22,32 @@ import {
   deleteDiscordToken,
   updateDiscordTokenStatus,
   updateDiscordTokenLabel,
+  updateDiscordTokenProxy,
+  getCalendarEvents,
+  insertCalendarEvent,
+  getCalendarEventById,
+  updateCalendarEvent,
+  deleteCalendarEvent,
+  getSummaryById,
   type ReportRow,
   type SummaryRow,
   type SourceRow,
   type ItemRow,
+  type CalendarEventRow,
 } from './db/queries.js';
 import net from 'node:net';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
-import { encryptToken, decryptToken, getEncryptionKey } from './crypto/token-encrypt.js';
+import { encryptSecret, decryptSecret, getEncryptionKey } from './crypto/token-encrypt.js';
+import {
+  createEnvDiscordTokens,
+  maskDiscordToken,
+  maskProxyUrl,
+  normalizeProxyUrl,
+  type DiscordRuntimeToken,
+} from './discord-tokens.js';
+import { getNextCalendarOccurrence, isCalendarRecurrenceRule } from './knowledge/calendar.js';
+import { normalizeAlias } from './knowledge/entities.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
@@ -43,6 +60,113 @@ function toCamelCase<T>(obj: Record<string, unknown>): T {
   return result as T;
 }
 
+function parseReportBody(body: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function parseSummaryBody(body: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function extractStringArrayField(value: unknown, limit: number): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string').slice(0, limit);
+}
+
+function getReportEventChainPreview(body: string, limit = 1): string[] {
+  const parsed = parseReportBody(body);
+  if (!parsed) return [];
+  return extractStringArrayField(parsed.eventChains ?? parsed.event_chains, limit);
+}
+
+function getReportSearchPreview(tldr: string | null, body: string): string {
+  if (typeof tldr === 'string' && tldr.trim().length > 0) {
+    return tldr.trim();
+  }
+
+  const parsed = parseReportBody(body);
+  if (!parsed) {
+    return body;
+  }
+
+  const sections = parsed.sections;
+  if (Array.isArray(sections)) {
+    for (const section of sections) {
+      if (
+        section &&
+        typeof section === 'object' &&
+        'body' in section &&
+        typeof (section as { body?: unknown }).body === 'string'
+      ) {
+        const sectionBody = (section as { body: string }).body.trim();
+        if (sectionBody.length > 0) {
+          return sectionBody;
+        }
+      }
+    }
+  }
+
+  const keyEvents = extractStringArrayField(parsed.keyEvents ?? parsed.key_events, 1);
+  if (keyEvents[0]) return keyEvents[0];
+
+  const eventChains = extractStringArrayField(parsed.eventChains ?? parsed.event_chains, 1);
+  if (eventChains[0]) return eventChains[0];
+
+  return body;
+}
+
+function extractSummaryEntities(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+    .map((entry) => ({
+      name: typeof entry.name === 'string' ? entry.name : 'Unknown',
+      aliases: Array.isArray(entry.aliases)
+        ? entry.aliases.filter((alias): alias is string => typeof alias === 'string').slice(0, 10)
+        : [],
+      type: typeof entry.type === 'string' ? entry.type : 'project',
+      mentionCount:
+        typeof entry.mentionCount === 'number'
+          ? entry.mentionCount
+          : typeof entry.mention_count === 'number'
+            ? entry.mention_count
+            : 1,
+      sentiment: typeof entry.sentiment === 'number' ? entry.sentiment : 0,
+    }));
+}
+
+function extractSummaryEvents(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+    .map((entry) => ({
+      entityName:
+        typeof entry.entityName === 'string'
+          ? entry.entityName
+          : typeof entry.entity_name === 'string'
+            ? entry.entity_name
+            : 'Unknown',
+      eventType:
+        typeof entry.eventType === 'string'
+          ? entry.eventType
+          : typeof entry.event_type === 'string'
+            ? entry.event_type
+            : 'custom',
+      description: typeof entry.description === 'string' ? entry.description : '',
+    }))
+    .filter((entry) => entry.description.length > 0);
+}
+
 interface UserRow {
   discord_id: string;
   username: string;
@@ -52,8 +176,167 @@ interface UserRow {
   last_login_at: number | null;
 }
 
+interface UserAuditRow {
+  id: string;
+  actor_discord_id: string;
+  actor_username: string;
+  target_discord_id: string;
+  target_username: string | null;
+  action: 'invite' | 'role_change' | 'request_approved' | 'request_rejected';
+  previous_role: string | null;
+  new_role: string | null;
+  created_at: number;
+}
+
+interface AccessRequestRow {
+  id: string;
+  discord_id: string;
+  requested_role: 'viewer' | 'admin';
+  note: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  resolved_role: 'viewer' | 'admin' | null;
+  decided_at: number | null;
+  decided_by_discord_id: string | null;
+  created_at: number;
+}
+
 interface ChatHandler {
-  handle(query: string, conversationId: string, userId: string): Promise<{ response: string; toolsUsed: string[] }>;
+  handle(
+    query: string,
+    conversationId: string,
+    userId: string,
+  ): Promise<{
+    response: string;
+    toolsUsed: string[];
+    sources: Array<{ type: 'report' | 'summary'; id: string; label: string; snippet: string }>;
+  }>;
+}
+
+interface DiscordTokenView {
+  id: string;
+  maskedToken: string;
+  label: string | null;
+  status: string;
+  addedAt: number;
+  lastUsedAt: number | null;
+  plainToken: string | null;
+  proxyConfigured: boolean;
+  maskedProxy: string | null;
+  plainProxyUrl: string | null;
+}
+
+interface CalendarEntityLookupRow {
+  id: string;
+  name: string;
+}
+
+interface EntitySearchSuggestionRow {
+  id: string;
+  name: string;
+  matched_alias: string | null;
+}
+
+async function getManagedDiscordTokenViews(pool: Pool, encKey: string): Promise<DiscordTokenView[]> {
+  const rows = await getDiscordTokens(pool);
+  return rows.map((row) => {
+    let plainToken: string | null = null;
+    let maskedToken = '***';
+    try {
+      plainToken = decryptSecret({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
+      maskedToken = maskDiscordToken(plainToken);
+    } catch {
+      maskedToken = '[decryption failed]';
+    }
+
+    let plainProxyUrl: string | null = null;
+    let maskedProxy: string | null = null;
+    const proxyConfigured =
+      row.proxy_url_encrypted != null || row.proxy_url_iv != null || row.proxy_url_auth_tag != null;
+
+    if (proxyConfigured) {
+      if (!row.proxy_url_encrypted || !row.proxy_url_iv || !row.proxy_url_auth_tag) {
+        maskedProxy = '[incomplete proxy data]';
+      } else {
+        try {
+          plainProxyUrl = normalizeProxyUrl(
+            decryptSecret(
+              {
+                ciphertext: row.proxy_url_encrypted,
+                iv: row.proxy_url_iv,
+                authTag: row.proxy_url_auth_tag,
+              },
+              encKey,
+            ),
+          );
+          maskedProxy = maskProxyUrl(plainProxyUrl);
+        } catch {
+          maskedProxy = '[decryption failed]';
+        }
+      }
+    }
+
+    return {
+      id: row.id,
+      maskedToken,
+      label: row.label,
+      status: row.status,
+      addedAt: row.added_at,
+      lastUsedAt: row.last_used_at,
+      plainToken,
+      proxyConfigured,
+      maskedProxy,
+      plainProxyUrl,
+    };
+  });
+}
+
+async function resolveCalendarEntity(pool: Pool, rawEntityName: string | null | undefined): Promise<CalendarEntityLookupRow | null> {
+  const trimmed = rawEntityName?.trim();
+  if (!trimmed) return null;
+  const normalized = normalizeAlias(trimmed);
+  const { rows } = await pool.query<CalendarEntityLookupRow>(
+    `SELECT DISTINCT e.id, e.name
+       FROM entities e
+       LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+      WHERE LOWER(e.name) = LOWER($1)
+         OR ea.alias = $2
+      ORDER BY e.name ASC
+      LIMIT 1`,
+    [trimmed, normalized],
+  );
+  return rows[0] ?? null;
+}
+
+async function recordUserAuditEvent(
+  pool: Pool,
+  event: {
+    actorDiscordId: string;
+    actorUsername: string;
+    targetDiscordId: string;
+    targetUsername: string | null;
+    action: UserAuditRow['action'];
+    previousRole: string | null;
+    newRole: string | null;
+  },
+): Promise<void> {
+  const { ulid } = await import('ulid');
+  await pool.query(
+    `INSERT INTO user_audit_log (
+      id, actor_discord_id, actor_username, target_discord_id, target_username,
+      action, previous_role, new_role, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      ulid(),
+      event.actorDiscordId,
+      event.actorUsername,
+      event.targetDiscordId,
+      event.targetUsername,
+      event.action,
+      event.previousRole,
+      event.newRole,
+      Date.now(),
+    ],
+  );
 }
 
 export async function createServer(
@@ -63,8 +346,21 @@ export async function createServer(
   healthMonitor: HealthMonitor,
   chatHandler?: ChatHandler,
   onConfigChange?: () => Promise<void>,
-  onTokensChanged?: () => Promise<string[]>,
-  getTokenHealth?: () => Array<{ index: number; status: string; errorCount: number; connectedAt: number | null; channelCount: number }>,
+  onTokensChanged?: () => Promise<DiscordRuntimeToken[]>,
+  getTokenHealth?: () => Array<{
+    index: number;
+    status: string;
+    errorCount: number;
+    connectedAt: number | null;
+    channelCount: number;
+    source: 'env' | 'db';
+    tokenId: string | null;
+    label: string | null;
+    maskedToken: string | null;
+    proxyConfigured: boolean;
+    maskedProxy: string | null;
+  }>,
+  initialDiscordTokens: DiscordRuntimeToken[] = createEnvDiscordTokens(config.discordTokens),
 ): Promise<FastifyInstance> {
   // Warn if Discord OAuth is configured without PUBLIC_URL (DB-008)
   if (config.discordClientId && config.discordClientSecret && !config.publicUrl) {
@@ -73,7 +369,7 @@ export async function createServer(
 
   const sessionManager = createSessionManager(pool, log);
   const authPreHandler = requireAuth(pool, config, sessionManager);
-  const discordRest = createDiscordRest(config.discordTokens, log);
+  const discordRest = createDiscordRest(initialDiscordTokens, log);
   const app = Fastify({ logger: false, trustProxy: config.publicUrl ? 1 : false });
 
   // --- Plugins ---
@@ -138,7 +434,7 @@ export async function createServer(
       whereClause = `WHERE type = $${params.length}`;
     }
     const { rows: reports } = await pool.query<ReportRow>(
-      `SELECT id, date, type, tldr, sentiment, delivery_status, created_at FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT id, date, type, tldr, sentiment, delivery_status, created_at, body FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
       params,
     );
     const countParams: unknown[] = [];
@@ -152,7 +448,17 @@ export async function createServer(
       countParams,
     );
     return {
-      reports: reports.map((r) => toCamelCase(r as unknown as Record<string, unknown>)),
+      reports: reports.map((r) => {
+        const report = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
+        if (typeof r.body === 'string') {
+          const eventChains = getReportEventChainPreview(r.body, 1);
+          if (eventChains.length > 0) {
+            report.eventChains = eventChains;
+          }
+        }
+        delete report.body;
+        return report;
+      }),
       total: parseInt(countRows[0].count, 10),
     };
   });
@@ -166,16 +472,44 @@ export async function createServer(
     const report = toCamelCase<Record<string, unknown>>(rows[0] as unknown as Record<string, unknown>);
     // Parse body JSON to extract nested fields for the frontend
     if (typeof report.body === 'string') {
-      try {
-        const parsed = JSON.parse(report.body) as Record<string, unknown>;
+      const parsed = parseReportBody(report.body);
+      if (parsed) {
         report.keyEvents = (parsed.keyEvents ?? parsed.key_events ?? []) as unknown[];
+        report.marketCatalysts = (parsed.marketCatalysts ?? parsed.market_catalysts ?? []) as unknown[];
+        report.eventChains = (parsed.eventChains ?? parsed.event_chains ?? []) as unknown[];
         report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
         report.sections = (parsed.sections ?? []) as unknown[];
-      } catch {
-        // body is not valid JSON — leave it as-is
       }
     }
     return reply.send({ report });
+  });
+
+  app.get('/api/v1/summaries/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = await getSummaryById(pool, id);
+    if (!row) {
+      return reply.code(404).send({ error: 'Summary not found' });
+    }
+
+    const summary = toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>);
+    if (typeof row.body === 'string') {
+      const parsed = parseSummaryBody(row.body);
+      if (parsed) {
+        summary.text = typeof parsed.summary === 'string' ? parsed.summary : row.body;
+        summary.confidence = typeof parsed.confidence === 'number' ? parsed.confidence : null;
+        summary.keyEvents = extractStringArrayField(parsed.keyEvents ?? parsed.key_events, 5);
+        summary.entities = extractSummaryEntities(parsed.entities);
+        summary.events = extractSummaryEvents(parsed.events);
+      } else {
+        summary.text = row.body;
+        summary.confidence = null;
+        summary.keyEvents = [];
+        summary.entities = [];
+        summary.events = [];
+      }
+    }
+
+    return reply.send({ summary });
   });
 
   // --- Sources ---
@@ -363,6 +697,7 @@ export async function createServer(
             limit: { type: 'integer', minimum: 1, maximum: 100 },
             days: { type: 'integer', minimum: 1, maximum: 365 },
             mode: { type: 'string', enum: ['keyword', 'semantic'] },
+            scope: { type: 'string', enum: ['summary', 'report', 'all'] },
           },
           required: ['q'],
           additionalProperties: false,
@@ -375,11 +710,13 @@ export async function createServer(
         limit: rawLimit,
         days: rawDays,
         mode: rawMode,
+        scope: rawScope,
       } = request.query as {
         q: string;
         limit?: number;
         days?: number;
         mode?: 'keyword' | 'semantic';
+        scope?: 'summary' | 'report' | 'all';
       };
       const mode = rawMode ?? 'keyword';
       if (mode === 'semantic') {
@@ -387,12 +724,59 @@ export async function createServer(
       }
       const limit = Math.min(Math.max(rawLimit ?? 20, 1), 100);
       const days = Math.min(Math.max(rawDays ?? 30, 1), 365);
+      const scope = rawScope ?? 'summary';
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-      const { rows: results } = await pool.query<SummaryRow>(
-        `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
-        [`%${q}%`, cutoff, limit],
-      );
-      return { results: results.map((r) => toCamelCase(r as unknown as Record<string, unknown>)) };
+      const likeQuery = `%${q}%`;
+
+      const summaryResults =
+        scope === 'report'
+          ? []
+          : (
+              await pool.query<SummaryRow>(
+                `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
+                [likeQuery, cutoff, limit],
+              )
+            ).rows.map((row) =>
+              toCamelCase<Record<string, unknown>>({
+                ...row,
+                result_type: 'summary',
+              } as Record<string, unknown>),
+            );
+
+      const reportResults =
+        scope === 'summary'
+          ? []
+          : (
+              await pool.query<Pick<ReportRow, 'id' | 'date' | 'type' | 'body' | 'tldr' | 'created_at'>>(
+                `SELECT id, date, type, body, tldr, created_at
+                   FROM reports
+                  WHERE (COALESCE(tldr, '') ILIKE $1 OR body ILIKE $1)
+                    AND created_at > $2
+                  ORDER BY created_at DESC
+                  LIMIT $3`,
+                [likeQuery, cutoff, limit],
+              )
+            ).rows.map((row) => {
+              const report = toCamelCase<Record<string, unknown>>({
+                id: row.id,
+                date: row.date,
+                report_type: row.type,
+                body: getReportSearchPreview(row.tldr, row.body),
+                created_at: row.created_at,
+                result_type: 'report',
+              });
+              const eventChains = getReportEventChainPreview(row.body, 1);
+              if (eventChains.length > 0) {
+                report.eventChains = eventChains;
+              }
+              return report;
+            });
+
+      const results = [...summaryResults, ...reportResults]
+        .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
+        .slice(0, limit);
+
+      return { results };
     },
   );
 
@@ -495,6 +879,209 @@ export async function createServer(
     const { rows: users } = await pool.query<UserRow>(`SELECT * FROM users ORDER BY created_at DESC`);
     return { users: users.map((r) => toCamelCase(r as unknown as Record<string, unknown>)) };
   });
+
+  app.get('/api/v1/access-requests', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const { rows } = await pool.query<AccessRequestRow>(
+      `SELECT * FROM access_requests WHERE status = 'pending' ORDER BY created_at DESC LIMIT 20`,
+    );
+    return { requests: rows.map((row) => toCamelCase(row as unknown as Record<string, unknown>)) };
+  });
+
+  app.get('/api/v1/users/audit', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const { rows } = await pool.query<UserAuditRow>(`SELECT * FROM user_audit_log ORDER BY created_at DESC LIMIT 20`);
+    return { events: rows.map((row) => toCamelCase(row as unknown as Record<string, unknown>)) };
+  });
+
+  app.post(
+    '/api/v1/access-requests',
+    {
+      config: { rateLimit: { max: 3, timeWindow: '1 hour' } },
+      schema: {
+        body: {
+          type: 'object',
+          required: ['discordId', 'requestedRole'],
+          properties: {
+            discordId: { type: 'string', pattern: '^\\d{17,20}$' },
+            requestedRole: { type: 'string', enum: ['viewer', 'admin'] },
+            note: { type: 'string', maxLength: 500 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { discordId, requestedRole, note } = request.body as {
+        discordId: string;
+        requestedRole: 'viewer' | 'admin';
+        note?: string;
+      };
+      const trimmedNote = note?.trim() ? note.trim() : null;
+      const now = Date.now();
+      const existing = await pool.query<AccessRequestRow>(
+        `SELECT * FROM access_requests WHERE discord_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,
+        [discordId],
+      );
+      if (existing.rows.length > 0) {
+        const { rows } = await pool.query<AccessRequestRow>(
+          `UPDATE access_requests
+             SET requested_role = $2, note = $3, created_at = $4
+           WHERE id = $1
+           RETURNING *`,
+          [existing.rows[0].id, requestedRole, trimmedNote, now],
+        );
+        return toCamelCase<AccessRequestRow>(rows[0] as unknown as Record<string, unknown>);
+      }
+
+      const { ulid } = await import('ulid');
+      const id = ulid();
+      const { rows } = await pool.query<AccessRequestRow>(
+        `INSERT INTO access_requests (
+          id, discord_id, requested_role, note, status, resolved_role, decided_at, decided_by_discord_id, created_at
+        ) VALUES ($1, $2, $3, $4, 'pending', NULL, NULL, NULL, $5)
+        RETURNING *`,
+        [id, discordId, requestedRole, trimmedNote, now],
+      );
+      reply.code(201);
+      return toCamelCase<AccessRequestRow>(rows[0] as unknown as Record<string, unknown>);
+    },
+  );
+
+  // --- POST /users/invite (AC-001) ---
+  app.post(
+    '/api/v1/users/invite',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['discordId', 'role'],
+          properties: {
+            discordId: { type: 'string', pattern: '^\\d{17,20}$' },
+            role: { type: 'string', enum: ['admin', 'viewer', 'blocked'] },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const { discordId, role } = request.body as { discordId: string; role: string };
+      const now = Date.now();
+      const existing = await pool.query<Pick<UserRow, 'role' | 'username'>>(
+        `SELECT role, username FROM users WHERE discord_id = $1`,
+        [discordId],
+      );
+      const { rows } = await pool.query<UserRow>(
+        `INSERT INTO users (discord_id, username, avatar, role, created_at, last_login_at)
+         VALUES ($1, $2, NULL, $3, $4, NULL)
+         ON CONFLICT (discord_id) DO UPDATE SET role = EXCLUDED.role
+         RETURNING *`,
+        [discordId, 'Pending invite', role, now],
+      );
+      await recordUserAuditEvent(pool, {
+        actorDiscordId: request.user!.discordId,
+        actorUsername: request.user!.username,
+        targetDiscordId: discordId,
+        targetUsername: rows[0]?.username ?? null,
+        action: 'invite',
+        previousRole: existing.rows[0]?.role ?? null,
+        newRole: role,
+      });
+      return toCamelCase<UserRow>(rows[0] as unknown as Record<string, unknown>);
+    },
+  );
+
+  app.patch(
+    '/api/v1/access-requests/:requestId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['requestId'],
+          properties: {
+            requestId: { type: 'string', minLength: 1 },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['decision'],
+          properties: {
+            decision: { type: 'string', enum: ['approved', 'rejected'] },
+            role: { type: 'string', enum: ['viewer', 'admin'] },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { requestId } = request.params as { requestId: string };
+      const { decision, role } = request.body as { decision: 'approved' | 'rejected'; role?: 'viewer' | 'admin' };
+      const existingRequest = await pool.query<AccessRequestRow>(`SELECT * FROM access_requests WHERE id = $1`, [requestId]);
+      if (existingRequest.rows.length === 0) {
+        return reply.code(404).send({ error: 'Access request not found' });
+      }
+      const accessRequest = existingRequest.rows[0];
+      if (accessRequest.status !== 'pending') {
+        return reply.code(409).send({ error: 'Access request already decided' });
+      }
+
+      const existingUser = await pool.query<Pick<UserRow, 'role' | 'username'>>(
+        `SELECT role, username FROM users WHERE discord_id = $1`,
+        [accessRequest.discord_id],
+      );
+      const previousRole = existingUser.rows[0]?.role ?? null;
+      const now = Date.now();
+
+      if (decision === 'approved') {
+        const resolvedRole = role ?? accessRequest.requested_role;
+        const { rows: userRows } = await pool.query<UserRow>(
+          `INSERT INTO users (discord_id, username, avatar, role, created_at, last_login_at)
+           VALUES ($1, $2, NULL, $3, $4, NULL)
+           ON CONFLICT (discord_id) DO UPDATE SET role = EXCLUDED.role
+           RETURNING *`,
+          [accessRequest.discord_id, existingUser.rows[0]?.username ?? 'Pending invite', resolvedRole, now],
+        );
+        const { rows } = await pool.query<AccessRequestRow>(
+          `UPDATE access_requests
+             SET status = 'approved', resolved_role = $2, decided_at = $3, decided_by_discord_id = $4
+           WHERE id = $1
+           RETURNING *`,
+          [requestId, resolvedRole, now, request.user!.discordId],
+        );
+        await recordUserAuditEvent(pool, {
+          actorDiscordId: request.user!.discordId,
+          actorUsername: request.user!.username,
+          targetDiscordId: accessRequest.discord_id,
+          targetUsername: userRows[0]?.username ?? existingUser.rows[0]?.username ?? null,
+          action: 'request_approved',
+          previousRole,
+          newRole: resolvedRole,
+        });
+        return {
+          request: toCamelCase<AccessRequestRow>(rows[0] as unknown as Record<string, unknown>),
+          user: toCamelCase<UserRow>(userRows[0] as unknown as Record<string, unknown>),
+        };
+      }
+
+      const { rows } = await pool.query<AccessRequestRow>(
+        `UPDATE access_requests
+           SET status = 'rejected', resolved_role = NULL, decided_at = $2, decided_by_discord_id = $3
+         WHERE id = $1
+         RETURNING *`,
+        [requestId, now, request.user!.discordId],
+      );
+      await recordUserAuditEvent(pool, {
+        actorDiscordId: request.user!.discordId,
+        actorUsername: request.user!.username,
+        targetDiscordId: accessRequest.discord_id,
+        targetUsername: existingUser.rows[0]?.username ?? null,
+        action: 'request_rejected',
+        previousRole,
+        newRole: null,
+      });
+      return { request: toCamelCase<AccessRequestRow>(rows[0] as unknown as Record<string, unknown>) };
+    },
+  );
 
   // --- PATCH /sources/:source/:sourceId (CD-002) ---
   app.patch(
@@ -631,25 +1218,16 @@ export async function createServer(
     if (!encKey) {
       return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
     }
-    const rows = await getDiscordTokens(pool);
-    const tokens = rows.map((row) => {
-      // Mask the token — show first 10 chars only
-      let maskedToken = '***';
-      try {
-        const plain = decryptToken({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
-        maskedToken = plain.slice(0, 10) + '...' + plain.slice(-4);
-      } catch {
-        maskedToken = '[decryption failed]';
-      }
-      return {
-        id: row.id,
-        maskedToken,
-        label: row.label,
-        status: row.status,
-        addedAt: row.added_at,
-        lastUsedAt: row.last_used_at,
-      };
-    });
+    const tokens = (await getManagedDiscordTokenViews(pool, encKey)).map((token) => ({
+      id: token.id,
+      maskedToken: token.maskedToken,
+      label: token.label,
+      status: token.status,
+      addedAt: token.addedAt,
+      lastUsedAt: token.lastUsedAt,
+      proxyConfigured: token.proxyConfigured,
+      maskedProxy: token.maskedProxy,
+    }));
     return { tokens };
   });
 
@@ -664,6 +1242,7 @@ export async function createServer(
           properties: {
             token: { type: 'string', minLength: 1, maxLength: 500 },
             label: { type: 'string', maxLength: 100 },
+            proxyUrl: { type: 'string', minLength: 1, maxLength: 500 },
           },
           additionalProperties: false,
         },
@@ -674,14 +1253,41 @@ export async function createServer(
       if (!encKey) {
         return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
       }
-      const { token, label } = request.body as { token: string; label?: string };
+      const { token, label, proxyUrl } = request.body as { token: string; label?: string; proxyUrl?: string };
       const { ulid } = await import('ulid');
       const id = ulid();
-      const encrypted = encryptToken(token, encKey);
-      await insertDiscordToken(pool, id, encrypted.ciphertext, encrypted.iv, encrypted.authTag, label ?? null, Date.now());
+      const encryptedToken = encryptSecret(token, encKey);
+
+      let encryptedProxy: { ciphertext: string; iv: string; authTag: string } | null = null;
+      if (proxyUrl) {
+        try {
+          encryptedProxy = encryptSecret(normalizeProxyUrl(proxyUrl), encKey);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Invalid proxy URL';
+          return reply.code(400).send({ error: message });
+        }
+      }
+
+      await insertDiscordToken(
+        pool,
+        id,
+        encryptedToken.ciphertext,
+        encryptedToken.iv,
+        encryptedToken.authTag,
+        label ?? null,
+        Date.now(),
+        encryptedProxy,
+      );
       if (onTokensChanged) onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
       reply.code(201);
-      return { id, label: label ?? null, status: 'active', addedAt: Date.now() };
+      return {
+        id,
+        label: label ?? null,
+        status: 'active',
+        addedAt: Date.now(),
+        proxyConfigured: encryptedProxy != null,
+        maskedProxy: proxyUrl ? maskProxyUrl(normalizeProxyUrl(proxyUrl)) : null,
+      };
     },
   );
 
@@ -720,6 +1326,12 @@ export async function createServer(
           properties: {
             label: { type: 'string', maxLength: 100 },
             status: { type: 'string', enum: ['active', 'disabled'] },
+            proxyUrl: {
+              anyOf: [
+                { type: 'string', minLength: 1, maxLength: 500 },
+                { type: 'null' },
+              ],
+            },
           },
           additionalProperties: false,
         },
@@ -734,7 +1346,7 @@ export async function createServer(
     },
     async (request, reply) => {
       const { tokenId } = request.params;
-      const body = request.body as { label?: string; status?: string };
+      const body = request.body as { label?: string; status?: string; proxyUrl?: string | null };
       if (body.label != null) {
         const updated = await updateDiscordTokenLabel(pool, tokenId, body.label);
         if (!updated) return reply.code(404).send({ error: 'Token not found' });
@@ -743,7 +1355,26 @@ export async function createServer(
         const updated = await updateDiscordTokenStatus(pool, tokenId, body.status);
         if (!updated) return reply.code(404).send({ error: 'Token not found' });
       }
-      if (body.status != null && onTokensChanged) {
+      if (Object.prototype.hasOwnProperty.call(body, 'proxyUrl')) {
+        const encKey = getEncryptionKey();
+        if (!encKey) {
+          return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
+        }
+
+        let encryptedProxy: { ciphertext: string; iv: string; authTag: string } | null = null;
+        if (body.proxyUrl != null) {
+          try {
+            encryptedProxy = encryptSecret(normalizeProxyUrl(body.proxyUrl), encKey);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Invalid proxy URL';
+            return reply.code(400).send({ error: message });
+          }
+        }
+
+        const updated = await updateDiscordTokenProxy(pool, tokenId, encryptedProxy);
+        if (!updated) return reply.code(404).send({ error: 'Token not found' });
+      }
+      if ((body.status != null || Object.prototype.hasOwnProperty.call(body, 'proxyUrl')) && onTokensChanged) {
         onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
       }
       return { ok: true };
@@ -753,7 +1384,22 @@ export async function createServer(
   // --- Discord token health (Gateway connection states) ---
   app.get('/api/v1/discord/tokens/health', { preHandler: [authPreHandler, requireAdmin] }, async () => {
     if (!getTokenHealth) return { states: [] };
-    const states = getTokenHealth();
+    const runtimeStates = getTokenHealth();
+    const encKey = getEncryptionKey();
+    const managedTokens = encKey ? await getManagedDiscordTokenViews(pool, encKey) : [];
+    const managedById = new Map(managedTokens.map((token) => [token.id, token]));
+
+    const states = runtimeStates.map((state) => {
+      const managedMeta = state.tokenId ? managedById.get(state.tokenId) : null;
+      return {
+        ...state,
+        label: managedMeta?.label ?? state.label ?? null,
+        maskedToken: managedMeta?.maskedToken ?? state.maskedToken ?? null,
+        proxyConfigured: managedMeta?.proxyConfigured ?? state.proxyConfigured ?? false,
+        maskedProxy: managedMeta?.maskedProxy ?? state.maskedProxy ?? null,
+      };
+    });
+
     return { states };
   });
 
@@ -780,18 +1426,36 @@ export async function createServer(
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const { discordId } = request.params as { discordId: string };
       const { role } = request.body as { role: string };
-      await pool.query(
-        `INSERT INTO users (discord_id, role) VALUES ($1, $2) ON CONFLICT (discord_id) DO UPDATE SET role = $2`,
+      const existing = await pool.query<Pick<UserRow, 'role' | 'username'>>(
+        `SELECT role, username FROM users WHERE discord_id = $1`,
+        [discordId],
+      );
+      if (existing.rows.length === 0) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      const { rows } = await pool.query<UserRow>(
+        `UPDATE users SET role = $2 WHERE discord_id = $1 RETURNING *`,
         [discordId, role],
       );
       // AU-035: purge all active sessions when a user is blocked
       if (role === 'blocked') {
         await sessionManager.deleteAllForUser(discordId);
       }
-      return { discordId, role };
+      if (existing.rows[0].role !== role) {
+        await recordUserAuditEvent(pool, {
+          actorDiscordId: request.user!.discordId,
+          actorUsername: request.user!.username,
+          targetDiscordId: discordId,
+          targetUsername: rows[0]?.username ?? existing.rows[0].username ?? null,
+          action: 'role_change',
+          previousRole: existing.rows[0].role,
+          newRole: role,
+        });
+      }
+      return toCamelCase<UserRow>(rows[0] as unknown as Record<string, unknown>);
     },
   );
 
@@ -819,6 +1483,249 @@ export async function createServer(
       costToday: parseFloat(row.cost_today),
     };
   });
+
+  app.get<{ Querystring: { q: string; limit?: number } }>(
+    '/api/v1/entities/search',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          required: ['q'],
+          properties: {
+            q: { type: 'string', minLength: 2, maxLength: 100 },
+            limit: { type: 'integer', minimum: 1, maximum: 10 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const rawQuery = request.query.q.trim();
+      const normalizedQuery = normalizeAlias(rawQuery);
+      if (!rawQuery || !normalizedQuery) {
+        return { entities: [] };
+      }
+
+      const rawPrefix = `${rawQuery.toLowerCase()}%`;
+      const aliasPrefix = `${normalizedQuery}%`;
+      const limit = Math.min(Math.max(request.query.limit ?? 6, 1), 10);
+
+      const { rows } = await pool.query<EntitySearchSuggestionRow>(
+        `SELECT id, name, matched_alias
+           FROM (
+             SELECT DISTINCT ON (e.id)
+                    e.id,
+                    e.name,
+                    CASE
+                      WHEN ea.alias IS NOT NULL AND ea.alias LIKE $2 AND ea.alias <> LOWER(e.name) THEN ea.alias
+                      ELSE NULL
+                    END AS matched_alias,
+                    CASE
+                      WHEN LOWER(e.name) = $3 THEN 0
+                      WHEN ea.alias = $4 THEN 1
+                      WHEN LOWER(e.name) LIKE $1 THEN 2
+                      ELSE 3
+                    END AS rank
+               FROM entities e
+               LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+              WHERE LOWER(e.name) LIKE $1
+                 OR ea.alias LIKE $2
+              ORDER BY e.id,
+                       rank ASC,
+                       LENGTH(e.name) ASC,
+                       e.name ASC
+           ) ranked
+          ORDER BY rank ASC, LENGTH(name) ASC, name ASC
+          LIMIT $5`,
+        [rawPrefix, aliasPrefix, rawQuery.toLowerCase(), normalizedQuery, limit],
+      );
+
+      return {
+        entities: rows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          matchedAlias: row.matched_alias,
+        })),
+      };
+    },
+  );
+
+  // --- Calendar events (Cycle detection foundation) ---
+  app.get('/api/v1/calendar-events', { preHandler: [authPreHandler] }, async () => {
+    const events = await getCalendarEvents(pool, Date.now(), 25);
+    return { events: events.map((row) => toCamelCase<CalendarEventRow>(row as unknown as Record<string, unknown>)) };
+  });
+
+  app.post(
+    '/api/v1/calendar-events',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['name', 'category', 'scheduledFor'],
+          properties: {
+            name: { type: 'string', minLength: 1, maxLength: 120 },
+            category: { type: 'string', enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'] },
+            entityName: {
+              anyOf: [{ type: 'string', minLength: 1, maxLength: 120 }, { type: 'null' }],
+            },
+            description: {
+              anyOf: [{ type: 'string', maxLength: 500 }, { type: 'null' }],
+            },
+            scheduledFor: { type: 'integer', minimum: 0 },
+            recurrenceRule: {
+              anyOf: [{ type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly'] }, { type: 'null' }],
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { name, category, entityName, description, scheduledFor, recurrenceRule } = request.body as {
+        name: string;
+        category: CalendarEventRow['category'];
+        entityName?: string | null;
+        description?: string;
+        scheduledFor: number;
+        recurrenceRule?: CalendarEventRow['recurrence_rule'];
+      };
+      const trimmedName = name.trim();
+      const trimmedDescription = description?.trim() ? description.trim() : null;
+      if (!trimmedName) {
+        return reply.code(400).send({ error: 'Event name is required' });
+      }
+      if (recurrenceRule != null && !isCalendarRecurrenceRule(recurrenceRule)) {
+        return reply.code(400).send({ error: 'Invalid recurrence rule' });
+      }
+      if (scheduledFor < Date.now() - 60_000 && recurrenceRule == null) {
+        return reply.code(400).send({ error: 'Calendar events must be scheduled in the future' });
+      }
+      const entity = await resolveCalendarEntity(pool, entityName);
+      if (entityName?.trim() && !entity) {
+        return reply.code(400).send({ error: 'Linked entity not found' });
+      }
+
+      const { ulid } = await import('ulid');
+      const row = await insertCalendarEvent(pool, {
+        id: ulid(),
+        name: trimmedName,
+        category,
+        description: trimmedDescription,
+        recurrenceRule: recurrenceRule ?? null,
+        entityId: entity?.id ?? null,
+        nextOccurrence: getNextCalendarOccurrence(scheduledFor, recurrenceRule ?? null),
+        createdAt: Date.now(),
+      });
+      reply.code(201);
+      return { event: toCamelCase<CalendarEventRow>(row as unknown as Record<string, unknown>) };
+    },
+  );
+
+  app.patch<{ Params: { eventId: string } }>(
+    '/api/v1/calendar-events/:eventId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['eventId'],
+          properties: {
+            eventId: { type: 'string', minLength: 1 },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['name', 'category', 'scheduledFor'],
+          properties: {
+            name: { type: 'string', minLength: 1, maxLength: 120 },
+            category: { type: 'string', enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'] },
+            entityName: {
+              anyOf: [{ type: 'string', minLength: 1, maxLength: 120 }, { type: 'null' }],
+            },
+            description: {
+              anyOf: [{ type: 'string', maxLength: 500 }, { type: 'null' }],
+            },
+            scheduledFor: { type: 'integer', minimum: 0 },
+            recurrenceRule: {
+              anyOf: [{ type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly'] }, { type: 'null' }],
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const existing = await getCalendarEventById(pool, request.params.eventId);
+      if (!existing) {
+        return reply.code(404).send({ error: 'Calendar event not found' });
+      }
+
+      const { name, category, entityName, description, scheduledFor, recurrenceRule } = request.body as {
+        name: string;
+        category: CalendarEventRow['category'];
+        entityName?: string | null;
+        description?: string | null;
+        scheduledFor: number;
+        recurrenceRule?: CalendarEventRow['recurrence_rule'];
+      };
+
+      const trimmedName = name.trim();
+      const trimmedDescription = description?.trim() ? description.trim() : null;
+      if (!trimmedName) {
+        return reply.code(400).send({ error: 'Event name is required' });
+      }
+      if (recurrenceRule != null && !isCalendarRecurrenceRule(recurrenceRule)) {
+        return reply.code(400).send({ error: 'Invalid recurrence rule' });
+      }
+      if (scheduledFor < Date.now() - 60_000 && recurrenceRule == null) {
+        return reply.code(400).send({ error: 'Calendar events must be scheduled in the future' });
+      }
+      const entity = await resolveCalendarEntity(pool, entityName);
+      if (entityName?.trim() && !entity) {
+        return reply.code(400).send({ error: 'Linked entity not found' });
+      }
+
+      const row = await updateCalendarEvent(pool, {
+        id: existing.id,
+        name: trimmedName,
+        category,
+        description: trimmedDescription,
+        recurrenceRule: recurrenceRule ?? null,
+        entityId: entity?.id ?? null,
+        nextOccurrence: getNextCalendarOccurrence(scheduledFor, recurrenceRule ?? null),
+      });
+      if (!row) {
+        return reply.code(404).send({ error: 'Calendar event not found' });
+      }
+      return { event: toCamelCase<CalendarEventRow>(row as unknown as Record<string, unknown>) };
+    },
+  );
+
+  app.delete<{ Params: { eventId: string } }>(
+    '/api/v1/calendar-events/:eventId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['eventId'],
+          properties: {
+            eventId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const deleted = await deleteCalendarEvent(pool, request.params.eventId);
+      if (!deleted) {
+        return reply.code(404).send({ error: 'Calendar event not found' });
+      }
+      reply.code(204).send();
+    },
+  );
 
   // --- POST /api/v1/config/test-webhook (CD-005) ---
   app.post(

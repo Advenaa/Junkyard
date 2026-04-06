@@ -13,4 +13,5 @@ export interface Report {
   sentiment: number | null;
   deliveryStatus: string;
   createdAt: number;
+  eventChains?: string[];
 }

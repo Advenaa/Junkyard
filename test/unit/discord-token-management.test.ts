@@ -175,8 +175,8 @@ describe('Structural: server routes (src/server.ts)', () => {
     assert.ok(getIdx !== -1);
     const getBody = serverSrc.slice(getIdx, getIdx + 800);
     assert.ok(
-      getBody.includes('.slice(0, 10)'),
-      'GET tokens endpoint must mask tokens using .slice(0, 10)',
+      getBody.includes('maskedToken') || getBody.includes('maskDiscordToken'),
+      'GET tokens endpoint must expose masked tokens',
     );
   });
 });

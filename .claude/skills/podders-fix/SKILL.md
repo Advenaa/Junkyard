@@ -9,11 +9,11 @@ context: fork
 
 You fix exactly one finding from the research queue. The finding ID is: `$ARGUMENTS`
 
-**Working directory**: `/Users/advena/project/poddyarchie`
+**Working directory**: project root
 
 ## Step 1: Parse the finding
 
-Read `/Users/advena/project/poddyarchie/.research-queue.md` and locate the finding matching ID `$ARGUMENTS`.
+Read `./.research-queue.md` and locate the finding matching ID `$ARGUMENTS`.
 
 Extract these fields:
 - **ID** (e.g., `EN-005`, `C-001`, `W-003`)
@@ -39,7 +39,8 @@ Read the referenced source file. Do NOT read only the exact line — read a gene
 If the finding references multiple files, read all of them.
 
 Also read these for project conventions:
-- `/Users/advena/project/poddyarchie/CLAUDE.md` — conventions and coding guidelines
+- `./docs/AGENT_LOOP.md` — shared cross-harness execution + handoff loop
+- `./CLAUDE.md` or `./AGENTS.md` — repo conventions and coding guidelines
 - Any relevant doc from the `docs/` folder if the finding touches a specific subsystem
 
 ## Step 3: Apply the fix
@@ -69,7 +70,7 @@ Fix the issue following Podders conventions strictly:
 
 ## Step 4: Verify — build
 
-Run `npm run build` in `/Users/advena/project/poddyarchie`.
+Run `npm run build` in the project root.
 
 If it fails:
 1. Read the error output carefully
@@ -81,7 +82,7 @@ Do NOT proceed to the next step until the build passes.
 
 ## Step 5: Verify — test
 
-Run `npm test` in `/Users/advena/project/poddyarchie`.
+Run `npm test` in the project root.
 
 If tests fail:
 1. Determine if the failure is caused by your fix or was pre-existing
@@ -90,7 +91,7 @@ If tests fail:
 
 ## Step 6: Update the research queue
 
-Edit `/Users/advena/project/poddyarchie/.research-queue.md`:
+Edit `./.research-queue.md`:
 
 - Change the finding's status from `open` to `pending`
 - Do NOT use a commit hash (there is no commit yet — the user or evolve handles committing)
@@ -123,7 +124,7 @@ Output a concise summary:
 
 - **One finding per invocation.** Do not batch multiple findings.
 - **Read before writing.** Always read the full context before making changes.
-- **Follow CLAUDE.md.** Every convention listed there applies.
+- **Follow the repo conventions.** Use `CLAUDE.md` or `AGENTS.md` plus `docs/AGENT_LOOP.md`.
 - **Minimal changes.** Fix the finding, nothing else. No drive-by refactors.
 - **No commits.** The user decides when to commit.
 - **If you can't fix it, say so.** Some findings may require design decisions or more context. Report what you found and why you couldn't apply a fix, rather than applying a bad one.

@@ -32,6 +32,8 @@ function makeValidReport() {
   return {
     tldr: 'Market is quiet today, nothing major.',
     keyEvents: ['BTC sideways', 'ETH gas low'],
+    marketCatalysts: ['Friday options expiry keeps BTC vol risk elevated.'],
+    eventChains: ['Bitcoin exploit chain remains unresolved after the audit follow-up.'],
     entitySentiment: [
       { name: 'Bitcoin', sentiment: 0.2, reason: 'Stable price action' },
       { name: 'Ethereum', sentiment: -0.1, reason: 'Slight dip' },
@@ -75,6 +77,9 @@ function makePool(
     priorPulse?: any[];
     existingPulse?: any[];
     appConfig?: any[];
+    entityRows?: any[];
+    eventSentimentShift?: any[];
+    eventChains?: any[];
   } = {},
 ) {
   return {
@@ -97,7 +102,24 @@ function makePool(
       }
       // Entity ID lookup: SELECT id FROM entities WHERE LOWER(name) = ANY($1)
       if (sql.includes('FROM entities')) {
-        return { rows: [] };
+        return { rows: opts.entityRows ?? [] };
+      }
+      if (sql.includes('FROM entity_mentions')) {
+        return {
+          rows:
+            opts.eventSentimentShift ??
+            [
+              {
+                pre_avg_sentiment: null,
+                pre_mention_count: 0,
+                post_avg_sentiment: null,
+                post_mention_count: 0,
+              },
+            ],
+        };
+      }
+      if (sql.includes('FROM events') && sql.includes('GROUP BY COALESCE(chain_id, id)')) {
+        return { rows: opts.eventChains ?? [] };
       }
       // insertReport: INSERT INTO reports ... RETURNING *
       if (sql.includes('INSERT INTO reports')) {
@@ -149,6 +171,8 @@ describe('pulse', { concurrency: 1 }, () => {
       const result = MarketReportLLMSchema.safeParse({ tldr: 'Short update.' });
       assert.ok(result.success);
       assert.deepStrictEqual(result.data!.keyEvents, []);
+      assert.deepStrictEqual(result.data!.marketCatalysts, []);
+      assert.deepStrictEqual(result.data!.eventChains, []);
       assert.deepStrictEqual(result.data!.entitySentiment, []);
       assert.deepStrictEqual(result.data!.sections, []);
       assert.deepStrictEqual(result.data!.newProjects, []);
@@ -164,6 +188,20 @@ describe('pulse', { concurrency: 1 }, () => {
     it('caps keyEvents at max 10', () => {
       const report = makeValidReport();
       report.keyEvents = Array.from({ length: 11 }, (_, i) => `Event ${i}`);
+      const result = MarketReportLLMSchema.safeParse(report);
+      assert.ok(!result.success);
+    });
+
+    it('caps marketCatalysts at max 6', () => {
+      const report = makeValidReport();
+      report.marketCatalysts = Array.from({ length: 7 }, (_, i) => `Catalyst ${i}`);
+      const result = MarketReportLLMSchema.safeParse(report);
+      assert.ok(!result.success);
+    });
+
+    it('caps eventChains at max 5', () => {
+      const report = makeValidReport();
+      report.eventChains = Array.from({ length: 6 }, (_, i) => `Chain ${i}`);
       const result = MarketReportLLMSchema.safeParse(report);
       assert.ok(!result.success);
     });
@@ -225,6 +263,182 @@ describe('pulse', { concurrency: 1 }, () => {
       assert.ok(typeof result!.id === 'string');
       assert.ok(typeof result!.body === 'string');
       assert.strictEqual(result!.type, 'pulse');
+    });
+
+    it('injects upcoming calendar events into the pulse prompt', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        llm,
+        mockSentimentTracker,
+        mockDivergenceTracker,
+        {
+          getRecentEvents: async () => [],
+          getUpcomingEvents: async () => [
+            {
+              id: 'cal-1',
+              name: 'ARB token unlock',
+              category: 'unlock',
+              description: 'Large circulating supply increase expected.',
+              recurrenceRule: null,
+              nextOccurrence: Date.now() + 12 * 60 * 60 * 1000,
+            },
+          ],
+        },
+      );
+
+      const result = await runPulse();
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.match(call.messages[0]!.content, /<upcoming_calendar_events>/);
+      assert.match(call.messages[0]!.content, /ARB token unlock/);
+      assert.match(call.messages[0]!.content, /Large circulating supply increase expected\./);
+    });
+
+    it('injects recent calendar events into the pulse prompt', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        llm,
+        mockSentimentTracker,
+        mockDivergenceTracker,
+        {
+          getUpcomingEvents: async () => [],
+          getRecentEvents: async () => [
+            {
+              id: 'cal-2',
+              name: 'Token unlock completed',
+              category: 'unlock',
+              description: 'No meaningful sell pressure followed.',
+              recurrenceRule: null,
+              nextOccurrence: Date.now() - 2 * 60 * 60 * 1000,
+            },
+          ],
+        },
+      );
+
+      const result = await runPulse();
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.match(call.messages[0]!.content, /<recent_calendar_events>/);
+      assert.match(call.messages[0]!.content, /No meaningful sell pressure followed\./);
+    });
+
+    it('injects recent event analysis into the pulse prompt', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        eventSentimentShift: [
+          {
+            pre_avg_sentiment: -0.1,
+            pre_mention_count: 14,
+            post_avg_sentiment: 0.25,
+            post_mention_count: 7,
+          },
+        ],
+      });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        llm,
+        mockSentimentTracker,
+        mockDivergenceTracker,
+        {
+          getUpcomingEvents: async () => [],
+          getRecentEvents: async () => [
+            {
+              id: 'cal-2',
+              name: 'Token unlock completed',
+              category: 'unlock',
+              description: 'Sell pressure stayed contained.',
+              recurrenceRule: null,
+              entityId: 'ent-arb',
+              entityName: 'Arbitrum',
+              nextOccurrence: Date.now() - 2 * 60 * 60 * 1000,
+            },
+          ],
+        },
+      );
+
+      const result = await runPulse();
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.match(call.messages[0]!.content, /<recent_event_analysis>/);
+      assert.match(call.messages[0]!.content, /pre-48h avg=-0\.10 \(14 mentions\)/);
+      assert.match(call.messages[0]!.content, /post-so-far avg=0\.25 \(7 mentions\)/);
+      assert.match(call.messages[0]!.content, /delta=\+0\.35/);
+      assert.match(call.messages[0]!.content, /\[entity: Arbitrum\]/);
+    });
+
+    it('injects recent event chains into the pulse prompt', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        entityRows: [{ id: 'ent-btc' }],
+        eventChains: [
+          {
+            chain_root_id: 'evt-root',
+            entity_id: 'ent-btc',
+            entity_name: 'Bitcoin',
+            event_count: 2,
+            first_event_time: Date.now() - 4 * 24 * 60 * 60 * 1000,
+            latest_event_time: Date.now() - 90 * 60 * 1000,
+            event_types: ['hack', 'audit'],
+            descriptions: ['Wallet exploit surfaced.', 'Audit update narrowed the blast radius.'],
+          },
+        ],
+      });
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        llm,
+        mockSentimentTracker,
+        mockDivergenceTracker,
+      );
+
+      const result = await runPulse();
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.match(call.messages[0]!.content, /<recent_event_chains>/);
+      assert.match(call.messages[0]!.content, /Bitcoin: 2 linked events/);
+      assert.match(call.messages[0]!.content, /chain=hack -> audit/);
+      assert.match(call.messages[0]!.content, /latest=Audit update narrowed the blast radius\./);
     });
 
     it('passes correct maxTokens to LLM based on summary count', async () => {

@@ -14,6 +14,7 @@ interface EntitySentiment {
 interface MarketReportParsed {
   tldr: string;
   keyEvents: string[];
+  eventChains: string[];
   entitySentiment: EntitySentiment[];
   sections: { title: string; body: string }[];
   newProjects: { name: string; description: string }[];
@@ -105,6 +106,15 @@ export function buildFields(parsed: MarketReportParsed): DiscordField[] {
     const bulleted = parsed.keyEvents.map((e) => `> ${e}`).join('\n');
     fields.push({
       name: 'Key Events',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  if (parsed.eventChains.length > 0) {
+    const bulleted = parsed.eventChains.map((chain) => `> ${chain}`).join('\n');
+    fields.push({
+      name: 'Event Chains',
       value: truncate(bulleted, 1024),
       inline: false,
     });

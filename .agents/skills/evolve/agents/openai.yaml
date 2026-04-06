@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolve"
+  short_description: "Run the next Podders product slice"
+  default_prompt: "Use $evolve to choose the next highest-value Podders slice, implement it, verify it, and leave a clean handoff."

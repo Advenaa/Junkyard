@@ -1,7 +1,8 @@
 import WebSocket from 'ws';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { ulid } from 'ulid';
-import type { Config } from '../config.js';
 import type { Pool } from '../db/connection.js';
+import type { DiscordRuntimeToken } from '../discord-tokens.js';
 import type { Logger } from '../logger.js';
 import type { RawItem } from './rss.js';
 
@@ -12,6 +13,12 @@ import type { RawItem } from './rss.js';
 export interface TokenState {
   index: number;
   status: 'idle' | 'connecting' | 'connected' | 'backoff' | 'disabled';
+  source: 'env' | 'db';
+  tokenId: string | null;
+  label: string | null;
+  maskedToken: string | null;
+  proxyConfigured: boolean;
+  maskedProxy: string | null;
   sessionId: string | null;
   resumeUrl: string | null;
   lastSeq: number | null;
@@ -296,21 +303,29 @@ class TokenConnection {
   private destroyed = false;
   private readonly concurrency = { active: 0, queue: [] as (() => void)[] };
   private readonly drops: DropAccumulator;
+  private readonly proxyAgent: HttpsProxyAgent<string> | null;
 
   readonly state: TokenState;
 
   constructor(
     private readonly tokenIndex: number,
-    private readonly token: string,
+    private readonly runtimeToken: DiscordRuntimeToken,
     private readonly log: Logger,
     private readonly onMessage: (item: RawItem) => Promise<void>,
     private readonly onDeath: (index: number) => void,
     pool: Pool,
   ) {
     this.drops = new DropAccumulator(pool, log, tokenIndex);
+    this.proxyAgent = runtimeToken.proxyUrl ? new HttpsProxyAgent(runtimeToken.proxyUrl) : null;
     this.state = {
       index: tokenIndex,
       status: 'idle',
+      source: runtimeToken.source,
+      tokenId: runtimeToken.tokenId,
+      label: runtimeToken.label,
+      maskedToken: runtimeToken.maskedToken,
+      proxyConfigured: runtimeToken.proxyUrl != null,
+      maskedProxy: runtimeToken.maskedProxy,
       sessionId: null,
       resumeUrl: null,
       lastSeq: null,
@@ -347,6 +362,7 @@ class TokenConnection {
       }
       this.ws = null;
     }
+    this.proxyAgent?.destroy();
     this.state.status = 'idle';
   }
 
@@ -362,7 +378,7 @@ class TokenConnection {
     this.clearHeartbeat();
     this.heartbeatAcked = true;
 
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, this.proxyAgent ? { agent: this.proxyAgent } : undefined);
     this.ws = ws;
 
     ws.on('open', () => {
@@ -622,7 +638,7 @@ class TokenConnection {
     this.send({
       op: 2,
       d: {
-        token: this.token,
+        token: this.runtimeToken.token,
         capabilities: 16381,
         properties: IDENTIFY_PROPERTIES,
         presence: { status: 'online', since: 0, activities: [], afk: false },
@@ -645,7 +661,7 @@ class TokenConnection {
     this.send({
       op: 6,
       d: {
-        token: this.token,
+        token: this.runtimeToken.token,
         session_id: this.state.sessionId,
         seq: this.state.lastSeq,
       },
@@ -801,7 +817,7 @@ function partitionChannels(channels: string[], activeTokens: TokenConnection[]):
 // ---------------------------------------------------------------------------
 
 export function createDiscordAdapter(
-  config: Config,
+  initialTokens: DiscordRuntimeToken[],
   pool: Pool,
   log: Logger,
   onMessage: (item: RawItem) => Promise<void>,
@@ -809,7 +825,7 @@ export function createDiscordAdapter(
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   getTokenStates: () => TokenState[];
-  reconnect: (newTokens: string[]) => Promise<void>;
+  reconnect: (newTokens: DiscordRuntimeToken[]) => Promise<void>;
 } {
   const connections: TokenConnection[] = [];
 
@@ -832,8 +848,8 @@ export function createDiscordAdapter(
   }
 
   // Create connection objects for each token
-  for (let i = 0; i < config.discordTokens.length; i++) {
-    const token = config.discordTokens[i]!;
+  for (let i = 0; i < initialTokens.length; i++) {
+    const token = initialTokens[i]!;
     connections.push(new TokenConnection(i, token, log, onMessage, handleTokenDeath, pool));
   }
 
@@ -863,7 +879,7 @@ export function createDiscordAdapter(
     return connections.map((c) => ({ ...c.state }));
   }
 
-  async function reconnect(newTokens: string[]): Promise<void> {
+  async function reconnect(newTokens: DiscordRuntimeToken[]): Promise<void> {
     // 1. Disconnect all existing connections
     await disconnect();
 

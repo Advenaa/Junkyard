@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+export const ChunkEventLLMSchema = z.object({
+  entityName: z.string().min(1),
+  eventType: z.enum(['exploit', 'audit', 'governance', 'launch', 'partnership', 'funding', 'hack', 'legal']),
+  description: z.string().min(1),
+});
+
 export const ChunkSummaryLLMSchema = z.object({
   summary: z.string().min(10),
   urgency: z.enum(['routine', 'elevated', 'breaking']),
@@ -17,13 +23,17 @@ export const ChunkSummaryLLMSchema = z.object({
     .max(20)
     .default([]),
   keyEvents: z.array(z.string()).max(5).default([]),
+  events: z.array(ChunkEventLLMSchema).max(5).default([]),
 });
 
 export type ChunkSummary = z.infer<typeof ChunkSummaryLLMSchema>;
+export type ChunkEvent = z.infer<typeof ChunkEventLLMSchema>;
 
 export const MarketReportLLMSchema = z.object({
   tldr: z.string().max(500),
   keyEvents: z.array(z.string()).max(10).default([]),
+  marketCatalysts: z.array(z.string()).max(6).default([]),
+  eventChains: z.array(z.string()).max(5).default([]),
   entitySentiment: z
     .array(
       z.object({

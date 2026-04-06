@@ -2,18 +2,21 @@ import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
 import { apiFetch } from '../lib/api';
 import { ChatPanel } from '../components/ChatPanel';
 import { ChatMessage } from '../components/ChatMessage';
+import type { ChatSource } from '../components/ChatSources';
 
 interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   toolsUsed?: string[];
+  sources?: ChatSource[];
   retryQuery?: string;
 }
 
 interface ChatResponse {
   response: string;
   toolsUsed: string[];
+  sources: ChatSource[];
 }
 
 function generateId(): string {
@@ -114,7 +117,7 @@ export function Chat() {
         setRetryQuery(null);
         setMessages((prev) => [
           ...prev,
-          { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed },
+          { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed, sources: data.sources },
         ]);
       } catch (err) {
         if (conversationIdRef.current !== requestConversationId) return;
@@ -173,7 +176,7 @@ export function Chat() {
         )}
         {messages.map((msg) => (
           <div key={msg.id}>
-            <ChatMessage role={msg.role} content={msg.content} toolsUsed={msg.toolsUsed} />
+            <ChatMessage role={msg.role} content={msg.content} toolsUsed={msg.toolsUsed} sources={msg.sources} />
             {msg.retryQuery && (
               <div className="flex justify-start pl-10 -mt-1 mb-2">
                 <button

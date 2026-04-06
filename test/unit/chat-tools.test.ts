@@ -225,6 +225,90 @@ describe('semantic_search', () => {
     assert.match(result, /<search_result_[0-9a-f]{8}>/, 'should have opening nonce tag');
     assert.match(result, /<\/search_result_[0-9a-f]{8}>/, 'should have closing nonce tag');
   });
+
+  it('formats report hits with tldr and event chain context', async () => {
+    const vectorResults: SearchResult[] = [{ targetId: 'report-1', score: 0.91 }];
+    const dbRows = [
+      {
+        id: 'report-1',
+        body: JSON.stringify({
+          eventChains: [
+            'Bitcoin exploit chain stayed active after the audit follow-up.',
+            'ETF rumor chain kept traders watching positioning into the close.',
+          ],
+        }),
+        created_at: '2026-04-06',
+        tldr: 'Bitcoin held gains while traders tracked two active narratives.',
+        date: '2026-04-06',
+        type: 'daily',
+      },
+    ];
+    const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
+    const search = toolByName(tools, 'semantic_search');
+
+    const result = await search.execute({ query: 'bitcoin narratives', type: 'report' });
+
+    assert.ok(result.includes('Type: daily | Date: 2026-04-06'), 'should include report metadata');
+    assert.ok(result.includes('TLDR: Bitcoin held gains while traders tracked two active narratives.'), 'should include tldr');
+    assert.ok(result.includes('Event chains:'), 'should include event chain label');
+    assert.ok(
+      result.includes('Bitcoin exploit chain stayed active after the audit follow-up.'),
+      'should include the first event chain',
+    );
+  });
+
+  it('auto-selects report search for timeline-style queries when type is omitted', async () => {
+    const vectorResults: SearchResult[] = [{ targetId: 'report-2', score: 0.88 }];
+    const pool = recordingPool([
+      [
+        {
+          id: 'report-2',
+          body: JSON.stringify({
+            eventChains: ['Exploit response chain stayed active across multiple reports.'],
+          }),
+          created_at: '2026-04-07',
+          tldr: 'The exploit timeline remained the dominant market story.',
+          date: '2026-04-07',
+          type: 'daily',
+        },
+      ],
+    ]);
+    const calls: { method: string; args: unknown[] }[] = [];
+    const embedder: Embedder = {
+      prepareText(text: string, type: string): string {
+        calls.push({ method: 'prepareText', args: [text, type] });
+        return `${type}: ${text}`;
+      },
+      async embed(text: string) {
+        calls.push({ method: 'embed', args: [text] });
+        return { vector: new Float32Array([1, 0, 0]) };
+      },
+    };
+    const tools = createChatTools(pool, noopLog, stubVectorCache(vectorResults), embedder, stubLlm());
+    const search = toolByName(tools, 'semantic_search');
+
+    const result = await search.execute({ query: 'Give me the exploit timeline and what changed over time' });
+
+    assert.ok(pool.calls[0].text.includes('FROM reports'), 'timeline-style query should search the reports table');
+    assert.deepEqual(
+      calls.find((c) => c.method === 'prepareText')?.args,
+      ['Give me the exploit timeline and what changed over time', 'report'],
+      'timeline-style query should be embedded as a report search',
+    );
+    assert.ok(result.includes('TLDR: The exploit timeline remained the dominant market story.'));
+  });
+
+  it('reports usage labels reflect inferred report mode when type is omitted', () => {
+    const tools = createChatTools(stubPool(), noopLog, stubVectorCache(), stubEmbedder(), stubLlm());
+    const search = toolByName(tools, 'semantic_search');
+
+    assert.equal(
+      search.formatUsage?.({ query: 'Give me the exploit timeline and what changed over time' }),
+      'semantic_search:report',
+    );
+    assert.equal(search.formatUsage?.({ query: 'What are traders saying about SOL today?' }), 'semantic_search:summary');
+    assert.equal(search.formatUsage?.({ query: 'Any timeline updates?', type: 'summary' }), 'semantic_search:summary');
+  });
 });
 
 // ── keyword_search ─────────────────────────────────────────────────────
@@ -274,6 +358,43 @@ describe('keyword_search', () => {
 
     assert.equal(pool.calls.length, 1);
     assert.deepEqual(pool.calls[0].params, ['bitcoin']);
+  });
+
+  it('includes recent event chains when the entity has linked story history', async () => {
+    const now = Date.UTC(2026, 3, 6);
+    const pool = recordingPool([
+      [{ id: 'ent-1', name: 'Bitcoin', type: 'token', relevance: 95, sentiment: 0.8, created_at: '2026-04-03' }],
+      [
+        {
+          chain_root_id: 'chain-1',
+          entity_id: 'ent-1',
+          entity_name: 'Bitcoin',
+          event_count: 3,
+          first_event_time: now - 5 * 24 * 60 * 60 * 1000,
+          latest_event_time: now - 1 * 24 * 60 * 60 * 1000,
+          event_types: ['exploit', 'governance', 'audit'],
+          descriptions: ['Bridge exploit surfaced', 'Governance approved a patch', 'Audit confirmed remediation'],
+        },
+      ],
+    ]);
+    const tools = createChatTools(pool, noopLog, stubVectorCache(), stubEmbedder(), stubLlm());
+    const search = toolByName(tools, 'keyword_search');
+
+    const realNow = Date.now;
+    Date.now = () => now;
+    try {
+      const result = await search.execute({ entity: 'Bitcoin' });
+
+      assert.ok(result.includes('Recent event chains:'), 'should include the event chain section');
+      assert.ok(result.includes('3 events'), 'should include event count');
+      assert.ok(result.includes('chain=exploit -> governance -> audit'), 'should include the event timeline');
+      assert.ok(result.includes('latest: Audit confirmed remediation'), 'should include latest event context');
+    } finally {
+      Date.now = realNow;
+    }
+
+    assert.equal(pool.calls.length, 2);
+    assert.deepEqual(pool.calls[1].params, [['ent-1'], now - 30 * 24 * 60 * 60 * 1000, 3]);
   });
 });
 

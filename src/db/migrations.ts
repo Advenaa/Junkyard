@@ -461,6 +461,106 @@ const migrations: Migration[] = [
       )
     `);
   },
+
+  // Migration 15: Create user audit log for account management activity
+  async (client) => {
+    await client.query(`
+      CREATE TABLE user_audit_log (
+        id TEXT PRIMARY KEY,
+        actor_discord_id TEXT NOT NULL,
+        actor_username TEXT NOT NULL,
+        target_discord_id TEXT NOT NULL,
+        target_username TEXT,
+        action TEXT NOT NULL CHECK (action IN ('invite', 'role_change')),
+        previous_role TEXT,
+        new_role TEXT,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`CREATE INDEX idx_user_audit_log_created_at ON user_audit_log(created_at DESC)`);
+    await client.query(`CREATE INDEX idx_user_audit_log_target ON user_audit_log(target_discord_id, created_at DESC)`);
+  },
+
+  // Migration 16: Expand audit actions for access-request decisions
+  async (client) => {
+    await client.query(`ALTER TABLE user_audit_log DROP CONSTRAINT IF EXISTS user_audit_log_action_check`);
+    await client.query(`
+      ALTER TABLE user_audit_log
+        ADD CONSTRAINT user_audit_log_action_check
+        CHECK (action IN ('invite', 'role_change', 'request_approved', 'request_rejected'))
+    `);
+  },
+
+  // Migration 17: Create access_requests table for self-service account requests
+  async (client) => {
+    await client.query(`
+      CREATE TABLE access_requests (
+        id TEXT PRIMARY KEY,
+        discord_id TEXT NOT NULL,
+        requested_role TEXT NOT NULL CHECK (requested_role IN ('viewer', 'admin')),
+        note TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+        resolved_role TEXT CHECK (resolved_role IN ('viewer', 'admin')),
+        decided_at BIGINT,
+        decided_by_discord_id TEXT,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`CREATE INDEX idx_access_requests_status_created_at ON access_requests(status, created_at DESC)`);
+    await client.query(`CREATE INDEX idx_access_requests_discord_id_created_at ON access_requests(discord_id, created_at DESC)`);
+  },
+
+  // Migration 18: Add encrypted per-token proxy configuration
+  async (client) => {
+    await client.query(`ALTER TABLE discord_tokens ADD COLUMN proxy_url_encrypted TEXT`);
+    await client.query(`ALTER TABLE discord_tokens ADD COLUMN proxy_url_iv TEXT`);
+    await client.query(`ALTER TABLE discord_tokens ADD COLUMN proxy_url_auth_tag TEXT`);
+  },
+
+  // Migration 19: Create calendar_events table for cycle detection foundation
+  async (client) => {
+    await client.query(`
+      CREATE TABLE calendar_events (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        category TEXT NOT NULL CHECK (category IN ('macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom')),
+        description TEXT,
+        recurrence_rule TEXT,
+        next_occurrence BIGINT NOT NULL,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`CREATE INDEX idx_calendar_events_next_occurrence ON calendar_events(next_occurrence ASC)`);
+  },
+  // Migration 20: Link calendar events to entities for event-specific analysis
+  async (client) => {
+    await client.query(`
+      ALTER TABLE calendar_events
+        ADD COLUMN entity_id TEXT REFERENCES entities(id) ON DELETE SET NULL
+    `);
+    await client.query(`CREATE INDEX idx_calendar_events_entity_id ON calendar_events(entity_id)`);
+  },
+  // Migration 21: Create events table for event-chain foundation
+  async (client) => {
+    await client.query(`
+      CREATE TABLE events (
+        id TEXT PRIMARY KEY,
+        entity_id TEXT REFERENCES entities(id) ON DELETE SET NULL,
+        entity_name TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('exploit', 'audit', 'governance', 'launch', 'partnership', 'funding', 'hack', 'legal')),
+        description TEXT NOT NULL,
+        event_time BIGINT NOT NULL,
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        summary_id TEXT NOT NULL REFERENCES summaries(id) ON DELETE CASCADE,
+        chain_id TEXT REFERENCES events(id) ON DELETE SET NULL,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`CREATE INDEX idx_events_entity_time ON events(entity_id, event_time DESC)`);
+    await client.query(`CREATE INDEX idx_events_summary_id ON events(summary_id)`);
+    await client.query(`CREATE INDEX idx_events_chain_id ON events(chain_id)`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

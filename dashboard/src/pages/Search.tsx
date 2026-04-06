@@ -1,13 +1,20 @@
 import { useState, type FormEvent } from 'react';
 import { apiFetch } from '../lib/api';
 import { EmptyState } from '../components/EmptyState';
+import { TypeBadge } from '../components/TypeBadge';
+
+type SearchScope = 'all' | 'summary' | 'report';
 
 interface SearchResult {
   id: string;
-  source: string;
-  sourceId: string;
+  resultType?: 'summary' | 'report';
+  source?: string | null;
+  sourceId?: string | null;
   body: string;
   createdAt: number;
+  reportType?: 'daily' | 'flash' | 'pulse' | null;
+  date?: string | null;
+  eventChains?: string[];
 }
 
 interface SearchResponse {
@@ -20,6 +27,12 @@ const DAYS_OPTIONS = [
   { label: '30 days', value: 30 },
   { label: '90 days', value: 90 },
   { label: '365 days', value: 365 },
+];
+
+const SCOPE_OPTIONS: Array<{ label: string; value: SearchScope }> = [
+  { label: 'All', value: 'all' },
+  { label: 'Summaries', value: 'summary' },
+  { label: 'Reports', value: 'report' },
 ];
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -49,9 +62,14 @@ function truncate(text: string, max: number): string {
   return text.slice(0, max) + '...';
 }
 
+function isReportResult(result: SearchResult): boolean {
+  return result.resultType === 'report';
+}
+
 export function Search() {
   const [query, setQuery] = useState('');
   const [days, setDays] = useState(30);
+  const [scope, setScope] = useState<SearchScope>('all');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,7 +86,7 @@ export function Search() {
 
     try {
       const data = await apiFetch<SearchResponse>(
-        `/search?q=${encodeURIComponent(q)}&limit=20&days=${days}&mode=keyword`,
+        `/search?q=${encodeURIComponent(q)}&limit=20&days=${days}&mode=keyword&scope=${scope}`,
       );
       setResults(data.results);
     } catch {
@@ -89,9 +107,26 @@ export function Search() {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search summaries..."
+          placeholder={
+            scope === 'report'
+              ? 'Search reports...'
+              : scope === 'summary'
+                ? 'Search summaries...'
+                : 'Search summaries and reports...'
+          }
           className="flex-1 bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
         />
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as SearchScope)}
+          className="bg-background border border-border rounded-lg px-3 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+        >
+          {SCOPE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
         <select
           value={days}
           onChange={(e) => setDays(Number(e.target.value))}
@@ -129,13 +164,31 @@ export function Search() {
           {results.map((result) => (
             <div key={result.id} className="bg-surface border border-border rounded-lg p-4 space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <SourceBadge source={result.source} />
-                  <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isReportResult(result) ? (
+                    <>
+                      <TypeBadge type={result.reportType ?? 'report'} />
+                      <span className="text-text-secondary text-xs font-mono uppercase tracking-wider">report</span>
+                      {result.date && <span className="text-text-secondary text-xs font-mono">{result.date}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <SourceBadge source={result.source ?? 'summary'} />
+                      {result.sourceId && <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>}
+                    </>
+                  )}
                 </div>
                 <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
               </div>
               <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(result.body, 200)}</p>
+              {isReportResult(result) && result.eventChains && result.eventChains.length > 0 && (
+                <p className="text-xs font-body text-text-secondary leading-relaxed">
+                  <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
+                    Event Chain
+                  </span>{' '}
+                  {result.eventChains[0]}
+                </p>
+              )}
             </div>
           ))}
         </div>

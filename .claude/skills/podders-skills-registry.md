@@ -11,6 +11,7 @@ Updated automatically when skills are created or modified.
 | podders-migration | .claude/skills/podders-migration/ | Cycle 95 | Cycle 95 | Create new DB migrations following conventions |
 | podders-source | .claude/skills/podders-source/ | Cycle 95 | Cycle 95 | Scaffold new ingest source adapter |
 | podders-fix | .claude/skills/podders-fix/ | Cycle 95 | Cycle 95 | Fix a specific finding from research queue |
+| podders-workloop | .claude/skills/podders-workloop/ | Manual | Manual | Shared Claude/Codex single-slice execution loop with clean handoff |
 | evolve (unified) | ~/.claude/skills/evolve/ | Cycle 27 | Cycle 138 | Autonomous product dev engine — bugs, features, roadmap, user priorities |
 
 ## Skill Evolution Log
@@ -18,6 +19,7 @@ Updated automatically when skills are created or modified.
 - **Cycle 95**: Initial creation of 4 project-local skills (audit, migration, source, fix)
 - **Cycle 100**: Updated podders-audit with 8 new bug patterns from cycles 95-100 (claim-before-process, livelock on retry, batch length mismatch, HTML double-encoding, SQL interpolation, HTTP status regex, ULID stale detection, engagement sentinel -1)
 - **Cycle 138**: Unified evolve skill — merged QA loop + feature builder + roadmap awareness. Reads ROADMAP.md, PRODUCT.md. Supports user priorities (P0), multi-cycle features, verify cycles, roadmap-gap research. Retired v2 and auto-research skills (superseded). State unified into `.evolve-state.md`.
+- **Manual**: Added `podders-workloop` plus `docs/AGENT_LOOP.md` so Claude and Codex can run the same single-slice loop and hand work off cleanly when rate-limited.
 
 ## Planned Skills (create when pattern emerges)
 

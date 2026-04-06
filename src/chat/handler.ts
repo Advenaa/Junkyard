@@ -18,11 +18,19 @@ interface ChatLLM extends ToolLLM {
 interface ChatResult {
   response: string;
   toolsUsed: string[];
+  sources: ChatSource[];
 }
 
 interface ToolCall {
   name: string;
   args: Record<string, unknown>;
+}
+
+interface ChatSource {
+  type: 'report' | 'summary';
+  id: string;
+  label: string;
+  snippet: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────
@@ -35,15 +43,17 @@ const SYSTEM_PROMPT = `You are Podders, a market intelligence assistant for cryp
 
 Available tools:
 - semantic_search(query, type?): Search summaries/reports by meaning
-- keyword_search(entity): Look up entity mentions, sentiment, history
+- keyword_search(entity): Look up entity mentions, sentiment, history, and active event chains
 - read_raw(itemId): Read the original source message
 
-Always cite your sources. If a user asks about an entity, use keyword_search first, then semantic_search for context.`;
+Always cite your sources. If a user asks about an entity, use keyword_search first, then semantic_search for context.
+If the user asks about an ongoing story, timeline, chain of events, exploit follow-up, governance response, or what changed over time, prefer semantic_search with type="report" after keyword_search so you retrieve synthesized report context instead of only raw summary fragments.
+Use semantic_search with type="summary" when you need narrower chunk-level detail, and use read_raw only when the original message text is necessary.`;
 
 const TOOL_DEFINITIONS = [
   {
     name: 'semantic_search',
-    description: 'Search summaries and reports by semantic similarity.',
+    description: 'Search summaries and reports by semantic similarity. Use report mode for synthesized chain-aware context.',
     parameters: {
       type: 'object',
       properties: {
@@ -51,7 +61,7 @@ const TOOL_DEFINITIONS = [
         type: {
           type: 'string',
           enum: ['summary', 'report'],
-          description: 'Type of content to search (default: summary)',
+          description: 'Type of content to search (default: summary). Use report for synthesized report-level context.',
         },
       },
       required: ['query'],
@@ -59,7 +69,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'keyword_search',
-    description: 'Look up an entity by name/alias for mentions, sentiment, and history.',
+    description: 'Look up an entity by name/alias for mentions, sentiment, history, and recent event chains.',
     parameters: {
       type: 'object',
       properties: {
@@ -113,6 +123,58 @@ function truncateToolResult(result: string, limit: number): string {
 
 function buildToolResultMessage(toolName: string, result: string): string {
   return `<tool_result name="${toolName}">\n${result}\n</tool_result>`;
+}
+
+function formatToolUsageLabel(tool: ChatTool, args: Record<string, unknown>): string {
+  return tool.formatUsage?.(args) ?? tool.name;
+}
+
+function truncateSnippet(text: string, max = 140): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ');
+  if (trimmed.length <= max) return trimmed;
+  return trimmed.slice(0, max - 3) + '...';
+}
+
+function buildCitationLabel(type: 'report' | 'summary', id: string, rawSnippet: string): string {
+  if (type === 'report') {
+    const match = rawSnippet.match(/^Type:\s+([a-z]+)\s+\|\s+Date:\s+([0-9-]+)/i);
+    if (match) {
+      const reportType = match[1][0]!.toUpperCase() + match[1].slice(1).toLowerCase();
+      return `${reportType} ${match[2]}`;
+    }
+    return `Report ${id.slice(0, 8)}`;
+  }
+
+  return `Summary ${id.slice(0, 8)}`;
+}
+
+function extractSemanticSearchSources(usageLabel: string, toolResult: string): ChatSource[] {
+  const type: 'report' | 'summary' = usageLabel === 'semantic_search:report' ? 'report' : 'summary';
+  const sources: ChatSource[] = [];
+  const blockRegex = /\[([^\]]+)\] \((?:[^)]*)\)\n<search_result_[0-9a-f]{8}>([\s\S]*?)<\/search_result_[0-9a-f]{8}>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = blockRegex.exec(toolResult)) !== null) {
+    const id = match[1]?.trim();
+    const rawSnippet = match[2] ?? '';
+    const snippet = truncateSnippet(rawSnippet);
+    if (!id || !snippet) continue;
+    sources.push({
+      type,
+      id,
+      label: buildCitationLabel(type, id, rawSnippet),
+      snippet,
+    });
+  }
+
+  return sources;
+}
+
+function extractSourcesFromToolResult(usageLabel: string, toolResult: string): ChatSource[] {
+  if (usageLabel.startsWith('semantic_search:')) {
+    return extractSemanticSearchSources(usageLabel, toolResult);
+  }
+  return [];
 }
 
 // ── Factory ───────────────────────────────────────────────────────────
@@ -182,14 +244,17 @@ export function createChatHandler(
         response:
           'You have reached your daily query limit. Your budget resets at midnight UTC. Please try again later.',
         toolsUsed: [],
+        sources: [],
       };
     }
 
     if (query.length > 4000) {
-      return { response: 'Query is too long. Please keep it under 4000 characters.', toolsUsed: [] };
+      return { response: 'Query is too long. Please keep it under 4000 characters.', toolsUsed: [], sources: [] };
     }
 
     const toolsUsed: string[] = [];
+    const toolUsageLabels: string[] = [];
+    const sources = new Map<string, ChatSource>();
     let processedQuery = query;
     let queryWrapped = false; // CH-020: track whether processedQuery has nonce wrapping
 
@@ -270,14 +335,14 @@ export function createChatHandler(
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('halted') || msg.includes('401') || msg.includes('unauthorized')) {
           log.error({ err, conversationId }, 'chat: LLM service halted');
-          return { response: 'Chat service is temporarily unavailable. Please try again later.', toolsUsed };
+          return { response: 'Chat service is temporarily unavailable. Please try again later.', toolsUsed, sources: [] };
         }
         if (msg.includes('context') || msg.includes('token')) {
           log.warn({ err, conversationId }, 'chat: context length exceeded');
-          return { response: 'Your conversation is too long. Please start a new conversation.', toolsUsed };
+          return { response: 'Your conversation is too long. Please start a new conversation.', toolsUsed, sources: [] };
         }
         log.error({ err, conversationId }, 'chat: LLM call failed');
-        return { response: 'An error occurred processing your request. Please try again.', toolsUsed };
+        return { response: 'An error occurred processing your request. Please try again.', toolsUsed, sources: [] };
       }
 
       // Track only new tokens this round — response + any tool results added
@@ -323,7 +388,14 @@ export function createChatHandler(
           if (!toolsUsed.includes(call.name)) {
             toolsUsed.push(call.name);
           }
+          const usageLabel = formatToolUsageLabel(tool, call.args);
+          if (!toolUsageLabels.includes(usageLabel)) {
+            toolUsageLabels.push(usageLabel);
+          }
           const truncatedResult = truncateToolResult(toolResult, MAX_TOOL_RESULT_CHARS);
+          for (const source of extractSourcesFromToolResult(usageLabel, truncatedResult)) {
+            sources.set(`${source.type}:${source.id}`, source);
+          }
           totalToolResultChars += truncatedResult.length;
           toolResults.push(buildToolResultMessage(call.name, truncatedResult));
           // Reset failure counter on success
@@ -371,7 +443,11 @@ export function createChatHandler(
     conversations.add(conversationId, userId, 'user', historyQuery);
     conversations.add(conversationId, userId, 'assistant', finalResponse);
 
-    return { response: finalResponse, toolsUsed };
+    return {
+      response: finalResponse,
+      toolsUsed: toolUsageLabels.length > 0 ? toolUsageLabels : toolsUsed,
+      sources: [...sources.values()],
+    };
   }
 
   return { handle };

@@ -75,6 +75,7 @@ describe('buildFields', () => {
     const parsed = {
       tldr: 'test',
       keyEvents: ['Event A', 'Event B'],
+      eventChains: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -94,6 +95,7 @@ describe('buildFields', () => {
     const parsed = {
       tldr: 'test',
       keyEvents: longEvents,
+      eventChains: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -106,6 +108,7 @@ describe('buildFields', () => {
     const parsed = {
       tldr: 'test',
       keyEvents: [],
+      eventChains: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -119,6 +122,7 @@ describe('buildFields', () => {
     const parsed = {
       tldr: 'test',
       keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
       entitySentiment: [
         { name: 'BTC', sentiment: 0.5, reason: 'bullish' },
         { name: 'ETH', sentiment: -0.5, reason: 'bearish' },
@@ -129,6 +133,22 @@ describe('buildFields', () => {
     const fields = buildFields(parsed);
     assert.ok(fields.length <= 4);
   });
+
+  it('builds event chains field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: ['Exploit -> audit -> governance response', 'Unlock -> muted follow-through'],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Event Chains');
+    assert.ok(fields[0]!.value.includes('> Exploit -> audit -> governance response'));
+    assert.ok(fields[0]!.value.includes('> Unlock -> muted follow-through'));
+  });
 });
 
 describe('buildEmbed — description truncation', () => {
@@ -138,6 +158,7 @@ describe('buildEmbed — description truncation', () => {
     const parsed = {
       tldr: longTldr,
       keyEvents: [],
+      eventChains: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -239,6 +260,7 @@ describe('buildEmbed — full integration', () => {
     const parsed = {
       tldr: 'Market summary',
       keyEvents: ['BTC pumped'],
+      eventChains: ['BTC exploit chain still active after audit response.'],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -253,6 +275,7 @@ describe('buildEmbed — full integration', () => {
     const parsed = {
       tldr: 'Market summary',
       keyEvents: [],
+      eventChains: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -269,6 +292,10 @@ describe('buildEmbed — full integration', () => {
       keyEvents: Array.from(
         { length: 20 },
         (_, i) => `Major event number ${i} with detailed description that goes on for a while`,
+      ),
+      eventChains: Array.from(
+        { length: 5 },
+        (_, i) => `Chain ${i} remains active after another step in the story with extra detail to add size`,
       ),
       entitySentiment: Array.from({ length: 10 }, (_, i) => ({
         name: `Token${i}`,
@@ -292,6 +319,7 @@ describe('buildEmbed — full integration', () => {
 const VALID_REPORT_BODY = JSON.stringify({
   tldr: 'Market moved up',
   keyEvents: ['BTC pumped'],
+  eventChains: ['BTC exploit chain remains active after the audit update.'],
   entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
   sections: [],
   newProjects: [],

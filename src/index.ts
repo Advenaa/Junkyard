@@ -29,15 +29,24 @@ import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
 import { createSentimentTracker } from './knowledge/sentiment.js';
 import { createDivergenceTracker } from './knowledge/divergence.js';
+import { createCalendarTracker } from './knowledge/calendar.js';
 import { getSources, resetCrashed, recoverStaleProcessing, getAppConfig, getDiscordTokens } from './db/queries.js';
 import { decryptToken, getEncryptionKey } from './crypto/token-encrypt.js';
+import {
+  createEnvDiscordTokens,
+  maskDiscordToken,
+  maskProxyUrl,
+  normalizeProxyUrl,
+  type DiscordRuntimeToken,
+} from './discord-tokens.js';
 import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 
 /** Load all active Discord tokens (env var + DB), deduplicated. */
-async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Promise<string[]> {
-  const tokens = [...envTokens];
+async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Promise<DiscordRuntimeToken[]> {
+  const tokens = createEnvDiscordTokens(envTokens);
+  const seen = new Set(tokens.map((token) => token.token));
   const encKey = getEncryptionKey();
   if (encKey) {
     try {
@@ -45,8 +54,47 @@ async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Prom
       for (const row of rows) {
         if (row.status !== 'active') continue;
         try {
-          const plain = decryptToken({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
-          if (!tokens.includes(plain)) tokens.push(plain);
+          const plainToken = decryptToken({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
+          let proxyUrl: string | null = null;
+          let maskedProxy: string | null = null;
+          const hasProxy =
+            row.proxy_url_encrypted != null || row.proxy_url_iv != null || row.proxy_url_auth_tag != null;
+
+          if (hasProxy) {
+            if (!row.proxy_url_encrypted || !row.proxy_url_iv || !row.proxy_url_auth_tag) {
+              log.warn({ tokenId: row.id }, 'managed token has incomplete proxy config — skipping token');
+              continue;
+            }
+
+            try {
+              proxyUrl = normalizeProxyUrl(
+                decryptToken(
+                  {
+                    ciphertext: row.proxy_url_encrypted,
+                    iv: row.proxy_url_iv,
+                    authTag: row.proxy_url_auth_tag,
+                  },
+                  encKey,
+                ),
+              );
+              maskedProxy = maskProxyUrl(proxyUrl);
+            } catch {
+              log.warn({ tokenId: row.id }, 'failed to decrypt managed token proxy — skipping token');
+              continue;
+            }
+          }
+
+          if (seen.has(plainToken)) continue;
+          seen.add(plainToken);
+          tokens.push({
+            token: plainToken,
+            source: 'db',
+            tokenId: row.id,
+            label: row.label,
+            maskedToken: maskDiscordToken(plainToken),
+            proxyUrl,
+            maskedProxy,
+          });
         } catch {
           log.warn({ tokenId: row.id }, 'failed to decrypt DB token — skipping');
         }
@@ -102,8 +150,18 @@ program
     const correlator = createCorrelator(pool, log);
     const sentimentTracker = createSentimentTracker(pool, log);
     const divergenceTracker = createDivergenceTracker(pool, log);
-    const synthesizer = createSynthesizer(pool, log, config, llm, correlator, sentimentTracker, divergenceTracker);
-    const pulse = createPulse(pool, log, config, llm, sentimentTracker, divergenceTracker);
+    const calendarTracker = createCalendarTracker(pool, log);
+    const synthesizer = createSynthesizer(
+      pool,
+      log,
+      config,
+      llm,
+      correlator,
+      sentimentTracker,
+      divergenceTracker,
+      calendarTracker,
+    );
+    const pulse = createPulse(pool, log, config, llm, sentimentTracker, divergenceTracker, calendarTracker);
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
     const decayManager = createDecayManager(pool, log);
@@ -111,9 +169,10 @@ program
     const healthMonitor = createHealthMonitor(pool, log, config);
     const backup = createBackup(config, log);
     const retention = createRetention(pool, log);
+    const initialDiscordTokens = await loadAllTokens(pool, config.discordTokens, log);
 
     // ── 3. Ingest adapters ────────────────────────────────────────────
-    const discordAdapter = createDiscordAdapter(config, pool, log, async (item: RawItem) => {
+    const discordAdapter = createDiscordAdapter(initialDiscordTokens, pool, log, async (item: RawItem) => {
       await normalizer.normalize(item);
     });
 
@@ -344,6 +403,11 @@ program
 
     async function onHealthCheck(): Promise<void> {
       await healthMonitor.check();
+      try {
+        await calendarTracker.refreshLifecycle();
+      } catch (err: unknown) {
+        log.error({ err }, 'Calendar lifecycle refresh failed');
+      }
 
       // Daily report catch-up: if 5+ minutes past digest time and no report exists, retry synthesis.
       // The 5-minute buffer avoids racing with onDaily which fires at exactly digest time.
@@ -429,11 +493,16 @@ program
     } catch (err) {
       log.warn({ err }, 'Initial health check failed');
     }
+    try {
+      await calendarTracker.refreshLifecycle();
+    } catch (err) {
+      log.warn({ err }, 'Initial calendar lifecycle refresh failed');
+    }
 
     // ── 8. Start server ───────────────────────────────────────────────
     const chatHandler = createChatHandler(pool, log, config, llm, vectorCache, embedder);
     // CF-010: rebuild cron on config change
-    const onTokensChanged = async (): Promise<string[]> => {
+    const onTokensChanged = async (): Promise<DiscordRuntimeToken[]> => {
       const allTokens = await loadAllTokens(pool, config.discordTokens, log);
       discordAdapter.reconnect(allTokens).catch((err: unknown) => log.error({ err }, 'adapter reconnect failed'));
       return allTokens;
@@ -445,8 +514,24 @@ program
         errorCount: s.errorCount,
         connectedAt: s.connectedAt,
         channelCount: s.assignedChannels.size,
+        source: s.source,
+        tokenId: s.tokenId,
+        label: s.label,
+        maskedToken: s.maskedToken,
+        proxyConfigured: s.proxyConfigured,
+        maskedProxy: s.maskedProxy,
       }));
-    const app = await createServer(config, pool, log, healthMonitor, chatHandler, () => scheduler.refreshDailyCron(), onTokensChanged, getTokenHealth);
+    const app = await createServer(
+      config,
+      pool,
+      log,
+      healthMonitor,
+      chatHandler,
+      () => scheduler.refreshDailyCron(),
+      onTokensChanged,
+      getTokenHealth,
+      initialDiscordTokens,
+    );
     await startServer(app, config.port, log);
 
     // ── 9. Start background services ──────────────────────────────────

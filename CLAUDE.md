@@ -126,11 +126,12 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 
 ## Reading Order
 
-New to the repo? Start with [PRODUCT.md](./PRODUCT.md) to understand why this exists, then this file (CLAUDE.md) for conventions, then ARCHITECTURE.md for the full technical picture, then INTEGRATION.md to see how a message becomes a report. Everything else is reference material for specific subsystems.
+New to the repo? Start with [PRODUCT.md](./PRODUCT.md) to understand why this exists, then this file (CLAUDE.md) for conventions, then [docs/AGENT_LOOP.md](./docs/AGENT_LOOP.md) if you are switching between Claude and Codex, then ARCHITECTURE.md for the full technical picture, then INTEGRATION.md to see how a message becomes a report. Everything else is reference material for specific subsystems.
 
 ## Reference Docs
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — full schema, API contract, deployment, build order, cost model
+- [docs/AGENT_LOOP.md](./docs/AGENT_LOOP.md) — shared Claude/Codex task loop, handoff rules, and canonical artifacts
 - [PIPELINE.md](./PIPELINE.md) — LLM prompts, chunking code, output validation, scheduling details
 - [docs/DISCORD.md](./docs/DISCORD.md) — Gateway lifecycle, multi-token management, opcodes, close codes
 - [docs/DASHBOARD.md](./docs/DASHBOARD.md) — wireframes, component inventory, dark theme spec

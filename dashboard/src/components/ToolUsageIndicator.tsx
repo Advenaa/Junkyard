@@ -1,8 +1,10 @@
 import { useState } from 'react';
 
 const TOOL_LABELS: Record<string, string> = {
+  'semantic_search:summary': 'Searched summaries by meaning',
+  'semantic_search:report': 'Searched reports by meaning',
   semantic_search: 'Searched summaries by meaning',
-  keyword_search: 'Searched summaries by keyword',
+  keyword_search: 'Looked up entity history',
   read_raw: 'Read raw source messages',
   get_entity: 'Looked up entity details',
   get_recent: 'Fetched recent items',

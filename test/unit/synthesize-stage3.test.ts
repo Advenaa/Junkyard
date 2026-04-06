@@ -88,6 +88,8 @@ function makeReportJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
     keyEvents: ['BTC breaks 70k', 'ETF inflows hit record'],
+    marketCatalysts: ['Friday options expiry remains the next volatility check.'],
+    eventChains: ['Bitcoin exploit chain: audit follow-up kept the recovery narrative alive.'],
     entitySentiment: [{ name: 'Bitcoin', sentiment: 0.7, reason: 'ETF demand' }],
     sections: [{ title: 'ETF Impact', body: 'Analysis of the ETF-driven rally.' }],
     newProjects: [],
@@ -98,7 +100,7 @@ function makeReportJson(overrides: Record<string, unknown> = {}): string {
 /**
  * Build standard mock pool responses for runDaily.
  * Query order: getAppConfig, dailyReportExists, getSummariesByTimeWindow,
- *              getYesterdayTldr, (entity alias fallback if correlated), narratives, insertReport
+ *              getYesterdayTldr, narratives, chain entity lookup, recent event chains, insertReport
  */
 function dailyPoolResponses(
   summaryRows: unknown[],
@@ -110,6 +112,8 @@ function dailyPoolResponses(
     { rows: summaryRows }, // getSummariesByTimeWindow
     { rows: opts.yesterdayTldr ? [{ tldr: opts.yesterdayTldr }] : [] }, // getYesterdayTldr
     { rows: [] }, // narratives query
+    { rows: [] }, // chain entity lookup
+    { rows: [] }, // recent event chains query
     {
       rows: [
         {
@@ -147,6 +151,13 @@ function mockSentimentTracker(momentum: unknown[] = []) {
 function mockDivergenceTracker(divergence: unknown[] = []) {
   return {
     getDivergence: async () => divergence,
+  };
+}
+
+function mockCalendarTracker(events: unknown[] = []) {
+  return {
+    getUpcomingEvents: async () => events,
+    getRecentEvents: async () => [],
   };
 }
 
@@ -200,6 +211,172 @@ describe('synthesize: runDaily', () => {
     const result = await synth.runDaily();
     assert.notStrictEqual(result, null);
     assert.strictEqual(result!.type, 'daily');
+  });
+
+  it('injects upcoming calendar events into the daily synthesis prompt', async () => {
+    const pool = mockPool(dailyPoolResponses([makeSummaryRow()]));
+    const llm = mockLlm();
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+      mockCalendarTracker([
+        {
+          id: 'cal-1',
+          name: 'FOMC rate decision',
+          category: 'macro',
+          description: 'Market expects a hawkish hold.',
+          recurrenceRule: null,
+          nextOccurrence: Date.now() + 6 * 60 * 60 * 1000,
+        },
+      ]) as never,
+    );
+
+    const result = await synth.runDaily();
+    assert.notStrictEqual(result, null);
+    const call = llm.calls[0] as { messages: Array<{ content: string }> };
+    assert.match(call.messages[0]!.content, /<upcoming_calendar_events>/);
+    assert.match(call.messages[0]!.content, /FOMC rate decision/);
+    assert.match(call.messages[0]!.content, /Market expects a hawkish hold\./);
+  });
+
+  it('injects recent calendar events into the daily synthesis prompt', async () => {
+    const responses = dailyPoolResponses([makeSummaryRow()]);
+    responses.splice(5, 0, {
+      rows: [
+        {
+          pre_avg_sentiment: null,
+          pre_mention_count: 0,
+          post_avg_sentiment: null,
+          post_mention_count: 0,
+        },
+      ],
+    });
+    const pool = mockPool(responses);
+    const llm = mockLlm();
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+      {
+        getUpcomingEvents: async () => [],
+        getRecentEvents: async () => [
+          {
+            id: 'cal-1',
+            name: 'FOMC rate decision',
+            category: 'macro',
+            description: 'The event passed without a surprise hike.',
+            recurrenceRule: null,
+            nextOccurrence: Date.now() - 3 * 60 * 60 * 1000,
+          },
+        ],
+      } as never,
+    );
+
+    const result = await synth.runDaily();
+    assert.notStrictEqual(result, null);
+    const call = llm.calls[0] as { messages: Array<{ content: string }> };
+    assert.match(call.messages[0]!.content, /<recent_calendar_events>/);
+    assert.match(call.messages[0]!.content, /The event passed without a surprise hike\./);
+  });
+
+  it('injects recent event analysis into the daily synthesis prompt', async () => {
+    const responses = dailyPoolResponses([makeSummaryRow()]);
+    responses.splice(5, 0, {
+      rows: [
+        {
+          pre_avg_sentiment: 0.2,
+          pre_mention_count: 12,
+          post_avg_sentiment: 0.55,
+          post_mention_count: 9,
+        },
+      ],
+    });
+    const pool = mockPool(responses);
+    const llm = mockLlm();
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+      {
+        getUpcomingEvents: async () => [],
+        getRecentEvents: async () => [
+          {
+            id: 'cal-1',
+            name: 'FOMC rate decision',
+            category: 'macro',
+            description: 'Macro catalyst just passed.',
+            recurrenceRule: null,
+            entityId: 'ent-btc',
+            entityName: 'Bitcoin',
+            nextOccurrence: Date.now() - 3 * 60 * 60 * 1000,
+          },
+        ],
+      } as never,
+    );
+
+    const result = await synth.runDaily();
+    assert.notStrictEqual(result, null);
+    const call = llm.calls[0] as { messages: Array<{ content: string }> };
+    assert.match(call.messages[0]!.content, /<recent_event_analysis>/);
+    assert.match(call.messages[0]!.content, /pre-48h avg=0\.20 \(12 mentions\)/);
+    assert.match(call.messages[0]!.content, /post-so-far avg=0\.55 \(9 mentions\)/);
+    assert.match(call.messages[0]!.content, /delta=\+0\.35/);
+    assert.match(call.messages[0]!.content, /\[entity: Bitcoin\]/);
+  });
+
+  it('injects recent event chains into the daily synthesis prompt', async () => {
+    const responses = dailyPoolResponses([makeSummaryRow()]);
+    responses[5] = { rows: [{ id: 'ent-btc' }] };
+    responses[6] = {
+      rows: [
+        {
+          chain_root_id: 'evt-root',
+          entity_id: 'ent-btc',
+          entity_name: 'Bitcoin',
+          event_count: 3,
+          first_event_time: Date.now() - 5 * 24 * 60 * 60 * 1000,
+          latest_event_time: Date.now() - 2 * 60 * 60 * 1000,
+          event_types: ['exploit', 'audit', 'governance'],
+          descriptions: [
+            'Bridge exploit disclosed.',
+            'Audit remediation update published.',
+            'Governance vote opened on the response plan.',
+          ],
+        },
+      ],
+    };
+    const pool = mockPool(responses);
+    const llm = mockLlm();
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    const result = await synth.runDaily();
+    assert.notStrictEqual(result, null);
+    const call = llm.calls[0] as { messages: Array<{ content: string }> };
+    assert.match(call.messages[0]!.content, /<recent_event_chains>/);
+    assert.match(call.messages[0]!.content, /Bitcoin: 3 linked events/);
+    assert.match(call.messages[0]!.content, /chain=exploit -> audit -> governance/);
+    assert.match(call.messages[0]!.content, /latest=Governance vote opened on the response plan\./);
   });
 
   it('skips when all summary bodies fail to parse', async () => {
@@ -315,6 +492,8 @@ describe('synthesize: runDaily', () => {
       { rows: [] }, // getSummariesByTimeWindow → empty (quiet day)
       { rows: [] }, // getYesterdayTldr
       { rows: [] }, // narratives query
+      { rows: [] }, // chain entity lookup
+      { rows: [] }, // recent event chains query
       {
         rows: [
           {
@@ -786,6 +965,70 @@ describe('synthesize: LLM response parsing', () => {
     assert.strictEqual(body.entitySentiment[0].name, 'Bitcoin');
     assert.strictEqual(body.entitySentiment[0].sentiment, 0.8);
     assert.strictEqual(body.entitySentiment[1].sentiment, -0.3);
+  });
+
+  it('report body preserves marketCatalysts from LLM', async () => {
+    const reportWithCatalysts = makeReportJson({
+      marketCatalysts: [
+        'FOMC decision tomorrow is the main macro risk.',
+        'Monthly BTC options expiry could amplify vol.',
+      ],
+    });
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const llm = mockLlm(reportWithCatalysts);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    await synth.runDaily();
+
+    const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'Should have an INSERT INTO reports query');
+    const bodyParam = insertCall!.values.find((v) => typeof v === 'string' && v.includes('marketCatalysts'));
+    assert.ok(bodyParam, 'Body param should contain marketCatalysts');
+    const body = JSON.parse(bodyParam as string);
+    assert.deepStrictEqual(body.marketCatalysts, [
+      'FOMC decision tomorrow is the main macro risk.',
+      'Monthly BTC options expiry could amplify vol.',
+    ]);
+  });
+
+  it('report body preserves eventChains from LLM', async () => {
+    const reportWithEventChains = makeReportJson({
+      eventChains: [
+        'Bitcoin exploit chain: exploit -> audit -> governance response remains active.',
+        'Arbitrum unlock chain: unlock passed quietly but follow-up liquidity monitoring continues.',
+      ],
+    });
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const llm = mockLlm(reportWithEventChains);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    await synth.runDaily();
+
+    const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'Should have an INSERT INTO reports query');
+    const bodyParam = insertCall!.values.find((v) => typeof v === 'string' && v.includes('eventChains'));
+    assert.ok(bodyParam, 'Body param should contain eventChains');
+    const body = JSON.parse(bodyParam as string);
+    assert.deepStrictEqual(body.eventChains, [
+      'Bitcoin exploit chain: exploit -> audit -> governance response remains active.',
+      'Arbitrum unlock chain: unlock passed quietly but follow-up liquidity monitoring continues.',
+    ]);
   });
 });
 

@@ -65,6 +65,18 @@ function formatDiscordEmbed(report: MarketReport, publicUrl?: string) {
     inline: false
   });
 
+  // Event chains (1 field, only when ongoing stories matter)
+  if (report.eventChains?.length) {
+    fields.push({
+      name: 'Event Chains',
+      value: report.eventChains
+        .slice(0, 4)
+        .map(chain => `> ${chain}`)
+        .join('\n'),
+      inline: false
+    });
+  }
+
   // Entity sentiment (1 field, compact table)
   if (report.entitySentiment?.length) {
     fields.push({
@@ -152,7 +164,7 @@ Differences from daily: muted grey color (`0x4A4A5A`), no `[FLASH]` prefix, no s
 2. **No inline fields.** `inline: false` on everything. Inline fields render side-by-side on desktop but stack badly on narrow screens.
 3. **Key events as blockquotes** (`> text`), not separate fields. One field with `>` lines renders cleanly on mobile; 5 separate fields create excessive vertical spacing.
 4. **Entity sentiment: names bold, no ASCII bar charts.** Monospace bars break on mobile proportional fonts. Use `**ETH** -0.4 bearish` plaintext instead.
-5. **Max 3-4 fields total.** Each field header adds ~30px of dead space on mobile. Fewer fields = tighter layout.
+5. **Max 3-4 fields total.** Each field header adds ~30px of dead space on mobile. Fewer fields = tighter layout. If `eventChains` is present, it should replace less important metadata before the embed grows past that range.
 6. **No images or thumbnails.** Adds load time on mobile data, provides no information density for a text report.
 
 ## Action Links

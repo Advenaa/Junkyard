@@ -1,4 +1,6 @@
+import { ProxyAgent, type Dispatcher } from 'undici';
 import type { Logger } from '../logger.js';
+import type { DiscordRuntimeToken } from '../discord-tokens.js';
 
 // ---------------------------------------------------------------------------
 // Types for Discord REST API responses
@@ -46,15 +48,37 @@ interface RawChannel {
 // Rate-limit-aware fetch helper
 // ---------------------------------------------------------------------------
 
-async function discordFetch<T>(path: string, token: string, log: Logger): Promise<T | null> {
+interface RestTokenRuntime {
+  config: DiscordRuntimeToken;
+  dispatcher: Dispatcher | null;
+}
+
+function buildRestTokenRuntime(tokens: DiscordRuntimeToken[]): RestTokenRuntime[] {
+  return tokens.map((config) => ({
+    config,
+    dispatcher: config.proxyUrl ? new ProxyAgent(config.proxyUrl) : null,
+  }));
+}
+
+function closeDispatchers(tokens: RestTokenRuntime[], log: Logger): void {
+  for (const token of tokens) {
+    if (!token.dispatcher) continue;
+    void token.dispatcher.close().catch((err: unknown) => {
+      log.warn({ err, tokenId: token.config.tokenId }, 'discord-rest: failed to close proxy dispatcher');
+    });
+  }
+}
+
+async function discordFetch<T>(path: string, token: RestTokenRuntime, log: Logger): Promise<T | null> {
   try {
     const response = await fetch(`${DISCORD_API}${path}`, {
       headers: {
-        Authorization: token,
+        Authorization: token.config.token,
         'Content-Type': 'application/json',
       },
+      dispatcher: token.dispatcher ?? undefined,
       signal: AbortSignal.timeout(10_000),
-    });
+    } as RequestInit & { dispatcher?: Dispatcher });
 
     if (response.status === 401 || response.status === 403) {
       log.warn({ path, status: response.status }, 'discord-rest: token unauthorized');
@@ -84,8 +108,8 @@ async function discordFetch<T>(path: string, token: string, log: Logger): Promis
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createDiscordRest(tokens: string[], log: Logger) {
-  let activeTokens = tokens;
+export function createDiscordRest(tokens: DiscordRuntimeToken[], log: Logger) {
+  let activeTokens = buildRestTokenRuntime(tokens);
 
   /**
    * Fetch all guilds visible across all tokens, deduplicated by guild ID.
@@ -137,8 +161,9 @@ export function createDiscordRest(tokens: string[], log: Logger) {
     return [];
   }
 
-  function updateTokens(newTokens: string[]): void {
-    activeTokens = newTokens;
+  function updateTokens(newTokens: DiscordRuntimeToken[]): void {
+    closeDispatchers(activeTokens, log);
+    activeTokens = buildRestTokenRuntime(newTokens);
   }
 
   return { getGuilds, getChannels, updateTokens };

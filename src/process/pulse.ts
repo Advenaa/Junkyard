@@ -2,13 +2,20 @@ import { ulid } from 'ulid';
 import { z } from 'zod';
 import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
-import { getSummariesByTimeWindow, insertReport, getAppConfig } from '../db/queries.js';
-import type { ReportRow } from '../db/queries.js';
+import {
+  getSummariesByTimeWindow,
+  insertReport,
+  getAppConfig,
+  getSentimentShiftAroundTime,
+  getRecentEventChains,
+} from '../db/queries.js';
+import type { ReportRow, EventChainRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import type { MomentumEntry } from '../knowledge/sentiment.js';
 import type { DivergenceEntry } from '../knowledge/divergence.js';
+import type { CalendarEventEntry } from '../knowledge/calendar.js';
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
@@ -33,6 +40,8 @@ Return ONLY valid JSON matching this schema:
 {
   "tldr": "1-2 sentence update (max 280 chars for mobile)",
   "keyEvents": ["what happened in the last 3 hours, max 5"],
+  "marketCatalysts": ["up to 6 concise catalyst lines for positioning/risk"],
+  "eventChains": ["up to 5 concise chain summaries when ongoing stories matter"],
   "entitySentiment": [{"name": "Entity", "sentiment": -1 to 1, "reason": "brief reason (include momentum label if available)"}],
   "sections": [{"title": "Theme", "body": "analysis"}],
   "newProjects": []
@@ -43,7 +52,31 @@ Rules:
 - If sentiment drifted significantly on an entity, call it out explicitly.
 - Reference the prior pulse context to show continuity ("Previously X, now Y").
 - If nothing notable happened, keep the TL;DR to one sentence and use minimal sections.
-- All output in English.`;
+- All output in English.
+
+When <upcoming_calendar_events> data is provided:
+- Treat it as scheduled catalyst risk in the next 48 hours.
+- Mention only the events that matter for positioning or risk management.
+- Do not describe a scheduled event as if it has already happened.
+- Use "marketCatalysts" for concise forward catalyst watchlist lines when useful.
+
+When <recent_calendar_events> data is provided:
+- Treat it as scheduled catalyst context from the last 24 hours.
+- Mention whether the market is following through, fading, or ignoring the catalyst.
+- Do not invent reaction if the summaries stay quiet.
+- Use "marketCatalysts" for concise recent catalyst recaps when they matter to traders.
+
+When <recent_event_analysis> data is provided:
+- Use the pre-48h vs post-event sentiment shift to judge whether the catalyst is getting follow-through.
+- "post-so-far" metrics may reflect less than a full 24h if the event just happened.
+- Prefer concrete observations like "reaction muted" or "follow-through improving" over generic commentary.
+
+When <recent_event_chains> data is provided:
+- Treat each chain as a continuing story that can shape how traders interpret the latest headline.
+- Highlight escalation, follow-up, or attempted resolution when the recent summaries support it.
+- Use chain continuity to avoid describing a fresh update as if it came out of nowhere.
+- Do not imply the story is resolved unless the latest summaries clearly support that.
+- Use "eventChains" for concise summaries of the most relevant active chains when they add trader context.`;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -77,10 +110,40 @@ interface DriftFlag {
   delta: number;
 }
 
+interface RecentEventAnalysisEntry {
+  event: CalendarEventEntry;
+  preAvgSentiment: number | null;
+  preMentionCount: number;
+  postAvgSentiment: number | null;
+  postMentionCount: number;
+  sentimentDelta: number | null;
+}
+
+const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
 // ── Helpers ──────────────────────────────────────────────────────────
 
 function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatCalendarEventTime(timestamp: number, timezone: string): string {
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: timezone,
+  }).format(timestamp);
+  return `${formatted} ${timezone}`;
+}
+
+function formatEventChainLine(chain: EventChainRow, timezone: string): string {
+  const timeline = chain.event_types.map((eventType) => escapeXml(eventType)).join(' -> ');
+  const latestDescription = chain.descriptions[chain.descriptions.length - 1];
+  const latestText = latestDescription ? ` | latest=${escapeXml(latestDescription)}` : '';
+  return `${escapeXml(chain.entity_name)}: ${chain.event_count} linked events from ${formatCalendarEventTime(chain.first_event_time, timezone)} to ${formatCalendarEventTime(chain.latest_event_time, timezone)} | chain=${timeline}${latestText}`;
 }
 
 function parseSummaryBody(body: string): ParsedSummaryBody | null {
@@ -155,6 +218,11 @@ interface DivergenceTracker {
   getDivergence(startTime: number, endTime: number, minMentions?: number): Promise<DivergenceEntry[]>;
 }
 
+interface CalendarTracker {
+  getUpcomingEvents(startTime: number, endTime: number, limit?: number): Promise<CalendarEventEntry[]>;
+  getRecentEvents(startTime: number, endTime: number, limit?: number): Promise<CalendarEventEntry[]>;
+}
+
 // ── Factory ──────────────────────────────────────────────────────────
 
 export function createPulse(
@@ -164,6 +232,7 @@ export function createPulse(
   llm: LLM,
   sentimentTracker: SentimentTracker,
   divergenceTracker: DivergenceTracker,
+  calendarTracker: CalendarTracker = { getUpcomingEvents: async () => [], getRecentEvents: async () => [] },
 ) {
   /**
    * Get the prior pulse report (most recent pulse).
@@ -237,6 +306,11 @@ export function createPulse(
     priorTldr: string | null,
     momentum: MomentumEntry[],
     divergence: DivergenceEntry[],
+    recentCalendarEvents: CalendarEventEntry[],
+    recentEventAnalysis: RecentEventAnalysisEntry[],
+    recentEventChains: EventChainRow[],
+    calendarEvents: CalendarEventEntry[],
+    timezone: string,
   ): string {
     const parts: string[] = [];
 
@@ -272,6 +346,48 @@ export function createPulse(
           `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
       );
       parts.push(`<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`);
+    }
+
+    if (recentCalendarEvents.length > 0) {
+      const eventLines = recentCalendarEvents.map((event) => {
+        const description = event.description ? ` — ${escapeXml(event.description)}` : '';
+        const recurrence = event.recurrenceRule ? ` (recurs ${event.recurrenceRule})` : '';
+        const linkedEntity = event.entityName ? ` [entity: ${escapeXml(event.entityName)}]` : '';
+        return `${formatCalendarEventTime(event.nextOccurrence, timezone)} [${event.category}] ${escapeXml(event.name)}${recurrence}${linkedEntity}${description}`;
+      });
+      parts.push(`<recent_calendar_events>\n${eventLines.join('\n')}\n</recent_calendar_events>`);
+    }
+
+    if (recentEventAnalysis.length > 0) {
+      const eventLines = recentEventAnalysis.map((entry) => {
+        const event = entry.event;
+        const description = event.description ? ` — ${escapeXml(event.description)}` : '';
+        const preAvg = entry.preAvgSentiment === null ? 'n/a' : entry.preAvgSentiment.toFixed(2);
+        const postAvg = entry.postAvgSentiment === null ? 'n/a' : entry.postAvgSentiment.toFixed(2);
+        const delta =
+          entry.sentimentDelta === null
+            ? 'n/a'
+            : `${entry.sentimentDelta > 0 ? '+' : ''}${entry.sentimentDelta.toFixed(2)}`;
+        const linkedEntity = event.entityName ? ` [entity: ${escapeXml(event.entityName)}]` : '';
+        return `${formatCalendarEventTime(event.nextOccurrence, timezone)} [${event.category}] ${escapeXml(event.name)}${linkedEntity}${description} | pre-48h avg=${preAvg} (${entry.preMentionCount} mentions), post-so-far avg=${postAvg} (${entry.postMentionCount} mentions), delta=${delta}`;
+      });
+      parts.push(`<recent_event_analysis>\n${eventLines.join('\n')}\n</recent_event_analysis>`);
+    }
+
+    if (recentEventChains.length > 0) {
+      parts.push(
+        `<recent_event_chains>\n${recentEventChains.map((chain) => formatEventChainLine(chain, timezone)).join('\n')}\n</recent_event_chains>`,
+      );
+    }
+
+    if (calendarEvents.length > 0) {
+      const eventLines = calendarEvents.map((event) => {
+        const description = event.description ? ` — ${escapeXml(event.description)}` : '';
+        const recurrence = event.recurrenceRule ? ` (recurs ${event.recurrenceRule})` : '';
+        const linkedEntity = event.entityName ? ` [entity: ${escapeXml(event.entityName)}]` : '';
+        return `${formatCalendarEventTime(event.nextOccurrence, timezone)} [${event.category}] ${escapeXml(event.name)}${recurrence}${linkedEntity}${description}`;
+      });
+      parts.push(`<upcoming_calendar_events>\n${eventLines.join('\n')}\n</upcoming_calendar_events>`);
     }
 
     return parts.join('\n\n');
@@ -312,6 +428,8 @@ export function createPulse(
     }[] = [];
     let hasBreaking = false;
     let hasElevated = false;
+    const rawTz = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const timezone = validateTimezone(rawTz, 'Asia/Jakarta', log);
 
     for (const row of summaryRows) {
       const parsed = parseSummaryBody(row.body);
@@ -400,11 +518,57 @@ export function createPulse(
 
     log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for pulse');
 
+    const recentCalendarEvents = await calendarTracker.getRecentEvents(now - 24 * 60 * 60 * 1000, now);
+    const recentEventAnalysis = (
+      await Promise.all(
+        recentCalendarEvents.slice(0, 3).map(async (event) => {
+          const shift = await getSentimentShiftAroundTime(pool, event.nextOccurrence, event.entityId);
+          if (shift.pre_mention_count === 0 && shift.post_mention_count === 0) {
+            return null;
+          }
+          return {
+            event,
+            preAvgSentiment: shift.pre_avg_sentiment,
+            preMentionCount: shift.pre_mention_count,
+            postAvgSentiment: shift.post_avg_sentiment,
+            postMentionCount: shift.post_mention_count,
+            sentimentDelta:
+              shift.pre_avg_sentiment !== null && shift.post_avg_sentiment !== null
+                ? shift.post_avg_sentiment - shift.pre_avg_sentiment
+                : null,
+          };
+        }),
+      )
+    ).filter((entry): entry is RecentEventAnalysisEntry => entry !== null);
+    const recentEventChains = await getRecentEventChains(pool, entityIds, now - EVENT_CHAIN_LOOKBACK_MS);
+    const calendarEvents = await calendarTracker.getUpcomingEvents(now, now + 48 * 60 * 60 * 1000);
+
+    log.info(
+      {
+        recentCalendarEventCount: recentCalendarEvents.length,
+        recentEventAnalysisCount: recentEventAnalysis.length,
+        recentEventChainCount: recentEventChains.length,
+        calendarEventCount: calendarEvents.length,
+      },
+      'Loaded calendar events for pulse',
+    );
+
     // Activity-scaled maxTokens
     const maxTokens = computeMaxTokens(parsedSummaries.length, hasBreaking, hasElevated);
 
     // Build prompt
-    const userMessage = buildUserMessage(parsedSummaries, driftFlags, prior.tldr, momentum, divergence);
+    const userMessage = buildUserMessage(
+      parsedSummaries,
+      driftFlags,
+      prior.tldr,
+      momentum,
+      divergence,
+      recentCalendarEvents,
+      recentEventAnalysis,
+      recentEventChains,
+      calendarEvents,
+      timezone,
+    );
 
     log.info(
       {
@@ -450,8 +614,6 @@ export function createPulse(
 
     // Insert report
     const reportId = ulid();
-    const rawTz = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    const timezone = validateTimezone(rawTz, 'Asia/Jakarta', log);
     const dateString = getDateString(timezone);
     const avgSentiment = computeAvgSentiment(report);
 

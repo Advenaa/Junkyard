@@ -165,6 +165,45 @@ describe('toCamelCase — structural (server.ts source)', () => {
       'GET /api/v1/reports should map rows through toCamelCase',
     );
   });
+
+  it('GET /api/v1/reports parses body JSON for event chain previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1800);
+    assert.ok(
+      handlerSlice.includes('getReportEventChainPreview') && source.includes('function parseReportBody'),
+      'GET /api/v1/reports must parse body JSON, directly or via a shared helper, to expose event chain previews',
+    );
+  });
+
+  it('GET /api/v1/reports selects body so previews can be derived', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const handlerSlice = source.slice(reportsEndpoint, reportsEndpoint + 1200);
+    assert.ok(handlerSlice.includes('body FROM reports'), 'GET /api/v1/reports must select body for preview parsing');
+  });
+
+  it('GET /api/v1/search supports report scope so report previews can be searched', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 2600);
+    assert.ok(
+      handlerSlice.includes("scope: { type: 'string', enum: ['summary', 'report', 'all'] }"),
+      'GET /api/v1/search must declare a scope filter for summary/report/all searches',
+    );
+    assert.ok(
+      handlerSlice.includes('FROM reports'),
+      'GET /api/v1/search must query reports when report scope is requested',
+    );
+  });
+
+  it('GET /api/v1/search parses report bodies for event chain previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 3200);
+    assert.ok(
+      handlerSlice.includes('getReportEventChainPreview') && handlerSlice.includes("result_type: 'report'"),
+      'GET /api/v1/search must attach report event chain previews to report search hits',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -255,8 +294,8 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
     assert.ok(reportIdStart !== -1);
     const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
     assert.ok(
-      handlerSlice.includes('JSON.parse') && handlerSlice.includes('body'),
-      'reports/:id must JSON.parse the body column',
+      handlerSlice.includes('parseReportBody(report.body)') || handlerSlice.includes('parseReportBody'),
+      'reports/:id must parse the body column, directly or via a shared helper',
     );
   });
 
@@ -264,6 +303,21 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
     const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
     assert.ok(handlerSlice.includes('keyEvents'), 'reports/:id must extract keyEvents from the parsed body');
+  });
+
+  it('extracts marketCatalysts from parsed body', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(
+      handlerSlice.includes('marketCatalysts'),
+      'reports/:id must extract marketCatalysts from the parsed body',
+    );
+  });
+
+  it('extracts eventChains from parsed body', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    assert.ok(handlerSlice.includes('eventChains'), 'reports/:id must extract eventChains from the parsed body');
   });
 
   it('extracts entitySentiment from parsed body', () => {
@@ -282,17 +336,63 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
   });
 
   it('wraps JSON.parse in a try/catch for invalid body JSON', () => {
-    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
-    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    const helperStart = source.indexOf('function parseReportBody');
+    assert.ok(helperStart !== -1, 'server.ts must define a parseReportBody helper');
+    const helperSlice = source.slice(helperStart, helperStart + 220);
     assert.ok(
-      handlerSlice.includes('try') && handlerSlice.includes('catch'),
-      'reports/:id must wrap body JSON.parse in try/catch to handle invalid JSON',
+      helperSlice.includes('JSON.parse') && helperSlice.includes('try') && helperSlice.includes('catch'),
+      'report body parsing must wrap JSON.parse in try/catch to handle invalid JSON',
     );
   });
 });
 
 // ---------------------------------------------------------------------------
-// 6. SV-001 — toCamelCase guards __proto__/constructor/prototype keys
+// 6. CD-015 — summaries/:id endpoint parses body JSON
+// ---------------------------------------------------------------------------
+
+describe('CD-015 — summaries/:id parses body JSON (server.ts source)', () => {
+  it('summaries/:id endpoint exists', () => {
+    assert.ok(source.includes("'/api/v1/summaries/:id'"), 'summaries/:id endpoint must be defined');
+  });
+
+  it('parses the summary body as JSON', () => {
+    const summaryIdStart = source.indexOf("'/api/v1/summaries/:id'");
+    assert.ok(summaryIdStart !== -1);
+    const handlerSlice = source.slice(summaryIdStart, summaryIdStart + 1800);
+    assert.ok(
+      handlerSlice.includes('parseSummaryBody(row.body)') || handlerSlice.includes('parseSummaryBody'),
+      'summaries/:id must parse the body column, directly or via a shared helper',
+    );
+  });
+
+  it('extracts text and confidence from parsed body', () => {
+    const summaryIdStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(summaryIdStart, summaryIdStart + 1800);
+    assert.ok(handlerSlice.includes('summary.text'), 'summaries/:id must extract summary text from the parsed body');
+    assert.ok(handlerSlice.includes('summary.confidence'), 'summaries/:id must extract confidence from the parsed body');
+  });
+
+  it('extracts keyEvents, entities, and events from parsed body', () => {
+    const summaryIdStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(summaryIdStart, summaryIdStart + 2200);
+    assert.ok(handlerSlice.includes('summary.keyEvents'), 'summaries/:id must extract keyEvents from the parsed body');
+    assert.ok(handlerSlice.includes('summary.entities'), 'summaries/:id must extract entities from the parsed body');
+    assert.ok(handlerSlice.includes('summary.events'), 'summaries/:id must extract events from the parsed body');
+  });
+
+  it('wraps summary JSON parsing in a try/catch helper', () => {
+    const helperStart = source.indexOf('function parseSummaryBody');
+    assert.ok(helperStart !== -1, 'server.ts must define a parseSummaryBody helper');
+    const helperSlice = source.slice(helperStart, helperStart + 220);
+    assert.ok(
+      helperSlice.includes('JSON.parse') && helperSlice.includes('try') && helperSlice.includes('catch'),
+      'summary body parsing must wrap JSON.parse in try/catch to handle invalid JSON',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. SV-001 — toCamelCase guards __proto__/constructor/prototype keys
 // ---------------------------------------------------------------------------
 
 describe('SV-001 — toCamelCase prototype pollution guard (server.ts source)', () => {

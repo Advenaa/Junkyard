@@ -23,9 +23,9 @@ export interface EncryptedToken {
 }
 
 /**
- * Encrypt a plaintext Discord token.
+ * Encrypt a plaintext secret.
  */
-export function encryptToken(plaintext: string, passphrase: string): EncryptedToken {
+export function encryptSecret(plaintext: string, passphrase: string): EncryptedToken {
   const key = deriveKey(passphrase);
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -40,10 +40,10 @@ export function encryptToken(plaintext: string, passphrase: string): EncryptedTo
 }
 
 /**
- * Decrypt an encrypted token back to plaintext.
+ * Decrypt an encrypted secret back to plaintext.
  * Throws if the key is wrong or data is tampered.
  */
-export function decryptToken(encrypted: EncryptedToken, passphrase: string): string {
+export function decryptSecret(encrypted: EncryptedToken, passphrase: string): string {
   const key = deriveKey(passphrase);
   const iv = Buffer.from(encrypted.iv, 'base64');
   const authTag = Buffer.from(encrypted.authTag, 'base64');
@@ -61,4 +61,12 @@ export function decryptToken(encrypted: EncryptedToken, passphrase: string): str
  */
 export function getEncryptionKey(): string | null {
   return process.env['TOKEN_ENCRYPTION_KEY'] || process.env['SESSION_SECRET'] || null;
+}
+
+export function encryptToken(plaintext: string, passphrase: string): EncryptedToken {
+  return encryptSecret(plaintext, passphrase);
+}
+
+export function decryptToken(encrypted: EncryptedToken, passphrase: string): string {
+  return decryptSecret(encrypted, passphrase);
 }

@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
+import { ChatSources, type ChatSource } from './ChatSources';
 import { ToolUsageIndicator } from './ToolUsageIndicator';
 
 interface ChatMessageProps {
   role: 'user' | 'assistant';
   content: string;
   toolsUsed?: string[];
+  sources?: ChatSource[];
   loading?: boolean;
 }
 
@@ -159,7 +161,7 @@ function renderContent(text: string): ReactNode {
   return <>{elements}</>;
 }
 
-export function ChatMessage({ role, content, toolsUsed, loading }: ChatMessageProps) {
+export function ChatMessage({ role, content, toolsUsed, sources, loading }: ChatMessageProps) {
   const isUser = role === 'user';
 
   return (
@@ -180,6 +182,7 @@ export function ChatMessage({ role, content, toolsUsed, loading }: ChatMessagePr
             renderContent(content)
           )}
         </div>
+        {!loading && sources && sources.length > 0 && <ChatSources sources={sources} />}
         {!loading && toolsUsed && toolsUsed.length > 0 && <ToolUsageIndicator tools={toolsUsed} />}
       </div>
     </div>

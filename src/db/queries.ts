@@ -97,6 +97,43 @@ export interface EmbeddingRow {
   created_at: number;
 }
 
+export interface CalendarEventRow {
+  id: string;
+  name: string;
+  category: 'macro' | 'unlock' | 'expiry' | 'governance' | 'launch' | 'legal' | 'custom';
+  description: string | null;
+  recurrence_rule: 'daily' | 'weekly' | 'monthly' | 'quarterly' | null;
+  entity_id: string | null;
+  entity_name: string | null;
+  next_occurrence: number;
+  created_at: number;
+}
+
+export interface EventRow {
+  id: string;
+  entity_id: string | null;
+  entity_name: string;
+  event_type: 'exploit' | 'audit' | 'governance' | 'launch' | 'partnership' | 'funding' | 'hack' | 'legal';
+  description: string;
+  event_time: number;
+  source: string;
+  source_id: string;
+  summary_id: string;
+  chain_id: string | null;
+  created_at: number;
+}
+
+export interface EventChainRow {
+  chain_root_id: string;
+  entity_id: string | null;
+  entity_name: string;
+  event_count: number;
+  first_event_time: number;
+  latest_event_time: number;
+  event_types: string[];
+  descriptions: string[];
+}
+
 // ── Items ───────────────────────────────────────────────────────────────
 
 export async function insertItem(
@@ -302,6 +339,97 @@ export async function getSummariesByTimeWindow(pool: Pool, start: number, end: n
   const { rows } = await pool.query<SummaryRow>(
     `SELECT * FROM summaries WHERE created_at >= $1 AND created_at <= $2 ORDER BY created_at DESC LIMIT 200`,
     [start, end],
+  );
+  return rows;
+}
+
+export async function getSummaryById(pool: Pool, id: string): Promise<SummaryRow | null> {
+  const { rows } = await pool.query<SummaryRow>(`SELECT * FROM summaries WHERE id = $1 LIMIT 1`, [id]);
+  return rows[0] ?? null;
+}
+
+export async function insertEvents(
+  pool: Pool,
+  events: Array<{
+    id: string;
+    entityId: string | null;
+    entityName: string;
+    eventType: EventRow['event_type'];
+    description: string;
+    eventTime: number;
+    source: string;
+    sourceId: string;
+    summaryId: string;
+    chainId?: string | null;
+    createdAt: number;
+  }>,
+): Promise<void> {
+  for (const event of events) {
+    await pool.query(
+      `INSERT INTO events (
+        id, entity_id, entity_name, event_type, description, event_time,
+        source, source_id, summary_id, chain_id, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ON CONFLICT (id) DO NOTHING`,
+      [
+        event.id,
+        event.entityId,
+        event.entityName,
+        event.eventType,
+        event.description,
+        event.eventTime,
+        event.source,
+        event.sourceId,
+        event.summaryId,
+        event.chainId ?? null,
+        event.createdAt,
+      ],
+    );
+  }
+}
+
+export async function getMostRecentEventForEntity(
+  pool: Pool,
+  entityId: string,
+  beforeTime: number,
+  sinceTime: number,
+): Promise<EventRow | null> {
+  const { rows } = await pool.query<EventRow>(
+    `SELECT id, entity_id, entity_name, event_type, description, event_time, source, source_id, summary_id, chain_id, created_at
+       FROM events
+      WHERE entity_id = $1
+        AND event_time < $2
+        AND event_time >= $3
+      ORDER BY event_time DESC
+      LIMIT 1`,
+    [entityId, beforeTime, sinceTime],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getRecentEventChains(
+  pool: Pool,
+  entityIds: string[],
+  sinceTime: number,
+  limit = 5,
+): Promise<EventChainRow[]> {
+  const { rows } = await pool.query<EventChainRow>(
+    `SELECT COALESCE(chain_id, id) AS chain_root_id,
+            MIN(entity_id) AS entity_id,
+            MIN(entity_name) AS entity_name,
+            COUNT(*)::int AS event_count,
+            MIN(event_time) AS first_event_time,
+            MAX(event_time) AS latest_event_time,
+            ARRAY_AGG(event_type ORDER BY event_time ASC) AS event_types,
+            ARRAY_AGG(description ORDER BY event_time ASC) AS descriptions
+       FROM events
+      WHERE entity_id = ANY($1::text[])
+        AND event_time >= $2
+      GROUP BY COALESCE(chain_id, id)
+     HAVING COUNT(*) > 1
+      ORDER BY MAX(event_time) DESC
+      LIMIT $3`,
+    [entityIds, sinceTime, limit],
   );
   return rows;
 }
@@ -566,6 +694,9 @@ export interface DiscordTokenRow {
   encrypted_token: string;
   iv: string;
   auth_tag: string;
+  proxy_url_encrypted: string | null;
+  proxy_url_iv: string | null;
+  proxy_url_auth_tag: string | null;
   label: string | null;
   status: string;
   added_at: number;
@@ -574,7 +705,20 @@ export interface DiscordTokenRow {
 
 export async function getDiscordTokens(pool: Pool): Promise<DiscordTokenRow[]> {
   const { rows } = await pool.query<DiscordTokenRow>(
-    'SELECT id, encrypted_token, iv, auth_tag, label, status, added_at, last_used_at FROM discord_tokens ORDER BY added_at',
+    `SELECT
+       id,
+       encrypted_token,
+       iv,
+       auth_tag,
+       proxy_url_encrypted,
+       proxy_url_iv,
+       proxy_url_auth_tag,
+       label,
+       status,
+       added_at,
+       last_used_at
+     FROM discord_tokens
+     ORDER BY added_at`,
   );
   return rows;
 }
@@ -587,11 +731,31 @@ export async function insertDiscordToken(
   authTag: string,
   label: string | null,
   addedAt: number,
+  proxy: { ciphertext: string; iv: string; authTag: string } | null,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO discord_tokens (id, encrypted_token, iv, auth_tag, label, added_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [id, encryptedToken, iv, authTag, label, addedAt],
+    `INSERT INTO discord_tokens (
+       id,
+       encrypted_token,
+       iv,
+       auth_tag,
+       proxy_url_encrypted,
+       proxy_url_iv,
+       proxy_url_auth_tag,
+       label,
+       added_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [
+      id,
+      encryptedToken,
+      iv,
+      authTag,
+      proxy?.ciphertext ?? null,
+      proxy?.iv ?? null,
+      proxy?.authTag ?? null,
+      label,
+      addedAt,
+    ],
   );
 }
 
@@ -621,4 +785,243 @@ export async function updateDiscordTokenLastUsed(pool: Pool, id: string, lastUse
     'UPDATE discord_tokens SET last_used_at = $1 WHERE id = $2',
     [lastUsedAt, id],
   );
+}
+
+export async function updateDiscordTokenProxy(
+  pool: Pool,
+  id: string,
+  proxy: { ciphertext: string; iv: string; authTag: string } | null,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE discord_tokens
+       SET proxy_url_encrypted = $1,
+           proxy_url_iv = $2,
+           proxy_url_auth_tag = $3
+     WHERE id = $4`,
+    [proxy?.ciphertext ?? null, proxy?.iv ?? null, proxy?.authTag ?? null, id],
+  );
+  return (rowCount ?? 0) > 0;
+}
+
+export interface EventSentimentShiftRow {
+  pre_avg_sentiment: number | null;
+  pre_mention_count: number;
+  post_avg_sentiment: number | null;
+  post_mention_count: number;
+}
+
+export async function getSentimentShiftAroundTime(
+  pool: Pool,
+  eventTime: number,
+  entityId: string | null = null,
+  preWindowMs = 48 * 60 * 60 * 1000,
+  postWindowMs = 24 * 60 * 60 * 1000,
+): Promise<EventSentimentShiftRow> {
+  const preStart = eventTime - preWindowMs;
+  const postEnd = eventTime + postWindowMs;
+  const { rows } = await pool.query<{
+    pre_avg_sentiment: number | null;
+    pre_mention_count: number | string;
+    post_avg_sentiment: number | null;
+    post_mention_count: number | string;
+  }>(
+    `SELECT
+       AVG(sentiment) FILTER (WHERE created_at >= $1 AND created_at < $2) AS pre_avg_sentiment,
+       COUNT(*) FILTER (WHERE created_at >= $1 AND created_at < $2) AS pre_mention_count,
+       AVG(sentiment) FILTER (WHERE created_at >= $2 AND created_at < $3) AS post_avg_sentiment,
+       COUNT(*) FILTER (WHERE created_at >= $2 AND created_at < $3) AS post_mention_count
+     FROM entity_mentions
+     WHERE sentiment IS NOT NULL
+       AND created_at >= $1
+       AND created_at < $3
+       AND ($4::text IS NULL OR entity_id = $4)`,
+    [preStart, eventTime, postEnd, entityId],
+  );
+  const row = rows[0];
+  return {
+    pre_avg_sentiment: row?.pre_avg_sentiment ?? null,
+    pre_mention_count: Number(row?.pre_mention_count ?? 0),
+    post_avg_sentiment: row?.post_avg_sentiment ?? null,
+    post_mention_count: Number(row?.post_mention_count ?? 0),
+  };
+}
+
+// ── Calendar Events ───────────────────────────────────────────────────
+
+const CALENDAR_EVENT_SELECT = `SELECT
+       ce.id,
+       ce.name,
+       ce.category,
+       ce.description,
+       ce.recurrence_rule,
+       ce.entity_id,
+       e.name AS entity_name,
+       ce.next_occurrence,
+       ce.created_at
+     FROM calendar_events ce
+     LEFT JOIN entities e ON e.id = ce.entity_id`;
+
+export async function getCalendarEvents(pool: Pool, fromTime: number, limit = 25): Promise<CalendarEventRow[]> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `${CALENDAR_EVENT_SELECT}
+      WHERE ce.next_occurrence >= $1
+      ORDER BY next_occurrence ASC
+      LIMIT $2`,
+    [fromTime, limit],
+  );
+  return rows;
+}
+
+export async function getUpcomingCalendarEvents(
+  pool: Pool,
+  startTime: number,
+  endTime: number,
+  limit = 8,
+): Promise<CalendarEventRow[]> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `${CALENDAR_EVENT_SELECT}
+      WHERE ce.next_occurrence >= $1
+        AND ce.next_occurrence <= $2
+      ORDER BY ce.next_occurrence ASC
+      LIMIT $3`,
+    [startTime, endTime, limit],
+  );
+  return rows;
+}
+
+export async function getCalendarEventsInRange(
+  pool: Pool,
+  startTime: number,
+  endTime: number,
+  limit = 25,
+): Promise<CalendarEventRow[]> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `${CALENDAR_EVENT_SELECT}
+      WHERE ce.next_occurrence >= $1
+        AND ce.next_occurrence <= $2
+      ORDER BY ce.next_occurrence DESC
+      LIMIT $3`,
+    [startTime, endTime, limit],
+  );
+  return rows;
+}
+
+export async function getOverdueRecurringCalendarEvents(pool: Pool, beforeTime: number): Promise<CalendarEventRow[]> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `${CALENDAR_EVENT_SELECT}
+      WHERE ce.recurrence_rule IS NOT NULL
+        AND ce.next_occurrence < $1
+      ORDER BY ce.next_occurrence ASC`,
+    [beforeTime],
+  );
+  return rows;
+}
+
+export async function insertCalendarEvent(
+  pool: Pool,
+  event: {
+    id: string;
+    name: string;
+    category: CalendarEventRow['category'];
+    description: string | null;
+    recurrenceRule: string | null;
+    entityId: string | null;
+    nextOccurrence: number;
+    createdAt: number;
+  },
+): Promise<CalendarEventRow> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `INSERT INTO calendar_events (id, name, category, description, recurrence_rule, entity_id, next_occurrence, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING
+       id,
+       name,
+       category,
+       description,
+       recurrence_rule,
+       entity_id,
+       (SELECT entities.name FROM entities WHERE entities.id = calendar_events.entity_id) AS entity_name,
+       next_occurrence,
+       created_at`,
+    [
+      event.id,
+      event.name,
+      event.category,
+      event.description,
+      event.recurrenceRule,
+      event.entityId,
+      event.nextOccurrence,
+      event.createdAt,
+    ],
+  );
+  return rows[0]!;
+}
+
+export async function getCalendarEventById(pool: Pool, id: string): Promise<CalendarEventRow | null> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `${CALENDAR_EVENT_SELECT}
+      WHERE ce.id = $1
+      LIMIT 1`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateCalendarEvent(
+  pool: Pool,
+  event: {
+    id: string;
+    name: string;
+    category: CalendarEventRow['category'];
+    description: string | null;
+    recurrenceRule: CalendarEventRow['recurrence_rule'];
+    entityId: string | null;
+    nextOccurrence: number;
+  },
+): Promise<CalendarEventRow | null> {
+  const { rows } = await pool.query<CalendarEventRow>(
+    `UPDATE calendar_events
+        SET name = $2,
+            category = $3,
+            description = $4,
+            recurrence_rule = $5,
+            entity_id = $6,
+            next_occurrence = $7
+      WHERE id = $1
+      RETURNING
+        id,
+        name,
+        category,
+        description,
+        recurrence_rule,
+        entity_id,
+        (SELECT entities.name FROM entities WHERE entities.id = calendar_events.entity_id) AS entity_name,
+        next_occurrence,
+        created_at`,
+    [event.id, event.name, event.category, event.description, event.recurrenceRule, event.entityId, event.nextOccurrence],
+  );
+  return rows[0] ?? null;
+}
+
+export async function updateCalendarEventOccurrence(pool: Pool, id: string, nextOccurrence: number): Promise<boolean> {
+  const { rowCount } = await pool.query(`UPDATE calendar_events SET next_occurrence = $2 WHERE id = $1`, [
+    id,
+    nextOccurrence,
+  ]);
+  return (rowCount ?? 0) > 0;
+}
+
+export async function deleteExpiredOneTimeCalendarEvents(pool: Pool, beforeTime: number): Promise<number> {
+  const { rowCount } = await pool.query(
+    `DELETE FROM calendar_events
+      WHERE recurrence_rule IS NULL
+        AND next_occurrence < $1`,
+    [beforeTime],
+  );
+  return rowCount ?? 0;
+}
+
+export async function deleteCalendarEvent(pool: Pool, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query(`DELETE FROM calendar_events WHERE id = $1`, [id]);
+  return (rowCount ?? 0) > 0;
 }

@@ -19,6 +19,8 @@ interface Section {
 interface FullReport extends Report {
   body: string | null;
   keyEvents: string[];
+  marketCatalysts: string[];
+  eventChains: string[];
   entitySentiment: EntitySentiment[];
   sections: Section[];
 }
@@ -171,6 +173,32 @@ export function ReportView() {
       <blockquote className="font-heading text-xl leading-relaxed text-text-primary border-l-2 border-accent pl-6 py-2">
         {report.tldr}
       </blockquote>
+
+      {report.marketCatalysts && report.marketCatalysts.length > 0 && (
+        <div>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Market Catalysts</h2>
+          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+            {report.marketCatalysts.map((catalyst, i) => (
+              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                {catalyst}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {report.eventChains && report.eventChains.length > 0 && (
+        <div>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Event Chains</h2>
+          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+            {report.eventChains.map((chain, i) => (
+              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                {chain}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Key Events */}
       {report.keyEvents && report.keyEvents.length > 0 && (

@@ -1,17 +1,25 @@
+import { z } from 'zod';
 import { ulid } from 'ulid';
 import { ChunkSummaryLLMSchema } from './schemas.js';
-import type { ChunkSummary } from './schemas.js';
+import type { ChunkEvent, ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk } from './chunk.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
-import { insertSummary, claimBatch } from '../db/queries.js';
+import { insertSummary, claimBatch, insertEvents, getMostRecentEventForEntity } from '../db/queries.js';
+import type { EventRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import { normalizeAlias } from '../knowledge/entities.js';
 import type { ExtractedEntity } from '../knowledge/entities.js';
 
 /** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
 const MAX_ITEM_RETRIES = 3;
+const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+
+const EventFollowUpSchema = z.object({
+  followUp: z.boolean(),
+});
 
 interface EntityManager {
   resolveEntities(
@@ -68,7 +76,14 @@ Return ONLY valid JSON matching this schema:
       "sentiment": -1.0 to 1.0
     }
   ],
-  "keyEvents": ["max 5 factual bullets"]
+  "keyEvents": ["max 5 factual bullets"],
+  "events": [
+    {
+      "entityName": "Canonical entity or project name from the entities list",
+      "eventType": "exploit" | "audit" | "governance" | "launch" | "partnership" | "funding" | "hack" | "legal",
+      "description": "Short factual description of the event"
+    }
+  ]
 }
 
 Rules:
@@ -76,6 +91,7 @@ Rules:
 - type must be one of the enum values. If unsure, use "project"
 - urgency: "breaking" = major exploit, crash, regulatory action. "elevated" = notable. "routine" = normal.
 - keyEvents: factual only, no speculation.
+- events: include only concrete entity-linked developments that happened or were announced in this chunk. Reuse the canonical entity name from the entities list. Max 5.
 - Content is in English. Always output in English.
 - Rate confidence 1-10 based on clarity and certainty.
 
@@ -92,6 +108,9 @@ Example 1 (routine):
   "keyEvents": [
     "Uniswap v4 hook audit completed by OpenZeppelin — no critical findings",
     "Arbitrum sequencer congestion causing elevated gas costs"
+  ],
+  "events": [
+    {"entityName": "Uniswap", "eventType": "audit", "description": "OpenZeppelin completed the Uniswap v4 hook audit with no critical findings."}
   ]
 }
 
@@ -107,6 +126,10 @@ Example 2 (breaking):
     "Wormhole bridge exploited for ~$120M in wrapped ETH",
     "Wormhole bridge paused by team, white-hat coordination underway",
     "Solana DeFi protocols experiencing panic selling"
+  ],
+  "events": [
+    {"entityName": "Wormhole", "eventType": "exploit", "description": "Wormhole bridge was exploited for roughly $120M in wrapped ETH."},
+    {"entityName": "Wormhole", "eventType": "hack", "description": "Wormhole paused bridge operations while coordinating incident response."}
   ]
 }
 
@@ -161,6 +184,40 @@ export function verifyEntities(
     return found;
   });
   return { ...parsed, entities: verified };
+}
+
+export function verifyEvents(parsed: ChunkSummary, log: Logger, source: string, sourceId: string): ChunkSummary {
+  const validEntityKeys = new Set<string>();
+  for (const entity of parsed.entities) {
+    const canonical = normalizeAlias(entity.name);
+    if (canonical) validEntityKeys.add(canonical);
+    for (const alias of entity.aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
+    }
+  }
+
+  const verified = parsed.events.filter((event) => {
+    const normalizedEntityName = normalizeAlias(event.entityName);
+    const found = normalizedEntityName !== '' && validEntityKeys.has(normalizedEntityName);
+    if (!found) {
+      log.info({ eventType: event.eventType, entityName: event.entityName, source, sourceId }, 'Dropped event without verified entity match');
+    }
+    return found;
+  });
+
+  return { ...parsed, events: verified };
+}
+
+function verifyChunkSummary(parsed: ChunkSummary, rawText: string, log: Logger, source: string, sourceId: string): ChunkSummary {
+  return verifyEvents(verifyEntities(parsed, rawText, log, source, sourceId), log, source, sourceId);
+}
+
+function getChunkEventTime(chunk: ClaimedItem[], fallback: number): number {
+  const finiteTimestamps = chunk
+    .map((item) => item.timestamp)
+    .filter((timestamp) => Number.isFinite(timestamp));
+  return finiteTimestamps.length > 0 ? Math.max(...finiteTimestamps) : fallback;
 }
 
 // ── Call budget ──────────────────────────────────────────────────────
@@ -312,7 +369,7 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
 
       const escalated = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped, callBudget);
       if (escalated !== null) {
-        return verifyEntities(escalated, rawText, log, source, sourceId);
+        return verifyChunkSummary(escalated, rawText, log, source, sourceId);
       }
     } catch (err: unknown) {
       log.error({ err, source, sourceId }, 'Escalation to Sonnet failed');
@@ -324,6 +381,137 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
   interface ProcessedChunk {
     parsed: ChunkSummary;
     itemCount: number;
+  }
+
+  const processedChunkEventTimes = new WeakMap<ChunkSummary, number>();
+
+  async function persistExtractedEvents(
+    events: ChunkEvent[],
+    source: string,
+    sourceId: string,
+    summaryId: string,
+    eventTime: number,
+    createdAt: number,
+    callBudget: CallBudget,
+  ): Promise<void> {
+    if (events.length === 0) return;
+
+    const normalizedEntityNames = [...new Set(events.map((event) => normalizeAlias(event.entityName)).filter(Boolean))];
+    const entityIdByLookup = new Map<string, string>();
+
+    if (normalizedEntityNames.length > 0) {
+      const { rows } = await pool.query<{ id: string; canonical_name: string; alias: string | null }>(
+        `SELECT e.id, LOWER(e.name) AS canonical_name, ea.alias
+           FROM entities e
+           LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
+          WHERE LOWER(e.name) = ANY($1) OR ea.alias = ANY($1)`,
+        [normalizedEntityNames],
+      );
+
+      for (const row of rows) {
+        entityIdByLookup.set(row.canonical_name, row.id);
+        if (row.alias) {
+          entityIdByLookup.set(row.alias, row.id);
+        }
+      }
+    }
+
+    async function shouldLinkAsFollowUp(event: ChunkEvent, priorEvent: EventRow): Promise<boolean> {
+      if (budgetExhausted(callBudget, log)) return false;
+
+      const classifierPrompt = `You decide whether a new entity event is a follow-up in the same ongoing chain as a prior event.
+
+Return ONLY valid JSON:
+{
+  "followUp": true | false
+}
+
+Rules:
+- true only when the new event clearly continues, reacts to, resolves, governs, audits, or follows from the prior event for the same entity.
+- false when the new event is unrelated, a separate initiative, or too ambiguous to link safely.
+- Be conservative.`;
+
+      const classifierInput = JSON.stringify(
+        {
+          priorEvent: {
+            entityName: priorEvent.entity_name,
+            eventType: priorEvent.event_type,
+            description: priorEvent.description,
+            eventTime: priorEvent.event_time,
+          },
+          newEvent: {
+            entityName: event.entityName,
+            eventType: event.eventType,
+            description: event.description,
+            eventTime,
+          },
+        },
+        null,
+        2,
+      );
+
+      try {
+        const wrapped = llm.wrapWithNonce(classifierInput);
+        const result = await llm.call({
+          model: config.models.haiku,
+          system: classifierPrompt,
+          messages: [{ role: 'user', content: wrapped.wrapped }],
+          maxTokens: 120,
+          stage: 'event-link',
+        });
+
+        const parsed = JSON.parse(stripCodeFences(result.content)) as unknown;
+        const validated = EventFollowUpSchema.safeParse(parsed);
+        if (validated.success) {
+          return validated.data.followUp;
+        }
+      } catch (err: unknown) {
+        log.warn(
+          { err, entityName: event.entityName, eventType: event.eventType, source, sourceId },
+          'Event follow-up classification failed, leaving event unchained',
+        );
+      }
+
+      return false;
+    }
+
+    await insertEvents(
+      pool,
+      await Promise.all(
+        events.map(async (event) => {
+          const normalizedEntityName = normalizeAlias(event.entityName);
+          const entityId = entityIdByLookup.get(normalizedEntityName) ?? null;
+          let chainId: string | null = null;
+
+          if (entityId) {
+            const priorEvent = await getMostRecentEventForEntity(
+              pool,
+              entityId,
+              eventTime,
+              eventTime - EVENT_CHAIN_LOOKBACK_MS,
+            );
+
+            if (priorEvent && (await shouldLinkAsFollowUp(event, priorEvent))) {
+              chainId = priorEvent.chain_id ?? priorEvent.id;
+            }
+          }
+
+          return {
+            id: ulid(),
+            entityId,
+            entityName: event.entityName,
+            eventType: event.eventType,
+            description: event.description,
+            eventTime,
+            source,
+            sourceId,
+            summaryId,
+            chainId,
+            createdAt,
+          };
+        }),
+      ),
+    );
   }
 
   /**
@@ -350,12 +538,13 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
         return [];
       }
 
-      // Entity post-verification
-      parsed = verifyEntities(parsed, rawText, log, source, sourceId);
+      // Entity + structured event post-verification
+      parsed = verifyChunkSummary(parsed, rawText, log, source, sourceId);
 
       // Confidence escalation
       parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, source, sourceId, callBudget);
 
+      processedChunkEventTimes.set(parsed, getChunkEventTime(chunk, windowEnd));
       return [{ parsed, itemCount: chunk.length }];
     } catch (err: unknown) {
       if (err instanceof ContextLengthExceededError) {
@@ -531,6 +720,26 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
             log.warn(
               { summaryId, err: entityErr, source, sourceId, entityCount: parsed.entities.length },
               'Entity resolution failed for summary, keeping summary without entities',
+            );
+          }
+        }
+
+        if (parsed.events.length > 0) {
+          try {
+            const eventTime = processedChunkEventTimes.get(parsed) ?? windowEnd;
+            await persistExtractedEvents(
+              parsed.events,
+              source,
+              sourceId,
+              summaryId,
+              eventTime,
+              summaryRow.createdAt,
+              callBudget,
+            );
+          } catch (eventErr: unknown) {
+            log.warn(
+              { summaryId, err: eventErr, source, sourceId, eventCount: parsed.events.length },
+              'Event persistence failed for summary, keeping summary without events',
             );
           }
         }

@@ -142,6 +142,14 @@ export function ReportList() {
                 </div>
               </div>
               <p className="text-text-primary text-sm font-body leading-relaxed line-clamp-2">{report.tldr}</p>
+              {report.eventChains && report.eventChains.length > 0 && (
+                <p className="mt-2 text-xs font-body text-text-secondary leading-relaxed line-clamp-1">
+                  <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
+                    Event Chain
+                  </span>{' '}
+                  {report.eventChains[0]}
+                </p>
+              )}
             </button>
           ))}
         </div>

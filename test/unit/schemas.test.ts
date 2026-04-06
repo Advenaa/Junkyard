@@ -21,6 +21,7 @@ describe('ChunkSummaryLLMSchema', () => {
       },
     ],
     keyEvents: ['Price surged past $100k'],
+    events: [{ entityName: 'Bitcoin', eventType: 'launch' as const, description: 'Bitcoin product launch discussed.' }],
   };
 
   it('accepts valid input', () => {
@@ -149,6 +150,28 @@ describe('ChunkSummaryLLMSchema', () => {
     assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, keyEvents }));
   });
 
+  it('5 events pass', () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({
+      entityName: `Entity${i}`,
+      eventType: 'launch' as const,
+      description: `Launch event ${i}`,
+    }));
+    const result = ChunkSummaryLLMSchema.parse({
+      ...validChunk,
+      events,
+    });
+    assert.equal(result.events.length, 5);
+  });
+
+  it('6 events fail', () => {
+    const events = Array.from({ length: 6 }, (_, i) => ({
+      entityName: `Entity${i}`,
+      eventType: 'launch' as const,
+      description: `Launch event ${i}`,
+    }));
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, events }));
+  });
+
   /* -- Default values -- */
 
   it('defaults entities to [] when omitted', () => {
@@ -161,6 +184,12 @@ describe('ChunkSummaryLLMSchema', () => {
     const { keyEvents, ...rest } = validChunk;
     const result = ChunkSummaryLLMSchema.parse(rest);
     assert.deepStrictEqual(result.keyEvents, []);
+  });
+
+  it('defaults events to [] when omitted', () => {
+    const { events, ...rest } = validChunk;
+    const result = ChunkSummaryLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.events, []);
   });
 
   it('defaults entity type to "project" when omitted', () => {
@@ -208,6 +237,8 @@ describe('MarketReportLLMSchema', () => {
   const validReport = {
     tldr: 'Markets are calm today with minor movements across major tokens.',
     keyEvents: ['Fed held rates steady'],
+    marketCatalysts: ['Friday options expiry could raise BTC vol.'],
+    eventChains: ['Bitcoin exploit chain: exploit -> audit -> governance (3 linked events).'],
     entitySentiment: [{ name: 'Bitcoin', sentiment: 0.3, reason: 'Slow grind up' }],
     sections: [{ title: 'Overview', body: 'All quiet.' }],
     newProjects: [{ name: 'CoolDAO', description: 'A new DAO project' }],
@@ -284,12 +315,52 @@ describe('MarketReportLLMSchema', () => {
     assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, keyEvents }));
   });
 
+  it('6 marketCatalysts pass', () => {
+    const marketCatalysts = Array.from({ length: 6 }, (_, i) => `Catalyst ${i}`);
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      marketCatalysts,
+    });
+    assert.equal(result.marketCatalysts.length, 6);
+  });
+
+  it('7 marketCatalysts fail', () => {
+    const marketCatalysts = Array.from({ length: 7 }, (_, i) => `Catalyst ${i}`);
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, marketCatalysts }));
+  });
+
+  it('5 eventChains pass', () => {
+    const eventChains = Array.from({ length: 5 }, (_, i) => `Chain ${i}`);
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      eventChains,
+    });
+    assert.equal(result.eventChains.length, 5);
+  });
+
+  it('6 eventChains fail', () => {
+    const eventChains = Array.from({ length: 6 }, (_, i) => `Chain ${i}`);
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, eventChains }));
+  });
+
   /* -- Default values -- */
 
   it('defaults keyEvents to [] when omitted', () => {
     const { keyEvents, ...rest } = validReport;
     const result = MarketReportLLMSchema.parse(rest);
     assert.deepStrictEqual(result.keyEvents, []);
+  });
+
+  it('defaults marketCatalysts to [] when omitted', () => {
+    const { marketCatalysts, ...rest } = validReport;
+    const result = MarketReportLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.marketCatalysts, []);
+  });
+
+  it('defaults eventChains to [] when omitted', () => {
+    const { eventChains, ...rest } = validReport;
+    const result = MarketReportLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.eventChains, []);
   });
 
   it('defaults entitySentiment to [] when omitted', () => {

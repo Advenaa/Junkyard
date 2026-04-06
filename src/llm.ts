@@ -67,6 +67,7 @@ export type Stage =
   | 'chat'
   | 'translate'
   | 'escalate'
+  | 'event-link'
   | 'narrative-cluster'
   | 'entity-disambiguate';
 
@@ -79,6 +80,7 @@ const STAGE_TEMPERATURES: Record<string, number> = {
   chat: 0.7,
   translate: 0.1,
   escalate: 0.3,
+  'event-link': 0.1,
   'urgency-classify': 0.2,
   'narrative-cluster': 0.3,
   'entity-disambiguate': 0.2,

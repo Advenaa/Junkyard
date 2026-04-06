@@ -5,6 +5,10 @@ const COLORS: Record<string, string> = {
   active: 'bg-accent-green/20 text-accent-green',
   disabled: 'bg-border text-text-secondary',
   halted: 'bg-accent-red/20 text-accent-red',
+  connected: 'bg-accent-green/20 text-accent-green',
+  connecting: 'bg-accent/20 text-accent',
+  backoff: 'bg-yellow-500/20 text-yellow-400',
+  idle: 'bg-border text-text-secondary',
   unknown: 'bg-border text-text-secondary',
 };
 
