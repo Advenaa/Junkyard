@@ -281,7 +281,34 @@ describe('CD-013 — feed endpoint parses attachments (server.ts source)', () =>
 });
 
 // ---------------------------------------------------------------------------
-// 5. CD-014 — reports/:id endpoint parses body JSON
+// 5. CD-016 — items/:id endpoint parses attachments JSON
+// ---------------------------------------------------------------------------
+
+describe('CD-016 — items/:id parses attachments (server.ts source)', () => {
+  it('items/:id endpoint exists', () => {
+    assert.ok(source.includes("'/api/v1/items/:id'"), 'items/:id endpoint must be defined');
+  });
+
+  it('items/:id response handling includes JSON.parse for attachments', () => {
+    const itemStart = source.indexOf("'/api/v1/items/:id'");
+    assert.ok(itemStart !== -1);
+    const itemSlice = source.slice(itemStart, itemStart + 1200);
+    assert.ok(
+      itemSlice.includes('JSON.parse') && itemSlice.includes('attachments'),
+      'items/:id endpoint must JSON.parse the attachments column',
+    );
+  });
+
+  it('defaults null/undefined attachments to an empty array', () => {
+    const itemStart = source.indexOf("'/api/v1/items/:id'");
+    assert.ok(itemStart !== -1);
+    const itemSlice = source.slice(itemStart, itemStart + 1200);
+    assert.ok(itemSlice.includes('[]'), 'items/:id endpoint must default null attachments to an empty array ([])');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. CD-014 — reports/:id endpoint parses body JSON
 // ---------------------------------------------------------------------------
 
 describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
@@ -347,7 +374,7 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. CD-015 — summaries/:id endpoint parses body JSON
+// 7. CD-015 — summaries/:id endpoint parses body JSON
 // ---------------------------------------------------------------------------
 
 describe('CD-015 — summaries/:id parses body JSON (server.ts source)', () => {
@@ -369,7 +396,10 @@ describe('CD-015 — summaries/:id parses body JSON (server.ts source)', () => {
     const summaryIdStart = source.indexOf("'/api/v1/summaries/:id'");
     const handlerSlice = source.slice(summaryIdStart, summaryIdStart + 1800);
     assert.ok(handlerSlice.includes('summary.text'), 'summaries/:id must extract summary text from the parsed body');
-    assert.ok(handlerSlice.includes('summary.confidence'), 'summaries/:id must extract confidence from the parsed body');
+    assert.ok(
+      handlerSlice.includes('summary.confidence'),
+      'summaries/:id must extract confidence from the parsed body',
+    );
   });
 
   it('extracts keyEvents, entities, and events from parsed body', () => {

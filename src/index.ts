@@ -54,7 +54,10 @@ async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Prom
       for (const row of rows) {
         if (row.status !== 'active') continue;
         try {
-          const plainToken = decryptToken({ ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag }, encKey);
+          const plainToken = decryptToken(
+            { ciphertext: row.encrypted_token, iv: row.iv, authTag: row.auth_tag },
+            encKey,
+          );
           let proxyUrl: string | null = null;
           let maskedProxy: string | null = null;
           const hasProxy =

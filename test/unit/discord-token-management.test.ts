@@ -26,62 +26,35 @@ const serverSrc = readFileSync(resolve(ROOT, 'src/server.ts'), 'utf-8');
 
 describe('Structural: encryption module (src/crypto/token-encrypt.ts)', () => {
   it('1. exports encryptToken function', () => {
-    assert.ok(
-      encryptSrc.includes('export function encryptToken'),
-      'must export encryptToken function',
-    );
+    assert.ok(encryptSrc.includes('export function encryptToken'), 'must export encryptToken function');
   });
 
   it('2. exports decryptToken function', () => {
-    assert.ok(
-      encryptSrc.includes('export function decryptToken'),
-      'must export decryptToken function',
-    );
+    assert.ok(encryptSrc.includes('export function decryptToken'), 'must export decryptToken function');
   });
 
   it('3. exports getEncryptionKey function', () => {
-    assert.ok(
-      encryptSrc.includes('export function getEncryptionKey'),
-      'must export getEncryptionKey function',
-    );
+    assert.ok(encryptSrc.includes('export function getEncryptionKey'), 'must export getEncryptionKey function');
   });
 
   it('4. uses aes-256-gcm algorithm', () => {
-    assert.ok(
-      encryptSrc.includes('aes-256-gcm'),
-      'must use aes-256-gcm algorithm',
-    );
+    assert.ok(encryptSrc.includes('aes-256-gcm'), 'must use aes-256-gcm algorithm');
   });
 
   it('5. uses pbkdf2Sync for key derivation', () => {
-    assert.ok(
-      encryptSrc.includes('pbkdf2Sync'),
-      'must use pbkdf2Sync for key derivation',
-    );
+    assert.ok(encryptSrc.includes('pbkdf2Sync'), 'must use pbkdf2Sync for key derivation');
   });
 });
 
 describe('Structural: migration (src/db/migrations.ts)', () => {
   it('6. contains discord_tokens table creation', () => {
-    assert.ok(
-      migrationsSrc.includes('CREATE TABLE discord_tokens'),
-      'migration must create discord_tokens table',
-    );
+    assert.ok(migrationsSrc.includes('CREATE TABLE discord_tokens'), 'migration must create discord_tokens table');
   });
 
   it('7. table has encrypted_token, iv, auth_tag columns', () => {
-    assert.ok(
-      migrationsSrc.includes('encrypted_token'),
-      'discord_tokens must have encrypted_token column',
-    );
-    assert.ok(
-      migrationsSrc.includes('iv TEXT NOT NULL'),
-      'discord_tokens must have iv column',
-    );
-    assert.ok(
-      migrationsSrc.includes('auth_tag TEXT NOT NULL'),
-      'discord_tokens must have auth_tag column',
-    );
+    assert.ok(migrationsSrc.includes('encrypted_token'), 'discord_tokens must have encrypted_token column');
+    assert.ok(migrationsSrc.includes('iv TEXT NOT NULL'), 'discord_tokens must have iv column');
+    assert.ok(migrationsSrc.includes('auth_tag TEXT NOT NULL'), 'discord_tokens must have auth_tag column');
   });
 
   it('8. has CHECK constraint on status (active, disabled)', () => {
@@ -90,7 +63,7 @@ describe('Structural: migration (src/db/migrations.ts)', () => {
     assert.ok(tableIdx !== -1);
     const tableBlock = migrationsSrc.slice(tableIdx, tableIdx + 500);
     assert.ok(
-      tableBlock.includes("CHECK") && tableBlock.includes("'active'") && tableBlock.includes("'disabled'"),
+      tableBlock.includes('CHECK') && tableBlock.includes("'active'") && tableBlock.includes("'disabled'"),
       'discord_tokens must have CHECK constraint with active and disabled statuses',
     );
   });
@@ -98,10 +71,7 @@ describe('Structural: migration (src/db/migrations.ts)', () => {
 
 describe('Structural: queries (src/db/queries.ts)', () => {
   it('9. exports getDiscordTokens function', () => {
-    assert.ok(
-      queriesSrc.includes('export async function getDiscordTokens'),
-      'must export getDiscordTokens function',
-    );
+    assert.ok(queriesSrc.includes('export async function getDiscordTokens'), 'must export getDiscordTokens function');
   });
 
   it('10. exports insertDiscordToken function', () => {
@@ -156,16 +126,16 @@ describe('Structural: server routes (src/server.ts)', () => {
     const tokenSection = serverSrc.slice(sectionStart);
 
     // Each CRUD route in the token section should reference requireAdmin
-    const getRoute = tokenSection.slice(0, tokenSection.indexOf("app.post"));
+    const getRoute = tokenSection.slice(0, tokenSection.indexOf('app.post'));
     assert.ok(getRoute.includes('requireAdmin'), 'GET tokens route must require admin auth');
 
-    const postRoute = tokenSection.slice(tokenSection.indexOf("app.post"), tokenSection.indexOf("app.delete"));
+    const postRoute = tokenSection.slice(tokenSection.indexOf('app.post'), tokenSection.indexOf('app.delete'));
     assert.ok(postRoute.includes('requireAdmin'), 'POST tokens route must require admin auth');
 
-    const deleteRoute = tokenSection.slice(tokenSection.indexOf("app.delete"), tokenSection.indexOf("app.patch"));
+    const deleteRoute = tokenSection.slice(tokenSection.indexOf('app.delete'), tokenSection.indexOf('app.patch'));
     assert.ok(deleteRoute.includes('requireAdmin'), 'DELETE tokens route must require admin auth');
 
-    const patchRoute = tokenSection.slice(tokenSection.indexOf("app.patch"));
+    const patchRoute = tokenSection.slice(tokenSection.indexOf('app.patch'));
     assert.ok(patchRoute.includes('requireAdmin'), 'PATCH tokens route must require admin auth');
   });
 
@@ -270,7 +240,10 @@ describe('Discord adapter reconnect (discord.ts)', () => {
     assert.ok(reconnectBlock, 'reconnect function must exist');
     const block = reconnectBlock[0];
     assert.ok(block.includes('disconnect()'), 'reconnect must call disconnect');
-    assert.ok(block.includes('connections.length = 0') || block.includes('connections.splice'), 'reconnect must clear connections');
+    assert.ok(
+      block.includes('connections.length = 0') || block.includes('connections.splice'),
+      'reconnect must clear connections',
+    );
     assert.ok(block.includes('connect()'), 'reconnect must call connect');
   });
 });

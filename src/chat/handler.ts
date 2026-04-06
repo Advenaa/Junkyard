@@ -27,7 +27,7 @@ interface ToolCall {
 }
 
 interface ChatSource {
-  type: 'report' | 'summary';
+  type: 'report' | 'summary' | 'item';
   id: string;
   label: string;
   snippet: string;
@@ -53,7 +53,8 @@ Use semantic_search with type="summary" when you need narrower chunk-level detai
 const TOOL_DEFINITIONS = [
   {
     name: 'semantic_search',
-    description: 'Search summaries and reports by semantic similarity. Use report mode for synthesized chain-aware context.',
+    description:
+      'Search summaries and reports by semantic similarity. Use report mode for synthesized chain-aware context.',
     parameters: {
       type: 'object',
       properties: {
@@ -148,6 +149,26 @@ function buildCitationLabel(type: 'report' | 'summary', id: string, rawSnippet: 
   return `Summary ${id.slice(0, 8)}`;
 }
 
+function extractReadRawSources(toolResult: string): ChatSource[] {
+  const match = toolResult.match(
+    /^Item\s+(\S+)\s+by\s+(.+?)\s+at\s+(.+?):\n<raw_content_[0-9a-f]{8}>([\s\S]*?)<\/raw_content_[0-9a-f]{8}>$/,
+  );
+  if (!match) return [];
+
+  const [, id, _author, _timestamp, rawContent] = match;
+  const snippet = truncateSnippet(rawContent ?? '');
+  if (!id || !snippet) return [];
+
+  return [
+    {
+      type: 'item',
+      id,
+      label: `Item ${id.slice(0, 8)}`,
+      snippet,
+    },
+  ];
+}
+
 function extractSemanticSearchSources(usageLabel: string, toolResult: string): ChatSource[] {
   const type: 'report' | 'summary' = usageLabel === 'semantic_search:report' ? 'report' : 'summary';
   const sources: ChatSource[] = [];
@@ -173,6 +194,9 @@ function extractSemanticSearchSources(usageLabel: string, toolResult: string): C
 function extractSourcesFromToolResult(usageLabel: string, toolResult: string): ChatSource[] {
   if (usageLabel.startsWith('semantic_search:')) {
     return extractSemanticSearchSources(usageLabel, toolResult);
+  }
+  if (usageLabel === 'read_raw') {
+    return extractReadRawSources(toolResult);
   }
   return [];
 }
@@ -335,11 +359,19 @@ export function createChatHandler(
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('halted') || msg.includes('401') || msg.includes('unauthorized')) {
           log.error({ err, conversationId }, 'chat: LLM service halted');
-          return { response: 'Chat service is temporarily unavailable. Please try again later.', toolsUsed, sources: [] };
+          return {
+            response: 'Chat service is temporarily unavailable. Please try again later.',
+            toolsUsed,
+            sources: [],
+          };
         }
         if (msg.includes('context') || msg.includes('token')) {
           log.warn({ err, conversationId }, 'chat: context length exceeded');
-          return { response: 'Your conversation is too long. Please start a new conversation.', toolsUsed, sources: [] };
+          return {
+            response: 'Your conversation is too long. Please start a new conversation.',
+            toolsUsed,
+            sources: [],
+          };
         }
         log.error({ err, conversationId }, 'chat: LLM call failed');
         return { response: 'An error occurred processing your request. Please try again.', toolsUsed, sources: [] };

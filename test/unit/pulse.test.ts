@@ -106,16 +106,14 @@ function makePool(
       }
       if (sql.includes('FROM entity_mentions')) {
         return {
-          rows:
-            opts.eventSentimentShift ??
-            [
-              {
-                pre_avg_sentiment: null,
-                pre_mention_count: 0,
-                post_avg_sentiment: null,
-                post_mention_count: 0,
-              },
-            ],
+          rows: opts.eventSentimentShift ?? [
+            {
+              pre_avg_sentiment: null,
+              pre_mention_count: 0,
+              post_avg_sentiment: null,
+              post_mention_count: 0,
+            },
+          ],
         };
       }
       if (sql.includes('FROM events') && sql.includes('GROUP BY COALESCE(chain_id, id)')) {
@@ -275,27 +273,19 @@ describe('pulse', { concurrency: 1 }, () => {
         wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
       };
       const pool = makePool({ summaries: [makeSummaryRow()] });
-      const { runPulse } = createPulse(
-        pool,
-        noopLog,
-        baseConfig,
-        llm,
-        mockSentimentTracker,
-        mockDivergenceTracker,
-        {
-          getRecentEvents: async () => [],
-          getUpcomingEvents: async () => [
-            {
-              id: 'cal-1',
-              name: 'ARB token unlock',
-              category: 'unlock',
-              description: 'Large circulating supply increase expected.',
-              recurrenceRule: null,
-              nextOccurrence: Date.now() + 12 * 60 * 60 * 1000,
-            },
-          ],
-        },
-      );
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker, {
+        getRecentEvents: async () => [],
+        getUpcomingEvents: async () => [
+          {
+            id: 'cal-1',
+            name: 'ARB token unlock',
+            category: 'unlock',
+            description: 'Large circulating supply increase expected.',
+            recurrenceRule: null,
+            nextOccurrence: Date.now() + 12 * 60 * 60 * 1000,
+          },
+        ],
+      });
 
       const result = await runPulse();
       assert.equal(result?.type, 'pulse');
@@ -315,27 +305,19 @@ describe('pulse', { concurrency: 1 }, () => {
         wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
       };
       const pool = makePool({ summaries: [makeSummaryRow()] });
-      const { runPulse } = createPulse(
-        pool,
-        noopLog,
-        baseConfig,
-        llm,
-        mockSentimentTracker,
-        mockDivergenceTracker,
-        {
-          getUpcomingEvents: async () => [],
-          getRecentEvents: async () => [
-            {
-              id: 'cal-2',
-              name: 'Token unlock completed',
-              category: 'unlock',
-              description: 'No meaningful sell pressure followed.',
-              recurrenceRule: null,
-              nextOccurrence: Date.now() - 2 * 60 * 60 * 1000,
-            },
-          ],
-        },
-      );
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker, {
+        getUpcomingEvents: async () => [],
+        getRecentEvents: async () => [
+          {
+            id: 'cal-2',
+            name: 'Token unlock completed',
+            category: 'unlock',
+            description: 'No meaningful sell pressure followed.',
+            recurrenceRule: null,
+            nextOccurrence: Date.now() - 2 * 60 * 60 * 1000,
+          },
+        ],
+      });
 
       const result = await runPulse();
       assert.equal(result?.type, 'pulse');
@@ -364,29 +346,21 @@ describe('pulse', { concurrency: 1 }, () => {
           },
         ],
       });
-      const { runPulse } = createPulse(
-        pool,
-        noopLog,
-        baseConfig,
-        llm,
-        mockSentimentTracker,
-        mockDivergenceTracker,
-        {
-          getUpcomingEvents: async () => [],
-          getRecentEvents: async () => [
-            {
-              id: 'cal-2',
-              name: 'Token unlock completed',
-              category: 'unlock',
-              description: 'Sell pressure stayed contained.',
-              recurrenceRule: null,
-              entityId: 'ent-arb',
-              entityName: 'Arbitrum',
-              nextOccurrence: Date.now() - 2 * 60 * 60 * 1000,
-            },
-          ],
-        },
-      );
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker, {
+        getUpcomingEvents: async () => [],
+        getRecentEvents: async () => [
+          {
+            id: 'cal-2',
+            name: 'Token unlock completed',
+            category: 'unlock',
+            description: 'Sell pressure stayed contained.',
+            recurrenceRule: null,
+            entityId: 'ent-arb',
+            entityName: 'Arbitrum',
+            nextOccurrence: Date.now() - 2 * 60 * 60 * 1000,
+          },
+        ],
+      });
 
       const result = await runPulse();
       assert.equal(result?.type, 'pulse');
@@ -423,14 +397,7 @@ describe('pulse', { concurrency: 1 }, () => {
           },
         ],
       });
-      const { runPulse } = createPulse(
-        pool,
-        noopLog,
-        baseConfig,
-        llm,
-        mockSentimentTracker,
-        mockDivergenceTracker,
-      );
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
 
       const result = await runPulse();
       assert.equal(result?.type, 'pulse');

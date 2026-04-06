@@ -92,11 +92,7 @@ describe('createChatHandler sources', () => {
       stubEmbedder,
     );
 
-    const result = await handler.handle(
-      'Give me the exploit timeline and what changed over time',
-      'conv-1',
-      'user-1',
-    );
+    const result = await handler.handle('Give me the exploit timeline and what changed over time', 'conv-1', 'user-1');
 
     assert.equal(result.toolsUsed[0], 'semantic_search:report');
     assert.equal(result.sources.length, 1);
@@ -105,5 +101,62 @@ describe('createChatHandler sources', () => {
     assert.equal(result.sources[0]!.label, 'Daily 2026-04-06');
     assert.match(result.sources[0]!.snippet, /Type: daily \| Date: 2026-04-06/);
     assert.match(result.sources[0]!.snippet, /The exploit timeline remained active through the week/);
+  });
+
+  it('returns raw item citations from read_raw results', async () => {
+    const pool = {
+      async query() {
+        return {
+          rows: [
+            {
+              id: 'item-1',
+              content: 'Original governance reply confirmed remediation steps.',
+              author: 'alice',
+              created_at: '2026-04-06T08:00:00Z',
+            },
+          ],
+        };
+      },
+    } as any;
+
+    let chatCall = 0;
+    const llm = {
+      async call(params: { stage: string }) {
+        if (params.stage === 'chat' && chatCall === 0) {
+          chatCall++;
+          return {
+            content: '<tool_call>{"name":"read_raw","args":{"itemId":"item-1"}}</tool_call>',
+          };
+        }
+
+        return {
+          content: 'The original message confirmed remediation steps directly from governance.',
+        };
+      },
+      wrapWithNonce(content: string) {
+        return { wrapped: `<wrapped>${content}</wrapped>`, nonce: 'nonce' };
+      },
+      sanitizeForPrompt(content: string) {
+        return content;
+      },
+    } as any;
+
+    const handler = createChatHandler(
+      pool,
+      noopLog,
+      { models: { haiku: 'haiku', sonnet: 'sonnet' } } as any,
+      llm,
+      stubVectorCache([]),
+      stubEmbedder,
+    );
+
+    const result = await handler.handle('Show me the original governance reply', 'conv-2', 'user-2');
+
+    assert.equal(result.toolsUsed[0], 'read_raw');
+    assert.equal(result.sources.length, 1);
+    assert.equal(result.sources[0]!.type, 'item');
+    assert.equal(result.sources[0]!.id, 'item-1');
+    assert.equal(result.sources[0]!.label, 'Item item-1');
+    assert.match(result.sources[0]!.snippet, /Original governance reply confirmed remediation steps/);
   });
 });

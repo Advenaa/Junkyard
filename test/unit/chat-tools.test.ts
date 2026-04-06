@@ -249,7 +249,10 @@ describe('semantic_search', () => {
     const result = await search.execute({ query: 'bitcoin narratives', type: 'report' });
 
     assert.ok(result.includes('Type: daily | Date: 2026-04-06'), 'should include report metadata');
-    assert.ok(result.includes('TLDR: Bitcoin held gains while traders tracked two active narratives.'), 'should include tldr');
+    assert.ok(
+      result.includes('TLDR: Bitcoin held gains while traders tracked two active narratives.'),
+      'should include tldr',
+    );
     assert.ok(result.includes('Event chains:'), 'should include event chain label');
     assert.ok(
       result.includes('Bitcoin exploit chain stayed active after the audit follow-up.'),
@@ -306,7 +309,10 @@ describe('semantic_search', () => {
       search.formatUsage?.({ query: 'Give me the exploit timeline and what changed over time' }),
       'semantic_search:report',
     );
-    assert.equal(search.formatUsage?.({ query: 'What are traders saying about SOL today?' }), 'semantic_search:summary');
+    assert.equal(
+      search.formatUsage?.({ query: 'What are traders saying about SOL today?' }),
+      'semantic_search:summary',
+    );
     assert.equal(search.formatUsage?.({ query: 'Any timeline updates?', type: 'summary' }), 'semantic_search:summary');
   });
 });

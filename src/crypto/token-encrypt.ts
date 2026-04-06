@@ -18,8 +18,8 @@ function deriveKey(passphrase: string): Buffer {
 
 export interface EncryptedToken {
   ciphertext: string; // base64
-  iv: string;         // base64
-  authTag: string;    // base64
+  iv: string; // base64
+  authTag: string; // base64
 }
 
 /**

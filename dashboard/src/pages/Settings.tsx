@@ -152,7 +152,9 @@ async function fetchCalendarEventsData(): Promise<CalendarEvent[]> {
 }
 
 async function fetchEntitySuggestionsData(query: string): Promise<EntitySuggestion[]> {
-  const res = await apiFetch<{ entities: EntitySuggestion[] }>(`/entities/search?q=${encodeURIComponent(query)}&limit=6`);
+  const res = await apiFetch<{ entities: EntitySuggestion[] }>(
+    `/entities/search?q=${encodeURIComponent(query)}&limit=6`,
+  );
   return res.entities;
 }
 
@@ -273,7 +275,9 @@ function SourcesTab() {
 
   // Discord browser state
   const [guilds, setGuilds] = useState<Array<{ id: string; name: string; icon: string | null }>>([]);
-  const [channels, setChannels] = useState<Array<{ id: string; name: string; type: number; position: number; parentId: string | null }>>([]);
+  const [channels, setChannels] = useState<
+    Array<{ id: string; name: string; type: number; position: number; parentId: string | null }>
+  >([]);
   const [selectedGuild, setSelectedGuild] = useState<{ id: string; name: string } | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
@@ -393,7 +397,9 @@ function SourcesTab() {
     setChannels([]);
     setSelectedGuild(null);
     try {
-      const res = await apiFetch<{ guilds: Array<{ id: string; name: string; icon: string | null }> }>('/discord/guilds');
+      const res = await apiFetch<{ guilds: Array<{ id: string; name: string; icon: string | null }> }>(
+        '/discord/guilds',
+      );
       setGuilds(res.guilds);
       if (res.guilds.length === 0) {
         setBrowseError('No servers found.');
@@ -414,7 +420,9 @@ function SourcesTab() {
     setBrowseLoading(true);
     setBrowseError(null);
     try {
-      const res = await apiFetch<{ channels: Array<{ id: string; name: string; type: number; position: number; parentId: string | null }> }>(`/discord/guilds/${guild.id}/channels`);
+      const res = await apiFetch<{
+        channels: Array<{ id: string; name: string; type: number; position: number; parentId: string | null }>;
+      }>(`/discord/guilds/${guild.id}/channels`);
       setChannels(res.channels);
       if (res.channels.length === 0) {
         setBrowseError('No text channels found in this server.');
@@ -676,7 +684,10 @@ function SourcesTab() {
             {!browseOpen ? (
               <button
                 type="button"
-                onClick={() => { setBrowseOpen(true); fetchGuilds(); }}
+                onClick={() => {
+                  setBrowseOpen(true);
+                  fetchGuilds();
+                }}
                 className="w-full px-4 py-2.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors text-left"
               >
                 Browse Servers...
@@ -688,7 +699,11 @@ function SourcesTab() {
                   {selectedGuild ? (
                     <button
                       type="button"
-                      onClick={() => { setSelectedGuild(null); setChannels([]); setBrowseError(null); }}
+                      onClick={() => {
+                        setSelectedGuild(null);
+                        setChannels([]);
+                        setBrowseError(null);
+                      }}
                       className="text-accent text-sm font-body hover:opacity-80 transition-opacity"
                     >
                       &larr; {selectedGuild.name}
@@ -741,7 +756,8 @@ function SourcesTab() {
                         onClick={() => selectChannel(ch)}
                         className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
                       >
-                        <span className="text-text-secondary">#</span>{ch.name}
+                        <span className="text-text-secondary">#</span>
+                        {ch.name}
                       </button>
                     ))}
                   </div>
@@ -911,7 +927,9 @@ function SourcesTab() {
     <Modal open={!!proxyTokenTarget} onClose={() => setProxyTokenTarget(null)} title="Configure Token Proxy">
       <div className="space-y-4">
         <div className="space-y-1">
-          <p className="text-text-primary text-sm font-body">{proxyTokenTarget?.label ?? proxyTokenTarget?.maskedToken}</p>
+          <p className="text-text-primary text-sm font-body">
+            {proxyTokenTarget?.label ?? proxyTokenTarget?.maskedToken}
+          </p>
           <p className="text-text-secondary/70 text-xs font-body">
             {proxyTokenTarget?.proxyConfigured
               ? `Current proxy: ${proxyTokenTarget.maskedProxy ?? 'configured'}`
@@ -1017,9 +1035,7 @@ function SourcesTab() {
           {error && <p className="text-red-400 text-sm font-body">{error}</p>}
           {tokenActionError && <p className="text-red-400 text-sm font-body">{tokenActionError}</p>}
         </div>
-        <div className="flex gap-2">
-          {addSourceButton}
-        </div>
+        <div className="flex gap-2">{addSourceButton}</div>
       </div>
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
@@ -1134,8 +1150,7 @@ function SourcesTab() {
             <div className="space-y-1">
               <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Managed Discord Tokens</h3>
               <p className="text-text-secondary/70 text-sm font-body">
-                DB-managed tokens are encrypted at rest and can be enabled, disabled, rotated, proxied, or removed
-                here.
+                DB-managed tokens are encrypted at rest and can be enabled, disabled, rotated, proxied, or removed here.
               </p>
             </div>
             {addTokenButton}
@@ -1166,11 +1181,16 @@ function SourcesTab() {
                 {tokens.map((token) => {
                   const isActive = token.status === 'active';
                   return (
-                    <tr key={token.id} className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors">
+                    <tr
+                      key={token.id}
+                      className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
+                    >
                       <td className="px-4 py-3 text-text-primary font-body">
                         <div className="space-y-1">
                           <div>{token.label ?? 'Untitled token'}</div>
-                          <div className="text-text-secondary/60 text-xs font-mono">added {formatRelativeTime(token.addedAt)}</div>
+                          <div className="text-text-secondary/60 text-xs font-mono">
+                            added {formatRelativeTime(token.addedAt)}
+                          </div>
                         </div>
                       </td>
                       <td className="px-4 py-3">
@@ -1267,7 +1287,9 @@ function SourcesTab() {
                         {state.label ?? state.maskedToken ?? `Connection ${state.index + 1}`}
                       </div>
                       <div className="text-text-secondary/60 text-xs font-mono flex items-center gap-2">
-                        <span>{state.channelCount} channel{state.channelCount === 1 ? '' : 's'}</span>
+                        <span>
+                          {state.channelCount} channel{state.channelCount === 1 ? '' : 's'}
+                        </span>
                         <span>&middot;</span>
                         <span>{state.source === 'db' ? 'managed token' : 'env token'}</span>
                       </div>
@@ -1282,7 +1304,9 @@ function SourcesTab() {
                   )}
                   <div className="flex items-center justify-between gap-3 text-xs font-mono">
                     <span className="text-text-secondary">Proxy</span>
-                    <span className="text-text-primary">{state.proxyConfigured ? state.maskedProxy ?? 'configured' : 'Direct'}</span>
+                    <span className="text-text-primary">
+                      {state.proxyConfigured ? (state.maskedProxy ?? 'configured') : 'Direct'}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between gap-3 text-xs font-mono">
                     <span className="text-text-secondary">Connected</span>
@@ -1842,8 +1866,12 @@ function PipelineTab() {
                         {formatCalendarRecurrence(event.recurrenceRule)}
                       </span>
                     </div>
-                    <p className="text-text-secondary text-sm font-body">{formatCalendarEventTime(event.nextOccurrence)}</p>
-                    {event.description && <p className="text-text-secondary/70 text-sm font-body">{event.description}</p>}
+                    <p className="text-text-secondary text-sm font-body">
+                      {formatCalendarEventTime(event.nextOccurrence)}
+                    </p>
+                    {event.description && (
+                      <p className="text-text-secondary/70 text-sm font-body">{event.description}</p>
+                    )}
                   </div>
                   {isAdmin && (
                     <div className="flex items-center gap-2 shrink-0">
@@ -1891,12 +1919,12 @@ function PipelineTab() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Category</label>
-            <select
-              aria-label="Category"
-              value={calendarCategory}
-              onChange={(e) => setCalendarCategory(e.target.value as CalendarEvent['category'])}
-              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
-            >
+              <select
+                aria-label="Category"
+                value={calendarCategory}
+                onChange={(e) => setCalendarCategory(e.target.value as CalendarEvent['category'])}
+                className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+              >
                 {CALENDAR_EVENT_CATEGORIES.map((category) => (
                   <option key={category.value} value={category.value}>
                     {category.label}
@@ -2120,7 +2148,7 @@ function UsersTab() {
         method: 'PATCH',
         body: JSON.stringify({
           decision,
-          role: decision === 'approved' ? requestRoleDrafts[requestId] ?? 'viewer' : undefined,
+          role: decision === 'approved' ? (requestRoleDrafts[requestId] ?? 'viewer') : undefined,
         }),
       });
       setRequestRoleDrafts((prev) => {
@@ -2238,7 +2266,9 @@ function UsersTab() {
                       )}
                       <div className="space-y-1">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-text-primary font-body">{isPendingInvite(u) ? 'Pending invite' : u.username}</span>
+                          <span className="text-text-primary font-body">
+                            {isPendingInvite(u) ? 'Pending invite' : u.username}
+                          </span>
                           {isPendingInvite(u) && (
                             <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-border text-text-secondary">
                               waiting for first login
@@ -2262,7 +2292,9 @@ function UsersTab() {
                       {u.role}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-text-secondary font-mono text-xs">{formatRelativeTime(u.lastLoginAt)}</td>
+                  <td className="px-4 py-3 text-text-secondary font-mono text-xs">
+                    {formatRelativeTime(u.lastLoginAt)}
+                  </td>
                   <td className="px-4 py-3 text-right">
                     {u.discordId !== currentUser?.discordId && (
                       <select
@@ -2285,7 +2317,9 @@ function UsersTab() {
         <div className="space-y-4">
           <div className="bg-surface border border-border rounded-lg overflow-hidden">
             <div className="px-4 py-3 border-b border-border">
-              <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Pending Access Requests</h3>
+              <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+                Pending Access Requests
+              </h3>
               <p className="text-text-secondary/70 mt-1 text-sm font-body">
                 Review self-service access requests from the login page.
               </p>

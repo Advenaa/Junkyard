@@ -80,36 +80,40 @@ function sentimentClass(sentiment: number): string {
 
 export function SummaryView() {
   const { id } = useParams<{ id: string }>();
+  const requestKey = id ?? '';
   const [summary, setSummary] = useState<FullSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) {
-      setLoading(false);
-      setSummary(null);
       return;
     }
 
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     apiFetch<{ summary: FullSummary }>(`/summaries/${id}`)
       .then((res) => {
-        if (!cancelled) setSummary(res.summary);
+        if (!cancelled) {
+          setSummary(res.summary);
+          setError(null);
+          setLoadedKey(id);
+        }
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setSummary(null);
+          setError(err.message);
+          setLoadedKey(id);
+        }
       });
 
     return () => {
       cancelled = true;
     };
   }, [id]);
+
+  const loading = Boolean(id) && loadedKey !== requestKey;
 
   if (loading) {
     return <div className="p-6 text-text-secondary font-body">Loading...</div>;
@@ -149,7 +153,9 @@ export function SummaryView() {
         </div>
         <div className="bg-surface border border-border rounded-lg p-4">
           <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary mb-2">Window</div>
-          <div className="text-sm text-text-primary font-body leading-relaxed">{formatRange(summary.windowStart, summary.windowEnd)}</div>
+          <div className="text-sm text-text-primary font-body leading-relaxed">
+            {formatRange(summary.windowStart, summary.windowEnd)}
+          </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-4">
           <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary mb-2">Signals</div>

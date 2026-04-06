@@ -117,7 +117,13 @@ export function Chat() {
         setRetryQuery(null);
         setMessages((prev) => [
           ...prev,
-          { id: generateId(), role: 'assistant', content: data.response, toolsUsed: data.toolsUsed, sources: data.sources },
+          {
+            id: generateId(),
+            role: 'assistant',
+            content: data.response,
+            toolsUsed: data.toolsUsed,
+            sources: data.sources,
+          },
         ]);
       } catch (err) {
         if (conversationIdRef.current !== requestConversationId) return;

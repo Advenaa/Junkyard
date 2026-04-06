@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router';
 import { apiFetch } from '../lib/api';
 import { EmptyState } from '../components/EmptyState';
 import { TypeBadge } from '../components/TypeBadge';
@@ -64,6 +65,10 @@ function truncate(text: string, max: number): string {
 
 function isReportResult(result: SearchResult): boolean {
   return result.resultType === 'report';
+}
+
+function getResultHref(result: SearchResult): string {
+  return isReportResult(result) ? `/reports/${result.id}` : `/summaries/${result.id}`;
 }
 
 export function Search() {
@@ -162,7 +167,11 @@ export function Search() {
       ) : results.length > 0 ? (
         <div className="space-y-3">
           {results.map((result) => (
-            <div key={result.id} className="bg-surface border border-border rounded-lg p-4 space-y-2">
+            <Link
+              key={result.id}
+              to={getResultHref(result)}
+              className="block bg-surface border border-border rounded-lg p-4 space-y-2 transition-colors hover:border-accent/50 focus:outline-none focus:ring-2 focus:ring-accent/40"
+            >
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2 flex-wrap">
                   {isReportResult(result) ? (
@@ -174,7 +183,9 @@ export function Search() {
                   ) : (
                     <>
                       <SourceBadge source={result.source ?? 'summary'} />
-                      {result.sourceId && <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>}
+                      {result.sourceId && (
+                        <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>
+                      )}
                     </>
                   )}
                 </div>
@@ -189,7 +200,7 @@ export function Search() {
                   {result.eventChains[0]}
                 </p>
               )}
-            </div>
+            </Link>
           ))}
         </div>
       ) : null}

@@ -25,7 +25,7 @@ describe('EP-001: embed() accepts taskType parameter', () => {
 
   it('embed function signature includes optional taskType parameter', () => {
     // Match: async function embed(text: string, taskType: TaskType = TaskType.RETRIEVAL_DOCUMENT)
-    assert.match(src, /async\s+function\s+embed\s*\([^)]*taskType\s*[:\?]/, 'embed() must accept a taskType parameter');
+    assert.match(src, /async\s+function\s+embed\s*\([^)]*taskType\s*[:?]/, 'embed() must accept a taskType parameter');
   });
 
   it('embed defaults to RETRIEVAL_DOCUMENT when taskType is not provided', () => {

@@ -765,26 +765,17 @@ export async function deleteDiscordToken(pool: Pool, id: string): Promise<boolea
 }
 
 export async function updateDiscordTokenStatus(pool: Pool, id: string, status: string): Promise<boolean> {
-  const { rowCount } = await pool.query(
-    'UPDATE discord_tokens SET status = $1 WHERE id = $2',
-    [status, id],
-  );
+  const { rowCount } = await pool.query('UPDATE discord_tokens SET status = $1 WHERE id = $2', [status, id]);
   return (rowCount ?? 0) > 0;
 }
 
 export async function updateDiscordTokenLabel(pool: Pool, id: string, label: string): Promise<boolean> {
-  const { rowCount } = await pool.query(
-    'UPDATE discord_tokens SET label = $1 WHERE id = $2',
-    [label, id],
-  );
+  const { rowCount } = await pool.query('UPDATE discord_tokens SET label = $1 WHERE id = $2', [label, id]);
   return (rowCount ?? 0) > 0;
 }
 
 export async function updateDiscordTokenLastUsed(pool: Pool, id: string, lastUsedAt: number): Promise<void> {
-  await pool.query(
-    'UPDATE discord_tokens SET last_used_at = $1 WHERE id = $2',
-    [lastUsedAt, id],
-  );
+  await pool.query('UPDATE discord_tokens SET last_used_at = $1 WHERE id = $2', [lastUsedAt, id]);
 }
 
 export async function updateDiscordTokenProxy(
@@ -998,7 +989,15 @@ export async function updateCalendarEvent(
         (SELECT entities.name FROM entities WHERE entities.id = calendar_events.entity_id) AS entity_name,
         next_occurrence,
         created_at`,
-    [event.id, event.name, event.category, event.description, event.recurrenceRule, event.entityId, event.nextOccurrence],
+    [
+      event.id,
+      event.name,
+      event.category,
+      event.description,
+      event.recurrenceRule,
+      event.entityId,
+      event.nextOccurrence,
+    ],
   );
   return rows[0] ?? null;
 }

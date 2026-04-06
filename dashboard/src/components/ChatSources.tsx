@@ -1,7 +1,7 @@
 import { Link } from 'react-router';
 
 export interface ChatSource {
-  type: 'report' | 'summary';
+  type: 'report' | 'summary' | 'item';
   id: string;
   label: string;
   snippet: string;
@@ -17,6 +17,9 @@ function hrefForSource(source: ChatSource): string | null {
   }
   if (source.type === 'summary') {
     return `/summaries/${source.id}`;
+  }
+  if (source.type === 'item') {
+    return `/items/${source.id}`;
   }
   return null;
 }

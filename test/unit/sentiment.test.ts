@@ -412,7 +412,7 @@ describe('getMomentumContext', () => {
   });
 
   it('returns correct MomentumEntry with trend labels', async () => {
-    let queryCount = 0;
+    const queryCount = 0;
     const { pool } = makeMockPool((sql, params) => {
       // Main query: latest rows per entity
       if (sql.includes('DISTINCT ON')) {

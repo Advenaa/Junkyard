@@ -61,10 +61,7 @@ export function getNextCalendarOccurrence(
   return next.getTime();
 }
 
-export function getPreviousCalendarOccurrence(
-  scheduledFor: number,
-  recurrenceRule: CalendarRecurrenceRule,
-): number {
+export function getPreviousCalendarOccurrence(scheduledFor: number, recurrenceRule: CalendarRecurrenceRule): number {
   const previous = new Date(scheduledFor);
   if (recurrenceRule === 'daily') {
     previous.setUTCDate(previous.getUTCDate() - 1);

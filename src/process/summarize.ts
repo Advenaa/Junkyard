@@ -201,7 +201,10 @@ export function verifyEvents(parsed: ChunkSummary, log: Logger, source: string, 
     const normalizedEntityName = normalizeAlias(event.entityName);
     const found = normalizedEntityName !== '' && validEntityKeys.has(normalizedEntityName);
     if (!found) {
-      log.info({ eventType: event.eventType, entityName: event.entityName, source, sourceId }, 'Dropped event without verified entity match');
+      log.info(
+        { eventType: event.eventType, entityName: event.entityName, source, sourceId },
+        'Dropped event without verified entity match',
+      );
     }
     return found;
   });
@@ -209,14 +212,18 @@ export function verifyEvents(parsed: ChunkSummary, log: Logger, source: string, 
   return { ...parsed, events: verified };
 }
 
-function verifyChunkSummary(parsed: ChunkSummary, rawText: string, log: Logger, source: string, sourceId: string): ChunkSummary {
+function verifyChunkSummary(
+  parsed: ChunkSummary,
+  rawText: string,
+  log: Logger,
+  source: string,
+  sourceId: string,
+): ChunkSummary {
   return verifyEvents(verifyEntities(parsed, rawText, log, source, sourceId), log, source, sourceId);
 }
 
 function getChunkEventTime(chunk: ClaimedItem[], fallback: number): number {
-  const finiteTimestamps = chunk
-    .map((item) => item.timestamp)
-    .filter((timestamp) => Number.isFinite(timestamp));
+  const finiteTimestamps = chunk.map((item) => item.timestamp).filter((timestamp) => Number.isFinite(timestamp));
   return finiteTimestamps.length > 0 ? Math.max(...finiteTimestamps) : fallback;
 }
 

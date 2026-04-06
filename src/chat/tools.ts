@@ -162,10 +162,7 @@ function createSemanticSearch(pool: Pool, log: Logger, vectorCache: VectorCache,
               tldr: string | null;
               date: string;
               type: string;
-            }>(
-              `SELECT id, body, created_at, tldr, date, type FROM reports WHERE id IN (${placeholders})`,
-              ids,
-            )
+            }>(`SELECT id, body, created_at, tldr, date, type FROM reports WHERE id IN (${placeholders})`, ids)
           : await pool.query<{
               id: string;
               body: string;
@@ -176,7 +173,9 @@ function createSemanticSearch(pool: Pool, log: Logger, vectorCache: VectorCache,
       for (const row of dbResult.rows) {
         const content =
           type === 'report'
-            ? formatReportSearchPreview(row as { body: string; tldr?: string | null; date?: string | null; type?: string | null })
+            ? formatReportSearchPreview(
+                row as { body: string; tldr?: string | null; date?: string | null; type?: string | null },
+              )
             : row.body;
         contentMap.set(row.id, {
           content,

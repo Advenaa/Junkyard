@@ -33,9 +33,7 @@ describe('ReportView', () => {
                   'FOMC tomorrow is the main macro reset for crypto beta.',
                   'Friday BTC options expiry could sharpen short-term volatility.',
                 ],
-                eventChains: [
-                  'Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.',
-                ],
+                eventChains: ['Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.'],
                 entitySentiment: [{ name: 'Bitcoin', sentiment: 0.6, reason: 'ETF flows' }],
                 sections: [{ title: 'Macro', body: 'Traders are watching catalysts closely.' }],
               },

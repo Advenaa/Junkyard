@@ -54,7 +54,7 @@ function makePool(
     query: async (text: string, values?: unknown[]) => {
       calls.push({ text, values: values ?? [] });
 
-      if (text.includes('SET batch_id = $1, status = \'processing\'')) {
+      if (text.includes("SET batch_id = $1, status = 'processing'")) {
         return { rows: [], rowCount: items.length };
       }
       if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
@@ -72,7 +72,7 @@ function makePool(
       if (text.includes('INSERT INTO events')) {
         return { rows: [], rowCount: 1 };
       }
-      if (text.includes('UPDATE items SET status = \'processed\'')) {
+      if (text.includes("UPDATE items SET status = 'processed'")) {
         return { rows: [], rowCount: items.length };
       }
       if (text.includes('UPDATE items')) {
@@ -112,7 +112,9 @@ describe('summarize: structured event persistence', () => {
       confidence: 8,
       entities: [{ name: 'Wormhole', aliases: ['wormhole'], type: 'project', mentionCount: 4, sentiment: -0.9 }],
       keyEvents: ['Wormhole bridge exploited'],
-      events: [{ entityName: 'Wormhole', eventType: 'exploit', description: 'Wormhole bridge exploited for a large amount.' }],
+      events: [
+        { entityName: 'Wormhole', eventType: 'exploit', description: 'Wormhole bridge exploited for a large amount.' },
+      ],
     });
 
     const summarizer = createSummarizer(
@@ -163,7 +165,13 @@ describe('summarize: structured event persistence', () => {
         confidence: 8,
         entities: [{ name: 'Wormhole', aliases: ['wormhole'], type: 'project', mentionCount: 4, sentiment: 0.1 }],
         keyEvents: ['Wormhole audit update published'],
-        events: [{ entityName: 'Wormhole', eventType: 'audit', description: 'Wormhole published audit findings after the exploit.' }],
+        events: [
+          {
+            entityName: 'Wormhole',
+            eventType: 'audit',
+            description: 'Wormhole published audit findings after the exploit.',
+          },
+        ],
       },
       true,
     );

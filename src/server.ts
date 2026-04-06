@@ -208,7 +208,7 @@ interface ChatHandler {
   ): Promise<{
     response: string;
     toolsUsed: string[];
-    sources: Array<{ type: 'report' | 'summary'; id: string; label: string; snippet: string }>;
+    sources: Array<{ type: 'report' | 'summary' | 'item'; id: string; label: string; snippet: string }>;
   }>;
 }
 
@@ -290,7 +290,10 @@ async function getManagedDiscordTokenViews(pool: Pool, encKey: string): Promise<
   });
 }
 
-async function resolveCalendarEntity(pool: Pool, rawEntityName: string | null | undefined): Promise<CalendarEntityLookupRow | null> {
+async function resolveCalendarEntity(
+  pool: Pool,
+  rawEntityName: string | null | undefined,
+): Promise<CalendarEntityLookupRow | null> {
   const trimmed = rawEntityName?.trim();
   if (!trimmed) return null;
   const normalized = normalizeAlias(trimmed);
@@ -781,6 +784,28 @@ export async function createServer(
   );
 
   // --- Raw feed ---
+  app.get('/api/v1/items/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { rows } = await pool.query<ItemRow>('SELECT * FROM items WHERE id = $1 LIMIT 1', [id]);
+
+    if (rows.length === 0) {
+      return reply.code(404).send({ error: 'Item not found' });
+    }
+
+    const item = toCamelCase<Record<string, unknown>>(rows[0] as unknown as Record<string, unknown>);
+    if (typeof item.attachments === 'string') {
+      try {
+        item.attachments = JSON.parse(item.attachments);
+      } catch {
+        item.attachments = [];
+      }
+    } else if (item.attachments === null || item.attachments === undefined) {
+      item.attachments = [];
+    }
+
+    return { item };
+  });
+
   app.get(
     '/api/v1/feed/:sourceId',
     {
@@ -1016,7 +1041,9 @@ export async function createServer(
     async (request, reply) => {
       const { requestId } = request.params as { requestId: string };
       const { decision, role } = request.body as { decision: 'approved' | 'rejected'; role?: 'viewer' | 'admin' };
-      const existingRequest = await pool.query<AccessRequestRow>(`SELECT * FROM access_requests WHERE id = $1`, [requestId]);
+      const existingRequest = await pool.query<AccessRequestRow>(`SELECT * FROM access_requests WHERE id = $1`, [
+        requestId,
+      ]);
       if (existingRequest.rows.length === 0) {
         return reply.code(404).send({ error: 'Access request not found' });
       }
@@ -1216,7 +1243,9 @@ export async function createServer(
   app.get('/api/v1/discord/tokens', { preHandler: [authPreHandler, requireAdmin] }, async (_request, reply) => {
     const encKey = getEncryptionKey();
     if (!encKey) {
-      return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
+      return reply
+        .code(503)
+        .send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
     }
     const tokens = (await getManagedDiscordTokenViews(pool, encKey)).map((token) => ({
       id: token.id,
@@ -1251,7 +1280,9 @@ export async function createServer(
     async (request, reply) => {
       const encKey = getEncryptionKey();
       if (!encKey) {
-        return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
+        return reply
+          .code(503)
+          .send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
       }
       const { token, label, proxyUrl } = request.body as { token: string; label?: string; proxyUrl?: string };
       const { ulid } = await import('ulid');
@@ -1278,7 +1309,10 @@ export async function createServer(
         Date.now(),
         encryptedProxy,
       );
-      if (onTokensChanged) onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
+      if (onTokensChanged)
+        onTokensChanged()
+          .then((t) => discordRest.updateTokens(t))
+          .catch((err: unknown) => log.error({ err }, 'token reload failed'));
       reply.code(201);
       return {
         id,
@@ -1311,7 +1345,10 @@ export async function createServer(
       if (!deleted) {
         return reply.code(404).send({ error: 'Token not found' });
       }
-      if (onTokensChanged) onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
+      if (onTokensChanged)
+        onTokensChanged()
+          .then((t) => discordRest.updateTokens(t))
+          .catch((err: unknown) => log.error({ err }, 'token reload failed'));
       reply.code(204).send();
     },
   );
@@ -1327,10 +1364,7 @@ export async function createServer(
             label: { type: 'string', maxLength: 100 },
             status: { type: 'string', enum: ['active', 'disabled'] },
             proxyUrl: {
-              anyOf: [
-                { type: 'string', minLength: 1, maxLength: 500 },
-                { type: 'null' },
-              ],
+              anyOf: [{ type: 'string', minLength: 1, maxLength: 500 }, { type: 'null' }],
             },
           },
           additionalProperties: false,
@@ -1358,7 +1392,9 @@ export async function createServer(
       if (Object.prototype.hasOwnProperty.call(body, 'proxyUrl')) {
         const encKey = getEncryptionKey();
         if (!encKey) {
-          return reply.code(503).send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
+          return reply
+            .code(503)
+            .send({ error: 'Token encryption not configured — set TOKEN_ENCRYPTION_KEY or SESSION_SECRET' });
         }
 
         let encryptedProxy: { ciphertext: string; iv: string; authTag: string } | null = null;
@@ -1375,7 +1411,9 @@ export async function createServer(
         if (!updated) return reply.code(404).send({ error: 'Token not found' });
       }
       if ((body.status != null || Object.prototype.hasOwnProperty.call(body, 'proxyUrl')) && onTokensChanged) {
-        onTokensChanged().then((t) => discordRest.updateTokens(t)).catch((err: unknown) => log.error({ err }, 'token reload failed'));
+        onTokensChanged()
+          .then((t) => discordRest.updateTokens(t))
+          .catch((err: unknown) => log.error({ err }, 'token reload failed'));
       }
       return { ok: true };
     },
@@ -1436,10 +1474,10 @@ export async function createServer(
       if (existing.rows.length === 0) {
         return reply.code(404).send({ error: 'User not found' });
       }
-      const { rows } = await pool.query<UserRow>(
-        `UPDATE users SET role = $2 WHERE discord_id = $1 RETURNING *`,
-        [discordId, role],
-      );
+      const { rows } = await pool.query<UserRow>(`UPDATE users SET role = $2 WHERE discord_id = $1 RETURNING *`, [
+        discordId,
+        role,
+      ]);
       // AU-035: purge all active sessions when a user is blocked
       if (role === 'blocked') {
         await sessionManager.deleteAllForUser(discordId);
@@ -1567,7 +1605,10 @@ export async function createServer(
           required: ['name', 'category', 'scheduledFor'],
           properties: {
             name: { type: 'string', minLength: 1, maxLength: 120 },
-            category: { type: 'string', enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'] },
+            category: {
+              type: 'string',
+              enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'],
+            },
             entityName: {
               anyOf: [{ type: 'string', minLength: 1, maxLength: 120 }, { type: 'null' }],
             },
@@ -1641,7 +1682,10 @@ export async function createServer(
           required: ['name', 'category', 'scheduledFor'],
           properties: {
             name: { type: 'string', minLength: 1, maxLength: 120 },
-            category: { type: 'string', enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'] },
+            category: {
+              type: 'string',
+              enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'],
+            },
             entityName: {
               anyOf: [{ type: 'string', minLength: 1, maxLength: 120 }, { type: 'null' }],
             },

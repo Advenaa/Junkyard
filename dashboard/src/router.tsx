@@ -11,6 +11,7 @@ import { Feed } from './pages/Feed';
 import { Chat } from './pages/Chat';
 import { Search } from './pages/Search';
 import { SummaryView } from './pages/SummaryView';
+import { ItemView } from './pages/ItemView';
 
 export function AppRouter() {
   return (
@@ -34,6 +35,7 @@ export function AppRouter() {
                 <Route path="/reports" element={<ReportList />} />
                 <Route path="/reports/:id" element={<ReportView />} />
                 <Route path="/summaries/:id" element={<SummaryView />} />
+                <Route path="/items/:id" element={<ItemView />} />
                 <Route path="/feed" element={<Feed />} />
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/search" element={<Search />} />

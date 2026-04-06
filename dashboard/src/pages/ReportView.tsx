@@ -104,14 +104,13 @@ function CollapsibleSection({ section }: { section: Section }) {
 
 export function ReportView() {
   const { id } = useParams<{ id: string }>();
+  const requestKey = id ?? '__latest__';
   const [report, setReport] = useState<FullReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
 
     const fetchReport = id
       ? apiFetch<{ report: FullReport }>(`/reports/${id}`)
@@ -125,19 +124,24 @@ export function ReportView() {
       .then((res) => {
         if (!cancelled) {
           setReport((res as { report: FullReport | null }).report ?? null);
+          setError(null);
+          setLoadedKey(requestKey);
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setReport(null);
+          setError(err.message);
+          setLoadedKey(requestKey);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, requestKey]);
+
+  const loading = loadedKey !== requestKey;
 
   if (loading) {
     return <div className="p-6 text-text-secondary font-body">Loading...</div>;

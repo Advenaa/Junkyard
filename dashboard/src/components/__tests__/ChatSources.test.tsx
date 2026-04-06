@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router';
 import { ChatSources } from '../ChatSources';
 
 describe('ChatSources', () => {
-  it('renders report and summary citations as links when routes exist', () => {
+  it('renders report, summary, and item citations as links when routes exist', () => {
     render(
       <MemoryRouter>
         <ChatSources
@@ -21,6 +21,12 @@ describe('ChatSources', () => {
               label: 'Summary summary-1',
               snippet: 'Summary snippet',
             },
+            {
+              type: 'item',
+              id: 'item-1',
+              label: 'Item item-1',
+              snippet: 'Raw item snippet',
+            },
           ]}
         />
       </MemoryRouter>,
@@ -28,7 +34,9 @@ describe('ChatSources', () => {
 
     const reportLink = screen.getByRole('link', { name: 'Daily 2026-04-06' });
     const summaryLink = screen.getByRole('link', { name: 'Summary summary-1' });
+    const itemLink = screen.getByRole('link', { name: 'Item item-1' });
     expect(reportLink).toHaveAttribute('href', '/reports/report-1');
     expect(summaryLink).toHaveAttribute('href', '/summaries/summary-1');
+    expect(itemLink).toHaveAttribute('href', '/items/item-1');
   });
 });

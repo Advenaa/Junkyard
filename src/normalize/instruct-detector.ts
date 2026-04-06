@@ -60,7 +60,7 @@ interface DetectionResult {
  * U+FEFF  BYTE ORDER MARK / ZERO WIDTH NO-BREAK SPACE
  * U+2060  WORD JOINER
  */
-const ZERO_WIDTH_RE = /[\u200B\u200C\u200D\uFEFF\u2060]/g;
+const ZERO_WIDTH_RE = /\u200B|\u200C|\u200D|\uFEFF|\u2060/g;
 
 /**
  * Bidirectional override / isolate characters to strip.

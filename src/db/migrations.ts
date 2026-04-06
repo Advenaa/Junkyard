@@ -506,8 +506,12 @@ const migrations: Migration[] = [
         created_at BIGINT NOT NULL
       )
     `);
-    await client.query(`CREATE INDEX idx_access_requests_status_created_at ON access_requests(status, created_at DESC)`);
-    await client.query(`CREATE INDEX idx_access_requests_discord_id_created_at ON access_requests(discord_id, created_at DESC)`);
+    await client.query(
+      `CREATE INDEX idx_access_requests_status_created_at ON access_requests(status, created_at DESC)`,
+    );
+    await client.query(
+      `CREATE INDEX idx_access_requests_discord_id_created_at ON access_requests(discord_id, created_at DESC)`,
+    );
   },
 
   // Migration 18: Add encrypted per-token proxy configuration

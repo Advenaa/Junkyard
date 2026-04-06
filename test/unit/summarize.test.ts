@@ -117,7 +117,9 @@ describe('verifyEntities', () => {
     assert.equal(result.urgency, 'breaking');
     assert.equal(result.confidence, 9);
     assert.deepStrictEqual(result.keyEvents, ['Something happened']);
-    assert.deepStrictEqual(result.events, [{ entityName: 'Ghost', eventType: 'launch', description: 'Ghost launched a new feature.' }]);
+    assert.deepStrictEqual(result.events, [
+      { entityName: 'Ghost', eventType: 'launch', description: 'Ghost launched a new feature.' },
+    ]);
     assert.equal(result.entities.length, 0);
   });
 
@@ -156,15 +158,15 @@ describe('verifyEvents', () => {
     const parsed = makeSummary([
       { name: 'Ethereum', aliases: ['ETH', '$ETH'], type: 'token', mentionCount: 8, sentiment: 0.2 },
     ]);
-    parsed.events = [{ entityName: 'ETH', eventType: 'funding', description: 'ETH ecosystem funding round announced.' }];
+    parsed.events = [
+      { entityName: 'ETH', eventType: 'funding', description: 'ETH ecosystem funding round announced.' },
+    ];
     const result = verifyEvents(parsed, noopLog, 'discord', 'chan1');
     assert.deepStrictEqual(result.events, parsed.events);
   });
 
   it('drops events whose entityName does not match any verified entity', () => {
-    const parsed = makeSummary([
-      { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 4, sentiment: 0.4 },
-    ]);
+    const parsed = makeSummary([{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 4, sentiment: 0.4 }]);
     parsed.events = [{ entityName: 'Wormhole', eventType: 'exploit', description: 'Wormhole exploited.' }];
     const result = verifyEvents(parsed, noopLog, 'discord', 'chan1');
     assert.deepStrictEqual(result.events, []);

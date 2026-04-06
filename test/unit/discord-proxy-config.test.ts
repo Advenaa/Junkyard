@@ -64,7 +64,7 @@ describe('Discord proxy persistence wiring', () => {
   });
 
   it('accepts proxyUrl in token create and patch routes', () => {
-    assert.ok(serverSrc.includes('proxyUrl: { type: \'string\''));
-    assert.ok(serverSrc.includes('Object.prototype.hasOwnProperty.call(body, \'proxyUrl\')'));
+    assert.ok(serverSrc.includes("proxyUrl: { type: 'string'"));
+    assert.ok(serverSrc.includes("Object.prototype.hasOwnProperty.call(body, 'proxyUrl')"));
   });
 });

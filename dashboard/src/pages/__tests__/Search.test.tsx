@@ -10,7 +10,7 @@ describe('Search', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders report hits with event chain previews from all-scope search', async () => {
+  it('renders report and summary hits with detail links from all-scope search', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const parsed = new URL(url, 'http://localhost');
@@ -20,6 +20,14 @@ describe('Search', () => {
         return new Response(
           JSON.stringify({
             results: [
+              {
+                id: 'summary-1',
+                resultType: 'summary',
+                source: 'discord',
+                sourceId: 'guild:1234',
+                body: 'Bridge watchers flagged new follow-up chatter right after the governance post.',
+                createdAt: Date.now() - 1000,
+              },
               {
                 id: 'report-1',
                 resultType: 'report',
@@ -58,8 +66,16 @@ describe('Search', () => {
     await screen.findByText('Event Chain');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText('report')).toBeInTheDocument();
+    expect(screen.getByText('guild:1234')).toBeInTheDocument();
     expect(
       screen.getByText('Bridge exploit chain: governance response kept the story active into the close.'),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /governance response kept the story active into the close/i }),
+    ).toHaveAttribute('href', '/reports/report-1');
+    expect(screen.getByRole('link', { name: /follow-up chatter right after the governance post/i })).toHaveAttribute(
+      'href',
+      '/summaries/summary-1',
+    );
   });
 });

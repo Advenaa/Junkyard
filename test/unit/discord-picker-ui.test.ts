@@ -97,10 +97,7 @@ describe('Discord picker UI (Settings.tsx)', () => {
 
   // 8. Channel list shows # prefix
   it('channel list renders # prefix for channel names', () => {
-    assert.ok(
-      src.includes('#</span>') || src.includes('#<'),
-      'Must render # prefix before channel name',
-    );
+    assert.ok(src.includes('#</span>') || src.includes('#<'), 'Must render # prefix before channel name');
   });
 
   // 9. handleSourceTypeChange resets browse state
@@ -108,9 +105,6 @@ describe('Discord picker UI (Settings.tsx)', () => {
     const fnStart = src.indexOf('handleSourceTypeChange');
     assert.ok(fnStart !== -1, 'handleSourceTypeChange must exist');
     const fnBlock = src.slice(fnStart, fnStart + 200);
-    assert.ok(
-      fnBlock.includes('resetBrowseState'),
-      'handleSourceTypeChange must call resetBrowseState',
-    );
+    assert.ok(fnBlock.includes('resetBrowseState'), 'handleSourceTypeChange must call resetBrowseState');
   });
 });

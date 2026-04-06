@@ -566,7 +566,7 @@ describe('call — unknown errors', () => {
 
 describe('call — sleep is called on retries', () => {
   it('calls sleepFn on 429 retries', async () => {
-    let sleepCalls: number[] = [];
+    const sleepCalls: number[] = [];
     let callCount = 0;
 
     const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {
@@ -586,7 +586,7 @@ describe('call — sleep is called on retries', () => {
   });
 
   it('calls sleepFn with exponential backoff on 500', async () => {
-    let sleepCalls: number[] = [];
+    const sleepCalls: number[] = [];
     let callCount = 0;
 
     const llm = createLLM(makePool() as never, makeLog() as never, makeConfig() as never, {

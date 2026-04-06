@@ -113,7 +113,11 @@ describe('Settings proxy management', () => {
         }
 
         if (path === '/api/v1/discord/tokens' && method === 'POST') {
-          const payload = JSON.parse(String(init?.body ?? '{}')) as { token: string; label?: string; proxyUrl?: string };
+          const payload = JSON.parse(String(init?.body ?? '{}')) as {
+            token: string;
+            label?: string;
+            proxyUrl?: string;
+          };
           const token: MockToken = {
             id: `tok-${tokens.length + 1}`,
             maskedToken: maskToken(payload.token),
@@ -174,7 +178,10 @@ describe('Settings proxy management', () => {
 
     const addDialog = await screen.findByRole('dialog', { name: 'Add Discord Token' });
     await user.type(within(addDialog).getByPlaceholderText('Optional label (e.g. Backup account)'), 'Proxy Scout');
-    await user.type(within(addDialog).getByPlaceholderText('Paste the raw Discord user token'), 'mfa.this-is-a-demo-token-1234567890');
+    await user.type(
+      within(addDialog).getByPlaceholderText('Paste the raw Discord user token'),
+      'mfa.this-is-a-demo-token-1234567890',
+    );
     await user.type(
       within(addDialog).getByPlaceholderText('Optional http://user:pass@proxy.example:8080'),
       'http://user:pass@proxy.one.example:8080',
