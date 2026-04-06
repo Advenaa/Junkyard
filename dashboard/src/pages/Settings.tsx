@@ -116,6 +116,22 @@ interface EntitySuggestion {
   matchedAlias: string | null;
 }
 
+function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
+  const trimmedLabel = source.label.trim();
+  if (trimmedLabel) return trimmedLabel;
+
+  const trimmedSourceId = source.sourceId.trim();
+  if (trimmedSourceId) return trimmedSourceId;
+
+  return `${source.source} source`;
+}
+
+function buildSourceActionPath(source: Pick<Source, 'source' | 'sourceId'>): string {
+  const params = new URLSearchParams();
+  params.set('sourceId', source.sourceId);
+  return `/sources/${encodeURIComponent(source.source)}?${params.toString()}`;
+}
+
 async function fetchSourcesData(): Promise<Source[]> {
   const res = await apiFetch<{ sources: Source[] }>('/sources');
   return res.sources;
@@ -567,7 +583,7 @@ function SourcesTab() {
     setError(null);
     const isActive = s.stateStatus == null || s.stateStatus === 'active';
     try {
-      await apiFetch(`/sources/${s.source}/${s.sourceId}`, {
+      await apiFetch(buildSourceActionPath(s), {
         method: 'PATCH',
         body: JSON.stringify({ enabled: !isActive }),
       });
@@ -580,9 +596,9 @@ function SourcesTab() {
       );
     } catch (err: unknown) {
       if (err instanceof Error && err.message.includes('409')) {
-        setError(`Cannot re-enable "${s.label}" — source is halted. Fix the underlying issue first.`);
+        setError(`Cannot re-enable "${getSourceDisplayName(s)}" — source is halted. Fix the underlying issue first.`);
       } else {
-        setError(`Failed to toggle source "${s.label}".`);
+        setError(`Failed to toggle source "${getSourceDisplayName(s)}".`);
       }
     }
   };
@@ -591,12 +607,12 @@ function SourcesTab() {
     if (!deleteTarget) return;
     setError(null);
     try {
-      await apiFetch(`/sources/${deleteTarget.source}/${deleteTarget.sourceId}`, { method: 'DELETE' });
+      await apiFetch(buildSourceActionPath(deleteTarget), { method: 'DELETE' });
       setSources((prev) =>
         prev.filter((src) => !(src.source === deleteTarget.source && src.sourceId === deleteTarget.sourceId)),
       );
     } catch {
-      setError(`Failed to delete source "${deleteTarget.label}".`);
+      setError(`Failed to delete source "${getSourceDisplayName(deleteTarget)}".`);
     } finally {
       setDeleteTarget(null);
     }
@@ -626,7 +642,7 @@ function SourcesTab() {
     if (!trimmed || trimmed === s.label) return;
     setError(null);
     try {
-      await apiFetch(`/sources/${s.source}/${s.sourceId}`, {
+      await apiFetch(buildSourceActionPath(s), {
         method: 'PATCH',
         body: JSON.stringify({ label: trimmed }),
       });
@@ -634,7 +650,7 @@ function SourcesTab() {
         prev.map((src) => (src.source === s.source && src.sourceId === s.sourceId ? { ...src, label: trimmed } : src)),
       );
     } catch {
-      setError(`Failed to update label for "${s.label}".`);
+      setError(`Failed to update label for "${getSourceDisplayName(s)}".`);
     }
   };
 
@@ -841,8 +857,8 @@ function SourcesTab() {
     <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Source">
       <p className="text-text-secondary text-sm mb-4">
         Are you sure you want to delete{' '}
-        <strong className="text-text-primary">{deleteTarget?.label || deleteTarget?.sourceId}</strong>? This action
-        cannot be undone.
+        <strong className="text-text-primary">{deleteTarget ? getSourceDisplayName(deleteTarget) : null}</strong>? This
+        action cannot be undone.
       </p>
       <div className="flex justify-end gap-3">
         <button
@@ -1094,7 +1110,7 @@ function SourcesTab() {
                           className="cursor-default"
                           title="Double-click to edit"
                         >
-                          {s.label}
+                          {getSourceDisplayName(s)}
                         </span>
                       )}
                     </td>
@@ -1114,7 +1130,7 @@ function SourcesTab() {
                         <button
                           onClick={() => setDeleteTarget(s)}
                           className="text-accent-red/70 hover:text-accent-red text-xs font-mono transition-colors"
-                          title={`Delete ${s.label}`}
+                          title={`Delete ${getSourceDisplayName(s)}`}
                         >
                           &times;
                         </button>
