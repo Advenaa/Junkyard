@@ -11,6 +11,7 @@
     "dev": "tsx watch src/index.ts -- run",
     "start": "node dist/index.js run",
     "test": "node --import tsx/esm --test test/unit/*.test.ts",
+    "test:integration": "node scripts/run-integration-tests.mjs",
     "test:dashboard": "cd dashboard && npx vitest run",
     "migrate": "node dist/index.js migrate",
     "lint": "eslint src/ dashboard/src/ test/",
