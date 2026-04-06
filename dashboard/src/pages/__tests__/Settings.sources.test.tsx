@@ -22,12 +22,12 @@ describe('Settings source management', () => {
     vi.unstubAllGlobals();
   });
 
-  it('deletes sources via query-string sourceId and shows a fallback name for blank labels', async () => {
+  it('deletes sources via query-string sourceId and shows a fallback name for null labels', async () => {
     const sources = [
       {
         source: 'rss',
         sourceId: 'https://feeds.example.com/alpha.xml?view=latest',
-        label: '',
+        label: null,
         enabled: true,
         pollInterval: 300,
         lastFetchedAt: null,

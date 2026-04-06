@@ -10,7 +10,7 @@ type Tab = 'sources' | 'delivery' | 'pipeline' | 'users';
 interface Source {
   source: string;
   sourceId: string;
-  label: string;
+  label: string | null;
   enabled: boolean;
   pollInterval: number;
   lastFetchedAt: number | null;
@@ -117,7 +117,7 @@ interface EntitySuggestion {
 }
 
 function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
-  const trimmedLabel = source.label.trim();
+  const trimmedLabel = typeof source.label === 'string' ? source.label.trim() : '';
   if (trimmedLabel) return trimmedLabel;
 
   const trimmedSourceId = source.sourceId.trim();
@@ -633,7 +633,7 @@ function SourcesTab() {
 
   const startEditLabel = (s: Source) => {
     setEditingKey(`${s.source}-${s.sourceId}`);
-    setEditLabel(s.label);
+    setEditLabel(s.label ?? '');
   };
 
   const saveLabel = async (s: Source) => {
