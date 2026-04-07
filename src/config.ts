@@ -14,6 +14,7 @@ export interface Config {
   adminUserIds: string[];
   discordTokens: string[];
   twitterApiKey: string | null;
+  coingeckoApiKey: string | null;
   apiKey: string;
   sessionSecret: string;
   port: number;
@@ -89,6 +90,7 @@ export function loadConfig(): Config {
   const adminUserIds = commaSplit(process.env['ADMIN_USER_IDS']);
   const discordTokens = commaSplit(process.env['DISCORD_TOKENS']);
   const twitterApiKey = process.env['TWITTERAPI_KEY'] || null;
+  const coingeckoApiKey = process.env['COINGECKO_API_KEY'] || null;
 
   let apiKey = process.env['API_KEY'] || null;
   if (!apiKey) {
@@ -151,6 +153,7 @@ export function loadConfig(): Config {
     databaseUrl,
     discordClientSecret,
     twitterApiKey,
+    coingeckoApiKey,
     apiKey,
     sessionSecret,
     alertWebhookUrl,
@@ -168,6 +171,7 @@ export function loadConfig(): Config {
     adminUserIds,
     discordTokens,
     twitterApiKey,
+    coingeckoApiKey,
     apiKey,
     sessionSecret,
     port,

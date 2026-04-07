@@ -1736,3 +1736,46 @@ export async function getLatestPricesForEntities(
   );
   return rows.map(toPriceSnapshotRow);
 }
+
+export interface TokenCoinGeckoMapping {
+  entityId: string;
+  entityName: string;
+  coingeckoId: string;
+}
+
+/**
+ * Get active token entities with their CoinGecko IDs.
+ * CoinGecko IDs come from entity_aliases.context_key ('coingecko:{id}' pattern)
+ * for non-top tokens, or fall back to entity.name for top-100 tokens
+ * that were seeded with empty context_key.
+ */
+export async function getActiveTokensWithCoinGeckoIds(
+  pool: Pool,
+): Promise<TokenCoinGeckoMapping[]> {
+  const { rows } = await pool.query<{
+    entity_id: string;
+    entity_name: string;
+    coingecko_id: string;
+  }>(
+    `SELECT DISTINCT ON (e.id)
+       e.id AS entity_id,
+       e.name AS entity_name,
+       CASE
+         WHEN ea.context_key LIKE 'coingecko:%'
+         THEN SUBSTRING(ea.context_key FROM 11)
+         ELSE e.name
+       END AS coingecko_id
+     FROM entities e
+     JOIN entity_aliases ea ON ea.entity_id = e.id
+     WHERE e.status = 'active'
+       AND e.type = 'token'
+       AND (ea.context_key LIKE 'coingecko:%' OR ea.context_key = '')
+     ORDER BY e.id, ea.context_key DESC`,
+  );
+
+  return rows.map((r) => ({
+    entityId: r.entity_id,
+    entityName: r.entity_name,
+    coingeckoId: r.coingecko_id,
+  }));
+}

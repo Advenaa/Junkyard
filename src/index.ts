@@ -21,6 +21,7 @@ import { createDecayManager } from './knowledge/decay.js';
 import { createDelivery } from './deliver/webhook.js';
 import { createDiscordAdapter } from './ingest/discord.js';
 import { createTwitterAdapter } from './ingest/twitter.js';
+import { createPriceTracker } from './prices/tracker.js';
 import { pollFeed } from './ingest/rss.js';
 import { createScheduler } from './scheduler.js';
 import { createHealthMonitor } from './health.js';
@@ -181,6 +182,7 @@ program
     });
 
     const twitterAdapter = createTwitterAdapter(config, pool, log);
+    const priceTracker = createPriceTracker(pool, log, config.coingeckoApiKey ?? undefined);
 
     // ── 4. Scheduler callbacks ────────────────────────────────────────
 
@@ -352,6 +354,12 @@ program
         await narrativeDetector.detectNarratives();
       } catch (err: unknown) {
         log.error({ err }, 'narrative detection failed');
+      }
+      // Price snapshot: fetch latest prices for all active token entities
+      try {
+        await priceTracker.fetchAndStore();
+      } catch (err: unknown) {
+        log.error({ err }, 'price fetch failed');
       }
       // Sentiment rollup: compute daily momentum before synthesis uses it
       try {
