@@ -864,9 +864,8 @@ Rules:
             // Determine predominant language of items in this chunk
             const langCounts = new Map<string, number>();
             for (const item of chunk) {
-              if (item.original_language) {
-                langCounts.set(item.original_language, (langCounts.get(item.original_language) ?? 0) + 1);
-              }
+              const lang = item.original_language ?? 'eng';
+              langCounts.set(lang, (langCounts.get(lang) ?? 0) + 1);
             }
             const predominantLang = [...langCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 

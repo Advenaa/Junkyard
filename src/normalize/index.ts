@@ -151,7 +151,7 @@ export function createNormalizer(pool: Pool, log: Logger, config: Config, llm: R
         return 'filtered';
       }
 
-      // ── Gate 6 — Indonesian translation ─────────────────────────────
+      // ── Gate 6 — Language tag + Indonesian translation ──────────────
       if (lang === 'ind' || lang === 'msa' || lang === 'zlm') {
         originalLanguage = 'ind';
         try {
@@ -198,6 +198,10 @@ export function createNormalizer(pool: Pool, log: Logger, config: Config, llm: R
             return 'dropped';
           }
         }
+      } else {
+        // English or undetermined (short content where franc returns 'und') —
+        // pipeline is English-first, so default to 'eng'
+        originalLanguage = 'eng';
       }
 
       // ── Final — Insert as ready (atomic dedup via UNIQUE constraint) ─

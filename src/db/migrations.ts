@@ -636,6 +636,33 @@ const migrations: Migration[] = [
       ADD COLUMN until_at BIGINT
     `);
   },
+
+  // Migration 26: Backfill entity_mentions.language NULL → 'eng' (H-001)
+  // + CHECK constraints on entity_relationships confidence range (M-001) and temporal order (M-002)
+  async (client) => {
+    // H-001: English mentions were stored with language = NULL instead of 'eng'
+    await client.query(`UPDATE entity_mentions SET language = 'eng' WHERE language IS NULL`);
+
+    // M-001: confidence must be in [0, 1]
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE entity_relationships
+          ADD CONSTRAINT chk_confidence_range
+          CHECK (confidence >= 0 AND confidence <= 1);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+
+    // M-002: since_at must be <= until_at when both are set
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE entity_relationships
+          ADD CONSTRAINT chk_temporal_order
+          CHECK (since_at IS NULL OR until_at IS NULL OR since_at <= until_at);
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
