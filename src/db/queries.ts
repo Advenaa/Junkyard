@@ -1569,3 +1569,170 @@ export async function deleteCalendarEvent(pool: Pool, id: string): Promise<boole
   const { rowCount } = await pool.query(`DELETE FROM calendar_events WHERE id = $1`, [id]);
   return (rowCount ?? 0) > 0;
 }
+
+// ── Price Snapshots ────────────────────────────────────────────────────
+
+export interface PriceSnapshotRow {
+  id: string;
+  entityId: string;
+  timestamp: number;
+  priceUsd: number;
+  priceChange24h: number | null;
+  priceChange7d: number | null;
+  volume24h: number | null;
+  marketCap: number | null;
+  source: string;
+  createdAt: number;
+}
+
+/** Map a snake_case DB row to a camelCase PriceSnapshotRow. */
+function toPriceSnapshotRow(row: Record<string, unknown>): PriceSnapshotRow {
+  return {
+    id: row.id as string,
+    entityId: row.entity_id as string,
+    timestamp: row.timestamp as number,
+    priceUsd: row.price_usd as number,
+    priceChange24h: (row.price_change_24h as number | null) ?? null,
+    priceChange7d: (row.price_change_7d as number | null) ?? null,
+    volume24h: (row.volume_24h as number | null) ?? null,
+    marketCap: (row.market_cap as number | null) ?? null,
+    source: row.source as string,
+    createdAt: row.created_at as number,
+  };
+}
+
+export async function insertPriceSnapshot(
+  pool: Pool,
+  snapshot: {
+    entityId: string;
+    timestamp: number;
+    priceUsd: number;
+    priceChange24h?: number | null;
+    priceChange7d?: number | null;
+    volume24h?: number | null;
+    marketCap?: number | null;
+    source?: string;
+  },
+): Promise<PriceSnapshotRow> {
+  const id = ulid();
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `INSERT INTO price_snapshots (
+      id, entity_id, timestamp, price_usd, price_change_24h,
+      price_change_7d, volume_24h, market_cap, source, created_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING *`,
+    [
+      id,
+      snapshot.entityId,
+      snapshot.timestamp,
+      snapshot.priceUsd,
+      snapshot.priceChange24h ?? null,
+      snapshot.priceChange7d ?? null,
+      snapshot.volume24h ?? null,
+      snapshot.marketCap ?? null,
+      snapshot.source ?? 'coingecko',
+      now,
+    ],
+  );
+  return toPriceSnapshotRow(rows[0]);
+}
+
+export async function insertPriceSnapshots(
+  pool: Pool,
+  snapshots: Array<{
+    entityId: string;
+    timestamp: number;
+    priceUsd: number;
+    priceChange24h?: number | null;
+    priceChange7d?: number | null;
+    volume24h?: number | null;
+    marketCap?: number | null;
+    source?: string;
+  }>,
+): Promise<number> {
+  if (snapshots.length === 0) return 0;
+
+  const cols = 10; // number of columns per row
+  const now = Date.now();
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+
+  for (let i = 0; i < snapshots.length; i++) {
+    const s = snapshots[i];
+    const offset = i * cols;
+    placeholders.push(
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10})`,
+    );
+    values.push(
+      ulid(),
+      s.entityId,
+      s.timestamp,
+      s.priceUsd,
+      s.priceChange24h ?? null,
+      s.priceChange7d ?? null,
+      s.volume24h ?? null,
+      s.marketCap ?? null,
+      s.source ?? 'coingecko',
+      now,
+    );
+  }
+
+  const result = await pool.query(
+    `INSERT INTO price_snapshots (
+      id, entity_id, timestamp, price_usd, price_change_24h,
+      price_change_7d, volume_24h, market_cap, source, created_at
+    ) VALUES ${placeholders.join(', ')}`,
+    values,
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function getLatestPriceSnapshot(
+  pool: Pool,
+  entityId: string,
+): Promise<PriceSnapshotRow | null> {
+  const { rows } = await pool.query(
+    `SELECT * FROM price_snapshots
+      WHERE entity_id = $1
+      ORDER BY timestamp DESC
+      LIMIT 1`,
+    [entityId],
+  );
+  return rows.length > 0 ? toPriceSnapshotRow(rows[0]) : null;
+}
+
+export async function getPriceHistory(
+  pool: Pool,
+  entityId: string,
+  startTime: number,
+  endTime: number,
+  limit = 30,
+): Promise<PriceSnapshotRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM price_snapshots
+      WHERE entity_id = $1
+        AND timestamp >= $2
+        AND timestamp <= $3
+      ORDER BY timestamp DESC
+      LIMIT $4`,
+    [entityId, startTime, endTime, limit],
+  );
+  return rows.map(toPriceSnapshotRow);
+}
+
+export async function getLatestPricesForEntities(
+  pool: Pool,
+  entityIds: string[],
+): Promise<PriceSnapshotRow[]> {
+  if (entityIds.length === 0) return [];
+
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (entity_id) *
+      FROM price_snapshots
+      WHERE entity_id = ANY($1)
+      ORDER BY entity_id, timestamp DESC`,
+    [entityIds],
+  );
+  return rows.map(toPriceSnapshotRow);
+}

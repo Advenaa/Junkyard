@@ -663,6 +663,32 @@ const migrations: Migration[] = [
       END $$
     `);
   },
+
+  // Migration 27: Create price_snapshots table for price feeds (Feature 3.1)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS price_snapshots (
+        id TEXT PRIMARY KEY,
+        entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        timestamp BIGINT NOT NULL,
+        price_usd REAL NOT NULL,
+        price_change_24h REAL,
+        price_change_7d REAL,
+        volume_24h REAL,
+        market_cap REAL,
+        source TEXT NOT NULL DEFAULT 'coingecko',
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_price_snapshots_entity_time
+        ON price_snapshots(entity_id, timestamp DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_price_snapshots_timestamp
+        ON price_snapshots(timestamp DESC)
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
