@@ -1284,8 +1284,7 @@ export async function getEntityRelationshipGraph(
       nodeNames.set(row.entityIdA, row.entityNameA);
       nodeNames.set(row.entityIdB, row.entityNameB);
 
-      let shouldIncludeRelationship =
-        nodeDepths.has(row.entityIdA) && nodeDepths.has(row.entityIdB);
+      let shouldIncludeRelationship = nodeDepths.has(row.entityIdA) && nodeDepths.has(row.entityIdB);
 
       const candidateExpansions = [
         { fromId: row.entityIdA, toId: row.entityIdB },
@@ -1689,10 +1688,7 @@ export async function insertPriceSnapshots(
   return result.rowCount ?? 0;
 }
 
-export async function getLatestPriceSnapshot(
-  pool: Pool,
-  entityId: string,
-): Promise<PriceSnapshotRow | null> {
+export async function getLatestPriceSnapshot(pool: Pool, entityId: string): Promise<PriceSnapshotRow | null> {
   const { rows } = await pool.query(
     `SELECT * FROM price_snapshots
       WHERE entity_id = $1
@@ -1722,10 +1718,7 @@ export async function getPriceHistory(
   return rows.map(toPriceSnapshotRow);
 }
 
-export async function getLatestPricesForEntities(
-  pool: Pool,
-  entityIds: string[],
-): Promise<PriceSnapshotRow[]> {
+export async function getLatestPricesForEntities(pool: Pool, entityIds: string[]): Promise<PriceSnapshotRow[]> {
   if (entityIds.length === 0) return [];
 
   const { rows } = await pool.query(
@@ -1750,9 +1743,7 @@ export interface TokenCoinGeckoMapping {
  * for non-top tokens, or fall back to entity.name for top-100 tokens
  * that were seeded with empty context_key.
  */
-export async function getActiveTokensWithCoinGeckoIds(
-  pool: Pool,
-): Promise<TokenCoinGeckoMapping[]> {
+export async function getActiveTokensWithCoinGeckoIds(pool: Pool): Promise<TokenCoinGeckoMapping[]> {
   const { rows } = await pool.query<{
     entity_id: string;
     entity_name: string;
@@ -1827,7 +1818,17 @@ export async function insertAlphaPropagation(
     `INSERT INTO alpha_propagation (id, entity_id, event_id, tier, source, source_id, first_mention_time, item_id, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
-    [id, record.entityId, record.eventId ?? null, record.tier, record.source, record.sourceId, record.firstMentionTime, record.itemId ?? null, now],
+    [
+      id,
+      record.entityId,
+      record.eventId ?? null,
+      record.tier,
+      record.source,
+      record.sourceId,
+      record.firstMentionTime,
+      record.itemId ?? null,
+      now,
+    ],
   );
   return toAlphaPropagationRow(rows[0]);
 }
@@ -1848,10 +1849,7 @@ export async function getAlphaPropagationByEntity(
   return rows.map(toAlphaPropagationRow);
 }
 
-export async function getAlphaPropagationByEvent(
-  pool: Pool,
-  eventId: string,
-): Promise<AlphaPropagationRow[]> {
+export async function getAlphaPropagationByEvent(pool: Pool, eventId: string): Promise<AlphaPropagationRow[]> {
   const { rows } = await pool.query(
     `SELECT * FROM alpha_propagation
      WHERE event_id = $1
@@ -1888,14 +1886,200 @@ export async function getAlphaPropagationSummary(
   }));
 }
 
-export async function updateSourceTier(
+export async function updateSourceTier(pool: Pool, source: string, sourceId: string, tier: string): Promise<void> {
+  await pool.query(`UPDATE sources SET tier = $3 WHERE source = $1 AND source_id = $2`, [source, sourceId, tier]);
+}
+
+// ── Author Tracking ──────────────────────────────────────────────────
+
+export interface AuthorRow {
+  id: string;
+  platform: string;
+  handle: string;
+  displayName: string | null;
+  firstSeen: number;
+  lastSeen: number;
+  mentionCount: number;
+  credibilityScore: number | null;
+  totalCalls: number;
+  correctCalls: number;
+  createdAt: number;
+}
+
+export interface AuthorCallRow {
+  id: string;
+  authorId: string;
+  entityId: string;
+  claimType: string;
+  claimText: string;
+  confidence: number;
+  sourceItemId: string | null;
+  timestamp: number;
+  resolved: boolean;
+  outcome: string | null;
+  resolvedAt: number | null;
+  createdAt: number;
+}
+
+function toAuthorRow(row: Record<string, unknown>): AuthorRow {
+  return {
+    id: row.id as string,
+    platform: row.platform as string,
+    handle: row.handle as string,
+    displayName: (row.display_name as string) ?? null,
+    firstSeen: Number(row.first_seen),
+    lastSeen: Number(row.last_seen),
+    mentionCount: Number(row.mention_count),
+    credibilityScore: row.credibility_score != null ? Number(row.credibility_score) : null,
+    totalCalls: Number(row.total_calls),
+    correctCalls: Number(row.correct_calls),
+    createdAt: Number(row.created_at),
+  };
+}
+
+function toAuthorCallRow(row: Record<string, unknown>): AuthorCallRow {
+  return {
+    id: row.id as string,
+    authorId: row.author_id as string,
+    entityId: row.entity_id as string,
+    claimType: row.claim_type as string,
+    claimText: row.claim_text as string,
+    confidence: Number(row.confidence),
+    sourceItemId: (row.source_item_id as string) ?? null,
+    timestamp: Number(row.timestamp),
+    resolved: Boolean(row.resolved),
+    outcome: (row.outcome as string) ?? null,
+    resolvedAt: row.resolved_at != null ? Number(row.resolved_at) : null,
+    createdAt: Number(row.created_at),
+  };
+}
+
+export async function upsertAuthor(
   pool: Pool,
-  source: string,
-  sourceId: string,
-  tier: string,
-): Promise<void> {
-  await pool.query(
-    `UPDATE sources SET tier = $3 WHERE source = $1 AND source_id = $2`,
-    [source, sourceId, tier],
+  platform: string,
+  handle: string,
+  displayName: string | null,
+  timestamp: number,
+): Promise<AuthorRow> {
+  const id = ulid();
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `INSERT INTO authors (id, platform, handle, display_name, first_seen, last_seen, mention_count, created_at)
+     VALUES ($1, $2, $3, $4, $5, $5, 1, $6)
+     ON CONFLICT (platform, handle) DO UPDATE
+     SET last_seen = GREATEST(authors.last_seen, EXCLUDED.last_seen),
+         mention_count = authors.mention_count + 1,
+         display_name = COALESCE(EXCLUDED.display_name, authors.display_name)
+     RETURNING *`,
+    [id, platform, handle, displayName, timestamp, now],
   );
+  return toAuthorRow(rows[0]);
+}
+
+export async function getAuthorByHandle(pool: Pool, platform: string, handle: string): Promise<AuthorRow | null> {
+  const { rows } = await pool.query(`SELECT * FROM authors WHERE platform = $1 AND handle = $2`, [platform, handle]);
+  return rows.length > 0 ? toAuthorRow(rows[0]) : null;
+}
+
+export async function getAuthorById(pool: Pool, authorId: string): Promise<AuthorRow | null> {
+  const { rows } = await pool.query(`SELECT * FROM authors WHERE id = $1`, [authorId]);
+  return rows.length > 0 ? toAuthorRow(rows[0]) : null;
+}
+
+export async function getTopAuthorsByEntity(
+  pool: Pool,
+  entityId: string,
+  limit = 10,
+): Promise<Array<AuthorRow & { entityMentionCount: number }>> {
+  const { rows } = await pool.query(
+    `SELECT a.*, COUNT(DISTINCT i.id) AS entity_mention_count
+     FROM authors a
+     JOIN items i ON i.author = a.handle AND i.source = a.platform
+     JOIN summaries s ON s.source = i.source AND s.source_id = i.source_id
+     JOIN entity_mentions em ON em.summary_id = s.id AND em.entity_id = $1
+     WHERE i.timestamp >= s.window_start AND i.timestamp <= s.window_end
+     GROUP BY a.id
+     ORDER BY entity_mention_count DESC
+     LIMIT $2`,
+    [entityId, limit],
+  );
+  return rows.map((r) => ({
+    ...toAuthorRow(r),
+    entityMentionCount: Number(r.entity_mention_count),
+  }));
+}
+
+export async function insertAuthorCall(
+  pool: Pool,
+  call: {
+    authorId: string;
+    entityId: string;
+    claimType: string;
+    claimText: string;
+    confidence: number;
+    sourceItemId?: string | null;
+    timestamp: number;
+  },
+): Promise<AuthorCallRow> {
+  const id = ulid();
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `INSERT INTO author_calls (id, author_id, entity_id, claim_type, claim_text, confidence, source_item_id, timestamp, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [
+      id,
+      call.authorId,
+      call.entityId,
+      call.claimType,
+      call.claimText,
+      call.confidence,
+      call.sourceItemId ?? null,
+      call.timestamp,
+      now,
+    ],
+  );
+  return toAuthorCallRow(rows[0]);
+}
+
+export async function getAuthorCalls(pool: Pool, authorId: string, limit = 20): Promise<AuthorCallRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM author_calls WHERE author_id = $1 ORDER BY timestamp DESC LIMIT $2`,
+    [authorId, limit],
+  );
+  return rows.map(toAuthorCallRow);
+}
+
+export async function getUnresolvedCalls(pool: Pool, limit = 50): Promise<AuthorCallRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM author_calls WHERE resolved = false ORDER BY timestamp ASC LIMIT $1`,
+    [limit],
+  );
+  return rows.map(toAuthorCallRow);
+}
+
+export async function resolveAuthorCall(
+  pool: Pool,
+  callId: string,
+  outcome: 'correct' | 'incorrect' | 'unresolved',
+): Promise<void> {
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `UPDATE author_calls SET resolved = true, outcome = $2, resolved_at = $3
+     WHERE id = $1 AND resolved = false
+     RETURNING author_id`,
+    [callId, outcome, now],
+  );
+  if (rows.length > 0 && outcome !== 'unresolved') {
+    const authorId = rows[0].author_id as string;
+    const correctIncrement = outcome === 'correct' ? 1 : 0;
+    await pool.query(
+      `UPDATE authors SET total_calls = total_calls + 1, correct_calls = correct_calls + $2,
+       credibility_score = CASE WHEN total_calls + 1 >= 5
+         THEN (correct_calls + $2)::REAL / (total_calls + 1)
+         ELSE NULL END
+       WHERE id = $1`,
+      [authorId, correctIncrement],
+    );
+  }
 }

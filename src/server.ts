@@ -54,6 +54,9 @@ import {
   updateSourceTier,
   getAlphaPropagationSummary,
   getAlphaPropagationByEntity,
+  getTopAuthorsByEntity,
+  getAuthorById,
+  getAuthorCalls,
 } from './db/queries.js';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
@@ -725,12 +728,10 @@ export async function createServer(
         return reply.code(400).send({ error: 'Discord channel ID must be a 17-20 digit snowflake' });
       }
       if (source === 'twitter' && sourceId.startsWith('@') && !/^@[A-Za-z0-9_]{1,39}$/.test(sourceId)) {
-        return reply
-          .code(400)
-          .send({
-            error:
-              'Twitter handle must be @username (1-39 chars, letters/numbers/underscores). For search queries, omit the @.',
-          });
+        return reply.code(400).send({
+          error:
+            'Twitter handle must be @username (1-39 chars, letters/numbers/underscores). For search queries, omit the @.',
+        });
       }
       try {
         await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
@@ -2127,9 +2128,7 @@ export async function createServer(
       const startTime = endTime - days * 24 * 60 * 60 * 1000;
       const rows = await getTopDivergentEntities(pool, startTime, endTime, limit);
       return {
-        divergences: rows.map((r) =>
-          toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>),
-        ),
+        divergences: rows.map((r) => toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>)),
       };
     },
   );
@@ -2257,6 +2256,80 @@ export async function createServer(
           sourceId: s.sourceId,
         })),
         records: records.map((r) => toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>)),
+      };
+    },
+  );
+
+  // Top authors for entity
+  app.get<{
+    Params: { entityId: string };
+    Querystring: { limit?: number };
+  }>(
+    '/api/v1/entities/:entityId/authors',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: { entityId: { type: 'string', minLength: 1 } },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const { entityId } = request.params;
+      const queryLimit = request.query.limit ?? 10;
+      const authors = await getTopAuthorsByEntity(pool, entityId, queryLimit);
+      return {
+        authors: authors.map((a) => ({
+          ...toCamelCase<Record<string, unknown>>(a as unknown as Record<string, unknown>),
+          entityMentionCount: a.entityMentionCount,
+        })),
+      };
+    },
+  );
+
+  // Author profile with recent calls
+  app.get<{
+    Params: { authorId: string };
+    Querystring: { callLimit?: number };
+  }>(
+    '/api/v1/authors/:authorId',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['authorId'],
+          properties: { authorId: { type: 'string', minLength: 1 } },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            callLimit: { type: 'integer', minimum: 1, maximum: 50 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { authorId } = request.params;
+      const callLimit = request.query.callLimit ?? 20;
+      const author = await getAuthorById(pool, authorId);
+      if (!author) {
+        return reply.code(404).send({ error: 'Author not found' });
+      }
+      const calls = await getAuthorCalls(pool, authorId, callLimit);
+      return {
+        author: toCamelCase<Record<string, unknown>>(author as unknown as Record<string, unknown>),
+        calls: calls.map((c) => toCamelCase<Record<string, unknown>>(c as unknown as Record<string, unknown>)),
       };
     },
   );

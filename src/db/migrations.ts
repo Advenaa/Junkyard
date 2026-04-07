@@ -725,6 +725,62 @@ const migrations: Migration[] = [
         ON alpha_propagation(event_id)
     `);
   },
+
+  // Migration 29: Author tracking tables (Feature 3.2)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS authors (
+        id TEXT PRIMARY KEY,
+        platform TEXT NOT NULL,
+        handle TEXT NOT NULL,
+        display_name TEXT,
+        first_seen BIGINT NOT NULL,
+        last_seen BIGINT NOT NULL,
+        mention_count INTEGER NOT NULL DEFAULT 0,
+        credibility_score REAL,
+        total_calls INTEGER NOT NULL DEFAULT 0,
+        correct_calls INTEGER NOT NULL DEFAULT 0,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_authors_platform_handle
+        ON authors(platform, handle)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_authors_credibility
+        ON authors(credibility_score DESC NULLS LAST)
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS author_calls (
+        id TEXT PRIMARY KEY,
+        author_id TEXT NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+        entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        claim_type TEXT NOT NULL CHECK (claim_type IN ('bullish', 'bearish', 'event', 'neutral')),
+        claim_text TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.5,
+        source_item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+        timestamp BIGINT NOT NULL,
+        resolved BOOLEAN NOT NULL DEFAULT false,
+        outcome TEXT CHECK (outcome IN ('correct', 'incorrect', 'unresolved', NULL)),
+        resolved_at BIGINT,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_author_calls_author
+        ON author_calls(author_id, timestamp DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_author_calls_entity
+        ON author_calls(entity_id, timestamp DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_author_calls_unresolved
+        ON author_calls(resolved, timestamp) WHERE resolved = false
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
