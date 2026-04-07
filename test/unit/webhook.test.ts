@@ -450,7 +450,7 @@ describe('deliver — idempotency guard', () => {
     assert.strictEqual(fetchMock.mock.callCount(), 1);
     const [url, opts] = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
     assert.strictEqual(opts.method, 'POST');
-    assert.ok(url.includes('104.16.60.37'), 'Expected pinned IP in URL');
+    assert.ok(url.includes('discord.com'), 'Expected original hostname in URL');
 
     // Verify body contains embeds
     const body = JSON.parse(opts.body as string);

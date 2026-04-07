@@ -1,4 +1,3 @@
-import net from 'node:net';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 import type { Config } from './config.js';
@@ -293,11 +292,6 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       return;
     }
 
-    // Pin to resolved IP to prevent DNS rebinding
-    const parsed = new URL(config.alertWebhookUrl);
-    const pinnedUrl = new URL(config.alertWebhookUrl);
-    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
-
     const body = {
       embeds: [
         {
@@ -314,9 +308,9 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await fetch(pinnedUrl.toString(), {
+        const response = await fetch(config.alertWebhookUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Host: parsed.host },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(10_000),
         });

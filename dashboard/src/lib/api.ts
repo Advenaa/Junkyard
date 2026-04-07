@@ -1,10 +1,15 @@
 const BASE = '/api/v1';
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const { headers: extraHeaders, ...rest } = options ?? {};
+  const { headers: extraHeaders, body, ...rest } = options ?? {};
+  const headers: Record<string, string> = { ...(extraHeaders as Record<string, string>) };
+  if (body != null) {
+    headers['Content-Type'] ??= 'application/json';
+  }
   const res = await fetch(`${BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    headers,
+    body,
     ...rest,
   });
   if (res.status === 401 && window.location.pathname !== '/login') {

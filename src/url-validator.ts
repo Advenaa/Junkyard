@@ -190,23 +190,11 @@ export async function fetchValidated(
     return { response: null, validation };
   }
 
-  const parsed = new URL(url);
-  const pinnedIp = validation.resolvedIp;
-
-  // Replace hostname with the validated IP so DNS cannot rebind between
-  // validation and the actual connection.
-  const pinnedUrl = new URL(url);
-  pinnedUrl.hostname = net.isIPv6(pinnedIp) ? `[${pinnedIp}]` : pinnedIp;
-
-  const headers: Record<string, string> = {
-    ...init?.headers,
-    // Preserve original Host header for TLS SNI and virtual hosting
-    Host: parsed.host,
-  };
-
-  const response = await fetch(pinnedUrl.toString(), {
+  // Use the original URL — validateUrl already verified the resolved IP is safe.
+  // DNS-pinning (replacing hostname with IP) breaks TLS cert verification for HTTPS.
+  const response = await fetch(url, {
     signal: init?.signal,
-    headers,
+    headers: init?.headers,
   });
 
   return { response, validation };

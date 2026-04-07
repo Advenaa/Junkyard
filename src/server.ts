@@ -39,7 +39,6 @@ import {
   type ItemRow,
   type CalendarEventRow,
 } from './db/queries.js';
-import net from 'node:net';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
 import { encryptSecret, decryptSecret, getEncryptionKey } from './crypto/token-encrypt.js';
@@ -2112,13 +2111,11 @@ export async function createServer(
           ],
           allowed_mentions: { parse: [] },
         });
-        // Pin to resolved IP to prevent DNS rebinding (TOCTOU) between validateUrl and fetch
-        const parsed = new URL(url);
-        const pinnedUrl = new URL(url);
-        pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
-        const response = await fetch(pinnedUrl.toString(), {
+        // Use the original URL — validateUrl already verified the resolved IP is safe.
+        // DNS-pinning (replacing hostname with IP) breaks TLS cert verification for HTTPS.
+        const response = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Host: parsed.host },
+          headers: { 'Content-Type': 'application/json' },
           body: payload,
           signal: AbortSignal.timeout(15_000),
         });

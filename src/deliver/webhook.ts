@@ -3,7 +3,6 @@ import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { getAppConfig } from '../db/queries.js';
 import { validateUrl } from '../url-validator.js';
-import net from 'node:net';
 
 interface EntitySentiment {
   name: string;
@@ -194,7 +193,7 @@ export function buildEmbed(report: Report, parsed: MarketReportParsed, config: C
   return embed;
 }
 
-async function postWithRetry(webhookUrl: string, payload: string, log: Logger, hostHeader?: string): Promise<boolean> {
+async function postWithRetry(webhookUrl: string, payload: string, log: Logger): Promise<boolean> {
   let rateLimitCount = 0;
   const startTime = Date.now();
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -203,11 +202,9 @@ async function postWithRetry(webhookUrl: string, payload: string, log: Logger, h
       return false;
     }
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (hostHeader) headers['Host'] = hostHeader;
       const response = await fetch(webhookUrl, {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: payload,
         signal: AbortSignal.timeout(15_000),
       });
@@ -306,12 +303,6 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       return false;
     }
 
-    // Pin to resolved IP to prevent DNS rebinding between validation and fetch
-    const pinnedUrl = new URL(webhookUrl);
-    pinnedUrl.hostname = net.isIPv6(validation.resolvedIp) ? `[${validation.resolvedIp}]` : validation.resolvedIp;
-    const pinnedWebhookUrl = pinnedUrl.toString();
-    const originalHost = new URL(webhookUrl).host;
-
     // Atomic idempotency: claim this report for delivery (skip if already delivered)
     const { rows: claimRows } = await pool.query<{ delivery_status: string }>(
       `UPDATE reports SET delivery_status = 'pending'
@@ -330,7 +321,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       allowed_mentions: { parse: [] },
     });
 
-    const success = await postWithRetry(pinnedWebhookUrl, payload, log, originalHost);
+    const success = await postWithRetry(webhookUrl, payload, log);
 
     if (success) {
       log.info({ reportId: report.id, type: report.type }, 'webhook delivered');
