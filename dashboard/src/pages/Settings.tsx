@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router';
 import { apiFetch } from '../lib/api';
 import { useAuth } from '../components/AuthProvider';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 
-type Tab = 'sources' | 'delivery' | 'pipeline' | 'users';
+type Tab = 'sources' | 'delivery' | 'pipeline' | 'entities' | 'users';
 
 interface Source {
   source: string;
@@ -122,6 +123,47 @@ interface EntitySuggestion {
   matchedAlias: string | null;
 }
 
+type EntityRelationshipType =
+  | 'competes_with'
+  | 'built_on'
+  | 'invested_in'
+  | 'forked_from'
+  | 'acquired'
+  | 'founded'
+  | 'advises'
+  | 'partnered_with'
+  | 'regulated_by';
+type EntityRelationshipSource = 'llm_inferred' | 'manual' | 'coingecko';
+
+interface EntityRelationship {
+  id: string;
+  entityIdA: string;
+  entityNameA: string;
+  entityIdB: string;
+  entityNameB: string;
+  relationshipType: EntityRelationshipType;
+  confidence: number;
+  source: EntityRelationshipSource;
+  summaryId: string | null;
+  sinceAt: number | null;
+  untilAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface EntityRelationshipGraphNode {
+  id: string;
+  name: string;
+  depth: number;
+  isRoot: boolean;
+}
+
+interface EntityRelationshipGraphData {
+  rootEntityId: string;
+  nodes: EntityRelationshipGraphNode[];
+  relationships: EntityRelationship[];
+}
+
 function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
   const trimmedLabel = typeof source.label === 'string' ? source.label.trim() : '';
   if (trimmedLabel) return trimmedLabel;
@@ -180,6 +222,20 @@ async function fetchEntitySuggestionsData(query: string): Promise<EntitySuggesti
   return res.entities;
 }
 
+async function fetchEntityRelationshipsData(entityId: string): Promise<EntityRelationship[]> {
+  const res = await apiFetch<{ relationships: EntityRelationship[] }>(`/entities/${entityId}/relationships`);
+  return res.relationships;
+}
+
+async function fetchEntityCompetitorsData(entityId: string): Promise<EntityRelationship[]> {
+  const res = await apiFetch<{ competitors: EntityRelationship[] }>(`/entities/${entityId}/competitors`);
+  return res.competitors;
+}
+
+async function fetchEntityRelationshipGraphData(entityId: string): Promise<EntityRelationshipGraphData> {
+  return apiFetch<EntityRelationshipGraphData>(`/entities/${entityId}/graph?depth=2&limit=18`);
+}
+
 const TIMEZONES = (() => {
   try {
     return Intl.supportedValuesOf('timeZone');
@@ -217,6 +273,116 @@ const CALENDAR_RECURRENCE_RULES: Array<{ value: NonNullable<CalendarEvent['recur
   { value: 'quarterly', label: 'Quarterly' },
 ];
 
+const ENTITY_RELATIONSHIP_TYPE_OPTIONS: Array<{ value: EntityRelationshipType; label: string }> = [
+  { value: 'competes_with', label: 'Competes With' },
+  { value: 'built_on', label: 'Built On' },
+  { value: 'invested_in', label: 'Invested In' },
+  { value: 'forked_from', label: 'Forked From' },
+  { value: 'acquired', label: 'Acquired' },
+  { value: 'founded', label: 'Founded' },
+  { value: 'advises', label: 'Advises' },
+  { value: 'partnered_with', label: 'Partnered With' },
+  { value: 'regulated_by', label: 'Regulated By' },
+];
+
+const ENTITY_RELATIONSHIP_SOURCE_STYLES: Record<EntityRelationshipSource, string> = {
+  llm_inferred: 'bg-accent/10 border border-accent/20 text-accent',
+  manual: 'bg-accent-green/10 border border-accent-green/20 text-accent-green',
+  coingecko: 'bg-background border border-border text-text-secondary',
+};
+
+const ENTITY_RELATIONSHIP_GRAPH_STYLES: Record<
+  EntityRelationshipType,
+  {
+    lineColor: string;
+    borderColor: string;
+    surfaceColor: string;
+    badgeBackground: string;
+    badgeText: string;
+  }
+> = {
+  competes_with: {
+    lineColor: '#fb923c',
+    borderColor: 'rgba(251, 146, 60, 0.44)',
+    surfaceColor: 'rgba(251, 146, 60, 0.08)',
+    badgeBackground: 'rgba(251, 146, 60, 0.18)',
+    badgeText: '#fdba74',
+  },
+  built_on: {
+    lineColor: '#38bdf8',
+    borderColor: 'rgba(56, 189, 248, 0.44)',
+    surfaceColor: 'rgba(56, 189, 248, 0.08)',
+    badgeBackground: 'rgba(56, 189, 248, 0.18)',
+    badgeText: '#7dd3fc',
+  },
+  invested_in: {
+    lineColor: '#34d399',
+    borderColor: 'rgba(52, 211, 153, 0.44)',
+    surfaceColor: 'rgba(52, 211, 153, 0.08)',
+    badgeBackground: 'rgba(52, 211, 153, 0.18)',
+    badgeText: '#6ee7b7',
+  },
+  forked_from: {
+    lineColor: '#facc15',
+    borderColor: 'rgba(250, 204, 21, 0.44)',
+    surfaceColor: 'rgba(250, 204, 21, 0.08)',
+    badgeBackground: 'rgba(250, 204, 21, 0.18)',
+    badgeText: '#fde047',
+  },
+  acquired: {
+    lineColor: '#f87171',
+    borderColor: 'rgba(248, 113, 113, 0.44)',
+    surfaceColor: 'rgba(248, 113, 113, 0.08)',
+    badgeBackground: 'rgba(248, 113, 113, 0.18)',
+    badgeText: '#fca5a5',
+  },
+  founded: {
+    lineColor: '#fb7185',
+    borderColor: 'rgba(251, 113, 133, 0.44)',
+    surfaceColor: 'rgba(251, 113, 133, 0.08)',
+    badgeBackground: 'rgba(251, 113, 133, 0.18)',
+    badgeText: '#fda4af',
+  },
+  advises: {
+    lineColor: '#2dd4bf',
+    borderColor: 'rgba(45, 212, 191, 0.44)',
+    surfaceColor: 'rgba(45, 212, 191, 0.08)',
+    badgeBackground: 'rgba(45, 212, 191, 0.18)',
+    badgeText: '#5eead4',
+  },
+  partnered_with: {
+    lineColor: '#60a5fa',
+    borderColor: 'rgba(96, 165, 250, 0.44)',
+    surfaceColor: 'rgba(96, 165, 250, 0.08)',
+    badgeBackground: 'rgba(96, 165, 250, 0.18)',
+    badgeText: '#93c5fd',
+  },
+  regulated_by: {
+    lineColor: '#94a3b8',
+    borderColor: 'rgba(148, 163, 184, 0.44)',
+    surfaceColor: 'rgba(148, 163, 184, 0.08)',
+    badgeBackground: 'rgba(148, 163, 184, 0.18)',
+    badgeText: '#cbd5e1',
+  },
+};
+
+const MAX_ENTITY_GRAPH_CONNECTIONS = 6;
+
+interface EntityRelationshipGraphConnection {
+  relatedEntityId: string;
+  relatedEntityName: string;
+  relationships: EntityRelationship[];
+  primaryRelationship: EntityRelationship;
+  hasEvidence: boolean;
+  isEnded: boolean;
+}
+
+interface EntityRelationshipSecondDegreeGroup {
+  relatedEntityId: string;
+  relatedEntityName: string;
+  nodes: EntityRelationshipGraphNode[];
+}
+
 function formatRelativeTime(dateValue: number | null): string {
   if (dateValue == null) return 'Never';
   const diff = Date.now() - dateValue;
@@ -250,9 +416,376 @@ function defaultCalendarEventInputValue(): string {
   return toDatetimeLocalInputValue(next.getTime());
 }
 
+function parseDatetimeLocalInputValue(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const dateValue = new Date(trimmed).getTime();
+  return Number.isFinite(dateValue) ? dateValue : null;
+}
+
 function formatCalendarRecurrence(recurrenceRule: CalendarEvent['recurrenceRule']): string {
   if (recurrenceRule == null) return 'One-time';
   return CALENDAR_RECURRENCE_RULES.find((rule) => rule.value === recurrenceRule)?.label ?? recurrenceRule;
+}
+
+function formatEntityRelationshipType(type: EntityRelationshipType): string {
+  return ENTITY_RELATIONSHIP_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
+}
+
+function formatEntityRelationshipSource(source: EntityRelationshipSource): string {
+  if (source === 'llm_inferred') return 'LLM inferred';
+  if (source === 'coingecko') return 'CoinGecko';
+  return 'Manual';
+}
+
+function formatRelationshipBoundary(dateValue: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(dateValue);
+}
+
+function getRelatedEntityName(relationship: EntityRelationship, entityId: string): string {
+  return relationship.entityIdA === entityId ? relationship.entityNameB : relationship.entityNameA;
+}
+
+function getRelatedEntityId(relationship: EntityRelationship, entityId: string): string {
+  return relationship.entityIdA === entityId ? relationship.entityIdB : relationship.entityIdA;
+}
+
+function getEntityRelationshipConnectionSummary(connection: EntityRelationshipGraphConnection): string {
+  if (connection.relationships.length === 1) {
+    return formatEntityRelationshipType(connection.primaryRelationship.relationshipType);
+  }
+
+  return `${connection.relationships.length} mapped links`;
+}
+
+function buildEntityRelationshipGraphConnections(
+  entityId: string,
+  relationships: EntityRelationship[],
+): EntityRelationshipGraphConnection[] {
+  const grouped = new Map<string, { relatedEntityName: string; relationships: EntityRelationship[] }>();
+  for (const relationship of relationships) {
+    const relatedEntityId = getRelatedEntityId(relationship, entityId);
+    const relatedEntityName = getRelatedEntityName(relationship, entityId);
+    const current = grouped.get(relatedEntityId);
+    if (current) {
+      current.relationships.push(relationship);
+      continue;
+    }
+
+    grouped.set(relatedEntityId, {
+      relatedEntityName,
+      relationships: [relationship],
+    });
+  }
+
+  const now = Date.now();
+
+  return Array.from(grouped.entries())
+    .map(([relatedEntityId, group]) => {
+      const sortedRelationships = [...group.relationships].sort(
+        (a, b) => b.confidence - a.confidence || b.updatedAt - a.updatedAt || a.relationshipType.localeCompare(b.relationshipType),
+      );
+
+      return {
+        relatedEntityId,
+        relatedEntityName: group.relatedEntityName,
+        relationships: sortedRelationships,
+        primaryRelationship: sortedRelationships[0],
+        hasEvidence: sortedRelationships.some((relationship) => relationship.summaryId != null),
+        isEnded: sortedRelationships.every(
+          (relationship) => relationship.untilAt != null && relationship.untilAt < now,
+        ),
+      };
+    })
+    .sort((a, b) => {
+      if (a.isEnded !== b.isEnded) return a.isEnded ? 1 : -1;
+      if (a.relationships.length !== b.relationships.length) return b.relationships.length - a.relationships.length;
+      if (a.primaryRelationship.confidence !== b.primaryRelationship.confidence) {
+        return b.primaryRelationship.confidence - a.primaryRelationship.confidence;
+      }
+      return a.relatedEntityName.localeCompare(b.relatedEntityName);
+    });
+}
+
+function getEntityRelationshipGraphPosition(index: number, total: number): { x: number; y: number } {
+  if (total <= 1) return { x: 50, y: 19 };
+
+  const angle = -Math.PI / 2 + (index / total) * Math.PI * 2;
+  return {
+    x: 50 + Math.cos(angle) * 28,
+    y: 50 + Math.sin(angle) * 31,
+  };
+}
+
+function buildEntityRelationshipSecondDegreeGroups(
+  graphData: EntityRelationshipGraphData | null,
+  directConnections: EntityRelationshipGraphConnection[],
+): EntityRelationshipSecondDegreeGroup[] {
+  if (!graphData) return [];
+
+  const nodeDepths = new Map(graphData.nodes.map((node) => [node.id, node.depth]));
+  const directConnectionById = new Map(directConnections.map((connection) => [connection.relatedEntityId, connection]));
+  const groups = new Map<string, EntityRelationshipGraphNode[]>();
+
+  for (const node of graphData.nodes) {
+    if (node.depth !== 2) continue;
+
+    const candidateParents = graphData.relationships
+      .filter((relationship) => {
+        if (relationship.entityIdA === node.id) return nodeDepths.get(relationship.entityIdB) === 1;
+        if (relationship.entityIdB === node.id) return nodeDepths.get(relationship.entityIdA) === 1;
+        return false;
+      })
+      .sort(
+        (a, b) => b.updatedAt - a.updatedAt || b.confidence - a.confidence || a.relationshipType.localeCompare(b.relationshipType),
+      );
+
+    const parent = candidateParents[0];
+    if (!parent) continue;
+
+    const parentId = parent.entityIdA === node.id ? parent.entityIdB : parent.entityIdA;
+    const connection = directConnectionById.get(parentId);
+    if (!connection) continue;
+
+    const current = groups.get(connection.relatedEntityId);
+    if (current) {
+      current.push(node);
+      continue;
+    }
+    groups.set(connection.relatedEntityId, [node]);
+  }
+
+  return directConnections
+    .map((connection) => ({
+      relatedEntityId: connection.relatedEntityId,
+      relatedEntityName: connection.relatedEntityName,
+      nodes: [...(groups.get(connection.relatedEntityId) ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .filter((group) => group.nodes.length > 0);
+}
+
+function EntityRelationshipGraph({
+  selectedEntity,
+  connections,
+  graphData,
+  relationshipCount,
+  focusedConnectionId,
+  onToggleConnectionFocus,
+}: {
+  selectedEntity: EntitySuggestion;
+  connections: EntityRelationshipGraphConnection[];
+  graphData: EntityRelationshipGraphData | null;
+  relationshipCount: number;
+  focusedConnectionId: string | null;
+  onToggleConnectionFocus: (relatedEntityId: string) => void;
+}) {
+  if (connections.length === 0) {
+    return (
+      <EmptyState
+        title="No relationship graph yet"
+        description="Add a direct relationship or wait for explicit inferred edges to build this entity's first neighborhood view."
+      />
+    );
+  }
+
+  const visibleConnections = connections.slice(0, MAX_ENTITY_GRAPH_CONNECTIONS);
+  const hiddenConnections = Math.max(0, connections.length - visibleConnections.length);
+  const activeConnections = connections.filter((connection) => !connection.isEnded).length;
+  const evidenceConnections = connections.filter((connection) => connection.hasEvidence).length;
+  const focusedConnection = connections.find((connection) => connection.relatedEntityId === focusedConnectionId) ?? null;
+  const secondDegreeGroups = buildEntityRelationshipSecondDegreeGroups(graphData, visibleConnections);
+  const secondDegreeCount = secondDegreeGroups.reduce((sum, group) => sum + group.nodes.length, 0);
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <div className="text-sm text-text-primary font-body">
+            {connections.length} connected {connections.length === 1 ? 'entity' : 'entities'}
+          </div>
+          <div className="text-xs text-text-secondary font-body mt-1">
+            Click a node or legend chip to focus the relationship list below. Dashed links mark neighborhoods whose mapped relationships are already ended.
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wide">
+          <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+            {activeConnections} active
+          </span>
+          <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+            {evidenceConnections} with evidence
+          </span>
+          {secondDegreeCount > 0 && (
+            <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+              {secondDegreeCount} in 2-hop context
+            </span>
+          )}
+          {hiddenConnections > 0 && (
+            <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+              +{hiddenConnections} more below
+            </span>
+          )}
+        </div>
+      </div>
+
+      <figure className="space-y-3">
+        <div
+          className="relative h-[430px] rounded-xl border border-border bg-background overflow-hidden"
+          aria-label={`${selectedEntity.name} relationship graph`}
+        >
+          <div
+            className="absolute inset-0"
+            style={{ background: 'radial-gradient(circle at center, rgba(91, 158, 255, 0.11), transparent 58%)' }}
+            aria-hidden="true"
+          />
+          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            {visibleConnections.map((connection, index) => {
+              const position = getEntityRelationshipGraphPosition(index, visibleConnections.length);
+              const style = ENTITY_RELATIONSHIP_GRAPH_STYLES[connection.primaryRelationship.relationshipType];
+              const isFocused = connection.relatedEntityId === focusedConnectionId;
+              const isDimmed = focusedConnection != null && !isFocused;
+              return (
+                <line
+                  key={`edge-${connection.relatedEntityId}`}
+                  x1="50"
+                  y1="50"
+                  x2={position.x}
+                  y2={position.y}
+                  stroke={style.lineColor}
+                  strokeWidth={isFocused ? 2.1 : connection.primaryRelationship.source === 'manual' ? 1.8 : 1.5}
+                  strokeOpacity={isDimmed ? 0.16 : connection.isEnded ? 0.42 : 0.82}
+                  strokeDasharray={connection.isEnded ? '3 2' : undefined}
+                />
+              );
+            })}
+          </svg>
+
+          <div className="absolute left-1/2 top-1/2 z-10 w-40 max-w-[46vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-accent/30 bg-surface px-4 py-3 text-center shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
+            <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">Selected</div>
+            <div className="mt-1 text-sm text-text-primary font-heading leading-tight break-words">{selectedEntity.name}</div>
+            <div className="mt-2 text-[11px] text-text-secondary font-body">
+              {relationshipCount} mapped relationship{relationshipCount !== 1 ? 's' : ''}
+            </div>
+          </div>
+
+          {visibleConnections.map((connection, index) => {
+            const position = getEntityRelationshipGraphPosition(index, visibleConnections.length);
+            const style = ENTITY_RELATIONSHIP_GRAPH_STYLES[connection.primaryRelationship.relationshipType];
+            const isFocused = connection.relatedEntityId === focusedConnectionId;
+            const isDimmed = focusedConnection != null && !isFocused;
+            return (
+              <button
+                key={connection.relatedEntityId}
+                type="button"
+                onClick={() => onToggleConnectionFocus(connection.relatedEntityId)}
+                aria-pressed={isFocused}
+                aria-label={`Graph node ${connection.relatedEntityName}`}
+                className="absolute z-10 w-[6.75rem] sm:w-32 -translate-x-1/2 -translate-y-1/2 rounded-xl border px-3 py-2 text-left shadow-[0_10px_30px_rgba(0,0,0,0.18)] transition-all focus:outline-none focus:ring-2 focus:ring-accent/60"
+                style={{
+                  left: `${position.x}%`,
+                  top: `${position.y}%`,
+                  borderColor: isFocused ? style.lineColor : style.borderColor,
+                  backgroundColor: style.surfaceColor,
+                  opacity: isDimmed ? 0.62 : 1,
+                  boxShadow: isFocused
+                    ? `0 0 0 1px ${style.lineColor}, 0 10px 30px rgba(0,0,0,0.18)`
+                    : '0 10px 30px rgba(0,0,0,0.18)',
+                }}
+              >
+                <div className="text-sm text-text-primary font-body leading-tight break-words">{connection.relatedEntityName}</div>
+                <div className="mt-1 text-[10px] text-text-secondary font-mono uppercase tracking-wide leading-tight">
+                  {getEntityRelationshipConnectionSummary(connection)}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <span
+                    className="rounded-full px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide"
+                    style={{
+                      backgroundColor: style.badgeBackground,
+                      color: style.badgeText,
+                    }}
+                  >
+                    {isFocused ? 'Focused' : 'Focus'}
+                  </span>
+                  {connection.hasEvidence && (
+                    <span className="rounded-full bg-background/70 border border-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                      Evidence
+                    </span>
+                  )}
+                  {connection.isEnded && (
+                    <span className="rounded-full bg-background/70 border border-border px-2 py-0.5 text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                      Ended
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <figcaption className="flex flex-wrap gap-2">
+          {visibleConnections.map((connection) => {
+            const style = ENTITY_RELATIONSHIP_GRAPH_STYLES[connection.primaryRelationship.relationshipType];
+            const isFocused = connection.relatedEntityId === focusedConnectionId;
+            return (
+              <button
+                key={`legend-${connection.relatedEntityId}`}
+                type="button"
+                onClick={() => onToggleConnectionFocus(connection.relatedEntityId)}
+                aria-pressed={isFocused}
+                aria-label={`Focus ${connection.relatedEntityName} relationship list`}
+                className={`inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-1.5 text-xs font-body transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
+                  isFocused ? 'border-accent/50 text-text-primary' : 'border-border text-text-primary hover:border-accent/30'
+                }`}
+              >
+                <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: style.lineColor }} />
+                <span>{connection.relatedEntityName}</span>
+                <span className="text-text-secondary">{getEntityRelationshipConnectionSummary(connection)}</span>
+                {connection.isEnded && (
+                  <span className="text-[10px] font-mono uppercase tracking-wide text-text-secondary/70">Ended</span>
+                )}
+              </button>
+            );
+          })}
+        </figcaption>
+
+        {secondDegreeGroups.length > 0 && (
+          <div className="rounded-xl border border-border bg-surface p-4 space-y-3">
+            <div>
+              <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">2-Hop Context</div>
+              <div className="text-sm text-text-primary font-body mt-1">
+                Nearby entities connected through the current direct neighborhood graph.
+              </div>
+            </div>
+            <div className="space-y-3">
+              {secondDegreeGroups.map((group) => (
+                <div key={`second-degree-${group.relatedEntityId}`} className="space-y-2">
+                  <div className="text-xs text-text-secondary font-body">
+                    Via <span className="text-text-primary">{group.relatedEntityName}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {group.nodes.map((node) => (
+                      <span
+                        key={node.id}
+                        className="inline-flex items-center rounded-full border border-border bg-background px-3 py-1.5 text-xs font-body text-text-primary"
+                      >
+                        {node.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </figure>
+    </div>
+  );
 }
 
 function isPendingInvite(user: UserRecord): boolean {
@@ -2063,6 +2596,686 @@ function PipelineTab() {
   );
 }
 
+/* ── Entities Tab ── */
+
+function EntitiesTab() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const [entityQuery, setEntityQuery] = useState('');
+  const [entitySuggestions, setEntitySuggestions] = useState<EntitySuggestion[]>([]);
+  const [entitySuggestionsLoading, setEntitySuggestionsLoading] = useState(false);
+  const [selectedEntity, setSelectedEntity] = useState<EntitySuggestion | null>(null);
+  const [relationships, setRelationships] = useState<EntityRelationship[]>([]);
+  const [competitors, setCompetitors] = useState<EntityRelationship[]>([]);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [relatedEntityQuery, setRelatedEntityQuery] = useState('');
+  const [relatedEntitySuggestions, setRelatedEntitySuggestions] = useState<EntitySuggestion[]>([]);
+  const [relatedEntitySuggestionsLoading, setRelatedEntitySuggestionsLoading] = useState(false);
+  const [selectedRelatedEntity, setSelectedRelatedEntity] = useState<EntitySuggestion | null>(null);
+  const [relationshipType, setRelationshipType] = useState<EntityRelationshipType>('competes_with');
+  const [relationshipConfidence, setRelationshipConfidence] = useState('0.70');
+  const [relationshipSince, setRelationshipSince] = useState('');
+  const [relationshipUntil, setRelationshipUntil] = useState('');
+  const [savingRelationship, setSavingRelationship] = useState(false);
+  const [removingRelationshipId, setRemovingRelationshipId] = useState<string | null>(null);
+  const [focusedRelationshipEntityId, setFocusedRelationshipEntityId] = useState<string | null>(null);
+  const [relationshipGraph, setRelationshipGraph] = useState<EntityRelationshipGraphData | null>(null);
+
+  useEffect(() => {
+    const query = entityQuery.trim();
+    const selectedName = selectedEntity?.name.trim().toLowerCase();
+
+    if (query.length < 2 || (selectedName != null && selectedName === query.toLowerCase())) {
+      setEntitySuggestions([]);
+      setEntitySuggestionsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setEntitySuggestionsLoading(true);
+
+    fetchEntitySuggestionsData(query)
+      .then((entities) => {
+        if (cancelled) return;
+        setEntitySuggestions(entities);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEntitySuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setEntitySuggestionsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [entityQuery, selectedEntity]);
+
+  useEffect(() => {
+    const query = relatedEntityQuery.trim();
+    const selectedName = selectedRelatedEntity?.name.trim().toLowerCase();
+
+    if (!isAdmin || query.length < 2 || (selectedName != null && selectedName === query.toLowerCase())) {
+      setRelatedEntitySuggestions([]);
+      setRelatedEntitySuggestionsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRelatedEntitySuggestionsLoading(true);
+
+    fetchEntitySuggestionsData(query)
+      .then((entities) => {
+        if (cancelled) return;
+        setRelatedEntitySuggestions(
+          entities.filter((entity) => entity.id !== selectedEntity?.id && entity.id !== selectedRelatedEntity?.id),
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRelatedEntitySuggestions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setRelatedEntitySuggestionsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin, relatedEntityQuery, selectedEntity?.id, selectedRelatedEntity]);
+
+  useEffect(() => {
+    if (!selectedEntity) {
+      setRelationships([]);
+      setCompetitors([]);
+      setRelationshipGraph(null);
+      setDetailsError(null);
+      setDetailsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDetailsLoading(true);
+    setDetailsError(null);
+
+    Promise.all([
+      fetchEntityRelationshipsData(selectedEntity.id),
+      fetchEntityCompetitorsData(selectedEntity.id),
+      fetchEntityRelationshipGraphData(selectedEntity.id),
+    ])
+      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph]) => {
+        if (cancelled) return;
+        setRelationships(nextRelationships);
+        setCompetitors(nextCompetitors);
+        setRelationshipGraph(nextRelationshipGraph);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setRelationships([]);
+        setCompetitors([]);
+        setRelationshipGraph(null);
+        setDetailsError('Failed to load entity relationships.');
+      })
+      .finally(() => {
+        if (!cancelled) setDetailsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntity]);
+
+  async function reloadSelectedEntityDetails(): Promise<void> {
+    if (!selectedEntity) return;
+
+    setDetailsLoading(true);
+    setDetailsError(null);
+    try {
+      const [nextRelationships, nextCompetitors, nextRelationshipGraph] = await Promise.all([
+        fetchEntityRelationshipsData(selectedEntity.id),
+        fetchEntityCompetitorsData(selectedEntity.id),
+        fetchEntityRelationshipGraphData(selectedEntity.id),
+      ]);
+      setRelationships(nextRelationships);
+      setCompetitors(nextCompetitors);
+      setRelationshipGraph(nextRelationshipGraph);
+    } catch {
+      setRelationshipGraph(null);
+      setDetailsError('Failed to load entity relationships.');
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
+
+  function selectEntity(entity: EntitySuggestion): void {
+    setSelectedEntity(entity);
+    setEntityQuery(entity.name);
+    setEntitySuggestions([]);
+    setFocusedRelationshipEntityId(null);
+    setDetailsError(null);
+    setActionError(null);
+    setSelectedRelatedEntity(null);
+    setRelatedEntityQuery('');
+  }
+
+  function selectRelatedEntity(entity: EntitySuggestion): void {
+    setSelectedRelatedEntity(entity);
+    setRelatedEntityQuery(entity.name);
+    setRelatedEntitySuggestions([]);
+    setActionError(null);
+  }
+
+  async function handleAddRelationship(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    if (!selectedEntity || !selectedRelatedEntity) return;
+
+    const confidence = Number(relationshipConfidence);
+    const sinceAt = parseDatetimeLocalInputValue(relationshipSince);
+    const untilAt = parseDatetimeLocalInputValue(relationshipUntil);
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      setActionError('Confidence must be a number between 0.00 and 1.00.');
+      return;
+    }
+    if (relationshipSince.trim() && sinceAt == null) {
+      setActionError('Since must be a valid date and time.');
+      return;
+    }
+    if (relationshipUntil.trim() && untilAt == null) {
+      setActionError('Until must be a valid date and time.');
+      return;
+    }
+    if (sinceAt != null && untilAt != null && untilAt < sinceAt) {
+      setActionError('Until must be later than or equal to since.');
+      return;
+    }
+
+    if (selectedEntity.id === selectedRelatedEntity.id) {
+      setActionError('Choose a different related entity.');
+      return;
+    }
+
+    setSavingRelationship(true);
+    setActionError(null);
+    try {
+      await apiFetch('/entities/relationships', {
+        method: 'POST',
+        body: JSON.stringify({
+          entityIdA: selectedEntity.id,
+          entityIdB: selectedRelatedEntity.id,
+          relationshipType,
+          confidence,
+          sinceAt,
+          untilAt,
+        }),
+      });
+      await reloadSelectedEntityDetails();
+      setRelatedEntityQuery('');
+      setSelectedRelatedEntity(null);
+      setRelationshipType('competes_with');
+      setRelationshipConfidence('0.70');
+      setRelationshipSince('');
+      setRelationshipUntil('');
+    } catch {
+      setActionError('Failed to save relationship.');
+    } finally {
+      setSavingRelationship(false);
+    }
+  }
+
+  async function handleRemoveRelationship(relationshipId: string): Promise<void> {
+    setRemovingRelationshipId(relationshipId);
+    setActionError(null);
+    try {
+      await apiFetch(`/entities/relationships/${relationshipId}`, { method: 'DELETE' });
+      await reloadSelectedEntityDetails();
+    } catch {
+      setActionError('Failed to remove relationship.');
+    } finally {
+      setRemovingRelationshipId(null);
+    }
+  }
+
+  const shouldShowEntitySuggestions =
+    entityQuery.trim().length >= 2 &&
+    (selectedEntity == null || entityQuery.trim().toLowerCase() !== selectedEntity.name.toLowerCase());
+  const shouldShowRelatedEntitySuggestions =
+    isAdmin &&
+    relatedEntityQuery.trim().length >= 2 &&
+    (selectedRelatedEntity == null || relatedEntityQuery.trim().toLowerCase() !== selectedRelatedEntity.name.toLowerCase());
+  const graphConnections = selectedEntity ? buildEntityRelationshipGraphConnections(selectedEntity.id, relationships) : [];
+  const focusedGraphConnection =
+    graphConnections.find((connection) => connection.relatedEntityId === focusedRelationshipEntityId) ?? null;
+  const visibleRelationships = focusedGraphConnection ? focusedGraphConnection.relationships : relationships;
+
+  function toggleGraphConnectionFocus(relatedEntityId: string): void {
+    setFocusedRelationshipEntityId((current) => (current === relatedEntityId ? null : relatedEntityId));
+  }
+
+  function inspectConnectedEntity(connection: EntityRelationshipGraphConnection): void {
+    selectEntity({
+      id: connection.relatedEntityId,
+      name: connection.relatedEntityName,
+      matchedAlias: null,
+    });
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Entity Detail</h3>
+          <p className="text-text-secondary/70 text-sm font-body mt-1">
+            Search by canonical name or alias to inspect mapped competitors and other relationships.
+          </p>
+        </div>
+        <div className="p-4 space-y-3">
+          <div className="space-y-1.5">
+            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Entity Search</label>
+            <input
+              type="text"
+              value={entityQuery}
+              onChange={(e) => {
+                const nextQuery = e.target.value;
+                setEntityQuery(nextQuery);
+                if (selectedEntity && nextQuery.trim().toLowerCase() !== selectedEntity.name.toLowerCase()) {
+                  setSelectedEntity(null);
+                }
+              }}
+              placeholder="Search entities by name or alias"
+              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+            />
+          </div>
+
+          {shouldShowEntitySuggestions && (
+            <div className="bg-background border border-border rounded-lg overflow-hidden">
+              {entitySuggestionsLoading ? (
+                <div className="px-3 py-2 text-text-secondary text-xs font-body">Searching entities...</div>
+              ) : entitySuggestions.length > 0 ? (
+                <div className="divide-y divide-border" aria-label="Entity detail suggestions">
+                  {entitySuggestions.map((entity) => (
+                    <button
+                      key={entity.id}
+                      type="button"
+                      onClick={() => selectEntity(entity)}
+                      className="w-full text-left px-3 py-2 hover:bg-surface-raised transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-text-primary text-sm font-body">{entity.name}</span>
+                        {entity.matchedAlias && (
+                          <span className="text-text-secondary/70 text-[11px] font-mono uppercase tracking-wide">
+                            alias: {entity.matchedAlias}
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-3 py-2 text-text-secondary text-xs font-body">No known entities match yet.</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {!selectedEntity ? (
+        <EmptyState
+          title="Choose an entity"
+          description="Pick a known entity to inspect its mapped competitors, inferred relationships, and manual overrides."
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="bg-surface border border-border rounded-lg p-4 md:col-span-2">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary mb-2">
+                Selected Entity
+              </div>
+              <div className="text-lg text-text-primary font-heading">{selectedEntity.name}</div>
+              <div className="text-sm text-text-secondary font-body mt-2">
+                {selectedEntity.matchedAlias ? `Matched via alias: ${selectedEntity.matchedAlias}` : 'Matched on canonical name'}
+              </div>
+            </div>
+            <div className="bg-surface border border-border rounded-lg p-4">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary mb-2">Coverage</div>
+              <div className="text-sm text-text-primary font-body leading-relaxed">
+                {competitors.length} competitor{competitors.length !== 1 ? 's' : ''}
+                <br />
+                {relationships.length} total relationship{relationships.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+          </div>
+
+          {actionError && <p className="text-red-400 text-sm font-body">{actionError}</p>}
+          {detailsError && <p className="text-red-400 text-sm font-body">{detailsError}</p>}
+
+          {detailsLoading ? (
+            <div className="text-text-secondary text-sm font-body">Loading entity relationships...</div>
+          ) : (
+            <div className="space-y-6">
+              <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Relationship Graph</h3>
+                  <p className="text-text-secondary/70 text-sm font-body mt-1">
+                    First-pass neighborhood view of direct links around the selected entity. Click a node to focus the list below.
+                  </p>
+                </div>
+                <EntityRelationshipGraph
+                  selectedEntity={selectedEntity}
+                  connections={graphConnections}
+                  graphData={relationshipGraph}
+                  relationshipCount={relationships.length}
+                  focusedConnectionId={focusedRelationshipEntityId}
+                  onToggleConnectionFocus={toggleGraphConnectionFocus}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-6">
+                <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Competitors</h3>
+                    <p className="text-text-secondary/70 text-sm font-body mt-1">
+                      Direct `competes_with` relationships for this entity.
+                    </p>
+                  </div>
+                  {competitors.length === 0 ? (
+                    <EmptyState
+                      title="No competitors mapped"
+                      description="This entity does not have any direct competitor pairs yet."
+                    />
+                  ) : (
+                    <div className="divide-y divide-border">
+                      {competitors.map((relationship) => (
+                        <div key={relationship.id} className="px-4 py-4 space-y-2">
+                          <div className="flex items-center justify-between gap-3 flex-wrap">
+                            <div className="text-sm text-text-primary font-body">
+                              {getRelatedEntityName(relationship, selectedEntity.id)}
+                            </div>
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${ENTITY_RELATIONSHIP_SOURCE_STYLES[relationship.source]}`}
+                            >
+                              {formatEntityRelationshipSource(relationship.source)}
+                            </span>
+                          </div>
+                          <div className="text-xs text-text-secondary font-body">
+                            Confidence {relationship.confidence.toFixed(2)} | updated {formatRelativeTime(relationship.updatedAt)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                      <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Relationships</h3>
+                      <p className="text-text-secondary/70 text-sm font-body mt-1">
+                        {focusedGraphConnection
+                          ? `Focused on ${focusedGraphConnection.relatedEntityName}; showing only that connection's mapped relationships.`
+                          : 'All mapped relationships for this entity, including inferred and seeded links.'}
+                      </p>
+                    </div>
+                    {relationships.length === 0 ? (
+                      <EmptyState
+                        title="No relationships mapped"
+                        description="Use the admin controls below to add the first explicit relationship."
+                      />
+                    ) : (
+                      <div className="divide-y divide-border">
+                        {focusedGraphConnection && (
+                          <div className="px-4 py-4 bg-background/70 flex items-start justify-between gap-4 flex-wrap">
+                            <div className="space-y-2 min-w-0">
+                              <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
+                                Focused Connection
+                              </div>
+                              <div className="text-sm text-text-primary font-body">
+                                Showing {visibleRelationships.length} mapped relationship
+                                {visibleRelationships.length !== 1 ? 's' : ''} with {focusedGraphConnection.relatedEntityName}.
+                              </div>
+                              <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wide">
+                                <span className="px-2 py-1 rounded-full bg-surface border border-border text-text-secondary">
+                                  {getEntityRelationshipConnectionSummary(focusedGraphConnection)}
+                                </span>
+                                {focusedGraphConnection.hasEvidence && (
+                                  <span className="px-2 py-1 rounded-full bg-surface border border-border text-text-secondary">
+                                    Evidence-linked
+                                  </span>
+                                )}
+                                {focusedGraphConnection.isEnded && (
+                                  <span className="px-2 py-1 rounded-full bg-surface border border-border text-text-secondary">
+                                    Ended
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-2 flex-wrap">
+                              <button
+                                type="button"
+                                onClick={() => inspectConnectedEntity(focusedGraphConnection)}
+                                className="px-3 py-2 bg-accent/10 text-accent border border-accent/20 rounded-lg text-xs font-mono uppercase tracking-wide hover:opacity-90 transition-opacity"
+                              >
+                                Inspect {focusedGraphConnection.relatedEntityName}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setFocusedRelationshipEntityId(null)}
+                                className="px-3 py-2 bg-background border border-border rounded-lg text-xs font-mono uppercase tracking-wide text-text-secondary hover:text-text-primary transition-colors"
+                              >
+                                Show all relationships
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {visibleRelationships.map((relationship) => (
+                          <div key={relationship.id} className="px-4 py-4 flex items-start justify-between gap-4">
+                            <div className="space-y-2 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm text-text-primary font-body">
+                                  {getRelatedEntityName(relationship, selectedEntity.id)}
+                                </span>
+                                <span className="px-2 py-0.5 rounded bg-background border border-border text-text-secondary text-[11px] font-mono uppercase tracking-wide">
+                                  {formatEntityRelationshipType(relationship.relationshipType)}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${ENTITY_RELATIONSHIP_SOURCE_STYLES[relationship.source]}`}
+                                >
+                                  {formatEntityRelationshipSource(relationship.source)}
+                                </span>
+                              </div>
+                              <div className="text-xs text-text-secondary font-body">
+                                Confidence {relationship.confidence.toFixed(2)} | updated {formatRelativeTime(relationship.updatedAt)}
+                              </div>
+                              {(relationship.sinceAt != null || relationship.untilAt != null) && (
+                                <div className="text-xs text-text-secondary font-body">
+                                  {relationship.sinceAt != null
+                                    ? `Since ${formatRelationshipBoundary(relationship.sinceAt)}`
+                                    : 'Start unknown'}
+                                  {relationship.untilAt != null ? ` | Until ${formatRelationshipBoundary(relationship.untilAt)}` : ''}
+                                </div>
+                              )}
+                              {relationship.summaryId && (
+                                <Link
+                                  to={`/summaries/${relationship.summaryId}`}
+                                  className="inline-flex items-center text-xs font-mono uppercase tracking-wide text-accent hover:opacity-80 transition-opacity"
+                                >
+                                  Open evidence summary
+                                </Link>
+                              )}
+                            </div>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleRemoveRelationship(relationship.id);
+                                }}
+                                aria-label={`Remove ${getRelatedEntityName(relationship, selectedEntity.id)} ${formatEntityRelationshipType(relationship.relationshipType)} relationship`}
+                                disabled={removingRelationshipId === relationship.id}
+                                className="px-3 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-mono hover:bg-red-500/30 transition-colors disabled:opacity-50 shrink-0"
+                              >
+                                {removingRelationshipId === relationship.id ? 'Removing...' : 'Remove'}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {isAdmin && (
+                    <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                      <div className="px-4 py-3 border-b border-border">
+                        <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+                          Manage Relationships
+                        </h3>
+                        <p className="text-text-secondary/70 text-sm font-body mt-1">
+                          Add or override a direct relationship for the selected entity.
+                        </p>
+                      </div>
+                      <form onSubmit={handleAddRelationship} className="p-4 space-y-4">
+                        <div className="space-y-1.5">
+                          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+                            Related Entity
+                          </label>
+                          <input
+                            type="text"
+                            value={relatedEntityQuery}
+                            onChange={(e) => {
+                              const nextQuery = e.target.value;
+                              setRelatedEntityQuery(nextQuery);
+                              if (
+                                selectedRelatedEntity &&
+                                nextQuery.trim().toLowerCase() !== selectedRelatedEntity.name.toLowerCase()
+                              ) {
+                                setSelectedRelatedEntity(null);
+                              }
+                            }}
+                            placeholder="Search another entity to relate"
+                            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+                          />
+                          {shouldShowRelatedEntitySuggestions && (
+                            <div className="bg-background border border-border rounded-lg overflow-hidden">
+                              {relatedEntitySuggestionsLoading ? (
+                                <div className="px-3 py-2 text-text-secondary text-xs font-body">Searching entities...</div>
+                              ) : relatedEntitySuggestions.length > 0 ? (
+                                <div className="divide-y divide-border" aria-label="Relationship suggestions">
+                                  {relatedEntitySuggestions.map((entity) => (
+                                    <button
+                                      key={entity.id}
+                                      type="button"
+                                      onClick={() => selectRelatedEntity(entity)}
+                                      className="w-full text-left px-3 py-2 hover:bg-surface-raised transition-colors"
+                                    >
+                                      <div className="flex items-center justify-between gap-3">
+                                        <span className="text-text-primary text-sm font-body">{entity.name}</span>
+                                        {entity.matchedAlias && (
+                                          <span className="text-text-secondary/70 text-[11px] font-mono uppercase tracking-wide">
+                                            alias: {entity.matchedAlias}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="px-3 py-2 text-text-secondary text-xs font-body">
+                                  No known entities match yet.
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid md:grid-cols-[minmax(0,1fr)_140px] gap-4">
+                          <div className="space-y-1.5">
+                            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+                              Relationship Type
+                            </label>
+                            <select
+                              value={relationshipType}
+                              onChange={(e) => setRelationshipType(e.target.value as EntityRelationshipType)}
+                              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+                            >
+                              {ENTITY_RELATIONSHIP_TYPE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+                              Confidence
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="1"
+                              step="0.05"
+                              value={relationshipConfidence}
+                              onChange={(e) => setRelationshipConfidence(e.target.value)}
+                              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-mono focus:outline-none focus:border-accent"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid md:grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor="relationship-since"
+                              className="font-mono text-xs uppercase tracking-wider text-text-secondary"
+                            >
+                              Since
+                            </label>
+                            <input
+                              id="relationship-since"
+                              type="datetime-local"
+                              value={relationshipSince}
+                              onChange={(e) => setRelationshipSince(e.target.value)}
+                              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label
+                              htmlFor="relationship-until"
+                              className="font-mono text-xs uppercase tracking-wider text-text-secondary"
+                            >
+                              Until
+                            </label>
+                            <input
+                              id="relationship-until"
+                              type="datetime-local"
+                              value={relationshipUntil}
+                              onChange={(e) => setRelationshipUntil(e.target.value)}
+                              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex justify-end">
+                          <button
+                            type="submit"
+                            disabled={savingRelationship || !selectedRelatedEntity}
+                            className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity disabled:opacity-50"
+                          >
+                            {savingRelationship ? 'Saving...' : 'Save Relationship'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ── Users Tab ── */
 
 function UsersTab() {
@@ -2476,6 +3689,7 @@ export function Settings() {
     { key: 'sources', label: 'Sources', adminOnly: true },
     { key: 'delivery', label: 'Delivery', adminOnly: true },
     { key: 'pipeline', label: 'Pipeline' },
+    { key: 'entities', label: 'Entities' },
     { key: 'users', label: 'Users', adminOnly: true },
   ];
 
@@ -2507,6 +3721,7 @@ export function Settings() {
       {activeTab === 'sources' && isAdmin && <SourcesTab />}
       {activeTab === 'delivery' && isAdmin && <DeliveryTab />}
       {activeTab === 'pipeline' && <PipelineTab />}
+      {activeTab === 'entities' && <EntitiesTab />}
       {activeTab === 'users' && isAdmin && <UsersTab />}
     </div>
   );

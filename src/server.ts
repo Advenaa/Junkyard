@@ -28,11 +28,14 @@ import {
   getCalendarEventById,
   updateCalendarEvent,
   deleteCalendarEvent,
+  getEntityRelationshipGraph,
   getEntityRelationships,
   getCompetitors,
   upsertEntityRelationship,
   deleteEntityRelationship,
+  type EntityRelationshipSource,
   type EntityRelationshipRow,
+  type EntityRelationshipType,
   getSummaryById,
   getSummaryEventsWithChainContext,
   getRecentReportChainDrilldowns,
@@ -1920,6 +1923,45 @@ export async function createServer(
     },
   );
 
+  app.get<{
+    Params: { entityId: string };
+    Querystring: { depth?: number; limit?: number };
+  }>(
+    '/api/v1/entities/:entityId/graph',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+          },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            depth: { type: 'integer', minimum: 1, maximum: 2 },
+            limit: { type: 'integer', minimum: 1, maximum: 24 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const graph = await getEntityRelationshipGraph(
+        pool,
+        request.params.entityId,
+        request.query.depth ?? 2,
+        request.query.limit ?? 18,
+      );
+      if (!graph) {
+        return reply.code(404).send({ error: 'Entity not found' });
+      }
+      return graph;
+    },
+  );
+
   app.get<{ Params: { entityId: string } }>(
     '/api/v1/entities/:entityId/competitors',
     {
@@ -1940,7 +1982,17 @@ export async function createServer(
     },
   );
 
-  app.post<{ Body: { entityIdA: string; entityIdB: string; relationshipType: string; confidence?: number; source?: string } }>(
+  app.post<{
+    Body: {
+      entityIdA: string;
+      entityIdB: string;
+      relationshipType: EntityRelationshipType;
+      confidence?: number;
+      source?: EntityRelationshipSource;
+      sinceAt?: number;
+      untilAt?: number;
+    };
+  }>(
     '/api/v1/entities/relationships',
     {
       preHandler: [authPreHandler, requireAdmin],
@@ -1953,30 +2005,48 @@ export async function createServer(
             entityIdB: { type: 'string', minLength: 1 },
             relationshipType: {
               type: 'string',
-              enum: ['competes_with', 'built_on', 'invested_in', 'forked_from'],
+              enum: [
+                'competes_with',
+                'built_on',
+                'invested_in',
+                'forked_from',
+                'acquired',
+                'founded',
+                'advises',
+                'partnered_with',
+                'regulated_by',
+              ],
             },
             confidence: { type: 'number', minimum: 0, maximum: 1 },
             source: {
               type: 'string',
               enum: ['llm_inferred', 'manual', 'coingecko'],
             },
+            sinceAt: { type: 'number' },
+            untilAt: { type: 'number' },
           },
           additionalProperties: false,
         },
       },
     },
     async (request, reply) => {
-      const { entityIdA, entityIdB, relationshipType, confidence, source } = request.body;
+      const { entityIdA, entityIdB, relationshipType, confidence, source, sinceAt, untilAt } = request.body;
       if (entityIdA === entityIdB) {
         return reply.code(400).send({ error: 'entityIdA and entityIdB must be different' });
+      }
+      if (sinceAt != null && untilAt != null && untilAt < sinceAt) {
+        return reply.code(400).send({ error: 'untilAt must be greater than or equal to sinceAt' });
       }
       await upsertEntityRelationship(
         pool,
         entityIdA,
         entityIdB,
-        relationshipType as EntityRelationshipRow['relationshipType'],
+        relationshipType,
         confidence ?? 0.7,
-        (source ?? 'manual') as EntityRelationshipRow['source'],
+        source ?? 'manual',
+        null,
+        sinceAt ?? null,
+        untilAt ?? null,
       );
       reply.code(201).send({ ok: true });
     },

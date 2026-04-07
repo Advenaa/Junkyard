@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { ulid } from 'ulid';
 import { ChunkSummaryLLMSchema } from './schemas.js';
-import type { ChunkEvent, ChunkSummary } from './schemas.js';
+import type { ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk } from './chunk.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
-import { insertSummary, claimBatch, insertEvents, getMostRecentEventForEntity } from '../db/queries.js';
-import type { EventRow } from '../db/queries.js';
+import { insertSummary, claimBatch, insertEvents, getMostRecentEventForEntity, upsertEntityRelationship } from '../db/queries.js';
+import type { EntityRelationshipType, EventRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -83,6 +83,14 @@ Return ONLY valid JSON matching this schema:
       "eventType": "exploit" | "audit" | "governance" | "launch" | "partnership" | "funding" | "hack" | "legal",
       "description": "Short factual description of the event"
     }
+  ],
+  "relationships": [
+    {
+      "entityNameA": "First canonical entity or project name from the entities list",
+      "entityNameB": "Second canonical entity or project name from the entities list",
+      "relationshipType": "competes_with" | "built_on" | "invested_in" | "forked_from" | "acquired" | "founded" | "advises" | "partnered_with" | "regulated_by",
+      "confidence": 0.0 to 1.0
+    }
   ]
 }
 
@@ -92,6 +100,7 @@ Rules:
 - urgency: "breaking" = major exploit, crash, regulatory action. "elevated" = notable. "routine" = normal.
 - keyEvents: factual only, no speculation.
 - events: include only concrete entity-linked developments that happened or were announced in this chunk. Reuse the canonical entity name from the entities list. Max 5.
+- relationships: include only direct relationships explicitly stated in this chunk. Reuse canonical names from the entities list. Prefer "competes_with" for comparisons or rivalries, "partnered_with" for collaborations, "acquired" for M&A, and "regulated_by" only for clear regulator-target statements. Max 5.
 - Content is in English. Always output in English.
 - Rate confidence 1-10 based on clarity and certainty.
 
@@ -111,6 +120,9 @@ Example 1 (routine):
   ],
   "events": [
     {"entityName": "Uniswap", "eventType": "audit", "description": "OpenZeppelin completed the Uniswap v4 hook audit with no critical findings."}
+  ],
+  "relationships": [
+    {"entityNameA": "Uniswap", "entityNameB": "Arbitrum", "relationshipType": "built_on", "confidence": 0.4}
   ]
 }
 
@@ -130,7 +142,8 @@ Example 2 (breaking):
   "events": [
     {"entityName": "Wormhole", "eventType": "exploit", "description": "Wormhole bridge was exploited for roughly $120M in wrapped ETH."},
     {"entityName": "Wormhole", "eventType": "hack", "description": "Wormhole paused bridge operations while coordinating incident response."}
-  ]
+  ],
+  "relationships": []
 }
 
 Now analyze the following messages and return ONLY valid JSON matching the schema above.`;
@@ -212,6 +225,65 @@ export function verifyEvents(parsed: ChunkSummary, log: Logger, source: string, 
   return { ...parsed, events: verified };
 }
 
+export function verifyRelationships(parsed: ChunkSummary, log: Logger, source: string, sourceId: string): ChunkSummary {
+  const validEntityKeys = new Set<string>();
+  for (const entity of parsed.entities) {
+    const canonical = normalizeAlias(entity.name);
+    if (canonical) validEntityKeys.add(canonical);
+    for (const alias of entity.aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
+    }
+  }
+
+  const seen = new Set<string>();
+  const verified = parsed.relationships.filter((relationship) => {
+    const entityNameA = normalizeAlias(relationship.entityNameA);
+    const entityNameB = normalizeAlias(relationship.entityNameB);
+    const valid =
+      entityNameA !== '' &&
+      entityNameB !== '' &&
+      entityNameA !== entityNameB &&
+      validEntityKeys.has(entityNameA) &&
+      validEntityKeys.has(entityNameB);
+
+    if (!valid) {
+      log.info(
+        {
+          entityNameA: relationship.entityNameA,
+          entityNameB: relationship.entityNameB,
+          relationshipType: relationship.relationshipType,
+          source,
+          sourceId,
+        },
+        'Dropped relationship without verified distinct entity match',
+      );
+      return false;
+    }
+
+    const [canonA, canonB] = entityNameA < entityNameB ? [entityNameA, entityNameB] : [entityNameB, entityNameA];
+    const dedupeKey = `${canonA}\0${canonB}\0${relationship.relationshipType}`;
+    if (seen.has(dedupeKey)) {
+      log.info(
+        {
+          entityNameA: relationship.entityNameA,
+          entityNameB: relationship.entityNameB,
+          relationshipType: relationship.relationshipType,
+          source,
+          sourceId,
+        },
+        'Dropped duplicate verified relationship',
+      );
+      return false;
+    }
+
+    seen.add(dedupeKey);
+    return true;
+  });
+
+  return { ...parsed, relationships: verified };
+}
+
 function verifyChunkSummary(
   parsed: ChunkSummary,
   rawText: string,
@@ -219,7 +291,12 @@ function verifyChunkSummary(
   source: string,
   sourceId: string,
 ): ChunkSummary {
-  return verifyEvents(verifyEntities(parsed, rawText, log, source, sourceId), log, source, sourceId);
+  return verifyRelationships(
+    verifyEvents(verifyEntities(parsed, rawText, log, source, sourceId), log, source, sourceId),
+    log,
+    source,
+    sourceId,
+  );
 }
 
 function getChunkEventTime(chunk: ClaimedItem[], fallback: number): number {
@@ -521,6 +598,77 @@ Rules:
     );
   }
 
+  async function persistExtractedRelationships(
+    relationships: ChunkRelationship[],
+    summaryId: string,
+  ): Promise<void> {
+    if (relationships.length === 0) return;
+
+    const exactNames = [
+      ...new Set(relationships.flatMap((relationship) => [relationship.entityNameA, relationship.entityNameB]).map(normalizeAlias)),
+    ].filter(Boolean);
+    const entityIdByLookup = new Map<string, string>();
+
+    if (exactNames.length > 0) {
+      const exactMatches = await pool.query<{ id: string; lookup_key: string }>(
+        `SELECT id, LOWER(name) AS lookup_key
+           FROM entities
+          WHERE LOWER(name) = ANY($1)`,
+        [exactNames],
+      );
+
+      for (const row of exactMatches.rows) {
+        entityIdByLookup.set(row.lookup_key, row.id);
+      }
+
+      const unresolved = exactNames.filter((name) => !entityIdByLookup.has(name));
+      if (unresolved.length > 0) {
+        const aliasMatches = await pool.query<{ id: string; lookup_key: string }>(
+          `SELECT DISTINCT ON (ea.alias)
+              ea.entity_id AS id,
+              ea.alias AS lookup_key
+             FROM entity_aliases ea
+             JOIN entities e ON e.id = ea.entity_id
+            WHERE ea.alias = ANY($1)
+            ORDER BY ea.alias, (e.status = 'active') DESC, (ea.context_key = '') DESC, ea.context_key, ea.entity_id`,
+          [unresolved],
+        );
+
+        for (const row of aliasMatches.rows) {
+          entityIdByLookup.set(row.lookup_key, row.id);
+        }
+      }
+    }
+
+    for (const relationship of relationships) {
+      const entityIdA = entityIdByLookup.get(normalizeAlias(relationship.entityNameA));
+      const entityIdB = entityIdByLookup.get(normalizeAlias(relationship.entityNameB));
+
+      if (!entityIdA || !entityIdB || entityIdA === entityIdB) {
+        log.info(
+          {
+            entityNameA: relationship.entityNameA,
+            entityNameB: relationship.entityNameB,
+            relationshipType: relationship.relationshipType,
+            source: 'llm_inferred',
+          },
+          'Skipping inferred relationship without resolved distinct entity IDs',
+        );
+        continue;
+      }
+
+      await upsertEntityRelationship(
+        pool,
+        entityIdA,
+        entityIdB,
+        relationship.relationshipType as EntityRelationshipType,
+        relationship.confidence,
+        'llm_inferred',
+        summaryId,
+      );
+    }
+  }
+
   /**
    * Process a single chunk end-to-end. Handles context-length splitting recursively.
    */
@@ -747,6 +895,17 @@ Rules:
             log.warn(
               { summaryId, err: eventErr, source, sourceId, eventCount: parsed.events.length },
               'Event persistence failed for summary, keeping summary without events',
+            );
+          }
+        }
+
+        if (parsed.relationships.length > 0) {
+          try {
+            await persistExtractedRelationships(parsed.relationships, summaryId);
+          } catch (relationshipErr: unknown) {
+            log.warn(
+              { summaryId, err: relationshipErr, source, sourceId, relationshipCount: parsed.relationships.length },
+              'Relationship persistence failed for summary, keeping summary without relationships',
             );
           }
         }

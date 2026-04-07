@@ -1,4 +1,12 @@
-export const COMPETITOR_SEEDS = [
+import type { EntityRelationshipType } from '../db/queries.js';
+
+export interface CompetitorSeed {
+  entityA: string;
+  entityB: string;
+  type: EntityRelationshipType;
+}
+
+export const COMPETITOR_SEEDS: CompetitorSeed[] = [
   { entityA: 'Aave', entityB: 'Compound', type: 'competes_with' as const },
   { entityA: 'MakerDAO', entityB: 'Aave', type: 'competes_with' as const },
   { entityA: 'Uniswap', entityB: 'SushiSwap', type: 'competes_with' as const },

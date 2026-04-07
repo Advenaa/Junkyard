@@ -1,6 +1,8 @@
 import { ulid } from 'ulid';
 import type { Pool } from '../db/connection.js';
+import { upsertEntityRelationship } from '../db/queries.js';
 import type { Logger } from '../logger.js';
+import { COMPETITOR_SEEDS } from './competitor-seeds.js';
 import { normalizeAlias } from './entities.js';
 
 interface CoinGeckoEntry {
@@ -123,6 +125,7 @@ const INDONESIAN_ENTITIES = [
 interface Seeder {
   seedCoinGecko(): Promise<number>;
   seedIndonesian(): Promise<number>;
+  seedCompetitorRelationships(): Promise<number>;
 }
 
 export function createSeeder(pool: Pool, log: Logger): Seeder {
@@ -302,5 +305,60 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
     return seeded;
   }
 
-  return { seedCoinGecko, seedIndonesian };
+  async function seedCompetitorRelationships(): Promise<number> {
+    const preferredNames = [...new Set(COMPETITOR_SEEDS.flatMap((seed) => [seed.entityA, seed.entityB]).map(normalizeAlias))];
+    const entityIdByLookup = new Map<string, string>();
+
+    if (preferredNames.length > 0) {
+      const exactMatches = await pool.query<{ id: string; lookup_key: string }>(
+        `SELECT id, LOWER(name) AS lookup_key
+           FROM entities
+          WHERE LOWER(name) = ANY($1)`,
+        [preferredNames],
+      );
+
+      for (const row of exactMatches.rows) {
+        entityIdByLookup.set(row.lookup_key, row.id);
+      }
+
+      const unresolved = preferredNames.filter((name) => !entityIdByLookup.has(name));
+      if (unresolved.length > 0) {
+        const aliasMatches = await pool.query<{ id: string; lookup_key: string }>(
+          `SELECT DISTINCT ON (ea.alias)
+              ea.entity_id AS id,
+              ea.alias AS lookup_key
+             FROM entity_aliases ea
+             JOIN entities e ON e.id = ea.entity_id
+            WHERE ea.alias = ANY($1)
+            ORDER BY ea.alias, (e.status = 'active') DESC, (ea.context_key = '') DESC, ea.context_key, ea.entity_id`,
+          [unresolved],
+        );
+
+        for (const row of aliasMatches.rows) {
+          entityIdByLookup.set(row.lookup_key, row.id);
+        }
+      }
+    }
+
+    let seeded = 0;
+    let skipped = 0;
+
+    for (const seed of COMPETITOR_SEEDS) {
+      const entityIdA = entityIdByLookup.get(normalizeAlias(seed.entityA));
+      const entityIdB = entityIdByLookup.get(normalizeAlias(seed.entityB));
+
+      if (!entityIdA || !entityIdB || entityIdA === entityIdB) {
+        skipped++;
+        continue;
+      }
+
+      await upsertEntityRelationship(pool, entityIdA, entityIdB, seed.type, 0.85, 'manual');
+      seeded++;
+    }
+
+    log.info({ seeded, skipped }, `Seeded ${seeded} competitor relationships`);
+    return seeded;
+  }
+
+  return { seedCoinGecko, seedIndonesian, seedCompetitorRelationships };
 }

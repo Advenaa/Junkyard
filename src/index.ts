@@ -136,6 +136,7 @@ program
     try {
       await seeder.seedCoinGecko();
       await seeder.seedIndonesian();
+      await seeder.seedCompetitorRelationships();
     } catch (err) {
       log.warn({ err }, 'Entity seeding failed, continuing without seeds');
     }

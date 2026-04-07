@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, stripCodeFences, verifyEntities, verifyEvents } from '../../src/process/summarize.js';
+import { buildSystemPrompt, stripCodeFences, verifyEntities, verifyEvents, verifyRelationships } from '../../src/process/summarize.js';
 import { ChunkSummaryLLMSchema } from '../../src/process/schemas.js';
 import type { ChunkSummary } from '../../src/process/schemas.js';
 
@@ -25,6 +25,7 @@ function makeSummary(entities: ChunkSummary['entities']): ChunkSummary {
     entities,
     keyEvents: [],
     events: [],
+    relationships: [],
   };
 }
 
@@ -173,6 +174,45 @@ describe('verifyEvents', () => {
   });
 });
 
+describe('verifyRelationships', () => {
+  it('keeps relationships whose entities match verified canonical names', () => {
+    const parsed = makeSummary([
+      { name: 'Aave', aliases: ['AAVE'], type: 'project', mentionCount: 4, sentiment: 0.2 },
+      { name: 'Compound', aliases: ['COMP'], type: 'project', mentionCount: 3, sentiment: -0.1 },
+    ]);
+    parsed.relationships = [
+      { entityNameA: 'Aave', entityNameB: 'Compound', relationshipType: 'competes_with', confidence: 0.8 },
+    ];
+    const result = verifyRelationships(parsed, noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.relationships, parsed.relationships);
+  });
+
+  it('drops relationships whose entities do not match verified entities', () => {
+    const parsed = makeSummary([{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 4, sentiment: 0.4 }]);
+    parsed.relationships = [
+      { entityNameA: 'Bitcoin', entityNameB: 'Ethereum', relationshipType: 'competes_with', confidence: 0.7 },
+    ];
+    const result = verifyRelationships(parsed, noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.relationships, []);
+  });
+
+  it('drops self-relationships and duplicate reversed pairs', () => {
+    const parsed = makeSummary([
+      { name: 'Arbitrum', aliases: ['ARB'], type: 'project', mentionCount: 2, sentiment: 0.1 },
+      { name: 'Optimism', aliases: ['OP'], type: 'project', mentionCount: 2, sentiment: 0.1 },
+    ]);
+    parsed.relationships = [
+      { entityNameA: 'Arbitrum', entityNameB: 'Arbitrum', relationshipType: 'competes_with', confidence: 0.9 },
+      { entityNameA: 'Arbitrum', entityNameB: 'Optimism', relationshipType: 'competes_with', confidence: 0.8 },
+      { entityNameA: 'Optimism', entityNameB: 'Arbitrum', relationshipType: 'competes_with', confidence: 0.8 },
+    ];
+    const result = verifyRelationships(parsed, noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.relationships, [
+      { entityNameA: 'Arbitrum', entityNameB: 'Optimism', relationshipType: 'competes_with', confidence: 0.8 },
+    ]);
+  });
+});
+
 // ═════════════════════════════════════════════════════════════════════
 // buildSystemPrompt
 // ═════════════════════════════════════════════════════════════════════
@@ -206,6 +246,10 @@ describe('buildSystemPrompt', () => {
     assert.ok(prompt.includes('"entityName"'));
     assert.ok(prompt.includes('"eventType"'));
     assert.ok(prompt.includes('"description"'));
+    assert.ok(prompt.includes('"relationships"'));
+    assert.ok(prompt.includes('"entityNameA"'));
+    assert.ok(prompt.includes('"entityNameB"'));
+    assert.ok(prompt.includes('"relationshipType"'));
   });
 
   it('contains few-shot examples (H-013 fix)', () => {
@@ -230,6 +274,22 @@ describe('buildSystemPrompt', () => {
       assert.ok(prompt.includes(`"${t}"`) || prompt.includes(`"${t}`), `missing event type "${t}" in prompt`);
     }
   });
+
+  it('contains relationship type enum values', () => {
+    for (const t of [
+      'competes_with',
+      'built_on',
+      'invested_in',
+      'forked_from',
+      'acquired',
+      'founded',
+      'advises',
+      'partnered_with',
+      'regulated_by',
+    ]) {
+      assert.ok(prompt.includes(`"${t}"`) || prompt.includes(`"${t}`), `missing relationship type "${t}" in prompt`);
+    }
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -245,9 +305,52 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
       entities: [{ name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 }],
       keyEvents: ['Something happened'],
       events: [{ entityName: 'Ethereum', eventType: 'funding', description: 'Ethereum funding announced.' }],
+      relationships: [
+        {
+          entityNameA: 'Ethereum',
+          entityNameB: 'Bitcoin',
+          relationshipType: 'competes_with',
+          confidence: 0.6,
+        },
+      ],
     };
     const result = ChunkSummaryLLMSchema.safeParse(input);
     assert.ok(result.success);
+  });
+
+  it('accepts all supported relationship types', () => {
+    for (const relationshipType of [
+      'competes_with',
+      'built_on',
+      'invested_in',
+      'forked_from',
+      'acquired',
+      'founded',
+      'advises',
+      'partnered_with',
+      'regulated_by',
+    ] as const) {
+      const result = ChunkSummaryLLMSchema.safeParse({
+        summary: 'A valid summary that is long enough to satisfy the min(10) constraint.',
+        urgency: 'routine',
+        confidence: 7,
+        entities: [
+          { name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 },
+          { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 4, sentiment: 0.1 },
+        ],
+        keyEvents: ['Something happened'],
+        events: [],
+        relationships: [
+          {
+            entityNameA: 'Ethereum',
+            entityNameB: 'Bitcoin',
+            relationshipType,
+            confidence: 0.6,
+          },
+        ],
+      });
+      assert.ok(result.success, `expected relationship type "${relationshipType}" to parse`);
+    }
   });
 
   it('rejects summary shorter than 10 chars', () => {

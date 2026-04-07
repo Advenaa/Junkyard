@@ -6,6 +6,23 @@ export const ChunkEventLLMSchema = z.object({
   description: z.string().min(1),
 });
 
+export const ChunkRelationshipLLMSchema = z.object({
+  entityNameA: z.string().min(1),
+  entityNameB: z.string().min(1),
+  relationshipType: z.enum([
+    'competes_with',
+    'built_on',
+    'invested_in',
+    'forked_from',
+    'acquired',
+    'founded',
+    'advises',
+    'partnered_with',
+    'regulated_by',
+  ]),
+  confidence: z.number().min(0).max(1).default(0.7),
+});
+
 export const ChunkSummaryLLMSchema = z.object({
   summary: z.string().min(10),
   urgency: z.enum(['routine', 'elevated', 'breaking']),
@@ -24,10 +41,12 @@ export const ChunkSummaryLLMSchema = z.object({
     .default([]),
   keyEvents: z.array(z.string()).max(5).default([]),
   events: z.array(ChunkEventLLMSchema).max(5).default([]),
+  relationships: z.array(ChunkRelationshipLLMSchema).max(5).default([]),
 });
 
 export type ChunkSummary = z.infer<typeof ChunkSummaryLLMSchema>;
 export type ChunkEvent = z.infer<typeof ChunkEventLLMSchema>;
+export type ChunkRelationship = z.infer<typeof ChunkRelationshipLLMSchema>;
 
 export const MarketReportLLMSchema = z.object({
   tldr: z.string().max(500),

@@ -597,6 +597,45 @@ const migrations: Migration[] = [
     await client.query(`CREATE INDEX idx_entity_relationships_entity_id_a ON entity_relationships(entity_id_a)`);
     await client.query(`CREATE INDEX idx_entity_relationships_entity_id_b ON entity_relationships(entity_id_b)`);
   },
+  // Migration 23: Expand entity relationship types for structured graph work
+  async (client) => {
+    await client.query(`
+      ALTER TABLE entity_relationships
+      DROP CONSTRAINT chk_entity_relationships_relationship_type
+    `);
+    await client.query(`
+      ALTER TABLE entity_relationships
+      ADD CONSTRAINT chk_entity_relationships_relationship_type CHECK (
+        relationship_type IN (
+          'competes_with',
+          'built_on',
+          'invested_in',
+          'forked_from',
+          'acquired',
+          'founded',
+          'advises',
+          'partnered_with',
+          'regulated_by'
+        )
+      )
+    `);
+  },
+  // Migration 24: Add nullable summary evidence for inferred relationships
+  async (client) => {
+    await client.query(`
+      ALTER TABLE entity_relationships
+      ADD COLUMN summary_id TEXT REFERENCES summaries(id) ON DELETE SET NULL
+    `);
+    await client.query(`CREATE INDEX idx_entity_relationships_summary_id ON entity_relationships(summary_id)`);
+  },
+  // Migration 25: Add nullable temporal bounds for relationships
+  async (client) => {
+    await client.query(`
+      ALTER TABLE entity_relationships
+      ADD COLUMN since_at BIGINT,
+      ADD COLUMN until_at BIGINT
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
