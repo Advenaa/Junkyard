@@ -1383,10 +1383,11 @@ export async function createServer(
     }
 
     const { source, sourceId } = target;
-    const { enabled, label, poll_interval } = request.body as {
+    const { enabled, label, poll_interval, tier } = request.body as {
       enabled?: boolean;
       label?: string;
       poll_interval?: number;
+      tier?: string;
     };
 
     const { rows: stateRows } = await pool.query<{ status: string; last_error: string | null }>(
@@ -1407,6 +1408,10 @@ export async function createServer(
         source,
         sourceId,
       ]);
+    }
+
+    if (tier != null) {
+      await updateSourceTier(pool, source, sourceId, tier);
     }
 
     let newStatus = stateRows[0].status;
