@@ -12,6 +12,7 @@ import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { normalizeAlias } from '../knowledge/entities.js';
 import type { ExtractedEntity } from '../knowledge/entities.js';
+import type { AlphaTracker } from '../knowledge/alpha-tracker.js';
 
 /** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
 const MAX_ITEM_RETRIES = 3;
@@ -27,7 +28,7 @@ interface EntityManager {
     source: string,
     summaryId: string,
     language?: string | null,
-  ): Promise<void>;
+  ): Promise<string[]>;
 }
 
 // ── LLM interface ─────────────────────────────────────────────────────
@@ -323,7 +324,7 @@ function budgetExhausted(budget: CallBudget, log: Logger): boolean {
 
 // ── Factory ───────────────────────────────────────────────────────────
 
-export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: LLM, entityManager: EntityManager) {
+export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: LLM, entityManager: EntityManager, alphaTracker?: AlphaTracker) {
   /**
    * Parse LLM response as JSON, validate with zod.
    * On JSON parse failure: returns null (caller retries with fresh prompt).
@@ -869,7 +870,19 @@ Rules:
             }
             const predominantLang = [...langCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
-            await entityManager.resolveEntities(parsed.entities, source, summaryId, predominantLang);
+            const resolvedEntityIds = await entityManager.resolveEntities(parsed.entities, source, summaryId, predominantLang);
+
+            // Track alpha propagation for resolved entities
+            if (alphaTracker && resolvedEntityIds.length > 0) {
+              try {
+                await alphaTracker.trackMentions(source, sourceId, resolvedEntityIds, windowEnd);
+              } catch (alphaErr: unknown) {
+                log.warn(
+                  { summaryId, err: alphaErr, source, sourceId },
+                  'Alpha propagation tracking failed, continuing',
+                );
+              }
+            }
           } catch (entityErr: unknown) {
             log.warn(
               { summaryId, err: entityErr, source, sourceId, entityCount: parsed.entities.length },

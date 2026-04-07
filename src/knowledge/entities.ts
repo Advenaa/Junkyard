@@ -47,7 +47,7 @@ interface EntityManager {
     source: string,
     summaryId: string,
     language?: string | null,
-  ): Promise<void>;
+  ): Promise<string[]>;
 }
 
 export function createEntityManager(pool: Pool, log: Logger, config: Config, llm: LLM): EntityManager {
@@ -56,7 +56,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
     source: string,
     summaryId: string,
     language?: string | null,
-  ): Promise<void> {
+  ): Promise<string[]> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -396,9 +396,13 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         );
       }
 
+      const resolvedEntityIds = [...new Set(entityIdMap.values())];
+
       await client.query('COMMIT');
 
       log.info({ count: entities.length, source, summaryId }, `Resolved ${entities.length} entities from ${source}`);
+
+      return resolvedEntityIds;
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;

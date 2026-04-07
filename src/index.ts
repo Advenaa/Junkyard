@@ -17,6 +17,7 @@ import { createPulse } from './process/pulse.js';
 import { createNarrativeDetector } from './process/narratives.js';
 import { createEmbedPipeline } from './embed-pipeline.js';
 import { createEntityManager } from './knowledge/entities.js';
+import { createAlphaTracker } from './knowledge/alpha-tracker.js';
 import { createDecayManager } from './knowledge/decay.js';
 import { createDelivery } from './deliver/webhook.js';
 import { createDiscordAdapter } from './ingest/discord.js';
@@ -151,7 +152,8 @@ program
     const normalizer = createNormalizer(pool, log, config, llm);
     const preSummarizer = createPreSummarizer(pool, log, config, llm);
     const entityManager = createEntityManager(pool, log, config, llm);
-    const summarizer = createSummarizer(pool, log, config, llm, entityManager);
+    const alphaTracker = createAlphaTracker(pool, log);
+    const summarizer = createSummarizer(pool, log, config, llm, entityManager, alphaTracker);
     const correlator = createCorrelator(pool, log);
     const sentimentTracker = createSentimentTracker(pool, log);
     const divergenceTracker = createDivergenceTracker(pool, log);

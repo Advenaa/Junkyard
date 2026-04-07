@@ -112,13 +112,31 @@ describe('IP-015 — Entity resolution failure keeps summary', () => {
     const tryIdx = beforeResolve.lastIndexOf('try');
     assert.notEqual(tryIdx, -1, 'Could not locate try block before resolveEntities');
 
-    // Walk forward from resolveEntities to find the catch block
+    // Walk forward from resolveEntities to find the OUTER catch block
+    // (skip inner try/catch pairs like the alpha tracker wrapper)
     const afterResolve = summarizeSrc.slice(resolveIdx);
-    const catchIdx = afterResolve.indexOf('catch');
-    assert.notEqual(catchIdx, -1, 'Could not locate catch block after resolveEntities');
+    let catchSearchPos = 0;
+    let outerCatchIdx = -1;
+    let tryDepth = 0;
+    while (catchSearchPos < afterResolve.length) {
+      const nextTry = afterResolve.indexOf('try', catchSearchPos);
+      const nextCatch = afterResolve.indexOf('catch', catchSearchPos);
+      if (nextCatch === -1) break;
+      if (nextTry !== -1 && nextTry < nextCatch) {
+        tryDepth++;
+        catchSearchPos = nextTry + 3;
+      } else if (tryDepth > 0) {
+        tryDepth--;
+        catchSearchPos = nextCatch + 5;
+      } else {
+        outerCatchIdx = nextCatch;
+        break;
+      }
+    }
+    assert.notEqual(outerCatchIdx, -1, 'Could not locate catch block after resolveEntities');
 
     // Extract from try to the end of the catch block
-    const catchStart = resolveIdx + catchIdx;
+    const catchStart = resolveIdx + outerCatchIdx;
     const catchBody = summarizeSrc.slice(catchStart);
     const braceOpen = catchBody.indexOf('{');
     let depth = 0;
