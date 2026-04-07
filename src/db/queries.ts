@@ -60,6 +60,7 @@ export interface SourceRow {
   trust_weight: number;
   initial_trust_weight: number;
   added_at: number;
+  tier: string;
 }
 
 export interface AppConfigRow {
@@ -1778,4 +1779,123 @@ export async function getActiveTokensWithCoinGeckoIds(
     entityName: r.entity_name,
     coingeckoId: r.coingecko_id,
   }));
+}
+
+// ── Alpha Propagation ─────────────────────────────────────────────────
+
+export interface AlphaPropagationRow {
+  id: string;
+  entityId: string;
+  eventId: string | null;
+  tier: string;
+  source: string;
+  sourceId: string;
+  firstMentionTime: number;
+  itemId: string | null;
+  createdAt: number;
+}
+
+function toAlphaPropagationRow(row: Record<string, unknown>): AlphaPropagationRow {
+  return {
+    id: row.id as string,
+    entityId: row.entity_id as string,
+    eventId: (row.event_id as string | null) ?? null,
+    tier: row.tier as string,
+    source: row.source as string,
+    sourceId: row.source_id as string,
+    firstMentionTime: row.first_mention_time as number,
+    itemId: (row.item_id as string | null) ?? null,
+    createdAt: row.created_at as number,
+  };
+}
+
+export async function insertAlphaPropagation(
+  pool: Pool,
+  record: {
+    entityId: string;
+    eventId?: string | null;
+    tier: string;
+    source: string;
+    sourceId: string;
+    firstMentionTime: number;
+    itemId?: string | null;
+  },
+): Promise<AlphaPropagationRow> {
+  const id = ulid();
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `INSERT INTO alpha_propagation (id, entity_id, event_id, tier, source, source_id, first_mention_time, item_id, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [id, record.entityId, record.eventId ?? null, record.tier, record.source, record.sourceId, record.firstMentionTime, record.itemId ?? null, now],
+  );
+  return toAlphaPropagationRow(rows[0]);
+}
+
+export async function getAlphaPropagationByEntity(
+  pool: Pool,
+  entityId: string,
+  sinceTime: number,
+  limit = 20,
+): Promise<AlphaPropagationRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM alpha_propagation
+     WHERE entity_id = $1 AND first_mention_time >= $2
+     ORDER BY first_mention_time ASC
+     LIMIT $3`,
+    [entityId, sinceTime, limit],
+  );
+  return rows.map(toAlphaPropagationRow);
+}
+
+export async function getAlphaPropagationByEvent(
+  pool: Pool,
+  eventId: string,
+): Promise<AlphaPropagationRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM alpha_propagation
+     WHERE event_id = $1
+     ORDER BY first_mention_time ASC`,
+    [eventId],
+  );
+  return rows.map(toAlphaPropagationRow);
+}
+
+/** Get the earliest mention per tier for a given entity within a time window. */
+export async function getAlphaPropagationSummary(
+  pool: Pool,
+  entityId: string,
+  sinceTime: number,
+): Promise<Array<{ tier: string; firstMentionTime: number; source: string; sourceId: string }>> {
+  const { rows } = await pool.query<{
+    tier: string;
+    first_mention_time: number;
+    source: string;
+    source_id: string;
+  }>(
+    `SELECT DISTINCT ON (tier)
+       tier, first_mention_time, source, source_id
+     FROM alpha_propagation
+     WHERE entity_id = $1 AND first_mention_time >= $2
+     ORDER BY tier, first_mention_time ASC`,
+    [entityId, sinceTime],
+  );
+  return rows.map((r) => ({
+    tier: r.tier,
+    firstMentionTime: r.first_mention_time,
+    source: r.source,
+    sourceId: r.source_id,
+  }));
+}
+
+export async function updateSourceTier(
+  pool: Pool,
+  source: string,
+  sourceId: string,
+  tier: string,
+): Promise<void> {
+  await pool.query(
+    `UPDATE sources SET tier = $3 WHERE source = $1 AND source_id = $2`,
+    [source, sourceId, tier],
+  );
 }

@@ -689,6 +689,42 @@ const migrations: Migration[] = [
         ON price_snapshots(timestamp DESC)
     `);
   },
+
+  // Migration 28: Source tiers + alpha propagation tracking (Feature 3.6)
+  async (client) => {
+    await client.query(`ALTER TABLE sources ADD COLUMN IF NOT EXISTS tier TEXT DEFAULT 'general'`);
+
+    // Add CHECK constraint for tier values
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE sources ADD CONSTRAINT chk_sources_tier CHECK (tier IN ('alpha', 'influencer', 'general', 'mainstream'));
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS alpha_propagation (
+        id TEXT PRIMARY KEY,
+        entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
+        tier TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        first_mention_time BIGINT NOT NULL,
+        item_id TEXT REFERENCES items(id) ON DELETE SET NULL,
+        created_at BIGINT NOT NULL
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_alpha_propagation_entity
+        ON alpha_propagation(entity_id, first_mention_time DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_alpha_propagation_event
+        ON alpha_propagation(event_id)
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

@@ -20,6 +20,7 @@ interface Source {
   status: string;
   stateStatus: string | null;
   nextRetryAt: number | null;
+  tier: string;
 }
 
 interface PipelineStatus {
@@ -918,6 +919,7 @@ function SourcesTab() {
   const [addSourceId, setAddSourceId] = useState('');
   const [addLabel, setAddLabel] = useState('');
   const [addPollInterval, setAddPollInterval] = useState(300);
+  const [newTier, setNewTier] = useState('general');
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -1041,6 +1043,7 @@ function SourcesTab() {
     setAddSourceId('');
     setAddLabel('');
     setAddPollInterval(300);
+    setNewTier('general');
     setAddError(null);
     resetBrowseState();
     setModalOpen(true);
@@ -1129,6 +1132,7 @@ function SourcesTab() {
           sourceId: addSourceId,
           label: addLabel || undefined,
           poll_interval: addPollInterval,
+          tier: newTier,
         }),
       });
       const newSource: Source = {
@@ -1143,6 +1147,7 @@ function SourcesTab() {
         status: created.status ?? 'ready',
         stateStatus: created.stateStatus ?? 'active',
         nextRetryAt: created.nextRetryAt ?? null,
+        tier: created.tier ?? newTier,
       };
       setSources((prev) => [...prev, newSource]);
       setModalOpen(false);
@@ -1509,6 +1514,21 @@ function SourcesTab() {
             <option value={86400}>24 hours</option>
           </select>
         </div>
+        <div className="space-y-1.5">
+          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+            Tier <span className="normal-case text-text-secondary/60">(optional)</span>
+          </label>
+          <select
+            value={newTier}
+            onChange={(e) => setNewTier(e.target.value)}
+            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+          >
+            <option value="general">General</option>
+            <option value="alpha">Alpha</option>
+            <option value="influencer">Influencer</option>
+            <option value="mainstream">Mainstream</option>
+          </select>
+        </div>
         <div className="flex justify-end gap-3 pt-2">
           <button
             type="button"
@@ -1746,6 +1766,7 @@ function SourcesTab() {
               <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
                 <th className="text-left px-4 py-3">Source</th>
                 <th className="text-left px-4 py-3">Label</th>
+                <th className="text-left px-4 py-3">Tier</th>
                 <th className="text-left px-4 py-3">Status</th>
                 <th className="text-left px-4 py-3">Last Fetched</th>
                 <th className="text-right px-4 py-3">Actions</th>
@@ -1800,6 +1821,43 @@ function SourcesTab() {
                           {getSourceDisplayName(s)}
                         </span>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={s.tier ?? 'general'}
+                        onChange={async (e) => {
+                          const nextTier = e.target.value;
+                          try {
+                            await apiFetch(buildSourceActionPath(s), {
+                              method: 'PATCH',
+                              body: JSON.stringify({ tier: nextTier }),
+                            });
+                            setSources((prev) =>
+                              prev.map((src) =>
+                                src.source === s.source && src.sourceId === s.sourceId
+                                  ? { ...src, tier: nextTier }
+                                  : src,
+                              ),
+                            );
+                          } catch {
+                            setError(`Failed to update tier for "${getSourceDisplayName(s)}".`);
+                          }
+                        }}
+                        className={`text-[11px] font-mono uppercase tracking-wide rounded-full px-2.5 py-0.5 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-accent ${
+                          (s.tier ?? 'general') === 'alpha'
+                            ? 'bg-purple-500/15 text-purple-400'
+                            : (s.tier ?? 'general') === 'influencer'
+                              ? 'bg-blue-500/15 text-blue-400'
+                              : (s.tier ?? 'general') === 'mainstream'
+                                ? 'bg-green-500/15 text-green-400'
+                                : 'bg-border/50 text-text-secondary'
+                        }`}
+                      >
+                        <option value="general" className="bg-background text-text-primary">General</option>
+                        <option value="alpha" className="bg-background text-text-primary">Alpha</option>
+                        <option value="influencer" className="bg-background text-text-primary">Influencer</option>
+                        <option value="mainstream" className="bg-background text-text-primary">Mainstream</option>
+                      </select>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={s.stateStatus ?? 'unknown'} />

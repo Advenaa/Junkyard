@@ -51,6 +51,7 @@ import {
   getLatestPriceSnapshot,
   getPriceHistory,
   type PriceSnapshotRow,
+  updateSourceTier,
 } from './db/queries.js';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
@@ -1343,6 +1344,7 @@ export async function createServer(
       enabled: { type: 'boolean' },
       label: { type: 'string', maxLength: 255 },
       poll_interval: { type: 'integer', minimum: 60, maximum: 86400 },
+      tier: { type: 'string', enum: ['alpha', 'influencer', 'general', 'mainstream'] },
     },
     additionalProperties: false,
   } as const;
@@ -1444,10 +1446,11 @@ export async function createServer(
     },
     async (request, reply) => {
       const { source, sourceId } = request.params as { source: string; sourceId: string };
-      const { enabled, label, poll_interval } = request.body as {
+      const { enabled, label, poll_interval, tier } = request.body as {
         enabled?: boolean;
         label?: string;
         poll_interval?: number;
+        tier?: string;
       };
 
       const { rows: stateRows } = await pool.query<{ status: string; last_error: string | null }>(
@@ -1472,6 +1475,10 @@ export async function createServer(
           source,
           sourceId,
         ]);
+      }
+
+      if (tier != null) {
+        await updateSourceTier(pool, source, sourceId, tier);
       }
 
       let newStatus = stateRows[0].status;
