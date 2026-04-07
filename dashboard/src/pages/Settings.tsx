@@ -165,11 +165,11 @@ interface EntityRelationshipGraphData {
 }
 
 interface EntityDivergence {
-  engSentiment: number;
+  engSentiment: number | null;
   engMentions: number;
-  indSentiment: number;
+  indSentiment: number | null;
   indMentions: number;
-  divergence: number;
+  divergence: number | null;
 }
 
 function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
@@ -3031,64 +3031,83 @@ function EntitiesTab() {
                         <div className="flex items-center justify-between text-sm font-body">
                           <span className="text-text-secondary">EN sentiment</span>
                           <span className="text-text-primary font-mono text-xs">
-                            {divergence.engSentiment.toFixed(2)} <span className="text-text-secondary/70">({divergence.engMentions} mention{divergence.engMentions !== 1 ? 's' : ''})</span>
+                            {divergence.engSentiment != null ? (
+                              <>{divergence.engSentiment.toFixed(2)} <span className="text-text-secondary/70">({divergence.engMentions} mention{divergence.engMentions !== 1 ? 's' : ''})</span></>
+                            ) : (
+                              <span className="text-text-secondary/50">No data</span>
+                            )}
                           </span>
                         </div>
-                        <div className="h-2.5 w-full bg-background rounded-full overflow-hidden border border-border">
-                          <div
-                            className="h-full rounded-full transition-all duration-300"
-                            style={{
-                              width: `${Math.max(2, divergence.engSentiment * 100)}%`,
-                              backgroundColor: divergence.engSentiment >= 0.55 ? '#34d399' : divergence.engSentiment <= 0.45 ? '#f87171' : '#facc15',
-                            }}
-                          />
-                        </div>
+                        {divergence.engSentiment != null && (
+                          <div className="h-2.5 w-full bg-background rounded-full overflow-hidden border border-border">
+                            <div
+                              className="h-full rounded-full transition-all duration-300"
+                              style={{
+                                width: `${Math.max(2, divergence.engSentiment * 100)}%`,
+                                backgroundColor: divergence.engSentiment >= 0.55 ? '#34d399' : divergence.engSentiment <= 0.45 ? '#f87171' : '#facc15',
+                              }}
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-sm font-body">
                           <span className="text-text-secondary">ID sentiment</span>
                           <span className="text-text-primary font-mono text-xs">
-                            {divergence.indSentiment.toFixed(2)} <span className="text-text-secondary/70">({divergence.indMentions} mention{divergence.indMentions !== 1 ? 's' : ''})</span>
+                            {divergence.indSentiment != null ? (
+                              <>{divergence.indSentiment.toFixed(2)} <span className="text-text-secondary/70">({divergence.indMentions} mention{divergence.indMentions !== 1 ? 's' : ''})</span></>
+                            ) : (
+                              <span className="text-text-secondary/50">No data</span>
+                            )}
                           </span>
                         </div>
-                        <div className="h-2.5 w-full bg-background rounded-full overflow-hidden border border-border">
-                          <div
-                            className="h-full rounded-full transition-all duration-300"
-                            style={{
-                              width: `${Math.max(2, divergence.indSentiment * 100)}%`,
-                              backgroundColor: divergence.indSentiment >= 0.55 ? '#34d399' : divergence.indSentiment <= 0.45 ? '#f87171' : '#facc15',
-                            }}
-                          />
-                        </div>
+                        {divergence.indSentiment != null && (
+                          <div className="h-2.5 w-full bg-background rounded-full overflow-hidden border border-border">
+                            <div
+                              className="h-full rounded-full transition-all duration-300"
+                              style={{
+                                width: `${Math.max(2, divergence.indSentiment * 100)}%`,
+                                backgroundColor: divergence.indSentiment >= 0.55 ? '#34d399' : divergence.indSentiment <= 0.45 ? '#f87171' : '#facc15',
+                              }}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-border">
                       <div className="text-sm font-body text-text-secondary">
                         {(() => {
+                          if (divergence.engSentiment == null || divergence.indSentiment == null) return 'Insufficient data for comparison';
                           const engLabel = divergence.engSentiment >= 0.55 ? 'bullish' : divergence.engSentiment <= 0.45 ? 'bearish' : 'neutral';
                           const indLabel = divergence.indSentiment >= 0.55 ? 'bullish' : divergence.indSentiment <= 0.45 ? 'bearish' : 'neutral';
                           if (engLabel === indLabel) return `Both regions ${engLabel}`;
                           return `EN ${engLabel} / ID ${indLabel}`;
                         })()}
                       </div>
-                      <span
-                        className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${
-                          divergence.divergence < 0.15
-                            ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                      {divergence.divergence != null ? (
+                        <span
+                          className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${
+                            divergence.divergence < 0.15
+                              ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                              : divergence.divergence <= 0.3
+                                ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400'
+                                : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                          }`}
+                        >
+                          {divergence.divergence < 0.15
+                            ? 'Aligned'
                             : divergence.divergence <= 0.3
-                              ? 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400'
-                              : 'bg-red-500/10 border border-red-500/20 text-red-400'
-                        }`}
-                      >
-                        {divergence.divergence < 0.15
-                          ? 'Aligned'
-                          : divergence.divergence <= 0.3
-                            ? 'Moderate'
-                            : 'Divergent'}{' '}
-                        ({divergence.divergence.toFixed(2)})
-                      </span>
+                              ? 'Moderate'
+                              : 'Divergent'}{' '}
+                          ({divergence.divergence.toFixed(2)})
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide bg-surface-raised border border-border text-text-secondary">
+                          Insufficient
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}

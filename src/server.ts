@@ -2133,7 +2133,7 @@ export async function createServer(
       const endTime = Date.now();
       const startTime = endTime - days * 24 * 60 * 60 * 1000;
       const row = await getEntityDivergence(pool, request.params.entityId, startTime, endTime);
-      if (!row) {
+      if (row.engMentions === 0 && row.indMentions === 0) {
         return reply.code(404).send({ error: 'No divergence data for this entity' });
       }
       return {
