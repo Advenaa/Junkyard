@@ -46,6 +46,8 @@ import {
   type SourceRow,
   type ItemRow,
   type CalendarEventRow,
+  getEntityDivergence,
+  getTopDivergentEntities,
 } from './db/queries.js';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
@@ -2072,6 +2074,71 @@ export async function createServer(
         return reply.code(404).send({ error: 'Relationship not found' });
       }
       reply.code(204).send();
+    },
+  );
+
+  // --- Regional Divergence (2.7) ---
+  app.get<{ Querystring: { days?: number; limit?: number } }>(
+    '/api/v1/divergence',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            days: { type: 'integer', minimum: 1, maximum: 90 },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const days = request.query.days ?? 7;
+      const limit = request.query.limit ?? 20;
+      const endTime = Date.now();
+      const startTime = endTime - days * 24 * 60 * 60 * 1000;
+      const rows = await getTopDivergentEntities(pool, startTime, endTime, limit);
+      return {
+        divergences: rows.map((r) =>
+          toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>),
+        ),
+      };
+    },
+  );
+
+  app.get<{ Params: { entityId: string }; Querystring: { days?: number } }>(
+    '/api/v1/entities/:entityId/divergence',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+          },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            days: { type: 'integer', minimum: 1, maximum: 90 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const days = request.query.days ?? 7;
+      const endTime = Date.now();
+      const startTime = endTime - days * 24 * 60 * 60 * 1000;
+      const row = await getEntityDivergence(pool, request.params.entityId, startTime, endTime);
+      if (!row) {
+        return reply.code(404).send({ error: 'No divergence data for this entity' });
+      }
+      return {
+        divergence: toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>),
+      };
     },
   );
 

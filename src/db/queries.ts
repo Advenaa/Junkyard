@@ -910,6 +910,109 @@ export async function getRegionalDivergence(
   return rows;
 }
 
+export interface EntityDivergenceRow {
+  engSentiment: number | null;
+  engMentions: number;
+  indSentiment: number | null;
+  indMentions: number;
+  divergence: number | null;
+}
+
+export async function getEntityDivergence(
+  pool: Pool,
+  entityId: string,
+  startTime: number,
+  endTime: number,
+): Promise<EntityDivergenceRow> {
+  const { rows } = await pool.query<{
+    eng_sentiment: number | null;
+    eng_mentions: number;
+    ind_sentiment: number | null;
+    ind_mentions: number;
+    divergence: number | null;
+  }>(
+    `WITH per_lang AS (
+       SELECT
+         language,
+         AVG(sentiment) AS avg_sentiment,
+         COUNT(*)::integer AS mention_count
+       FROM entity_mentions
+       WHERE entity_id = $1
+         AND created_at >= $2
+         AND created_at <= $3
+         AND language IN ('eng', 'ind')
+         AND sentiment IS NOT NULL
+       GROUP BY language
+     )
+     SELECT
+       (SELECT avg_sentiment FROM per_lang WHERE language = 'eng') AS eng_sentiment,
+       COALESCE((SELECT mention_count FROM per_lang WHERE language = 'eng'), 0) AS eng_mentions,
+       (SELECT avg_sentiment FROM per_lang WHERE language = 'ind') AS ind_sentiment,
+       COALESCE((SELECT mention_count FROM per_lang WHERE language = 'ind'), 0) AS ind_mentions,
+       CASE
+         WHEN (SELECT avg_sentiment FROM per_lang WHERE language = 'eng') IS NOT NULL
+          AND (SELECT avg_sentiment FROM per_lang WHERE language = 'ind') IS NOT NULL
+         THEN ABS(
+           (SELECT avg_sentiment FROM per_lang WHERE language = 'eng')
+           - (SELECT avg_sentiment FROM per_lang WHERE language = 'ind')
+         )
+         ELSE NULL
+       END AS divergence`,
+    [entityId, startTime, endTime],
+  );
+
+  const row = rows[0];
+  return {
+    engSentiment: row?.eng_sentiment ?? null,
+    engMentions: row?.eng_mentions ?? 0,
+    indSentiment: row?.ind_sentiment ?? null,
+    indMentions: row?.ind_mentions ?? 0,
+    divergence: row?.divergence ?? null,
+  };
+}
+
+export async function getTopDivergentEntities(
+  pool: Pool,
+  startTime: number,
+  endTime: number,
+  limit: number = 20,
+): Promise<RegionalDivergenceRow[]> {
+  const { rows } = await pool.query<RegionalDivergenceRow>(
+    `WITH per_lang AS (
+       SELECT
+         em.entity_id,
+         e.name AS entity_name,
+         em.language,
+         AVG(em.sentiment) AS avg_sentiment,
+         COUNT(*)::integer AS mention_count
+       FROM entity_mentions em
+       JOIN entities e ON e.id = em.entity_id
+       WHERE em.created_at >= $1
+         AND em.created_at <= $2
+         AND em.language IN ('eng', 'ind')
+         AND em.sentiment IS NOT NULL
+       GROUP BY em.entity_id, e.name, em.language
+     )
+     SELECT
+       eng.entity_id,
+       eng.entity_name,
+       eng.avg_sentiment AS eng_sentiment,
+       eng.mention_count AS eng_mentions,
+       ind.avg_sentiment AS ind_sentiment,
+       ind.mention_count AS ind_mentions,
+       ABS(eng.avg_sentiment - ind.avg_sentiment) AS divergence
+     FROM per_lang eng
+     JOIN per_lang ind
+       ON eng.entity_id = ind.entity_id
+       AND eng.language = 'eng'
+       AND ind.language = 'ind'
+     ORDER BY divergence DESC
+     LIMIT $3`,
+    [startTime, endTime, limit],
+  );
+  return rows;
+}
+
 // ── Daily Sentiment Computation ───────────────────────────────────────
 
 export async function computeDailySentiment(
