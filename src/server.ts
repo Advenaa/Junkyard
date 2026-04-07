@@ -28,6 +28,11 @@ import {
   getCalendarEventById,
   updateCalendarEvent,
   deleteCalendarEvent,
+  getEntityRelationships,
+  getCompetitors,
+  upsertEntityRelationship,
+  deleteEntityRelationship,
+  type EntityRelationshipRow,
   getSummaryById,
   getSummaryEventsWithChainContext,
   getRecentReportChainDrilldowns,
@@ -1891,6 +1896,112 @@ export async function createServer(
           matchedAlias: row.matched_alias,
         })),
       };
+    },
+  );
+
+  // --- Entity Relationships (2.4 Competitor Mapping) ---
+  app.get<{ Params: { entityId: string } }>(
+    '/api/v1/entities/:entityId/relationships',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const rows = await getEntityRelationships(pool, request.params.entityId);
+      return { relationships: rows };
+    },
+  );
+
+  app.get<{ Params: { entityId: string } }>(
+    '/api/v1/entities/:entityId/competitors',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const rows = await getCompetitors(pool, request.params.entityId);
+      return { competitors: rows };
+    },
+  );
+
+  app.post<{ Body: { entityIdA: string; entityIdB: string; relationshipType: string; confidence?: number; source?: string } }>(
+    '/api/v1/entities/relationships',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        body: {
+          type: 'object',
+          required: ['entityIdA', 'entityIdB', 'relationshipType'],
+          properties: {
+            entityIdA: { type: 'string', minLength: 1 },
+            entityIdB: { type: 'string', minLength: 1 },
+            relationshipType: {
+              type: 'string',
+              enum: ['competes_with', 'built_on', 'invested_in', 'forked_from'],
+            },
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
+            source: {
+              type: 'string',
+              enum: ['llm_inferred', 'manual', 'coingecko'],
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { entityIdA, entityIdB, relationshipType, confidence, source } = request.body;
+      if (entityIdA === entityIdB) {
+        return reply.code(400).send({ error: 'entityIdA and entityIdB must be different' });
+      }
+      await upsertEntityRelationship(
+        pool,
+        entityIdA,
+        entityIdB,
+        relationshipType as EntityRelationshipRow['relationshipType'],
+        confidence ?? 0.7,
+        (source ?? 'manual') as EntityRelationshipRow['source'],
+      );
+      reply.code(201).send({ ok: true });
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    '/api/v1/entities/relationships/:id',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['id'],
+          properties: {
+            id: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const deleted = await deleteEntityRelationship(pool, request.params.id);
+      if (!deleted) {
+        return reply.code(404).send({ error: 'Relationship not found' });
+      }
+      reply.code(204).send();
     },
   );
 

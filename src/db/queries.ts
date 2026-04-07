@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { decodeTime } from 'ulid';
+import { decodeTime, ulid } from 'ulid';
 
 type Pool = pg.Pool;
 
@@ -168,6 +168,19 @@ export interface ReportChainDrilldownRow {
   latest_event_type: EventRow['event_type'];
   latest_event_description: string;
   total_chain_count: number;
+}
+
+export interface EntityRelationshipRow {
+  id: string;
+  entityIdA: string;
+  entityNameA: string;
+  entityIdB: string;
+  entityNameB: string;
+  relationshipType: 'competes_with' | 'built_on' | 'invested_in' | 'forked_from';
+  confidence: number;
+  source: 'llm_inferred' | 'manual' | 'coingecko';
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ── Items ───────────────────────────────────────────────────────────────
@@ -1043,6 +1056,82 @@ export async function getSentimentShiftAroundTime(
     post_avg_sentiment: row?.post_avg_sentiment ?? null,
     post_mention_count: Number(row?.post_mention_count ?? 0),
   };
+}
+
+// ── Entity Relationships ──────────────────────────────────────────────
+
+const ENTITY_RELATIONSHIP_SELECT = `SELECT
+       er.id,
+       er.entity_id_a AS "entityIdA",
+       ea.name AS "entityNameA",
+       er.entity_id_b AS "entityIdB",
+       eb.name AS "entityNameB",
+       er.relationship_type AS "relationshipType",
+       er.confidence,
+       er.source,
+       er.created_at AS "createdAt",
+       er.updated_at AS "updatedAt"
+     FROM entity_relationships er
+     JOIN entities ea ON ea.id = er.entity_id_a
+     JOIN entities eb ON eb.id = er.entity_id_b`;
+
+export async function getEntityRelationships(pool: Pool, entityId: string): Promise<EntityRelationshipRow[]> {
+  const { rows } = await pool.query<EntityRelationshipRow>(
+    `${ENTITY_RELATIONSHIP_SELECT}
+      WHERE er.entity_id_a = $1
+         OR er.entity_id_b = $1
+      ORDER BY er.updated_at DESC, er.created_at DESC`,
+    [entityId],
+  );
+  return rows;
+}
+
+export async function getCompetitors(pool: Pool, entityId: string): Promise<EntityRelationshipRow[]> {
+  const { rows } = await pool.query<EntityRelationshipRow>(
+    `${ENTITY_RELATIONSHIP_SELECT}
+      WHERE (er.entity_id_a = $1 OR er.entity_id_b = $1)
+        AND er.relationship_type = 'competes_with'
+      ORDER BY er.updated_at DESC, er.created_at DESC`,
+    [entityId],
+  );
+  return rows;
+}
+
+export async function upsertEntityRelationship(
+  pool: Pool,
+  entityIdA: string,
+  entityIdB: string,
+  relationshipType: EntityRelationshipRow['relationshipType'],
+  confidence: number,
+  source: EntityRelationshipRow['source'],
+): Promise<void> {
+  // Canonicalize pair order so (A,B) and (B,A) hit the same unique row
+  const [canonA, canonB] = entityIdA < entityIdB ? [entityIdA, entityIdB] : [entityIdB, entityIdA];
+  const id = ulid();
+  const now = Date.now();
+
+  await pool.query(
+    `INSERT INTO entity_relationships (
+       id,
+       entity_id_a,
+       entity_id_b,
+       relationship_type,
+       confidence,
+       source,
+       created_at,
+       updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (entity_id_a, entity_id_b, relationship_type) DO UPDATE SET
+       confidence = EXCLUDED.confidence,
+       source = EXCLUDED.source,
+       updated_at = EXCLUDED.updated_at`,
+    [id, canonA, canonB, relationshipType, confidence, source, now, now],
+  );
+}
+
+export async function deleteEntityRelationship(pool: Pool, id: string): Promise<boolean> {
+  const { rowCount } = await pool.query(`DELETE FROM entity_relationships WHERE id = $1`, [id]);
+  return (rowCount ?? 0) > 0;
 }
 
 // ── Calendar Events ───────────────────────────────────────────────────

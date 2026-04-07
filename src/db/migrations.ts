@@ -565,6 +565,38 @@ const migrations: Migration[] = [
     await client.query(`CREATE INDEX idx_events_summary_id ON events(summary_id)`);
     await client.query(`CREATE INDEX idx_events_chain_id ON events(chain_id)`);
   },
+
+  // Migration 22: Create entity_relationships table (2.4 Competitor Mapping)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE entity_relationships (
+        id TEXT PRIMARY KEY,
+        entity_id_a TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        entity_id_b TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+        relationship_type TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.7,
+        source TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        CONSTRAINT chk_entity_relationships_relationship_type CHECK (
+          relationship_type IN ('competes_with', 'built_on', 'invested_in', 'forked_from')
+        ),
+        CONSTRAINT chk_entity_relationships_source CHECK (
+          source IN ('llm_inferred', 'manual', 'coingecko')
+        ),
+        CONSTRAINT chk_entity_relationships_no_self CHECK (
+          entity_id_a <> entity_id_b
+        ),
+        CONSTRAINT uq_entity_relationships_entity_pair_type UNIQUE (
+          entity_id_a,
+          entity_id_b,
+          relationship_type
+        )
+      )
+    `);
+    await client.query(`CREATE INDEX idx_entity_relationships_entity_id_a ON entity_relationships(entity_id_a)`);
+    await client.query(`CREATE INDEX idx_entity_relationships_entity_id_b ON entity_relationships(entity_id_b)`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
