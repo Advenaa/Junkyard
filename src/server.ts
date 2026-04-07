@@ -52,6 +52,8 @@ import {
   getPriceHistory,
   type PriceSnapshotRow,
   updateSourceTier,
+  getAlphaPropagationSummary,
+  getAlphaPropagationByEntity,
 } from './db/queries.js';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
@@ -2203,6 +2205,53 @@ export async function createServer(
       return {
         latest: latest ? toCamelCase<Record<string, unknown>>(latest as unknown as Record<string, unknown>) : null,
         history: history.map((row) => toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>)),
+      };
+    },
+  );
+
+  // Alpha propagation data for entity
+  app.get<{
+    Params: { entityId: string };
+    Querystring: { days?: number };
+  }>(
+    '/api/v1/entities/:entityId/alpha',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: { entityId: { type: 'string', minLength: 1 } },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            days: { type: 'integer', minimum: 1, maximum: 30 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { entityId } = request.params;
+      const days = request.query.days ?? 7;
+      const sinceTime = Date.now() - days * 24 * 60 * 60 * 1000;
+
+      const summary = await getAlphaPropagationSummary(pool, entityId, sinceTime);
+      const records = await getAlphaPropagationByEntity(pool, entityId, sinceTime);
+
+      if (summary.length === 0 && records.length === 0) {
+        return reply.code(404).send({ error: 'No alpha propagation data for this entity' });
+      }
+
+      return {
+        summary: summary.map((s) => ({
+          tier: s.tier,
+          firstMentionTime: s.firstMentionTime,
+          source: s.source,
+          sourceId: s.sourceId,
+        })),
+        records: records.map((r) => toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>)),
       };
     },
   );

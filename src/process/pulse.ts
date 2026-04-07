@@ -9,6 +9,7 @@ import {
   getSentimentShiftAroundTime,
   getRecentEventChains,
   getLatestPricesForEntities,
+  getAlphaPropagationSummary,
 } from '../db/queries.js';
 import type { ReportRow, EventChainRow, PriceSnapshotRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
@@ -54,6 +55,12 @@ Rules:
 - Reference the prior pulse context to show continuity ("Previously X, now Y").
 - If nothing notable happened, keep the TL;DR to one sentence and use minimal sections.
 - All output in English.
+
+When <alpha_propagation> data is provided:
+- These show entities that were first mentioned by higher-tier (alpha/influencer) sources before appearing in mainstream channels.
+- Fast propagation (alpha → mainstream in <6h) suggests the information is gaining traction rapidly.
+- Entities appearing ONLY in alpha tier may be early signals worth monitoring.
+- Use this to identify "smart money" positioning or information asymmetry.
 
 When <upcoming_calendar_events> data is provided:
 - Treat it as scheduled catalyst risk in the next 48 hours.
@@ -124,6 +131,12 @@ interface PriceContextEntry {
   priceChange7d: number | null;
   sentiment: number | null;
   contrarian: string | null;
+}
+
+interface AlphaPropagationContext {
+  entityName: string;
+  tiers: Array<{ tier: string; firstMentionTime: number; source: string; sourceId: string }>;
+  propagationSpeed: string | null; // e.g., "alpha → general in 4.2h"
 }
 
 interface RecentEventAnalysisEntry {
@@ -323,6 +336,7 @@ export function createPulse(
     momentum: MomentumEntry[],
     divergence: DivergenceEntry[],
     priceContext: PriceContextEntry[],
+    alphaPropagation: AlphaPropagationContext[],
     recentCalendarEvents: CalendarEventEntry[],
     recentEventAnalysis: RecentEventAnalysisEntry[],
     recentEventChains: EventChainRow[],
@@ -374,6 +388,16 @@ export function createPulse(
         return `${escapeXml(p.entityName)}: $${p.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${changes})${contrarianTag}`;
       });
       parts.push(`<price_context>\n${priceLines.join('\n')}\n</price_context>`);
+    }
+
+    // Alpha propagation context
+    if (alphaPropagation.length > 0) {
+      const alphaLines = alphaPropagation.map((a) => {
+        const tierList = a.tiers.map((t) => `${t.tier} (${t.source}/${t.sourceId})`).join(' → ');
+        const speed = a.propagationSpeed ? ` — ${a.propagationSpeed}` : '';
+        return `${escapeXml(a.entityName)}: ${tierList}${speed}`;
+      });
+      parts.push(`<alpha_propagation>\n${alphaLines.join('\n')}\n</alpha_propagation>`);
     }
 
     if (recentCalendarEvents.length > 0) {
@@ -561,6 +585,38 @@ export function createPulse(
 
     log.info({ priceEntries: priceContext.length, contrarianCount: priceContext.filter((p) => p.contrarian).length }, 'Loaded price context for pulse');
 
+    // Fetch alpha propagation for active entities (7-day window)
+    const alphaLookbackMs = 7 * 24 * 60 * 60 * 1000;
+    const alphaSinceTime = Date.now() - alphaLookbackMs;
+    const alphaPropagation: AlphaPropagationContext[] = [];
+
+    if (entityIds.length > 0) {
+      try {
+        const alphaResults = await Promise.all(
+          entityIds.map((id) => getAlphaPropagationSummary(pool, id, alphaSinceTime)),
+        );
+        for (let i = 0; i < entityIds.length; i++) {
+          const tiers = alphaResults[i];
+          if (tiers.length < 2) continue; // Need at least 2 tiers for propagation
+          const name = entityIdToName.get(entityIds[i]) ?? entityIds[i];
+          // Sort by first mention time
+          tiers.sort((a, b) => a.firstMentionTime - b.firstMentionTime);
+          // Calculate propagation speed from earliest to latest tier
+          const earliest = tiers[0];
+          const latest = tiers[tiers.length - 1];
+          const diffMs = latest.firstMentionTime - earliest.firstMentionTime;
+          const diffHours = diffMs / (1000 * 60 * 60);
+          const propagationSpeed = diffHours < 1
+            ? `${earliest.tier} → ${latest.tier} in ${Math.round(diffMs / 60000)}m`
+            : `${earliest.tier} → ${latest.tier} in ${diffHours.toFixed(1)}h`;
+          alphaPropagation.push({ entityName: name, tiers, propagationSpeed });
+        }
+        log.info({ alphaEntries: alphaPropagation.length }, 'Loaded alpha propagation context for pulse');
+      } catch (alphaErr: unknown) {
+        log.warn({ err: alphaErr }, 'Failed to fetch alpha propagation context, continuing without it');
+      }
+    }
+
     log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for pulse');
 
     // Fetch regional divergence for the pulse window
@@ -614,6 +670,7 @@ export function createPulse(
       momentum,
       divergence,
       priceContext,
+      alphaPropagation,
       recentCalendarEvents,
       recentEventAnalysis,
       recentEventChains,

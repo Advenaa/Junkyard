@@ -193,6 +193,30 @@ interface EntityPriceData {
   history: EntityPriceSnapshot[];
 }
 
+interface AlphaPropagationSummaryEntry {
+  tier: string;
+  firstMentionTime: number;
+  source: string;
+  sourceId: string;
+}
+
+interface AlphaPropagationRecord {
+  id: string;
+  entityId: string;
+  tier: string;
+  source: string;
+  sourceId: string;
+  firstMentionTime: number;
+  eventId: string | null;
+  itemId: string | null;
+  createdAt: number;
+}
+
+interface AlphaPropagationData {
+  summary: AlphaPropagationSummaryEntry[];
+  records: AlphaPropagationRecord[];
+}
+
 function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
   const trimmedLabel = typeof source.label === 'string' ? source.label.trim() : '';
   if (trimmedLabel) return trimmedLabel;
@@ -273,6 +297,15 @@ async function fetchEntityDivergenceData(entityId: string, days: number): Promis
 async function fetchEntityPriceData(entityId: string, days: number): Promise<EntityPriceData | null> {
   try {
     return await apiFetch<EntityPriceData>(`/entities/${entityId}/price?days=${days}`);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAlphaPropagation(entityId: string, days: number): Promise<AlphaPropagationData | null> {
+  try {
+    const res = await apiFetch<AlphaPropagationData>(`/entities/${entityId}/alpha?days=${days}`);
+    return res;
   } catch {
     return null;
   }
@@ -2851,6 +2884,7 @@ function EntitiesTab() {
   const [divergence, setDivergence] = useState<EntityDivergence | null>(null);
   const [divergenceDays, setDivergenceDays] = useState<number>(7);
   const [priceData, setPriceData] = useState<EntityPriceData | null>(null);
+  const [alphaPropagation, setAlphaPropagation] = useState<AlphaPropagationData | null>(null);
 
   useEffect(() => {
     const query = entityQuery.trim();
@@ -2923,6 +2957,7 @@ function EntitiesTab() {
       setRelationshipGraph(null);
       setDivergence(null);
       setPriceData(null);
+      setAlphaPropagation(null);
       setDetailsError(null);
       setDetailsLoading(false);
       return;
@@ -2938,14 +2973,16 @@ function EntitiesTab() {
       fetchEntityRelationshipGraphData(selectedEntity.id),
       fetchEntityDivergenceData(selectedEntity.id, divergenceDays).catch(() => null),
       fetchEntityPriceData(selectedEntity.id, 7),
+      fetchAlphaPropagation(selectedEntity.id, 7),
     ])
-      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData]) => {
+      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData, nextAlphaPropagation]) => {
         if (cancelled) return;
         setRelationships(nextRelationships);
         setCompetitors(nextCompetitors);
         setRelationshipGraph(nextRelationshipGraph);
         setDivergence(nextDivergence);
         setPriceData(nextPriceData);
+        setAlphaPropagation(nextAlphaPropagation);
       })
       .catch(() => {
         if (cancelled) return;
@@ -2954,6 +2991,7 @@ function EntitiesTab() {
         setRelationshipGraph(null);
         setDivergence(null);
         setPriceData(null);
+        setAlphaPropagation(null);
         setDetailsError('Failed to load entity relationships.');
       })
       .finally(() => {
@@ -2971,22 +3009,25 @@ function EntitiesTab() {
     setDetailsLoading(true);
     setDetailsError(null);
     try {
-      const [nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData] = await Promise.all([
+      const [nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData, nextAlphaPropagation] = await Promise.all([
         fetchEntityRelationshipsData(selectedEntity.id),
         fetchEntityCompetitorsData(selectedEntity.id),
         fetchEntityRelationshipGraphData(selectedEntity.id),
         fetchEntityDivergenceData(selectedEntity.id, divergenceDays).catch(() => null),
         fetchEntityPriceData(selectedEntity.id, 7),
+        fetchAlphaPropagation(selectedEntity.id, 7),
       ]);
       setRelationships(nextRelationships);
       setCompetitors(nextCompetitors);
       setRelationshipGraph(nextRelationshipGraph);
       setDivergence(nextDivergence);
       setPriceData(nextPriceData);
+      setAlphaPropagation(nextAlphaPropagation);
     } catch {
       setRelationshipGraph(null);
       setDivergence(null);
       setPriceData(null);
+      setAlphaPropagation(null);
       setDetailsError('Failed to load entity relationships.');
     } finally {
       setDetailsLoading(false);
@@ -3389,6 +3430,58 @@ function EntitiesTab() {
                 </div>
               </div>
             )}
+
+            {/* Alpha Propagation Card */}
+            <div className="bg-surface border border-border rounded-lg overflow-hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Alpha Propagation</h3>
+                <p className="text-text-secondary/70 text-sm font-body mt-1">7d tier timeline</p>
+              </div>
+              <div className="p-4">
+                {alphaPropagation == null || alphaPropagation.summary.length === 0 ? (
+                  <p className="text-sm text-text-secondary font-body">No propagation data yet</p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="space-y-2">
+                      {[...alphaPropagation.summary]
+                        .sort((a, b) => a.firstMentionTime - b.firstMentionTime)
+                        .map((entry, idx) => (
+                          <div key={`${entry.tier}-${entry.source}-${entry.sourceId}-${idx}`} className="flex items-center gap-3">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono uppercase tracking-wide ${
+                                entry.tier === 'alpha'
+                                  ? 'bg-purple-500/15 text-purple-400'
+                                  : entry.tier === 'influencer'
+                                    ? 'bg-blue-500/15 text-blue-400'
+                                    : entry.tier === 'mainstream'
+                                      ? 'bg-green-500/15 text-green-400'
+                                      : 'bg-border/50 text-text-secondary'
+                              }`}
+                            >
+                              {entry.tier}
+                            </span>
+                            <span className="text-xs font-mono text-text-secondary">{formatRelativeTime(entry.firstMentionTime)}</span>
+                            <span className="text-xs font-body text-text-primary truncate">{entry.source}/{entry.sourceId}</span>
+                          </div>
+                        ))}
+                    </div>
+                    {alphaPropagation.summary.length >= 2 && (() => {
+                      const sorted = [...alphaPropagation.summary].sort((a, b) => a.firstMentionTime - b.firstMentionTime);
+                      const first = sorted[0];
+                      const last = sorted[sorted.length - 1];
+                      const diffHours = (last.firstMentionTime - first.firstMentionTime) / 3_600_000;
+                      return (
+                        <div className="pt-2 border-t border-border">
+                          <span className="text-xs font-mono text-text-secondary">
+                            {first.tier} → {last.tier} in {diffHours < 1 ? `${Math.round(diffHours * 60)}m` : `${diffHours.toFixed(1)}h`}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            </div>
 
               <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-4 py-3 border-b border-border">

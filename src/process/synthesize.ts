@@ -12,6 +12,7 @@ import {
   getSentimentShiftAroundTime,
   getRecentEventChains,
   getLatestPricesForEntities,
+  getAlphaPropagationSummary,
 } from '../db/queries.js';
 import type { SummaryRow, ReportRow, EventChainRow, PriceSnapshotRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
@@ -75,6 +76,12 @@ When <price_context> data is provided:
 - If sentiment is bearish but price is rising, this may signal accumulation or short squeeze.
 - If sentiment is bullish but price is falling, this may signal distribution or capitulation.
 - Populate "priceAlerts" with the most notable price-sentiment divergences (max 5).
+
+When <alpha_propagation> data is provided:
+- These show entities that were first mentioned by higher-tier (alpha/influencer) sources before appearing in mainstream channels.
+- Fast propagation (alpha → mainstream in <6h) suggests the information is gaining traction rapidly.
+- Entities appearing ONLY in alpha tier may be early signals worth monitoring.
+- Use this to identify "smart money" positioning or information asymmetry.
 
 When <upcoming_calendar_events> data is provided:
 - Treat these as forward catalysts in the next 48 hours, not confirmed outcomes.
@@ -252,6 +259,12 @@ interface PriceContextEntry {
   contrarian: string | null;
 }
 
+interface AlphaPropagationContext {
+  entityName: string;
+  tiers: Array<{ tier: string; firstMentionTime: number; source: string; sourceId: string }>;
+  propagationSpeed: string | null; // e.g., "alpha → general in 4.2h"
+}
+
 // ── Prompt builders ───────────────────────────────────────────────────
 
 interface ScoredSummary {
@@ -268,6 +281,7 @@ function buildDailyUserMessage(
   momentum: MomentumEntry[],
   divergence: DivergenceEntry[],
   priceContext: PriceContextEntry[],
+  alphaPropagation: AlphaPropagationContext[],
   narratives: NarrativeContext[],
   recentCalendarEvents: CalendarEventEntry[],
   recentEventAnalysis: RecentEventAnalysisEntry[],
@@ -342,6 +356,16 @@ function buildDailyUserMessage(
       return `${escapeXml(p.entityName)}: $${p.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${changes})${contrarianTag}`;
     });
     parts.push(`<price_context>\n${priceLines.join('\n')}\n</price_context>`);
+  }
+
+  // Alpha propagation context
+  if (alphaPropagation.length > 0) {
+    const alphaLines = alphaPropagation.map((a) => {
+      const tierList = a.tiers.map((t) => `${t.tier} (${t.source}/${t.sourceId})`).join(' → ');
+      const speed = a.propagationSpeed ? ` — ${a.propagationSpeed}` : '';
+      return `${escapeXml(a.entityName)}: ${tierList}${speed}`;
+    });
+    parts.push(`<alpha_propagation>\n${alphaLines.join('\n')}\n</alpha_propagation>`);
   }
 
   // SY-001: Narrative context from clustering
@@ -619,6 +643,38 @@ export function createSynthesizer(
 
     log.info({ priceEntries: priceContext.length, contrarianCount: priceContext.filter((p) => p.contrarian).length }, 'Loaded price context for daily synthesis');
 
+    // Fetch alpha propagation for active entities (7-day window)
+    const alphaLookbackMs = 7 * 24 * 60 * 60 * 1000;
+    const alphaSinceTime = Date.now() - alphaLookbackMs;
+    const alphaPropagation: AlphaPropagationContext[] = [];
+
+    if (entityIds.length > 0) {
+      try {
+        const alphaResults = await Promise.all(
+          entityIds.map((id) => getAlphaPropagationSummary(pool, id, alphaSinceTime)),
+        );
+        for (let i = 0; i < entityIds.length; i++) {
+          const tiers = alphaResults[i];
+          if (tiers.length < 2) continue; // Need at least 2 tiers for propagation
+          const name = entityIdToName.get(entityIds[i]) ?? entityIds[i];
+          // Sort by first mention time
+          tiers.sort((a, b) => a.firstMentionTime - b.firstMentionTime);
+          // Calculate propagation speed from earliest to latest tier
+          const earliest = tiers[0];
+          const latest = tiers[tiers.length - 1];
+          const diffMs = latest.firstMentionTime - earliest.firstMentionTime;
+          const diffHours = diffMs / (1000 * 60 * 60);
+          const propagationSpeed = diffHours < 1
+            ? `${earliest.tier} → ${latest.tier} in ${Math.round(diffMs / 60000)}m`
+            : `${earliest.tier} → ${latest.tier} in ${diffHours.toFixed(1)}h`;
+          alphaPropagation.push({ entityName: name, tiers, propagationSpeed });
+        }
+        log.info({ alphaEntries: alphaPropagation.length }, 'Loaded alpha propagation context for daily synthesis');
+      } catch (alphaErr: unknown) {
+        log.warn({ err: alphaErr }, 'Failed to fetch alpha propagation context, continuing without it');
+      }
+    }
+
     // Use trailing 24h for divergence (not calendar day) to capture prior afternoon/evening
     const divergenceEnd = Date.now();
     const divergenceStart = divergenceEnd - 24 * 60 * 60 * 1000;
@@ -714,6 +770,7 @@ export function createSynthesizer(
       momentum,
       divergence,
       priceContext,
+      alphaPropagation,
       narratives,
       recentCalendarEvents,
       recentEventAnalysis,

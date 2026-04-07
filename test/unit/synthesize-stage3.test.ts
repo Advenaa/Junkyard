@@ -1304,10 +1304,11 @@ describe('synthesize: XML escaping in prompts', () => {
     // 3: getYesterdayTldr
     // 4: entity ID lookup for sentiment momentum (alias fallback)
     // 5: getLatestPricesForEntities
-    // 6: narratives query
-    // 7: chain entity lookup
-    // 8: getRecentEventChains
-    // 9: insertReport
+    // 6: getAlphaPropagationSummary (per entity)
+    // 7: narratives query
+    // 8: chain entity lookup
+    // 9: getRecentEventChains
+    // 10: insertReport
     const poolResponses = [
       { rows: [{ value: 'UTC' }] }, // getAppConfig
       { rows: [{ exists: false }] }, // dailyReportExists
@@ -1315,6 +1316,7 @@ describe('synthesize: XML escaping in prompts', () => {
       { rows: [] }, // getYesterdayTldr
       { rows: [{ id: 'entity-xss-1', name: '<script>alert(1)</script>' }] }, // entity ID lookup (alias fallback)
       { rows: [] }, // getLatestPricesForEntities
+      { rows: [] }, // getAlphaPropagationSummary (entity-xss-1)
       { rows: [] }, // narratives query
       { rows: [] }, // chain entity lookup
       { rows: [] }, // getRecentEventChains
