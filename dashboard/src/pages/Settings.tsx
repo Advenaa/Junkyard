@@ -27,9 +27,15 @@ interface PipelineStatus {
   costToday: number;
 }
 
+interface HealthCheck {
+  name: string;
+  status: 'ok' | 'warn' | 'critical';
+  message?: string;
+}
+
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
-  checks: Record<string, unknown>;
+  checks: HealthCheck[];
 }
 
 interface Config {
@@ -1793,10 +1799,14 @@ function PipelineTab() {
             <span className={`px-2 py-0.5 rounded text-xs font-mono ${healthColor}`}>{health.status}</span>
           </div>
           <div className="divide-y divide-border">
-            {Object.entries(health.checks).map(([key, value]) => (
-              <div key={key} className="flex items-center justify-between px-4 py-3">
-                <span className="text-text-primary text-sm font-body">{key}</span>
-                <span className="text-text-secondary text-sm font-mono">{String(value)}</span>
+            {(Array.isArray(health.checks) ? health.checks : []).map((check) => (
+              <div key={check.name} className="flex items-center justify-between px-4 py-3">
+                <span className="text-text-primary text-sm font-body">{check.name.replace(/_/g, ' ')}</span>
+                <span
+                  className={`text-sm font-mono ${check.status === 'ok' ? 'text-accent-green' : check.status === 'warn' ? 'text-yellow-400' : 'text-accent-red'}`}
+                >
+                  {check.message ?? check.status}
+                </span>
               </div>
             ))}
           </div>
