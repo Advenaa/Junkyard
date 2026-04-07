@@ -19,6 +19,7 @@ interface Source {
   lastError: string | null;
   status: string;
   stateStatus: string | null;
+  nextRetryAt: number | null;
 }
 
 interface PipelineStatus {
@@ -26,6 +27,7 @@ interface PipelineStatus {
   itemsProcessing: number;
   summariesToday: number;
   costToday: number;
+  twitterApiKeyConfigured?: boolean;
 }
 
 interface HealthCheck {
@@ -406,6 +408,51 @@ function formatRelativeTime(dateValue: number | null): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function formatCountdown(futureMs: number): string {
+  const diff = futureMs - Date.now();
+  if (diff <= 0) return 'imminently';
+  const secs = Math.floor(diff / 1000);
+  if (secs < 60) return `in ${secs}s`;
+  const mins = Math.ceil(diff / 60000);
+  if (mins < 60) return `in ${mins}m`;
+  const hours = Math.ceil(mins / 60);
+  return `in ${hours}h`;
+}
+
+function decodeTwitterError(source: Source): string {
+  if (source.source !== 'twitter') {
+    return source.lastError || 'Source halted — check server logs for details';
+  }
+
+  const error = source.lastError ?? '';
+
+  // 401 — invalid API key (halts all twitter sources)
+  if (source.stateStatus === 'halted' && (error.includes('401') || error.includes('invalid_api_key'))) {
+    return 'API key invalid or expired — all Twitter sources halted. Check TWITTERAPI_KEY in .env.';
+  }
+
+  // Rate limited with a future retry deadline
+  if (source.nextRetryAt && source.nextRetryAt > Date.now()) {
+    return `Rate limited — retrying ${formatCountdown(source.nextRetryAt)}`;
+  }
+
+  // Circuit breaker — consecutive failures
+  if (
+    source.stateStatus === 'halted' &&
+    (error.includes('consecutive failures') || error.includes('circuit breaker'))
+  ) {
+    return 'Halted after repeated failures — check source ID and API key';
+  }
+
+  // Generic halted (twitter-specific but no recognized pattern)
+  if (source.stateStatus === 'halted' && !error) {
+    return 'Source halted — check server logs for details';
+  }
+
+  // Fallback: return raw error
+  return error || 'Source halted — check server logs for details';
 }
 
 function formatCalendarEventTime(dateValue: number): string {
@@ -858,6 +905,9 @@ function SourcesTab() {
   const [proxyTokenTarget, setProxyTokenTarget] = useState<DiscordManagedToken | null>(null);
   const [savingTokenProxy, setSavingTokenProxy] = useState(false);
 
+  // Twitter API key status
+  const [twitterApiKeyConfigured, setTwitterApiKeyConfigured] = useState<boolean | null>(null);
+
   // Discord browser state
   const [guilds, setGuilds] = useState<Array<{ id: string; name: string; icon: string | null }>>([]);
   const [channels, setChannels] = useState<
@@ -974,6 +1024,11 @@ function SourcesTab() {
   const handleSourceTypeChange = (value: string) => {
     setAddSource(value);
     resetBrowseState();
+    if (value === 'twitter' && twitterApiKeyConfigured === null) {
+      apiFetch<PipelineStatus>('/status')
+        .then((status) => setTwitterApiKeyConfigured(status.twitterApiKeyConfigured ?? true))
+        .catch(() => setTwitterApiKeyConfigured(null));
+    }
   };
 
   const fetchGuilds = async () => {
@@ -1054,6 +1109,7 @@ function SourcesTab() {
         lastError: created.lastError ?? null,
         status: created.status ?? 'ready',
         stateStatus: created.stateStatus ?? 'active',
+        nextRetryAt: created.nextRetryAt ?? null,
       };
       setSources((prev) => [...prev, newSource]);
       setModalOpen(false);
@@ -1262,6 +1318,12 @@ function SourcesTab() {
             <option value="news">news</option>
           </select>
         </div>
+        {/* Twitter API key warning */}
+        {addSource === 'twitter' && twitterApiKeyConfigured === false && (
+          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-4 py-3 text-yellow-400 text-sm font-body">
+            Twitter API key (TWITTERAPI_KEY) is not configured in .env. Twitter sources will not poll until a key is set.
+          </div>
+        )}
         {/* Discord channel browser */}
         {addSource === 'discord' && (
           <div className="space-y-1.5">
@@ -1365,11 +1427,23 @@ function SourcesTab() {
                 : addSource === 'discord'
                   ? 'Channel ID'
                   : addSource === 'twitter'
-                    ? 'Username or list'
+                    ? '@username or search query (e.g. "ethereum OR defi")'
                     : 'Source identifier'
             }
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
           />
+          {addSource === 'twitter' && (
+            <>
+              {addSourceId.startsWith('@') && /[^a-zA-Z0-9_@]/.test(addSourceId) && (
+                <p className="text-red-400 text-xs font-body mt-1">
+                  Twitter handles can only contain letters, numbers, and underscores.
+                </p>
+              )}
+              <p className="text-text-secondary text-xs font-body mt-1">
+                Use @handle for a user timeline, or any search query. Supports: from:user, &quot;exact phrase&quot;, OR, -exclude
+              </p>
+            </>
+          )}
         </div>
         <div className="space-y-1.5">
           <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
@@ -1654,6 +1728,17 @@ function SourcesTab() {
                   >
                     <td className="px-4 py-3 font-mono text-xs text-text-secondary">
                       {s.source}
+                      {s.source === 'twitter' && (
+                        <span
+                          className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide ${
+                            s.sourceId.startsWith('@')
+                              ? 'bg-accent/15 text-accent'
+                              : 'bg-yellow-500/15 text-yellow-400'
+                          }`}
+                        >
+                          {s.sourceId.startsWith('@') ? '@handle' : 'search'}
+                        </span>
+                      )}
                       <span className="ml-2 text-text-secondary/60">
                         {s.pollInterval >= 3600
                           ? `${Math.floor(s.pollInterval / 3600)}h`
@@ -1685,9 +1770,29 @@ function SourcesTab() {
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={s.stateStatus ?? 'unknown'} />
-                      {(s.lastError || s.stateStatus === 'halted') && (
-                        <p className="text-accent-red text-xs mt-1 font-body">
-                          {s.lastError || 'Source halted — check server logs for details'}
+                      {s.source === 'twitter' && s.stateStatus === 'halted' && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-red-500/20 text-red-400 border border-red-500/30">
+                          api error
+                        </span>
+                      )}
+                      {s.source === 'twitter' && s.nextRetryAt != null && s.nextRetryAt > Date.now() && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-yellow-500/20 text-yellow-400">
+                          rate limited
+                        </span>
+                      )}
+                      {(s.lastError || s.stateStatus === 'halted' || (s.source === 'twitter' && s.nextRetryAt != null && s.nextRetryAt > Date.now())) && (
+                        <p
+                          className={`text-xs mt-1 font-body ${
+                            s.source === 'twitter' && s.stateStatus === 'halted'
+                              ? 'text-accent-red font-medium'
+                              : s.source === 'twitter' && s.nextRetryAt != null && s.nextRetryAt > Date.now()
+                                ? 'text-yellow-400'
+                                : 'text-accent-red'
+                          }`}
+                        >
+                          {s.source === 'twitter'
+                            ? decodeTwitterError(s)
+                            : s.lastError || 'Source halted — check server logs for details'}
                         </p>
                       )}
                     </td>

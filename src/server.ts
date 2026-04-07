@@ -717,6 +717,14 @@ export async function createServer(
       if (source === 'discord' && !/^\d{17,20}$/.test(sourceId)) {
         return reply.code(400).send({ error: 'Discord channel ID must be a 17-20 digit snowflake' });
       }
+      if (source === 'twitter' && sourceId.startsWith('@') && !/^@[A-Za-z0-9_]{1,39}$/.test(sourceId)) {
+        return reply
+          .code(400)
+          .send({
+            error:
+              'Twitter handle must be @username (1-39 chars, letters/numbers/underscores). For search queries, omit the @.',
+          });
+      }
       try {
         await insertSource(pool, source, sourceId, label ?? null, 1.0, Date.now());
         if (poll_interval != null) {
@@ -1834,6 +1842,7 @@ export async function createServer(
       itemsProcessing: parseInt(row.items_processing, 10),
       summariesToday: parseInt(row.summaries_today, 10),
       costToday: parseFloat(row.cost_today),
+      twitterApiKeyConfigured: !!config.twitterApiKey,
     };
   });
 
