@@ -48,6 +48,9 @@ import {
   type CalendarEventRow,
   getEntityDivergence,
   getTopDivergentEntities,
+  getLatestPriceSnapshot,
+  getPriceHistory,
+  type PriceSnapshotRow,
 } from './db/queries.js';
 import { validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
@@ -2147,6 +2150,51 @@ export async function createServer(
       }
       return {
         divergence: toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>),
+      };
+    },
+  );
+
+  // Price data for entity
+  app.get<{
+    Params: { entityId: string };
+    Querystring: { days?: number; limit?: number };
+  }>(
+    '/api/v1/entities/:entityId/price',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: { entityId: { type: 'string', minLength: 1 } },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            days: { type: 'integer', minimum: 1, maximum: 365 },
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { entityId } = request.params;
+      const days = request.query.days ?? 7;
+      const queryLimit = request.query.limit ?? 30;
+      const endTime = Date.now();
+      const startTime = endTime - days * 24 * 60 * 60 * 1000;
+
+      const latest = await getLatestPriceSnapshot(pool, entityId);
+      const history = await getPriceHistory(pool, entityId, startTime, endTime, queryLimit);
+
+      if (!latest && history.length === 0) {
+        return reply.code(404).send({ error: 'No price data for this entity' });
+      }
+
+      return {
+        latest: latest ? toCamelCase<Record<string, unknown>>(latest as unknown as Record<string, unknown>) : null,
+        history: history.map((row) => toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>)),
       };
     },
   );

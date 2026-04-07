@@ -53,6 +53,7 @@ export const MarketReportLLMSchema = z.object({
   keyEvents: z.array(z.string()).max(10).default([]),
   marketCatalysts: z.array(z.string()).max(6).default([]),
   eventChains: z.array(z.string()).max(5).default([]),
+  priceAlerts: z.array(z.string()).max(5).default([]),
   entitySentiment: z
     .array(
       z.object({

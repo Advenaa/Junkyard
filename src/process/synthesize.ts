@@ -11,8 +11,9 @@ import {
   getAppConfig,
   getSentimentShiftAroundTime,
   getRecentEventChains,
+  getLatestPricesForEntities,
 } from '../db/queries.js';
-import type { SummaryRow, ReportRow, EventChainRow } from '../db/queries.js';
+import type { SummaryRow, ReportRow, EventChainRow, PriceSnapshotRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -67,6 +68,13 @@ When <regional_divergence> data is provided, highlight entities where Indonesian
 - Cultural framing differences (same event interpreted differently)
 - Potential alpha: the divergent view may eventually converge
 Flag these as "Regional divergence: [entity] — EN [bullish/bearish], ID [bullish/bearish]" in the analysis.
+
+When <price_context> data is provided:
+- Compare price action with community sentiment. Flag CONTRARIAN signals prominently — these represent potential alpha.
+- Use price data to quantify moves instead of vague language ("up 5.2%" not "rising").
+- If sentiment is bearish but price is rising, this may signal accumulation or short squeeze.
+- If sentiment is bullish but price is falling, this may signal distribution or capitulation.
+- Populate "priceAlerts" with the most notable price-sentiment divergences (max 5).
 
 When <upcoming_calendar_events> data is provided:
 - Treat these as forward catalysts in the next 48 hours, not confirmed outcomes.
@@ -235,6 +243,15 @@ interface RecentEventAnalysisEntry {
   sentimentDelta: number | null;
 }
 
+interface PriceContextEntry {
+  entityName: string;
+  priceUsd: number;
+  priceChange24h: number | null;
+  priceChange7d: number | null;
+  sentiment: number | null;
+  contrarian: string | null;
+}
+
 // ── Prompt builders ───────────────────────────────────────────────────
 
 interface ScoredSummary {
@@ -250,6 +267,7 @@ function buildDailyUserMessage(
   yesterdayTldr: string | null,
   momentum: MomentumEntry[],
   divergence: DivergenceEntry[],
+  priceContext: PriceContextEntry[],
   narratives: NarrativeContext[],
   recentCalendarEvents: CalendarEventEntry[],
   recentEventAnalysis: RecentEventAnalysisEntry[],
@@ -312,6 +330,18 @@ function buildDailyUserMessage(
         `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
     );
     parts.push(`<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`);
+  }
+
+  // Price context + contrarian signals
+  if (priceContext.length > 0) {
+    const priceLines = priceContext.map((p) => {
+      const change24h = p.priceChange24h !== null ? `24h: ${p.priceChange24h > 0 ? '+' : ''}${p.priceChange24h.toFixed(1)}%` : '';
+      const change7d = p.priceChange7d !== null ? `7d: ${p.priceChange7d > 0 ? '+' : ''}${p.priceChange7d.toFixed(1)}%` : '';
+      const changes = [change24h, change7d].filter(Boolean).join(', ');
+      const contrarianTag = p.contrarian ? ` — CONTRARIAN: ${p.contrarian}` : ' — aligned';
+      return `${escapeXml(p.entityName)}: $${p.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${changes})${contrarianTag}`;
+    });
+    parts.push(`<price_context>\n${priceLines.join('\n')}\n</price_context>`);
   }
 
   // SY-001: Narrative context from clustering
@@ -553,8 +583,8 @@ export function createSynthesizer(
     const entityIdRows =
       entityNames.length > 0
         ? (
-            await pool.query<{ id: string }>(
-              `SELECT DISTINCT e.id FROM entities e
+            await pool.query<{ id: string; name: string }>(
+              `SELECT DISTINCT e.id, e.name FROM entities e
            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
            WHERE e.name = ANY($1) OR ea.alias = ANY($2)`,
               [entityNames, normalizedNames],
@@ -565,6 +595,29 @@ export function createSynthesizer(
     const momentum = entityIds.length > 0 ? await sentimentTracker.getMomentumContext(entityIds) : [];
 
     log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for daily synthesis');
+
+    // Fetch latest prices for token entities
+    const priceSnapshots = entityIds.length > 0 ? await getLatestPricesForEntities(pool, entityIds) : [];
+    const entityIdToName = new Map(entityIdRows.map((r) => [r.id, r.name]));
+    const momentumByName = new Map(momentum.map((m) => [m.entityName.toLowerCase(), m.avgSentiment]));
+
+    const priceContext: PriceContextEntry[] = priceSnapshots.map((snap) => {
+      const name = entityIdToName.get(snap.entityId) ?? snap.entityId;
+      const sentiment = momentumByName.get(name.toLowerCase()) ?? null;
+      let contrarian: string | null = null;
+
+      if (sentiment !== null && snap.priceChange24h !== null) {
+        if (sentiment < -0.2 && snap.priceChange24h > 3) {
+          contrarian = 'price rising, community bearish — potential accumulation or short squeeze';
+        } else if (sentiment > 0.2 && snap.priceChange24h < -3) {
+          contrarian = 'price falling, community bullish — potential distribution or capitulation';
+        }
+      }
+
+      return { entityName: name, priceUsd: snap.priceUsd, priceChange24h: snap.priceChange24h, priceChange7d: snap.priceChange7d, sentiment, contrarian };
+    });
+
+    log.info({ priceEntries: priceContext.length, contrarianCount: priceContext.filter((p) => p.contrarian).length }, 'Loaded price context for daily synthesis');
 
     // Use trailing 24h for divergence (not calendar day) to capture prior afternoon/evening
     const divergenceEnd = Date.now();
@@ -660,6 +713,7 @@ export function createSynthesizer(
       yesterdayTldr,
       momentum,
       divergence,
+      priceContext,
       narratives,
       recentCalendarEvents,
       recentEventAnalysis,

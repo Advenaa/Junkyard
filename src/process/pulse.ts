@@ -8,8 +8,9 @@ import {
   getAppConfig,
   getSentimentShiftAroundTime,
   getRecentEventChains,
+  getLatestPricesForEntities,
 } from '../db/queries.js';
-import type { ReportRow, EventChainRow } from '../db/queries.js';
+import type { ReportRow, EventChainRow, PriceSnapshotRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
@@ -76,7 +77,13 @@ When <recent_event_chains> data is provided:
 - Highlight escalation, follow-up, or attempted resolution when the recent summaries support it.
 - Use chain continuity to avoid describing a fresh update as if it came out of nowhere.
 - Do not imply the story is resolved unless the latest summaries clearly support that.
-- Use "eventChains" for concise summaries of the most relevant active chains when they add trader context.`;
+- Use "eventChains" for concise summaries of the most relevant active chains when they add trader context.
+
+When <price_context> data is provided:
+- Compare price moves with sentiment direction. Flag CONTRARIAN signals.
+- Use price data to quantify ("BTC +5.2%"), not vague language ("rising").
+- Contrarian divergences between price and sentiment are potential alpha signals — highlight them.
+- Populate "priceAlerts" with notable price-sentiment divergences (max 5).`;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -108,6 +115,15 @@ interface DriftFlag {
   prior: number;
   current: number;
   delta: number;
+}
+
+interface PriceContextEntry {
+  entityName: string;
+  priceUsd: number;
+  priceChange24h: number | null;
+  priceChange7d: number | null;
+  sentiment: number | null;
+  contrarian: string | null;
 }
 
 interface RecentEventAnalysisEntry {
@@ -306,6 +322,7 @@ export function createPulse(
     priorTldr: string | null,
     momentum: MomentumEntry[],
     divergence: DivergenceEntry[],
+    priceContext: PriceContextEntry[],
     recentCalendarEvents: CalendarEventEntry[],
     recentEventAnalysis: RecentEventAnalysisEntry[],
     recentEventChains: EventChainRow[],
@@ -346,6 +363,17 @@ export function createPulse(
           `${escapeXml(d.entityName)}: EN sentiment=${d.engSentiment.toFixed(1)} (${d.engMentions} mentions), ID sentiment=${d.indSentiment.toFixed(1)} (${d.indMentions} mentions) — divergence=${d.divergence.toFixed(1)} (${d.direction})`,
       );
       parts.push(`<regional_divergence>\n${divergenceLines.join('\n')}\n</regional_divergence>`);
+    }
+
+    if (priceContext.length > 0) {
+      const priceLines = priceContext.map((p) => {
+        const change24h = p.priceChange24h !== null ? `24h: ${p.priceChange24h > 0 ? '+' : ''}${p.priceChange24h.toFixed(1)}%` : '';
+        const change7d = p.priceChange7d !== null ? `7d: ${p.priceChange7d > 0 ? '+' : ''}${p.priceChange7d.toFixed(1)}%` : '';
+        const changes = [change24h, change7d].filter(Boolean).join(', ');
+        const contrarianTag = p.contrarian ? ` — CONTRARIAN: ${p.contrarian}` : ' — aligned';
+        return `${escapeXml(p.entityName)}: $${p.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${changes})${contrarianTag}`;
+      });
+      parts.push(`<price_context>\n${priceLines.join('\n')}\n</price_context>`);
     }
 
     if (recentCalendarEvents.length > 0) {
@@ -500,8 +528,8 @@ export function createPulse(
     const entityIdRows =
       entityNames.length > 0
         ? (
-            await pool.query<{ id: string }>(
-              `SELECT DISTINCT e.id FROM entities e
+            await pool.query<{ id: string; name: string }>(
+              `SELECT DISTINCT e.id, e.name FROM entities e
            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
            WHERE LOWER(e.name) = ANY($1) OR ea.alias = ANY($1)`,
               [entityNames],
@@ -510,6 +538,28 @@ export function createPulse(
         : [];
     const entityIds = entityIdRows.map((r) => r.id);
     const momentum = entityIds.length > 0 ? await sentimentTracker.getMomentumContext(entityIds) : [];
+
+    // Fetch latest prices for token entities
+    const priceSnapshots = entityIds.length > 0 ? await getLatestPricesForEntities(pool, entityIds) : [];
+    const entityIdToName = new Map(entityIdRows.map((r) => [r.id, r.name]));
+
+    const priceContext: PriceContextEntry[] = priceSnapshots.map((snap) => {
+      const name = entityIdToName.get(snap.entityId) ?? snap.entityId;
+      const sentiment = currentEntitySentiment.get(name.toLowerCase()) ?? null;
+      let contrarian: string | null = null;
+
+      if (sentiment !== null && snap.priceChange24h !== null) {
+        if (sentiment < -0.2 && snap.priceChange24h > 3) {
+          contrarian = 'price rising, community bearish — potential accumulation or short squeeze';
+        } else if (sentiment > 0.2 && snap.priceChange24h < -3) {
+          contrarian = 'price falling, community bullish — potential distribution or capitulation';
+        }
+      }
+
+      return { entityName: name, priceUsd: snap.priceUsd, priceChange24h: snap.priceChange24h, priceChange7d: snap.priceChange7d, sentiment, contrarian };
+    });
+
+    log.info({ priceEntries: priceContext.length, contrarianCount: priceContext.filter((p) => p.contrarian).length }, 'Loaded price context for pulse');
 
     log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for pulse');
 
@@ -563,6 +613,7 @@ export function createPulse(
       prior.tldr,
       momentum,
       divergence,
+      priceContext,
       recentCalendarEvents,
       recentEventAnalysis,
       recentEventChains,

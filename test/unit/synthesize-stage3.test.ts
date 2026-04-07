@@ -1303,15 +1303,21 @@ describe('synthesize: XML escaping in prompts', () => {
     // 2: getSummariesByTimeWindow
     // 3: getYesterdayTldr
     // 4: entity ID lookup for sentiment momentum (alias fallback)
-    // 5: narratives query
-    // 6: insertReport
+    // 5: getLatestPricesForEntities
+    // 6: narratives query
+    // 7: chain entity lookup
+    // 8: getRecentEventChains
+    // 9: insertReport
     const poolResponses = [
       { rows: [{ value: 'UTC' }] }, // getAppConfig
       { rows: [{ exists: false }] }, // dailyReportExists
       { rows: [row] }, // getSummariesByTimeWindow
       { rows: [] }, // getYesterdayTldr
-      { rows: [{ id: 'entity-xss-1' }] }, // entity ID lookup (alias fallback)
+      { rows: [{ id: 'entity-xss-1', name: '<script>alert(1)</script>' }] }, // entity ID lookup (alias fallback)
+      { rows: [] }, // getLatestPricesForEntities
       { rows: [] }, // narratives query
+      { rows: [] }, // chain entity lookup
+      { rows: [] }, // getRecentEventChains
       {
         rows: [
           {
