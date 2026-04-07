@@ -17,6 +17,7 @@ export interface Report {
   chainDrilldowns?: ReportChainDrilldown[];
   hasMoreActiveChains?: boolean;
   hiddenActiveChainCount?: number;
+  priceAlerts?: string[];
 }
 
 export interface ReportChainDrilldown {

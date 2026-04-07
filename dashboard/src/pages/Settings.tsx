@@ -174,6 +174,24 @@ interface EntityDivergence {
   divergence: number | null;
 }
 
+interface EntityPriceSnapshot {
+  id: string;
+  entityId: string;
+  timestamp: number;
+  priceUsd: number;
+  priceChange24h: number | null;
+  priceChange7d: number | null;
+  volume24h: number | null;
+  marketCap: number | null;
+  source: string;
+  createdAt: number;
+}
+
+interface EntityPriceData {
+  latest: EntityPriceSnapshot | null;
+  history: EntityPriceSnapshot[];
+}
+
 function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
   const trimmedLabel = typeof source.label === 'string' ? source.label.trim() : '';
   if (trimmedLabel) return trimmedLabel;
@@ -249,6 +267,21 @@ async function fetchEntityRelationshipGraphData(entityId: string): Promise<Entit
 async function fetchEntityDivergenceData(entityId: string, days: number): Promise<EntityDivergence> {
   const res = await apiFetch<{ divergence: EntityDivergence }>(`/entities/${entityId}/divergence?days=${days}`);
   return res.divergence;
+}
+
+async function fetchEntityPriceData(entityId: string, days: number): Promise<EntityPriceData | null> {
+  try {
+    return await apiFetch<EntityPriceData>(`/entities/${entityId}/price?days=${days}`);
+  } catch {
+    return null;
+  }
+}
+
+function formatCompactNumber(num: number): string {
+  if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  return num.toFixed(2);
 }
 
 const TIMEZONES = (() => {
@@ -2759,6 +2792,7 @@ function EntitiesTab() {
   const [relationshipGraph, setRelationshipGraph] = useState<EntityRelationshipGraphData | null>(null);
   const [divergence, setDivergence] = useState<EntityDivergence | null>(null);
   const [divergenceDays, setDivergenceDays] = useState<number>(7);
+  const [priceData, setPriceData] = useState<EntityPriceData | null>(null);
 
   useEffect(() => {
     const query = entityQuery.trim();
@@ -2830,6 +2864,7 @@ function EntitiesTab() {
       setCompetitors([]);
       setRelationshipGraph(null);
       setDivergence(null);
+      setPriceData(null);
       setDetailsError(null);
       setDetailsLoading(false);
       return;
@@ -2844,13 +2879,15 @@ function EntitiesTab() {
       fetchEntityCompetitorsData(selectedEntity.id),
       fetchEntityRelationshipGraphData(selectedEntity.id),
       fetchEntityDivergenceData(selectedEntity.id, divergenceDays).catch(() => null),
+      fetchEntityPriceData(selectedEntity.id, 7),
     ])
-      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence]) => {
+      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData]) => {
         if (cancelled) return;
         setRelationships(nextRelationships);
         setCompetitors(nextCompetitors);
         setRelationshipGraph(nextRelationshipGraph);
         setDivergence(nextDivergence);
+        setPriceData(nextPriceData);
       })
       .catch(() => {
         if (cancelled) return;
@@ -2858,6 +2895,7 @@ function EntitiesTab() {
         setCompetitors([]);
         setRelationshipGraph(null);
         setDivergence(null);
+        setPriceData(null);
         setDetailsError('Failed to load entity relationships.');
       })
       .finally(() => {
@@ -2875,19 +2913,22 @@ function EntitiesTab() {
     setDetailsLoading(true);
     setDetailsError(null);
     try {
-      const [nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence] = await Promise.all([
+      const [nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData] = await Promise.all([
         fetchEntityRelationshipsData(selectedEntity.id),
         fetchEntityCompetitorsData(selectedEntity.id),
         fetchEntityRelationshipGraphData(selectedEntity.id),
         fetchEntityDivergenceData(selectedEntity.id, divergenceDays).catch(() => null),
+        fetchEntityPriceData(selectedEntity.id, 7),
       ]);
       setRelationships(nextRelationships);
       setCompetitors(nextCompetitors);
       setRelationshipGraph(nextRelationshipGraph);
       setDivergence(nextDivergence);
+      setPriceData(nextPriceData);
     } catch {
       setRelationshipGraph(null);
       setDivergence(null);
+      setPriceData(null);
       setDetailsError('Failed to load entity relationships.');
     } finally {
       setDetailsLoading(false);
@@ -3217,6 +3258,79 @@ function EntitiesTab() {
                   </div>
                 )}
               </div>
+
+            {/* Price Data Card */}
+            {priceData?.latest && (
+              <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+                  <div>
+                    <h3 className="font-heading text-sm font-medium text-text-primary">Price Data</h3>
+                    <p className="text-xs text-text-secondary mt-0.5">CoinGecko market data</p>
+                  </div>
+                  <span className="font-mono text-xs text-text-secondary">
+                    {new Date(priceData.latest.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                <div className="p-4 space-y-4">
+                  {/* Current Price */}
+                  <div className="flex items-baseline gap-3">
+                    <span className="font-heading text-2xl font-bold text-text-primary">
+                      ${priceData.latest.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: priceData.latest.priceUsd < 1 ? 6 : 2 })}
+                    </span>
+                    {priceData.latest.priceChange24h !== null && (
+                      <span className={`font-mono text-sm font-medium ${priceData.latest.priceChange24h >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
+                        {priceData.latest.priceChange24h >= 0 ? '+' : ''}{priceData.latest.priceChange24h.toFixed(1)}% 24h
+                      </span>
+                    )}
+                    {priceData.latest.priceChange7d !== null && (
+                      <span className={`font-mono text-sm ${priceData.latest.priceChange7d >= 0 ? 'text-accent-green/70' : 'text-accent-red/70'}`}>
+                        {priceData.latest.priceChange7d >= 0 ? '+' : ''}{priceData.latest.priceChange7d.toFixed(1)}% 7d
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Volume and Market Cap */}
+                  <div className="grid grid-cols-2 gap-4">
+                    {priceData.latest.volume24h !== null && (
+                      <div>
+                        <div className="text-xs text-text-secondary font-mono uppercase">24h Volume</div>
+                        <div className="text-sm font-body text-text-primary">${formatCompactNumber(priceData.latest.volume24h)}</div>
+                      </div>
+                    )}
+                    {priceData.latest.marketCap !== null && (
+                      <div>
+                        <div className="text-xs text-text-secondary font-mono uppercase">Market Cap</div>
+                        <div className="text-sm font-body text-text-primary">${formatCompactNumber(priceData.latest.marketCap)}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Price History (simple list) */}
+                  {priceData.history.length > 1 && (
+                    <div>
+                      <div className="text-xs text-text-secondary font-mono uppercase mb-2">Recent History</div>
+                      <div className="space-y-1">
+                        {priceData.history.slice(0, 7).map((snap) => (
+                          <div key={snap.id} className="flex justify-between items-center text-xs font-mono">
+                            <span className="text-text-secondary">
+                              {new Date(snap.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </span>
+                            <span className="text-text-primary">
+                              ${snap.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: snap.priceUsd < 1 ? 6 : 2 })}
+                            </span>
+                            {snap.priceChange24h !== null && (
+                              <span className={snap.priceChange24h >= 0 ? 'text-accent-green' : 'text-accent-red'}>
+                                {snap.priceChange24h >= 0 ? '+' : ''}{snap.priceChange24h.toFixed(1)}%
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
               <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-4 py-3 border-b border-border">

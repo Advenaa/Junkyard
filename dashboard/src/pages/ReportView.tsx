@@ -22,6 +22,7 @@ interface FullReport extends Report {
   keyEvents: string[];
   marketCatalysts: string[];
   eventChains: string[];
+  priceAlerts: string[];
   chainDrilldowns?: ReportChainDrilldown[];
   entitySentiment: EntitySentiment[];
   sections: Section[];
@@ -215,6 +216,19 @@ export function ReportView() {
             {report.marketCatalysts.map((catalyst, i) => (
               <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
                 {catalyst}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {report.priceAlerts && report.priceAlerts.length > 0 && (
+        <div>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Price Alerts</h2>
+          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+            {report.priceAlerts.map((alert, i) => (
+              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                {alert}
               </div>
             ))}
           </div>

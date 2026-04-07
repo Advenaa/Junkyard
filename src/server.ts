@@ -628,6 +628,7 @@ export async function createServer(
         report.keyEvents = (parsed.keyEvents ?? parsed.key_events ?? []) as unknown[];
         report.marketCatalysts = (parsed.marketCatalysts ?? parsed.market_catalysts ?? []) as unknown[];
         report.eventChains = (parsed.eventChains ?? parsed.event_chains ?? []) as unknown[];
+        report.priceAlerts = (parsed.priceAlerts ?? parsed.price_alerts ?? []) as unknown[];
         report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
         report.sections = (parsed.sections ?? []) as unknown[];
         const reportEntityNames = extractReportEntityNames(parsed.entitySentiment ?? parsed.entity_sentiment);
