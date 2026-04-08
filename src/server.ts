@@ -415,6 +415,20 @@ interface DiscordTokenView {
   plainProxyUrl: string | null;
 }
 
+interface DiscordTokenHealthState {
+  index: number;
+  status: 'active' | 'idle' | 'disabled';
+  errorCount: number;
+  lastSuccessfulPollAt: number | null;
+  channelCount: number;
+  source: 'env' | 'db';
+  tokenId: string | null;
+  label: string | null;
+  maskedToken: string | null;
+  proxyConfigured: boolean;
+  maskedProxy: string | null;
+}
+
 interface CalendarEntityLookupRow {
   id: string;
   name: string;
@@ -540,19 +554,7 @@ export async function createServer(
   chatHandler?: ChatHandler,
   onConfigChange?: () => Promise<void>,
   onTokensChanged?: () => Promise<DiscordRuntimeToken[]>,
-  getTokenHealth?: () => Array<{
-    index: number;
-    status: string;
-    errorCount: number;
-    connectedAt: number | null;
-    channelCount: number;
-    source: 'env' | 'db';
-    tokenId: string | null;
-    label: string | null;
-    maskedToken: string | null;
-    proxyConfigured: boolean;
-    maskedProxy: string | null;
-  }>,
+  getTokenHealth?: () => Promise<DiscordTokenHealthState[]>,
   initialDiscordTokens: DiscordRuntimeToken[] = createEnvDiscordTokens(config.discordTokens),
 ): Promise<FastifyInstance> {
   // Warn if Discord OAuth is configured without PUBLIC_URL (DB-008)
@@ -1916,24 +1918,44 @@ export async function createServer(
     },
   );
 
-  // --- Discord token health (Gateway connection states) ---
+  // --- Discord token health (REST polling activity) ---
   app.get('/api/v1/discord/tokens/health', { preHandler: [authPreHandler, requireAdmin] }, async () => {
-    if (!getTokenHealth) return { states: [] };
-    const runtimeStates = getTokenHealth();
     const encKey = getEncryptionKey();
     const managedTokens = encKey ? await getManagedDiscordTokenViews(pool, encKey) : [];
     const managedById = new Map(managedTokens.map((token) => [token.id, token]));
+    const runtimeStates = getTokenHealth ? await getTokenHealth() : [];
 
-    const states = runtimeStates.map((state) => {
+    const states: DiscordTokenHealthState[] = runtimeStates.map((state) => {
       const managedMeta = state.tokenId ? managedById.get(state.tokenId) : null;
       return {
         ...state,
+        lastSuccessfulPollAt: state.lastSuccessfulPollAt ?? managedMeta?.lastUsedAt ?? null,
         label: managedMeta?.label ?? state.label ?? null,
         maskedToken: managedMeta?.maskedToken ?? state.maskedToken ?? null,
         proxyConfigured: managedMeta?.proxyConfigured ?? state.proxyConfigured ?? false,
         maskedProxy: managedMeta?.maskedProxy ?? state.maskedProxy ?? null,
       };
     });
+
+    for (const managedToken of managedTokens) {
+      if (states.some((state) => state.tokenId === managedToken.id)) {
+        continue;
+      }
+
+      states.push({
+        index: states.length,
+        status: managedToken.status === 'active' ? 'idle' : 'disabled',
+        errorCount: 0,
+        lastSuccessfulPollAt: managedToken.lastUsedAt,
+        channelCount: 0,
+        source: 'db',
+        tokenId: managedToken.id,
+        label: managedToken.label,
+        maskedToken: managedToken.maskedToken,
+        proxyConfigured: managedToken.proxyConfigured,
+        maskedProxy: managedToken.maskedProxy,
+      });
+    }
 
     return { states };
   });

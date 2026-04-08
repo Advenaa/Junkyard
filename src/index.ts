@@ -20,7 +20,6 @@ import { createEntityManager } from './knowledge/entities.js';
 import { createAlphaTracker } from './knowledge/alpha-tracker.js';
 import { createDecayManager } from './knowledge/decay.js';
 import { createDelivery } from './deliver/webhook.js';
-import { createDiscordAdapter } from './ingest/discord.js';
 import { createTwitterAdapter } from './ingest/twitter.js';
 import { createPriceTracker } from './prices/tracker.js';
 import { createMacroTracker } from './macro/tracker.js';
@@ -34,7 +33,14 @@ import { createSeeder } from './knowledge/seed.js';
 import { createSentimentTracker } from './knowledge/sentiment.js';
 import { createDivergenceTracker } from './knowledge/divergence.js';
 import { createCalendarTracker } from './knowledge/calendar.js';
-import { getSources, resetCrashed, recoverStaleProcessing, getAppConfig, getDiscordTokens } from './db/queries.js';
+import {
+  getSources,
+  resetCrashed,
+  recoverStaleProcessing,
+  getAppConfig,
+  getDiscordTokens,
+  updateDiscordTokenLastUsed,
+} from './db/queries.js';
 import { decryptToken, getEncryptionKey } from './crypto/token-encrypt.js';
 import {
   createEnvDiscordTokens,
@@ -113,6 +119,102 @@ async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Prom
   return tokens;
 }
 
+interface DiscordRestTokenHealthSnapshot {
+  channelIds: Set<string>;
+  lastSuccessfulPollAt: number | null;
+}
+
+function getDiscordTokenKey(token: DiscordRuntimeToken): string {
+  return token.token;
+}
+
+function syncDiscordRestTokenHealth(
+  healthByToken: Map<string, DiscordRestTokenHealthSnapshot>,
+  tokens: DiscordRuntimeToken[],
+): void {
+  const activeKeys = new Set(tokens.map(getDiscordTokenKey));
+
+  for (const key of [...healthByToken.keys()]) {
+    if (!activeKeys.has(key)) {
+      healthByToken.delete(key);
+    }
+  }
+
+  for (const token of tokens) {
+    const key = getDiscordTokenKey(token);
+    if (!healthByToken.has(key)) {
+      healthByToken.set(key, { channelIds: new Set(), lastSuccessfulPollAt: null });
+    }
+  }
+}
+
+function pruneDiscordRestTokenChannels(
+  healthByToken: Map<string, DiscordRestTokenHealthSnapshot>,
+  activeChannelIds: Set<string>,
+): void {
+  for (const snapshot of healthByToken.values()) {
+    for (const channelId of [...snapshot.channelIds]) {
+      if (!activeChannelIds.has(channelId)) {
+        snapshot.channelIds.delete(channelId);
+      }
+    }
+  }
+}
+
+function recordDiscordRestPollSuccess(
+  healthByToken: Map<string, DiscordRestTokenHealthSnapshot>,
+  token: DiscordRuntimeToken,
+  channelId: string,
+  polledAt: number,
+): void {
+  const key = getDiscordTokenKey(token);
+  let snapshot = healthByToken.get(key);
+
+  if (!snapshot) {
+    snapshot = { channelIds: new Set(), lastSuccessfulPollAt: null };
+    healthByToken.set(key, snapshot);
+  }
+
+  snapshot.channelIds.add(channelId);
+  snapshot.lastSuccessfulPollAt = polledAt;
+}
+
+function buildDiscordRestTokenHealthStates(
+  tokens: DiscordRuntimeToken[],
+  healthByToken: Map<string, DiscordRestTokenHealthSnapshot>,
+): Array<{
+  index: number;
+  status: 'active' | 'idle';
+  errorCount: number;
+  lastSuccessfulPollAt: number | null;
+  channelCount: number;
+  source: 'env' | 'db';
+  tokenId: string | null;
+  label: string | null;
+  maskedToken: string | null;
+  proxyConfigured: boolean;
+  maskedProxy: string | null;
+}> {
+  return tokens.map((token, index) => {
+    const snapshot = healthByToken.get(getDiscordTokenKey(token));
+    const lastSuccessfulPollAt = snapshot?.lastSuccessfulPollAt ?? null;
+
+    return {
+      index,
+      status: lastSuccessfulPollAt === null ? 'idle' : 'active',
+      errorCount: 0,
+      lastSuccessfulPollAt,
+      channelCount: snapshot?.channelIds.size ?? 0,
+      source: token.source,
+      tokenId: token.tokenId,
+      label: token.label,
+      maskedToken: token.maskedToken,
+      proxyConfigured: token.proxyUrl != null,
+      maskedProxy: token.maskedProxy,
+    };
+  });
+}
+
 const program = new Command();
 
 program.name('podders').version('2.0.0');
@@ -181,18 +283,27 @@ program
     const initialDiscordTokens = await loadAllTokens(pool, config.discordTokens, log);
 
     // ── 3. Ingest adapters ────────────────────────────────────────────
-    const discordAdapter = createDiscordAdapter(initialDiscordTokens, pool, log, async (item: RawItem) => {
-      await normalizer.normalize(item);
-    });
-
     const twitterAdapter = createTwitterAdapter(config, pool, log);
     const priceTracker = createPriceTracker(pool, log, config.coingeckoApiKey ?? undefined);
     const macroTracker = createMacroTracker(pool, log, config.fredApiKey ?? undefined);
+    let currentDiscordTokens = initialDiscordTokens;
+    const discordRestTokenHealth = new Map<string, DiscordRestTokenHealthSnapshot>();
+    syncDiscordRestTokenHealth(discordRestTokenHealth, currentDiscordTokens);
 
     // ── 4. Scheduler callbacks ────────────────────────────────────────
 
     async function onSourcePollTick(): Promise<void> {
       const sources = await getSources(pool);
+      syncDiscordRestTokenHealth(discordRestTokenHealth, currentDiscordTokens);
+      const activeDiscordChannelIds = new Set(
+        sources.filter((source) => source.source === 'discord').map((source) => source.source_id),
+      );
+      pruneDiscordRestTokenChannels(discordRestTokenHealth, activeDiscordChannelIds);
+
+      if (activeDiscordChannelIds.size > 0) {
+        currentDiscordTokens = await loadAllTokens(pool, config.discordTokens, log);
+        syncDiscordRestTokenHealth(discordRestTokenHealth, currentDiscordTokens);
+      }
 
       // Load source_state for each source to decide if it's time to poll
       // Process sources with limited concurrency (max 5 parallel)
@@ -235,16 +346,21 @@ program
               items = result.items;
               newLastId = result.lastId ?? lastId;
             } else if (src.source === 'discord') {
-              // REST polling fallback — gateway may miss MESSAGE_CREATE for some guilds
-              const currentTokens = await loadAllTokens(pool, config.discordTokens, log);
-              if (currentTokens.length === 0) {
+              // REST polling is the primary ingestion path for Discord sources.
+              if (currentDiscordTokens.length === 0) {
                 // No tokens available — just update last_fetched_at to keep health monitor happy
                 await updateSourceState(pool, src.source, src.source_id, now, lastId);
                 return;
               }
-              const result = await pollDiscordChannel(src.source_id, lastId, currentTokens, log);
+              const result = await pollDiscordChannel(src.source_id, lastId, currentDiscordTokens, log);
               items = result.items;
               newLastId = result.lastId ?? lastId;
+              if (result.usedToken) {
+                recordDiscordRestPollSuccess(discordRestTokenHealth, result.usedToken, src.source_id, now);
+                if (result.usedToken.source === 'db' && result.usedToken.tokenId) {
+                  await updateDiscordTokenLastUsed(pool, result.usedToken.tokenId, now);
+                }
+              }
             } else if (src.source === 'news') {
               // News adapter is URL-based extraction, not poll-based — skip in poll loop
               return;
@@ -532,23 +648,15 @@ program
     // CF-010: rebuild cron on config change
     const onTokensChanged = async (): Promise<DiscordRuntimeToken[]> => {
       const allTokens = await loadAllTokens(pool, config.discordTokens, log);
-      discordAdapter.reconnect(allTokens).catch((err: unknown) => log.error({ err }, 'adapter reconnect failed'));
+      currentDiscordTokens = allTokens;
+      syncDiscordRestTokenHealth(discordRestTokenHealth, currentDiscordTokens);
       return allTokens;
     };
-    const getTokenHealth = () =>
-      discordAdapter.getTokenStates().map((s) => ({
-        index: s.index,
-        status: s.status,
-        errorCount: s.errorCount,
-        connectedAt: s.connectedAt,
-        channelCount: s.assignedChannels.size,
-        source: s.source,
-        tokenId: s.tokenId,
-        label: s.label,
-        maskedToken: s.maskedToken,
-        proxyConfigured: s.proxyConfigured,
-        maskedProxy: s.maskedProxy,
-      }));
+    const getTokenHealth = async () => {
+      currentDiscordTokens = await loadAllTokens(pool, config.discordTokens, log);
+      syncDiscordRestTokenHealth(discordRestTokenHealth, currentDiscordTokens);
+      return buildDiscordRestTokenHealthStates(currentDiscordTokens, discordRestTokenHealth);
+    };
     const app = await createServer(
       config,
       pool,
@@ -564,12 +672,6 @@ program
 
     // ── 9. Start background services ──────────────────────────────────
     await scheduler.start();
-
-    // Gate Discord behind a successful server start — prevents burning
-    // Discord rate limits during crash loops (config errors, DB failures, etc.)
-    discordAdapter.connect().catch((err: unknown) => {
-      log.error({ err }, 'Discord gateway connection failed — will retry on next health check');
-    });
 
     log.info('podders v2 started');
 
@@ -588,12 +690,6 @@ program
         await scheduler.stop();
       } catch (err: unknown) {
         log.error({ err }, 'error stopping scheduler');
-      }
-
-      try {
-        await discordAdapter.disconnect();
-      } catch (err: unknown) {
-        log.error({ err }, 'error disconnecting discord');
       }
 
       try {

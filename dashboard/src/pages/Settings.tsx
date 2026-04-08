@@ -177,9 +177,9 @@ interface DiscordManagedToken {
 
 interface DiscordTokenHealthState {
   index: number;
-  status: 'idle' | 'connecting' | 'connected' | 'backoff' | 'disabled';
+  status: 'active' | 'idle' | 'disabled';
   errorCount: number;
-  connectedAt: number | null;
+  lastSuccessfulPollAt: number | null;
   channelCount: number;
   source: 'env' | 'db';
   tokenId: string | null;
@@ -2480,9 +2480,9 @@ function SourcesTab() {
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="flex items-start justify-between gap-4 px-4 py-3 border-b border-border">
             <div className="space-y-1">
-              <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Gateway Health</h3>
+              <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">REST Poll Health</h3>
               <p className="text-text-secondary/70 text-sm font-body">
-                Live runtime connection states. These include both env-managed and DB-managed tokens.
+                Recent Discord REST polling activity for env and managed tokens.
               </p>
             </div>
             <button
@@ -2497,7 +2497,7 @@ function SourcesTab() {
           {tokenHealthError && <p className="px-4 py-3 text-red-400 text-sm font-body">{tokenHealthError}</p>}
           {tokenHealth.length === 0 ? (
             <div className="px-4 py-10 text-center">
-              <p className="text-text-secondary text-sm font-body">No active gateway connections.</p>
+              <p className="text-text-secondary text-sm font-body">No Discord tokens configured.</p>
             </div>
           ) : (
             <div className="divide-y divide-border">
@@ -2531,8 +2531,8 @@ function SourcesTab() {
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3 text-xs font-mono">
-                    <span className="text-text-secondary">Connected</span>
-                    <span className="text-text-primary">{formatRelativeTime(state.connectedAt)}</span>
+                    <span className="text-text-secondary">Last Poll</span>
+                    <span className="text-text-primary">{formatRelativeTime(state.lastSuccessfulPollAt)}</span>
                   </div>
                   <div className="flex items-center justify-between gap-3 text-xs font-mono">
                     <span className="text-text-secondary">Errors</span>

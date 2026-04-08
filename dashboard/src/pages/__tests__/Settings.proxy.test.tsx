@@ -29,9 +29,9 @@ interface MockToken {
 
 interface MockHealthState {
   index: number;
-  status: 'idle' | 'connecting' | 'connected' | 'backoff' | 'disabled';
+  status: 'active' | 'idle' | 'disabled';
   errorCount: number;
-  connectedAt: number | null;
+  lastSuccessfulPollAt: number | null;
   channelCount: number;
   source: 'env' | 'db';
   tokenId: string | null;
@@ -66,9 +66,9 @@ describe('Settings proxy management', () => {
     function syncHealth(token: MockToken): void {
       const next: MockHealthState = {
         index: 0,
-        status: token.status === 'disabled' ? 'disabled' : 'connected',
+        status: token.status === 'disabled' ? 'disabled' : 'active',
         errorCount: 0,
-        connectedAt: Date.now() - 120_000,
+        lastSuccessfulPollAt: Date.now() - 120_000,
         channelCount: token.status === 'disabled' ? 0 : 4,
         source: 'db',
         tokenId: token.id,

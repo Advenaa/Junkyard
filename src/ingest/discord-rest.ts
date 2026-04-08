@@ -242,7 +242,7 @@ export async function pollDiscordChannel(
   lastId: string | null,
   tokens: DiscordRuntimeToken[],
   log: Logger,
-): Promise<{ items: RawItem[]; lastId: string | null }> {
+): Promise<{ items: RawItem[]; lastId: string | null; usedToken: DiscordRuntimeToken | null }> {
   const runtimeTokens = buildRestTokenRuntime(tokens);
 
   try {
@@ -254,13 +254,17 @@ export async function pollDiscordChannel(
 
     // Try each token until one works
     let messages: RawDiscordMessage[] | null = null;
+    let usedToken: DiscordRuntimeToken | null = null;
     for (const token of runtimeTokens) {
       messages = await discordFetch<RawDiscordMessage[]>(path, token, log);
-      if (messages) break;
+      if (messages) {
+        usedToken = token.config;
+        break;
+      }
     }
 
     if (!messages || messages.length === 0) {
-      return { items: [], lastId };
+      return { items: [], lastId, usedToken };
     }
 
     // Discord returns messages newest-first; sort oldest-first for processing order
@@ -336,12 +340,9 @@ export async function pollDiscordChannel(
     // The newest message ID becomes the new lastId for the next poll
     const newestId = messages[messages.length - 1]!.id;
 
-    log.info(
-      { channelId, fetched: messages.length, mapped: items.length, newestId },
-      'discord-rest: polled channel',
-    );
+    log.info({ channelId, fetched: messages.length, mapped: items.length, newestId }, 'discord-rest: polled channel');
 
-    return { items, lastId: newestId };
+    return { items, lastId: newestId, usedToken };
   } finally {
     closeDispatchers(runtimeTokens, log);
   }
