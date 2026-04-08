@@ -12,7 +12,7 @@ Use this skill to run the Podders "evolve" loop inside Codex.
 Treat this as a Codex-native adaptation of the existing Claude evolve workflow. Keep the same product-first decision engine, but follow the active Codex harness rules when they differ:
 
 - `AGENTS.md` and `docs/AGENT_LOOP.md` are authoritative for this repo.
-- Do not commit or push unless the user explicitly asks.
+- Do not commit or push unless the user explicitly asks, but once the user opts into ongoing remote checkpoints you should keep using that preference and push every 3 completed evolve cycles by default.
 - Do not spawn subagents unless the user explicitly asks for delegation or parallel agent work.
 - Complete one meaningful slice per invocation unless the user explicitly asks only for queue/state management.
 
@@ -126,13 +126,18 @@ If the user only asked to manage priorities or explain evolve, do not fake a cyc
 
 ## Step 7: Git behavior
 
-Unless the user explicitly asks, do not:
+Unless the user explicitly asks or has already opted into ongoing remote checkpoints for evolve, do not:
 
 - create a commit
 - push to remote
 - rewrite history
 
-If the user later asks for a commit, keep it to one clear theme that matches the single slice completed.
+If the user has opted into ongoing remote checkpoints:
+
+- create one checkpoint commit that matches the single slice completed
+- push every 3 completed evolve cycles by default
+- if the exact third cycle lands in the middle of a feature, wait until the next clean verified boundary instead of pushing a partial slice
+- if the user later says `push now`, push immediately even if the current boundary is not ideal
 
 ## Step 8: Report
 

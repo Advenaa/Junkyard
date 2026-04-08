@@ -35,9 +35,10 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
    - validation run
    - next step or blocker
 8. Do not commit unless the user explicitly asks.
-9. If the user wants ongoing remote checkpoints, push at clean feature boundaries by default instead of every cycle:
+9. If the user wants ongoing remote checkpoints, keep that preference active and push every 3 completed cycles by default, but only at clean verified feature boundaries:
    - a clean feature boundary is a coherent, verified slice that stands on its own
    - examples: token management, account management, chat citations, summary detail flow
+   - if cycle 3 lands mid-feature, wait until the next clean verified boundary instead of pushing a partial slice
    - if the user says `push now`, push immediately even if the current boundary is not ideal
 
 ## Handoff Contract
