@@ -536,8 +536,19 @@ class TokenConnection {
     }
   }
 
+  private dispatchCount = 0;
+  private eventCounts = new Map<string, number>();
+
   private handleDispatch(eventName: string | null, d: unknown): void {
     if (!eventName) return;
+
+    // Debug: track all dispatch events
+    this.dispatchCount++;
+    this.eventCounts.set(eventName, (this.eventCounts.get(eventName) ?? 0) + 1);
+    if (this.dispatchCount % 50 === 1 || eventName === 'MESSAGE_CREATE') {
+      const counts = Object.fromEntries(this.eventCounts);
+      this.log.info({ tokenIndex: this.tokenIndex, eventName, dispatchCount: this.dispatchCount, counts }, 'gateway dispatch event');
+    }
 
     switch (eventName) {
       case 'READY':
@@ -593,6 +604,23 @@ class TokenConnection {
 
   private async handleMessageCreate(d: unknown): Promise<void> {
     if (this.destroyed) return;
+
+    // Debug: log raw MESSAGE_CREATE shape
+    const raw = d as Record<string, unknown>;
+    this.log.info(
+      {
+        tokenIndex: this.tokenIndex,
+        channelId: raw.channel_id,
+        guildId: raw.guild_id,
+        authorBot: (raw.author as Record<string, unknown>)?.bot,
+        type: raw.type,
+        hasContent: !!raw.content,
+        assignedChannels: [...this.state.assignedChannels],
+        passesTypeGuard: isMessageCreateData(d),
+      },
+      'MESSAGE_CREATE received',
+    );
+
     if (!isMessageCreateData(d)) return;
 
     // Filter: only assigned channels
