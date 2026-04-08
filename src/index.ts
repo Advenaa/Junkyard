@@ -25,6 +25,7 @@ import { createTwitterAdapter } from './ingest/twitter.js';
 import { createPriceTracker } from './prices/tracker.js';
 import { createMacroTracker } from './macro/tracker.js';
 import { pollFeed } from './ingest/rss.js';
+import { pollDiscordChannel } from './ingest/discord-rest.js';
 import { createScheduler } from './scheduler.js';
 import { createHealthMonitor } from './health.js';
 import { createBackup } from './ops/backup.js';
@@ -234,10 +235,16 @@ program
               items = result.items;
               newLastId = result.lastId ?? lastId;
             } else if (src.source === 'discord') {
-              // Discord is push-based via gateway — no polling needed
-              // Just update last_fetched_at to keep health monitor happy
-              await updateSourceState(pool, src.source, src.source_id, now, lastId);
-              return;
+              // REST polling fallback — gateway may miss MESSAGE_CREATE for some guilds
+              const currentTokens = await loadAllTokens(pool, config.discordTokens, log);
+              if (currentTokens.length === 0) {
+                // No tokens available — just update last_fetched_at to keep health monitor happy
+                await updateSourceState(pool, src.source, src.source_id, now, lastId);
+                return;
+              }
+              const result = await pollDiscordChannel(src.source_id, lastId, currentTokens, log);
+              items = result.items;
+              newLastId = result.lastId ?? lastId;
             } else if (src.source === 'news') {
               // News adapter is URL-based extraction, not poll-based — skip in poll loop
               return;

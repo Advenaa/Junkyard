@@ -1,6 +1,8 @@
 import { ProxyAgent, type Dispatcher } from 'undici';
+import { ulid } from 'ulid';
 import type { Logger } from '../logger.js';
 import type { DiscordRuntimeToken } from '../discord-tokens.js';
+import type { RawItem } from './rss.js';
 
 // ---------------------------------------------------------------------------
 // Types for Discord REST API responses
@@ -167,4 +169,180 @@ export function createDiscordRest(tokens: DiscordRuntimeToken[], log: Logger) {
   }
 
   return { getGuilds, getChannels, updateTokens };
+}
+
+// ---------------------------------------------------------------------------
+// Discord REST message polling
+// ---------------------------------------------------------------------------
+
+const DISCORD_CDN_HOSTS: ReadonlySet<string> = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
+
+const IMAGE_EXTENSIONS: ReadonlySet<string> = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
+
+function isValidDiscordUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && DISCORD_CDN_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isImageUrl(url: string, contentType?: string): boolean {
+  if (contentType?.startsWith('image/')) return true;
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    return [...IMAGE_EXTENSIONS].some((ext) => path.endsWith(ext));
+  } catch {
+    return false;
+  }
+}
+
+interface RawDiscordAuthor {
+  username: string;
+  bot?: boolean;
+}
+
+interface RawDiscordAttachment {
+  url: string;
+  content_type?: string;
+}
+
+interface RawDiscordEmbed {
+  description?: string;
+}
+
+interface RawDiscordReferencedMessage {
+  content?: string;
+}
+
+interface RawDiscordMessage {
+  id: string;
+  channel_id: string;
+  guild_id?: string;
+  author: RawDiscordAuthor;
+  content: string;
+  timestamp: string;
+  type: number;
+  attachments?: RawDiscordAttachment[];
+  embeds?: RawDiscordEmbed[];
+  referenced_message?: RawDiscordReferencedMessage | null;
+}
+
+/**
+ * Poll a Discord channel for recent messages via REST API.
+ *
+ * Uses `GET /channels/{channelId}/messages` with `after` for incremental fetching.
+ * Maps messages to `RawItem` using the same logic as the gateway's `handleMessageCreate`.
+ *
+ * Returns the array of new RawItems and the latest message ID for state tracking.
+ */
+export async function pollDiscordChannel(
+  channelId: string,
+  lastId: string | null,
+  tokens: DiscordRuntimeToken[],
+  log: Logger,
+): Promise<{ items: RawItem[]; lastId: string | null }> {
+  const runtimeTokens = buildRestTokenRuntime(tokens);
+
+  try {
+    // Build query string
+    let path = `/channels/${channelId}/messages?limit=50`;
+    if (lastId) {
+      path += `&after=${lastId}`;
+    }
+
+    // Try each token until one works
+    let messages: RawDiscordMessage[] | null = null;
+    for (const token of runtimeTokens) {
+      messages = await discordFetch<RawDiscordMessage[]>(path, token, log);
+      if (messages) break;
+    }
+
+    if (!messages || messages.length === 0) {
+      return { items: [], lastId };
+    }
+
+    // Discord returns messages newest-first; sort oldest-first for processing order
+    messages.sort((a, b) => {
+      // Discord snowflake IDs are chronologically sortable as strings (same length)
+      // but safer to compare as BigInt
+      return Number(BigInt(a.id) - BigInt(b.id));
+    });
+
+    const items: RawItem[] = [];
+
+    for (const msg of messages) {
+      // Skip bots
+      if (msg.author.bot) continue;
+
+      // Only DEFAULT (0) and REPLY (19)
+      if (msg.type !== 0 && msg.type !== 19) continue;
+
+      // Build content
+      const parts: string[] = [];
+
+      // Reply context
+      if (msg.referenced_message?.content) {
+        const truncated = msg.referenced_message.content.slice(0, 200);
+        parts.push(`> ${truncated}`);
+      }
+
+      // Main content
+      if (msg.content) {
+        parts.push(msg.content);
+      }
+
+      // Embed descriptions
+      if (msg.embeds && msg.embeds.length > 0) {
+        for (const embed of msg.embeds) {
+          if (embed.description) {
+            parts.push(embed.description);
+          }
+        }
+      }
+
+      const content = parts.join('\n');
+      if (!content) continue;
+
+      const attachments = msg.attachments ?? [];
+      const validAttachments = attachments.filter((a) => isValidDiscordUrl(a.url));
+      const attachmentUrls = validAttachments.map((a) => a.url);
+      const imageUrls = validAttachments.filter((a) => isImageUrl(a.url, a.content_type)).map((a) => a.url);
+
+      let ts = new Date(msg.timestamp).getTime();
+      if (Number.isNaN(ts)) {
+        log.warn({ messageId: msg.id, channelId }, 'discord-rest: invalid timestamp, using current time');
+        ts = Date.now();
+      }
+
+      items.push({
+        id: ulid(),
+        source: 'discord',
+        sourceId: channelId,
+        author: msg.author.username,
+        content,
+        timestamp: ts,
+        engagement: 0,
+        attachments: attachmentUrls.length > 0 ? attachmentUrls : undefined,
+        metadata: {
+          guildId: msg.guild_id ?? null,
+          messageId: msg.id,
+          imageUrls,
+        },
+      });
+    }
+
+    // The newest message ID becomes the new lastId for the next poll
+    const newestId = messages[messages.length - 1]!.id;
+
+    log.info(
+      { channelId, fetched: messages.length, mapped: items.length, newestId },
+      'discord-rest: polled channel',
+    );
+
+    return { items, lastId: newestId };
+  } finally {
+    closeDispatchers(runtimeTokens, log);
+  }
 }
