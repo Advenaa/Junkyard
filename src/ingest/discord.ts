@@ -591,6 +591,15 @@ class TokenConnection {
         }
       }
     }
+    // Debug: check if assigned channels are in the guild map
+    for (const ch of this.state.assignedChannels) {
+      const guild = this.channelToGuild.get(ch);
+      this.log.info(
+        { tokenIndex: this.tokenIndex, channelId: ch, foundGuild: guild ?? 'NOT FOUND' },
+        'channel → guild lookup',
+      );
+    }
+
     this.log.info(
       { tokenIndex: this.tokenIndex, guildCount: d.guilds?.length ?? 0, channelMapSize: this.channelToGuild.size },
       'gateway session ready',
