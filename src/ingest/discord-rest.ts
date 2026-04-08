@@ -237,46 +237,74 @@ interface RawDiscordMessage {
  *
  * Returns the array of new RawItems and the latest message ID for state tracking.
  */
+const PAGE_SIZE = 50;
+const MAX_PAGES = 5; // Cap at 250 messages per poll to avoid runaway fetches
+
 export async function pollDiscordChannel(
   channelId: string,
   lastId: string | null,
   tokens: DiscordRuntimeToken[],
   log: Logger,
-): Promise<{ items: RawItem[]; lastId: string | null; usedToken: DiscordRuntimeToken | null }> {
+): Promise<{ items: RawItem[]; lastId: string | null; usedToken: DiscordRuntimeToken | null; fetchFailed: boolean }> {
   const runtimeTokens = buildRestTokenRuntime(tokens);
 
   try {
-    // Build query string
-    let path = `/channels/${channelId}/messages?limit=50`;
-    if (lastId) {
-      path += `&after=${lastId}`;
+    // Find a working token first
+    let workingToken: RestTokenRuntime | null = null;
+    let usedTokenConfig: DiscordRuntimeToken | null = null;
+
+    // Test with initial fetch
+    let currentAfter = lastId;
+    let path = `/channels/${channelId}/messages?limit=${PAGE_SIZE}`;
+    if (currentAfter) {
+      path += `&after=${currentAfter}`;
     }
 
-    // Try each token until one works
-    let messages: RawDiscordMessage[] | null = null;
-    let usedToken: DiscordRuntimeToken | null = null;
+    let firstPage: RawDiscordMessage[] | null = null;
     for (const token of runtimeTokens) {
-      messages = await discordFetch<RawDiscordMessage[]>(path, token, log);
-      if (messages) {
-        usedToken = token.config;
+      firstPage = await discordFetch<RawDiscordMessage[]>(path, token, log);
+      if (firstPage) {
+        workingToken = token;
+        usedTokenConfig = token.config;
         break;
       }
     }
 
-    if (!messages || messages.length === 0) {
-      return { items: [], lastId, usedToken };
+    // All tokens failed — signal fetch failure so caller doesn't update last_fetched_at
+    if (!workingToken) {
+      log.warn({ channelId }, 'discord-rest: all tokens failed for channel');
+      return { items: [], lastId, usedToken: null, fetchFailed: true };
     }
 
-    // Discord returns messages newest-first; sort oldest-first for processing order
-    messages.sort((a, b) => {
-      // Discord snowflake IDs are chronologically sortable as strings (same length)
-      // but safer to compare as BigInt
-      return Number(BigInt(a.id) - BigInt(b.id));
-    });
+    // Successful fetch but no messages
+    if (!firstPage || firstPage.length === 0) {
+      return { items: [], lastId, usedToken: usedTokenConfig, fetchFailed: false };
+    }
+
+    // Collect all pages (paginate while Discord returns a full page)
+    const allMessages: RawDiscordMessage[] = [...firstPage];
+    let pageCount = 1;
+    let lastPageSize = firstPage.length;
+
+    while (lastPageSize === PAGE_SIZE && pageCount < MAX_PAGES) {
+      const newestInPage = allMessages.reduce((a, b) => (BigInt(a.id) > BigInt(b.id) ? a : b));
+      const nextPath = `/channels/${channelId}/messages?limit=${PAGE_SIZE}&after=${newestInPage.id}`;
+      const nextPage = await discordFetch<RawDiscordMessage[]>(nextPath, workingToken, log);
+      if (nextPage && nextPage.length > 0) {
+        allMessages.push(...nextPage);
+        lastPageSize = nextPage.length;
+        pageCount++;
+      } else {
+        break;
+      }
+    }
+
+    // Sort oldest-first for processing order
+    allMessages.sort((a, b) => Number(BigInt(a.id) - BigInt(b.id)));
 
     const items: RawItem[] = [];
 
-    for (const msg of messages) {
+    for (const msg of allMessages) {
       // Skip bots
       if (msg.author.bot) continue;
 
@@ -338,11 +366,14 @@ export async function pollDiscordChannel(
     }
 
     // The newest message ID becomes the new lastId for the next poll
-    const newestId = messages[messages.length - 1]!.id;
+    const newestId = allMessages[allMessages.length - 1]!.id;
 
-    log.info({ channelId, fetched: messages.length, mapped: items.length, newestId }, 'discord-rest: polled channel');
+    log.info(
+      { channelId, fetched: allMessages.length, pages: pageCount, mapped: items.length, newestId },
+      'discord-rest: polled channel',
+    );
 
-    return { items, lastId: newestId, usedToken };
+    return { items, lastId: newestId, usedToken: usedTokenConfig, fetchFailed: false };
   } finally {
     closeDispatchers(runtimeTokens, log);
   }

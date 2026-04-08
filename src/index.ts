@@ -348,11 +348,28 @@ program
             } else if (src.source === 'discord') {
               // REST polling is the primary ingestion path for Discord sources.
               if (currentDiscordTokens.length === 0) {
-                // No tokens available — just update last_fetched_at to keep health monitor happy
-                await updateSourceState(pool, src.source, src.source_id, now, lastId);
+                log.warn(
+                  { source: src.source, sourceId: src.source_id },
+                  'no discord tokens available — skipping poll',
+                );
                 return;
               }
               const result = await pollDiscordChannel(src.source_id, lastId, currentDiscordTokens, log);
+              if (result.fetchFailed) {
+                // All tokens failed — don't update last_fetched_at so health monitor detects the stall
+                log.error(
+                  { source: src.source, sourceId: src.source_id },
+                  'discord REST poll failed — all tokens exhausted',
+                );
+                await pool.query(
+                  `INSERT INTO source_state (source, source_id, error_count, last_error, status)
+                   VALUES ($2, $3, 1, $1, 'active')
+                   ON CONFLICT (source, source_id)
+                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
+                  ['all discord tokens failed', src.source, src.source_id],
+                );
+                return;
+              }
               items = result.items;
               newLastId = result.lastId ?? lastId;
               if (result.usedToken) {
