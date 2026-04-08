@@ -31,6 +31,87 @@ interface PipelineStatus {
   twitterApiKeyConfigured?: boolean;
 }
 
+type MacroBias = 'risk-on' | 'risk-off' | 'mixed';
+type MacroSignal = 'risk-on' | 'risk-off' | 'neutral';
+type MacroIndicator = 'vix' | 'dxy' | 'us10y' | 'spx' | 'gold';
+
+interface MacroOverviewEntry {
+  indicator: MacroIndicator;
+  label: string;
+  value: number;
+  change1d: number | null;
+  change7d: number | null;
+  date: string;
+  signal: MacroSignal;
+  narrative: string;
+}
+
+interface MacroOverview {
+  overallBias: MacroBias;
+  latestDate: string | null;
+  entries: MacroOverviewEntry[];
+}
+
+interface UnusualActivityEntry {
+  entityId: string;
+  entityName: string;
+  date: string;
+  mentionCount: number;
+  baselineMentionCount: number | null;
+  baselinePeakMentionCount: number | null;
+  baselineDays: number;
+  avgSentiment: number | null;
+  momentum: number | null;
+  spikeRatio: number | null;
+  relevanceScore: number | null;
+  lowRelevance: boolean;
+  duplicateClusterSize: number | null;
+  duplicateAuthorCount: number | null;
+  duplicateSourceCount: number | null;
+}
+
+interface UnusualActivityOverview {
+  latestDate: string | null;
+  entries: UnusualActivityEntry[];
+}
+
+type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
+
+interface NarrativeWatchlistEntry {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: NarrativeSignalStrength;
+}
+
+interface NarrativeWatchlistOverview {
+  latestDate: string | null;
+  entries: NarrativeWatchlistEntry[];
+}
+
+interface NarrativeSummaryPreview {
+  id: string;
+  source: string;
+  sourceId: string;
+  sentiment: number | null;
+  urgency: 'routine' | 'elevated' | 'breaking' | null;
+  itemCount: number;
+  createdAt: number;
+  text: string;
+}
+
+interface NarrativeDrilldown {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: NarrativeSignalStrength;
+  summaries: NarrativeSummaryPreview[];
+}
+
 interface HealthCheck {
   name: string;
   status: 'ok' | 'warn' | 'critical';
@@ -217,6 +298,51 @@ interface AlphaPropagationData {
   records: AlphaPropagationRecord[];
 }
 
+interface AuthorRecord {
+  id: string;
+  platform: string;
+  handle: string;
+  displayName: string | null;
+  firstSeen: number;
+  lastSeen: number;
+  mentionCount: number;
+  credibilityScore: number | null;
+  totalCalls: number;
+  correctCalls: number;
+  createdAt: number;
+}
+
+interface EntityAuthor extends AuthorRecord {
+  entityMentionCount: number;
+  firstEntityCallTime: number | null;
+  firstMover: boolean;
+  firstMoverLagMs: number | null;
+}
+
+type AuthorClaimType = 'bullish' | 'bearish' | 'event' | 'neutral';
+type AuthorCallOutcome = 'correct' | 'incorrect' | 'unresolved';
+
+interface AuthorCall {
+  id: string;
+  authorId: string;
+  entityId: string;
+  entityName: string | null;
+  claimType: AuthorClaimType;
+  claimText: string;
+  confidence: number;
+  sourceItemId: string | null;
+  timestamp: number;
+  resolved: boolean;
+  outcome: AuthorCallOutcome | null;
+  resolvedAt: number | null;
+  createdAt: number;
+}
+
+interface AuthorProfileData {
+  author: AuthorRecord;
+  calls: AuthorCall[];
+}
+
 function getSourceDisplayName(source: Pick<Source, 'source' | 'sourceId' | 'label'>): string {
   const trimmedLabel = typeof source.label === 'string' ? source.label.trim() : '';
   if (trimmedLabel) return trimmedLabel;
@@ -268,6 +394,30 @@ async function fetchCalendarEventsData(): Promise<CalendarEvent[]> {
   return res.events;
 }
 
+async function fetchMacroOverviewData(): Promise<MacroOverview | null> {
+  try {
+    return await apiFetch<MacroOverview>('/macro');
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.includes('404')) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function fetchUnusualActivityOverviewData(): Promise<UnusualActivityOverview> {
+  return apiFetch<UnusualActivityOverview>('/unusual-activity');
+}
+
+async function fetchNarrativeWatchlistData(): Promise<NarrativeWatchlistOverview> {
+  return apiFetch<NarrativeWatchlistOverview>('/narratives');
+}
+
+async function fetchNarrativeDrilldownData(narrativeId: string): Promise<NarrativeDrilldown> {
+  const res = await apiFetch<{ narrative: NarrativeDrilldown }>(`/narratives/${narrativeId}`);
+  return res.narrative;
+}
+
 async function fetchEntitySuggestionsData(query: string): Promise<EntitySuggestion[]> {
   const res = await apiFetch<{ entities: EntitySuggestion[] }>(
     `/entities/search?q=${encodeURIComponent(query)}&limit=6`,
@@ -311,11 +461,156 @@ async function fetchAlphaPropagation(entityId: string, days: number): Promise<Al
   }
 }
 
+async function fetchEntityAuthorsData(entityId: string): Promise<EntityAuthor[]> {
+  const res = await apiFetch<{ authors: EntityAuthor[] }>(`/entities/${entityId}/authors?limit=12`);
+  return res.authors;
+}
+
+async function fetchAuthorProfileData(authorId: string): Promise<AuthorProfileData> {
+  return apiFetch<AuthorProfileData>(`/authors/${authorId}?callLimit=20`);
+}
+
+async function resolveAuthorClaim(callId: string, outcome: AuthorCallOutcome): Promise<void> {
+  await apiFetch<void>(`/author-calls/${callId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ outcome }),
+  });
+}
+
 function formatCompactNumber(num: number): string {
   if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
   if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(2)}M`;
   if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
   return num.toFixed(2);
+}
+
+function macroToneClasses(tone: MacroBias | MacroSignal): string {
+  switch (tone) {
+    case 'risk-on':
+      return 'bg-accent-green/15 text-accent-green border border-accent-green/25';
+    case 'risk-off':
+      return 'bg-accent-red/15 text-accent-red border border-accent-red/25';
+    case 'neutral':
+    case 'mixed':
+    default:
+      return 'bg-background text-text-secondary border border-border';
+  }
+}
+
+function formatMacroValue(entry: MacroOverviewEntry): string {
+  if (entry.indicator === 'spx') {
+    return entry.value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  }
+  return entry.value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatMacroChange(value: number | null, indicator: MacroIndicator): string {
+  if (value == null) return 'n/a';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toLocaleString('en-US', {
+    minimumFractionDigits: indicator === 'spx' ? 0 : 2,
+    maximumFractionDigits: indicator === 'spx' ? 0 : 2,
+  })}`;
+}
+
+function formatUnusualActivityRatio(ratio: number | null): string {
+  if (ratio == null) return 'New breakout';
+  return `${ratio.toFixed(ratio >= 10 ? 0 : 1)}x baseline`;
+}
+
+function formatUnusualActivityRelevance(score: number | null): string {
+  if (score == null) return 'n/a';
+  return score >= 10 ? score.toFixed(0) : score.toFixed(1);
+}
+
+function unusualActivityBadgeClasses(entry: UnusualActivityEntry): string {
+  if (entry.duplicateClusterSize != null && entry.duplicateClusterSize >= 4) {
+    return 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/25';
+  }
+  if (entry.lowRelevance) {
+    return 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/25';
+  }
+  if (entry.spikeRatio == null) {
+    return 'bg-accent/10 text-accent border border-accent/20';
+  }
+  if (entry.spikeRatio >= 5) {
+    return 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/25';
+  }
+  return 'bg-accent/10 text-accent border border-accent/20';
+}
+
+function formatSignedFixed(value: number): string {
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${value.toFixed(2)}`;
+}
+
+function formatUnusualActivityNarrative(entry: UnusualActivityEntry): string {
+  const relevanceNarrative = entry.lowRelevance
+    ? ` Podders still scores this entity as lower relevance${entry.relevanceScore == null ? '' : ` (${formatUnusualActivityRelevance(entry.relevanceScore)})`}, so sudden attention here deserves manual verification.`
+    : '';
+  const duplicateNarrative =
+    entry.duplicateClusterSize == null || entry.duplicateAuthorCount == null
+      ? ''
+      : ` A near-duplicate cluster tied together ${entry.duplicateClusterSize} posts from ${entry.duplicateAuthorCount} authors${entry.duplicateSourceCount != null ? ` across ${entry.duplicateSourceCount} source streams` : ''}.`;
+
+  if (entry.baselineMentionCount == null || entry.baselineDays === 0) {
+    return `${entry.mentionCount} mentions on the latest daily rollup without enough prior history to set a baseline yet.${relevanceNarrative}${duplicateNarrative}`;
+  }
+
+  return `${entry.mentionCount} mentions versus ${entry.baselineMentionCount.toFixed(1)}/day across ${entry.baselineDays} prior day${entry.baselineDays === 1 ? '' : 's'}.${relevanceNarrative}${duplicateNarrative}`;
+}
+
+function narrativeSignalClasses(signalStrength: NarrativeSignalStrength): string {
+  switch (signalStrength) {
+    case 'new':
+      return 'bg-accent/10 text-accent border border-accent/20';
+    case 'emerging':
+      return 'bg-accent-green/15 text-accent-green border border-accent-green/25';
+    case 'strong':
+      return 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/25';
+    case 'stable':
+      return 'bg-background text-text-secondary border border-border';
+    case 'fading':
+      return 'bg-accent-red/15 text-accent-red border border-accent-red/25';
+  }
+}
+
+function formatNarrativeSignalLabel(signalStrength: NarrativeSignalStrength): string {
+  switch (signalStrength) {
+    case 'new':
+      return 'New';
+    case 'emerging':
+      return 'Emerging';
+    case 'strong':
+      return 'Strong';
+    case 'stable':
+      return 'Stable';
+    case 'fading':
+      return 'Fading';
+  }
+}
+
+function formatNarrativeSentiment(avgSentiment: number | null): string {
+  if (avgSentiment == null) return 'sentiment n/a';
+  return `sentiment ${formatSignedFixed(avgSentiment)}`;
+}
+
+function formatNarrativeLifecycleCopy(entry: NarrativeWatchlistEntry): string {
+  switch (entry.signalStrength) {
+    case 'new':
+      return 'Fresh cluster with no close prior-day analogue in the recent narrative history.';
+    case 'emerging':
+      return 'Growing versus the closest recent narrative cluster and worth watching for follow-through.';
+    case 'strong':
+      return 'Meaningfully larger than the closest recent cluster, suggesting the theme is accelerating.';
+    case 'stable':
+      return 'Holding a similar footprint to the prior cluster rather than clearly accelerating or fading.';
+    case 'fading':
+      return 'Smaller than the closest recent cluster, so the theme is still active but losing momentum.';
+  }
 }
 
 const TIMEZONES = (() => {
@@ -584,6 +879,90 @@ function getRelatedEntityId(relationship: EntityRelationship, entityId: string):
   return relationship.entityIdA === entityId ? relationship.entityIdB : relationship.entityIdA;
 }
 
+function formatAuthorHandle(platform: string, handle: string): string {
+  if (platform === 'twitter' && !handle.startsWith('@')) {
+    return `@${handle}`;
+  }
+  return handle;
+}
+
+function formatAuthorPlatform(platform: string): string {
+  if (platform === 'twitter') return 'Twitter/X';
+  if (platform === 'discord') return 'Discord';
+  return platform.charAt(0).toUpperCase() + platform.slice(1);
+}
+
+function formatAuthorClaimType(type: AuthorClaimType): string {
+  if (type === 'bullish') return 'Bullish';
+  if (type === 'bearish') return 'Bearish';
+  if (type === 'event') return 'Event';
+  return 'Neutral';
+}
+
+function getAuthorClaimTypeStyles(type: AuthorClaimType): string {
+  if (type === 'bullish') return 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400';
+  if (type === 'bearish') return 'bg-red-500/10 border border-red-500/20 text-red-400';
+  if (type === 'event') return 'bg-blue-500/10 border border-blue-500/20 text-blue-400';
+  return 'bg-background border border-border text-text-secondary';
+}
+
+function formatAuthorOutcome(outcome: AuthorCallOutcome | null, resolved: boolean): string {
+  if (!resolved || outcome == null) return 'Needs review';
+  if (outcome === 'correct') return 'Correct';
+  if (outcome === 'incorrect') return 'Incorrect';
+  return 'Dismissed';
+}
+
+function getAuthorOutcomeStyles(outcome: AuthorCallOutcome | null, resolved: boolean): string {
+  if (!resolved || outcome == null) return 'bg-background border border-border text-text-secondary';
+  if (outcome === 'correct') return 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400';
+  if (outcome === 'incorrect') return 'bg-red-500/10 border border-red-500/20 text-red-400';
+  return 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400';
+}
+
+function formatAuthorReviewHistory(author: Pick<AuthorRecord, 'correctCalls' | 'totalCalls'>): string {
+  if (author.totalCalls === 0) {
+    return 'No reviewed calls yet';
+  }
+
+  const remaining = Math.max(0, 5 - author.totalCalls);
+  if (remaining > 0) {
+    return `${author.correctCalls}/${author.totalCalls} reviewed correct | ${remaining} more for stable history`;
+  }
+
+  return `${author.correctCalls}/${author.totalCalls} reviewed correct`;
+}
+
+function formatCompactDuration(durationMs: number): string {
+  const safeDurationMs = Math.max(0, durationMs);
+  const mins = Math.round(safeDurationMs / 60000);
+  if (mins < 60) return `${Math.max(1, mins)}m`;
+
+  const hours = safeDurationMs / 3_600_000;
+  if (hours < 24) {
+    const roundedHours = Math.round(hours * 10) / 10;
+    return `${Number.isInteger(roundedHours) ? roundedHours.toFixed(0) : roundedHours.toFixed(1)}h`;
+  }
+
+  const days = safeDurationMs / 86_400_000;
+  const roundedDays = Math.round(days * 10) / 10;
+  return `${Number.isInteger(roundedDays) ? roundedDays.toFixed(0) : roundedDays.toFixed(1)}d`;
+}
+
+function formatAuthorTiming(
+  author: Pick<EntityAuthor, 'firstEntityCallTime' | 'firstMover' | 'firstMoverLagMs'> | null,
+): string {
+  if (author?.firstEntityCallTime == null) {
+    return 'No tracked calls yet';
+  }
+
+  if (author.firstMover || (author.firstMoverLagMs ?? 0) <= 0) {
+    return 'First mover';
+  }
+
+  return `+${formatCompactDuration(author.firstMoverLagMs ?? 0)} after lead`;
+}
+
 function getEntityRelationshipConnectionSummary(connection: EntityRelationshipGraphConnection): string {
   if (connection.relationships.length === 1) {
     return formatEntityRelationshipType(connection.primaryRelationship.relationshipType);
@@ -617,7 +996,10 @@ function buildEntityRelationshipGraphConnections(
   return Array.from(grouped.entries())
     .map(([relatedEntityId, group]) => {
       const sortedRelationships = [...group.relationships].sort(
-        (a, b) => b.confidence - a.confidence || b.updatedAt - a.updatedAt || a.relationshipType.localeCompare(b.relationshipType),
+        (a, b) =>
+          b.confidence - a.confidence ||
+          b.updatedAt - a.updatedAt ||
+          a.relationshipType.localeCompare(b.relationshipType),
       );
 
       return {
@@ -671,7 +1053,10 @@ function buildEntityRelationshipSecondDegreeGroups(
         return false;
       })
       .sort(
-        (a, b) => b.updatedAt - a.updatedAt || b.confidence - a.confidence || a.relationshipType.localeCompare(b.relationshipType),
+        (a, b) =>
+          b.updatedAt - a.updatedAt ||
+          b.confidence - a.confidence ||
+          a.relationshipType.localeCompare(b.relationshipType),
       );
 
     const parent = candidateParents[0];
@@ -728,7 +1113,8 @@ function EntityRelationshipGraph({
   const hiddenConnections = Math.max(0, connections.length - visibleConnections.length);
   const activeConnections = connections.filter((connection) => !connection.isEnded).length;
   const evidenceConnections = connections.filter((connection) => connection.hasEvidence).length;
-  const focusedConnection = connections.find((connection) => connection.relatedEntityId === focusedConnectionId) ?? null;
+  const focusedConnection =
+    connections.find((connection) => connection.relatedEntityId === focusedConnectionId) ?? null;
   const secondDegreeGroups = buildEntityRelationshipSecondDegreeGroups(graphData, visibleConnections);
   const visibleSecondDegreeGroups =
     focusedConnection == null
@@ -744,7 +1130,8 @@ function EntityRelationshipGraph({
             {connections.length} connected {connections.length === 1 ? 'entity' : 'entities'}
           </div>
           <div className="text-xs text-text-secondary font-body mt-1">
-            Click a node or legend chip to focus the relationship list below. Dashed links mark neighborhoods whose mapped relationships are already ended.
+            Click a node or legend chip to focus the relationship list below. Dashed links mark neighborhoods whose
+            mapped relationships are already ended.
           </div>
         </div>
         <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wide">
@@ -777,7 +1164,12 @@ function EntityRelationshipGraph({
             style={{ background: 'radial-gradient(circle at center, rgba(91, 158, 255, 0.11), transparent 58%)' }}
             aria-hidden="true"
           />
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <svg
+            className="absolute inset-0 h-full w-full"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
             {visibleConnections.map((connection, index) => {
               const position = getEntityRelationshipGraphPosition(index, visibleConnections.length);
               const style = ENTITY_RELATIONSHIP_GRAPH_STYLES[connection.primaryRelationship.relationshipType];
@@ -801,7 +1193,9 @@ function EntityRelationshipGraph({
 
           <div className="absolute left-1/2 top-1/2 z-10 w-40 max-w-[46vw] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-accent/30 bg-surface px-4 py-3 text-center shadow-[0_10px_30px_rgba(0,0,0,0.18)]">
             <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">Selected</div>
-            <div className="mt-1 text-sm text-text-primary font-heading leading-tight break-words">{selectedEntity.name}</div>
+            <div className="mt-1 text-sm text-text-primary font-heading leading-tight break-words">
+              {selectedEntity.name}
+            </div>
             <div className="mt-2 text-[11px] text-text-secondary font-body">
               {relationshipCount} mapped relationship{relationshipCount !== 1 ? 's' : ''}
             </div>
@@ -831,7 +1225,9 @@ function EntityRelationshipGraph({
                     : '0 10px 30px rgba(0,0,0,0.18)',
                 }}
               >
-                <div className="text-sm text-text-primary font-body leading-tight break-words">{connection.relatedEntityName}</div>
+                <div className="text-sm text-text-primary font-body leading-tight break-words">
+                  {connection.relatedEntityName}
+                </div>
                 <div className="mt-1 text-[10px] text-text-secondary font-mono uppercase tracking-wide leading-tight">
                   {getEntityRelationshipConnectionSummary(connection)}
                 </div>
@@ -873,7 +1269,9 @@ function EntityRelationshipGraph({
                 aria-pressed={isFocused}
                 aria-label={`Focus ${connection.relatedEntityName} relationship list`}
                 className={`inline-flex items-center gap-2 rounded-full border bg-surface px-3 py-1.5 text-xs font-body transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60 ${
-                  isFocused ? 'border-accent/50 text-text-primary' : 'border-border text-text-primary hover:border-accent/30'
+                  isFocused
+                    ? 'border-accent/50 text-text-primary'
+                    : 'border-border text-text-primary hover:border-accent/30'
                 }`}
               >
                 <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: style.lineColor }} />
@@ -1392,7 +1790,8 @@ function SourcesTab() {
         {/* Twitter API key warning */}
         {addSource === 'twitter' && twitterApiKeyConfigured === false && (
           <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-4 py-3 text-yellow-400 text-sm font-body">
-            Twitter API key (TWITTERAPI_KEY) is not configured in .env. Twitter sources will not poll until a key is set.
+            Twitter API key (TWITTERAPI_KEY) is not configured in .env. Twitter sources will not poll until a key is
+            set.
           </div>
         )}
         {/* Discord channel browser */}
@@ -1511,7 +1910,8 @@ function SourcesTab() {
                 </p>
               )}
               <p className="text-text-secondary text-xs font-body mt-1">
-                Use @handle for a user timeline, or any search query. Supports: from:user, &quot;exact phrase&quot;, OR, -exclude
+                Use @handle for a user timeline, or any search query. Supports: from:user, &quot;exact phrase&quot;, OR,
+                -exclude
               </p>
             </>
           )}
@@ -1818,9 +2218,7 @@ function SourcesTab() {
                       {s.source === 'twitter' && (
                         <span
                           className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide ${
-                            s.sourceId.startsWith('@')
-                              ? 'bg-accent/15 text-accent'
-                              : 'bg-yellow-500/15 text-yellow-400'
+                            s.sourceId.startsWith('@') ? 'bg-accent/15 text-accent' : 'bg-yellow-500/15 text-yellow-400'
                           }`}
                         >
                           {s.sourceId.startsWith('@') ? '@handle' : 'search'}
@@ -1886,10 +2284,18 @@ function SourcesTab() {
                                 : 'bg-border/50 text-text-secondary'
                         }`}
                       >
-                        <option value="general" className="bg-background text-text-primary">General</option>
-                        <option value="alpha" className="bg-background text-text-primary">Alpha</option>
-                        <option value="influencer" className="bg-background text-text-primary">Influencer</option>
-                        <option value="mainstream" className="bg-background text-text-primary">Mainstream</option>
+                        <option value="general" className="bg-background text-text-primary">
+                          General
+                        </option>
+                        <option value="alpha" className="bg-background text-text-primary">
+                          Alpha
+                        </option>
+                        <option value="influencer" className="bg-background text-text-primary">
+                          Influencer
+                        </option>
+                        <option value="mainstream" className="bg-background text-text-primary">
+                          Mainstream
+                        </option>
                       </select>
                     </td>
                     <td className="px-4 py-3">
@@ -1904,7 +2310,9 @@ function SourcesTab() {
                           rate limited
                         </span>
                       )}
-                      {(s.lastError || s.stateStatus === 'halted' || (s.source === 'twitter' && s.nextRetryAt != null && s.nextRetryAt > Date.now())) && (
+                      {(s.lastError ||
+                        s.stateStatus === 'halted' ||
+                        (s.source === 'twitter' && s.nextRetryAt != null && s.nextRetryAt > Date.now())) && (
                         <p
                           className={`text-xs mt-1 font-body ${
                             s.source === 'twitter' && s.stateStatus === 'halted'
@@ -2390,6 +2798,19 @@ function PipelineTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [macroOverview, setMacroOverview] = useState<MacroOverview | null>(null);
+  const [macroLoading, setMacroLoading] = useState(true);
+  const [macroError, setMacroError] = useState<string | null>(null);
+  const [unusualActivity, setUnusualActivity] = useState<UnusualActivityOverview | null>(null);
+  const [unusualLoading, setUnusualLoading] = useState(true);
+  const [unusualError, setUnusualError] = useState<string | null>(null);
+  const [narrativeWatchlist, setNarrativeWatchlist] = useState<NarrativeWatchlistOverview | null>(null);
+  const [narrativeLoading, setNarrativeLoading] = useState(true);
+  const [narrativeError, setNarrativeError] = useState<string | null>(null);
+  const [expandedNarrativeId, setExpandedNarrativeId] = useState<string | null>(null);
+  const [narrativeDetails, setNarrativeDetails] = useState<Record<string, NarrativeDrilldown>>({});
+  const [narrativeDetailLoadingId, setNarrativeDetailLoadingId] = useState<string | null>(null);
+  const [narrativeDetailErrors, setNarrativeDetailErrors] = useState<Record<string, string>>({});
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -2425,6 +2846,66 @@ function PipelineTab() {
 
   useEffect(() => {
     let cancelled = false;
+    fetchMacroOverviewData()
+      .then((overview) => {
+        if (cancelled) return;
+        setMacroOverview(overview);
+        setMacroError(null);
+      })
+      .catch(() => {
+        if (!cancelled) setMacroError('Failed to load macro backdrop.');
+      })
+      .finally(() => {
+        if (!cancelled) setMacroLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchUnusualActivityOverviewData()
+      .then((overview) => {
+        if (cancelled) return;
+        setUnusualActivity(overview);
+        setUnusualError(null);
+      })
+      .catch(() => {
+        if (!cancelled) setUnusualError('Failed to load unusual activity.');
+      })
+      .finally(() => {
+        if (!cancelled) setUnusualLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchNarrativeWatchlistData()
+      .then((overview) => {
+        if (cancelled) return;
+        setNarrativeWatchlist(overview);
+        setNarrativeError(null);
+      })
+      .catch(() => {
+        if (!cancelled) setNarrativeError('Failed to load narrative watchlist.');
+      })
+      .finally(() => {
+        if (!cancelled) setNarrativeLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
     fetchCalendarEventsData()
       .then((events) => {
         if (cancelled) return;
@@ -2441,6 +2922,44 @@ function PipelineTab() {
       cancelled = true;
     };
   }, []);
+
+  async function loadNarrativeDrilldown(narrativeId: string): Promise<void> {
+    setNarrativeDetailLoadingId(narrativeId);
+    setNarrativeDetailErrors((current) => {
+      const next = { ...current };
+      delete next[narrativeId];
+      return next;
+    });
+
+    try {
+      const narrative = await fetchNarrativeDrilldownData(narrativeId);
+      setNarrativeDetails((current) => ({
+        ...current,
+        [narrativeId]: narrative,
+      }));
+    } catch {
+      setNarrativeDetailErrors((current) => ({
+        ...current,
+        [narrativeId]: 'Failed to load clustered summaries.',
+      }));
+    } finally {
+      setNarrativeDetailLoadingId((current) => (current === narrativeId ? null : current));
+    }
+  }
+
+  function toggleNarrativeDrilldown(narrativeId: string): void {
+    setExpandedNarrativeId((current) => (current === narrativeId ? null : narrativeId));
+
+    if (
+      expandedNarrativeId === narrativeId ||
+      narrativeDetails[narrativeId] ||
+      narrativeDetailLoadingId === narrativeId
+    ) {
+      return;
+    }
+
+    void loadNarrativeDrilldown(narrativeId);
+  }
 
   useEffect(() => {
     if (!calendarModalOpen || !isAdmin) {
@@ -2632,6 +3151,360 @@ function PipelineTab() {
         <p className="text-text-primary text-lg font-mono">
           ${status.costToday.toFixed(2)} <span className="text-text-secondary text-xs">today</span>
         </p>
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
+          <div>
+            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Macro Backdrop</h3>
+            <p className="text-text-secondary/70 text-sm font-body mt-1">
+              Latest FRED snapshots feed cross-market correlation context into daily and pulse synthesis.
+            </p>
+          </div>
+          {macroOverview && macroOverview.entries.length > 0 && (
+            <span
+              aria-label={`Overall macro bias ${macroOverview.overallBias}`}
+              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${macroToneClasses(macroOverview.overallBias)}`}
+            >
+              {macroOverview.overallBias}
+            </span>
+          )}
+        </div>
+
+        {macroLoading ? (
+          <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
+        ) : macroError ? (
+          <p className="px-4 py-6 text-red-400 text-sm font-body">{macroError}</p>
+        ) : !macroOverview || macroOverview.entries.length === 0 ? (
+          <EmptyState
+            title="No macro snapshots yet"
+            description="Macro indicators appear here after the daily FRED refresh runs with FRED_API_KEY configured."
+          />
+        ) : (
+          <div className="p-4 space-y-4">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-text-primary text-sm font-body">Latest snapshot date</p>
+                <p className="text-text-secondary text-xs font-mono mt-1">{macroOverview.latestDate ?? 'Unknown'}</p>
+              </div>
+              <p className="max-w-xl text-text-secondary/70 text-sm font-body">
+                Rising VIX, dollar strength, and higher yields usually lean risk-off, while a firmer S&amp;P 500 leans
+                risk-on. Podders uses this backdrop to frame when crypto sentiment is aligned or stretched.
+              </p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              {macroOverview.entries.map((entry) => (
+                <div key={entry.indicator} className="rounded-lg border border-border bg-background p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-text-primary text-sm font-body">{entry.label}</h4>
+                      <p className="text-text-secondary/70 text-xs font-body mt-1">{entry.narrative}</p>
+                    </div>
+                    <span
+                      aria-label={`${entry.label} macro signal ${entry.signal}`}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${macroToneClasses(entry.signal)}`}
+                    >
+                      {entry.signal}
+                    </span>
+                  </div>
+
+                  <p className="text-text-primary text-xl font-mono">{formatMacroValue(entry)}</p>
+
+                  <div className="flex flex-wrap gap-2 text-xs font-mono">
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      1d change {formatMacroChange(entry.change1d, entry.indicator)}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      7d change {formatMacroChange(entry.change7d, entry.indicator)}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      snapshot {entry.date}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
+          <div>
+            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Unusual Activity</h3>
+            <p className="text-text-secondary/70 text-sm font-body mt-1">
+              Daily mention spikes, especially in lower-relevance entities, plus strong copy-paste style clusters.
+              Useful as an attention heuristic, not manipulation detection.
+            </p>
+          </div>
+          {unusualActivity && unusualActivity.entries.length > 0 && (
+            <span className="px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide bg-accent/10 text-accent border border-accent/20">
+              {unusualActivity.entries.length} flagged
+            </span>
+          )}
+        </div>
+
+        {unusualLoading ? (
+          <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
+        ) : unusualError ? (
+          <p className="px-4 py-6 text-red-400 text-sm font-body">{unusualError}</p>
+        ) : !unusualActivity || unusualActivity.entries.length === 0 ? (
+          <EmptyState
+            title="No unusual activity on the latest rollup"
+            description="Entities with outsized daily mention spikes or strong same-day copy clusters will appear here once Podders has enough history to compare against a recent baseline."
+          />
+        ) : (
+          <div className="p-4 space-y-4">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-text-primary text-sm font-body">Latest rollup date</p>
+                <p className="text-text-secondary text-xs font-mono mt-1">{unusualActivity.latestDate ?? 'Unknown'}</p>
+              </div>
+              <p className="max-w-xl text-text-secondary/70 text-sm font-body">
+                This watchlist combines latest daily mention spikes, a lower-relevance breakout bias, and strong
+                near-duplicate posting clusters. Treat it as a prompt to inspect the entity, not proof of coordinated
+                behavior.
+              </p>
+            </div>
+
+            <div className="space-y-3" aria-label="Unusual activity entities">
+              {unusualActivity.entries.map((entry) => (
+                <div key={entry.entityId} className="rounded-lg border border-border bg-background p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-text-primary text-sm font-body">{entry.entityName}</h4>
+                      <p className="text-text-secondary/70 text-sm font-body mt-1">
+                        {formatUnusualActivityNarrative(entry)}
+                      </p>
+                    </div>
+                    <span
+                      aria-label={`${entry.entityName} unusual activity ${formatUnusualActivityRatio(entry.spikeRatio)}`}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${unusualActivityBadgeClasses(entry)}`}
+                    >
+                      {formatUnusualActivityRatio(entry.spikeRatio)}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-xs font-mono">
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      today {entry.mentionCount} mentions
+                    </span>
+                    {entry.baselineMentionCount != null && (
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        baseline {entry.baselineMentionCount.toFixed(1)}/day
+                      </span>
+                    )}
+                    {entry.baselinePeakMentionCount != null && (
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        prior peak {entry.baselinePeakMentionCount}
+                      </span>
+                    )}
+                    {entry.lowRelevance && (
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-yellow-300">
+                        low relevance {formatUnusualActivityRelevance(entry.relevanceScore)}
+                      </span>
+                    )}
+                    {entry.duplicateClusterSize != null && (
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-yellow-300">
+                        copy cluster {entry.duplicateClusterSize} posts
+                      </span>
+                    )}
+                    {entry.duplicateAuthorCount != null && (
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        {entry.duplicateAuthorCount} authors
+                      </span>
+                    )}
+                    {entry.momentum != null && (
+                      <span
+                        className={`px-2 py-1 rounded bg-surface border border-border ${entry.momentum >= 0 ? 'text-accent-green' : 'text-accent-red'}`}
+                      >
+                        momentum {formatSignedFixed(entry.momentum)}
+                      </span>
+                    )}
+                    {entry.avgSentiment != null && (
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        sentiment {entry.avgSentiment.toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
+          <div>
+            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Narrative Watchlist</h3>
+            <p className="text-text-secondary/70 text-sm font-body mt-1">
+              Latest narrative clusters from the daily embedding pass. These labels describe current trajectory; they
+              are not forward predictions.
+            </p>
+          </div>
+          {narrativeWatchlist && narrativeWatchlist.entries.length > 0 && (
+            <span className="px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide bg-accent/10 text-accent border border-accent/20">
+              {narrativeWatchlist.entries.length} tracked
+            </span>
+          )}
+        </div>
+
+        {narrativeLoading ? (
+          <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
+        ) : narrativeError ? (
+          <p className="px-4 py-6 text-red-400 text-sm font-body">{narrativeError}</p>
+        ) : !narrativeWatchlist || narrativeWatchlist.entries.length === 0 ? (
+          <EmptyState
+            title="No narrative clusters yet"
+            description="Narratives appear here after the daily clustering pass has enough summary embeddings to form stable groups."
+          />
+        ) : (
+          <div className="p-4 space-y-4">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div>
+                <p className="text-text-primary text-sm font-body">Latest cluster date</p>
+                <p className="text-text-secondary text-xs font-mono mt-1">
+                  {narrativeWatchlist.latestDate ?? 'Unknown'}
+                </p>
+              </div>
+              <p className="max-w-xl text-text-secondary/70 text-sm font-body">
+                Podders groups recent summaries by embedding similarity, names each cluster, and compares it with prior
+                daily clusters to decide whether the theme looks new, accelerating, stable, or fading.
+              </p>
+            </div>
+
+            <div className="space-y-3" aria-label="Narrative watchlist">
+              {narrativeWatchlist.entries.map((entry) => (
+                <div key={entry.id} className="rounded-lg border border-border bg-background p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-text-primary text-sm font-body">{entry.name}</h4>
+                      <p className="text-text-secondary/70 text-sm font-body mt-1">
+                        {formatNarrativeLifecycleCopy(entry)}
+                      </p>
+                    </div>
+                    <span
+                      aria-label={`${entry.name} narrative strength ${entry.signalStrength}`}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${narrativeSignalClasses(entry.signalStrength)}`}
+                    >
+                      {formatNarrativeSignalLabel(entry.signalStrength)}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-xs font-mono">
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      {entry.memberCount} summaries clustered
+                    </span>
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      {formatNarrativeSentiment(entry.avgSentiment)}
+                    </span>
+                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                      snapshot {entry.date}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-text-secondary/70 text-xs font-body">
+                      Open the clustered summaries inline to inspect the evidence behind this theme.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => toggleNarrativeDrilldown(entry.id)}
+                      aria-expanded={expandedNarrativeId === entry.id}
+                      aria-label={`${expandedNarrativeId === entry.id ? 'Hide' : 'Show'} summaries for ${entry.name}`}
+                      className="px-3 py-1.5 rounded border border-border bg-surface text-text-secondary text-xs font-mono uppercase tracking-wide hover:text-text-primary transition-colors"
+                    >
+                      {expandedNarrativeId === entry.id ? 'Hide summaries' : 'Show summaries'}
+                    </button>
+                  </div>
+
+                  {expandedNarrativeId === entry.id && (
+                    <div className="rounded-lg border border-border/70 bg-surface/60 p-4 space-y-3">
+                      {narrativeDetailLoadingId === entry.id ? (
+                        <p className="text-text-secondary text-sm font-body">Loading clustered summaries...</p>
+                      ) : narrativeDetailErrors[entry.id] ? (
+                        <div className="space-y-3">
+                          <p className="text-red-400 text-sm font-body">{narrativeDetailErrors[entry.id]}</p>
+                          <button
+                            type="button"
+                            onClick={() => void loadNarrativeDrilldown(entry.id)}
+                            className="px-3 py-1.5 rounded border border-border bg-background text-text-secondary text-xs font-mono uppercase tracking-wide hover:text-text-primary transition-colors"
+                          >
+                            Retry summaries
+                          </button>
+                        </div>
+                      ) : narrativeDetails[entry.id] == null || narrativeDetails[entry.id].summaries.length === 0 ? (
+                        <p className="text-text-secondary text-sm font-body">
+                          No retained summaries are available for this cluster yet.
+                        </p>
+                      ) : (
+                        <>
+                          <div className="flex items-start justify-between gap-3 flex-wrap">
+                            <div>
+                              <p className="text-text-primary text-sm font-body">Most recent clustered summaries</p>
+                              <p className="text-text-secondary/70 text-xs font-body mt-1">
+                                Showing {narrativeDetails[entry.id].summaries.length} of {entry.memberCount} summaries
+                                linked to this narrative.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            {narrativeDetails[entry.id].summaries.map((summary) => (
+                              <div
+                                key={summary.id}
+                                className="rounded-lg border border-border bg-background px-3 py-3 space-y-2"
+                              >
+                                <div className="flex items-start justify-between gap-3 flex-wrap">
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+                                      {summary.source} | {formatRelativeTime(summary.createdAt)}
+                                    </div>
+                                    <div className="text-text-primary text-sm font-body leading-relaxed">
+                                      {summary.text}
+                                    </div>
+                                  </div>
+                                  <Link
+                                    to={`/summaries/${summary.id}`}
+                                    className="text-xs font-mono uppercase tracking-wider text-accent hover:underline shrink-0"
+                                  >
+                                    Open summary
+                                  </Link>
+                                </div>
+
+                                <div className="flex flex-wrap gap-2 text-xs font-mono">
+                                  <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                    {summary.itemCount} item{summary.itemCount === 1 ? '' : 's'}
+                                  </span>
+                                  {summary.urgency && (
+                                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                      urgency {summary.urgency}
+                                    </span>
+                                  )}
+                                  {summary.sentiment != null && (
+                                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                      sentiment {summary.sentiment > 0 ? '+' : ''}
+                                      {summary.sentiment.toFixed(2)}
+                                    </span>
+                                  )}
+                                  <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                    {summary.sourceId}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -2885,6 +3758,14 @@ function EntitiesTab() {
   const [divergenceDays, setDivergenceDays] = useState<number>(7);
   const [priceData, setPriceData] = useState<EntityPriceData | null>(null);
   const [alphaPropagation, setAlphaPropagation] = useState<AlphaPropagationData | null>(null);
+  const [entityAuthors, setEntityAuthors] = useState<EntityAuthor[]>([]);
+  const [authorsLoading, setAuthorsLoading] = useState(false);
+  const [authorsError, setAuthorsError] = useState<string | null>(null);
+  const [selectedAuthorId, setSelectedAuthorId] = useState<string | null>(null);
+  const [authorProfile, setAuthorProfile] = useState<AuthorProfileData | null>(null);
+  const [authorProfileLoading, setAuthorProfileLoading] = useState(false);
+  const [authorProfileError, setAuthorProfileError] = useState<string | null>(null);
+  const [resolvingAuthorCallId, setResolvingAuthorCallId] = useState<string | null>(null);
 
   useEffect(() => {
     const query = entityQuery.trim();
@@ -2971,16 +3852,14 @@ function EntitiesTab() {
       fetchEntityRelationshipsData(selectedEntity.id),
       fetchEntityCompetitorsData(selectedEntity.id),
       fetchEntityRelationshipGraphData(selectedEntity.id),
-      fetchEntityDivergenceData(selectedEntity.id, divergenceDays).catch(() => null),
       fetchEntityPriceData(selectedEntity.id, 7),
       fetchAlphaPropagation(selectedEntity.id, 7),
     ])
-      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData, nextAlphaPropagation]) => {
+      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextPriceData, nextAlphaPropagation]) => {
         if (cancelled) return;
         setRelationships(nextRelationships);
         setCompetitors(nextCompetitors);
         setRelationshipGraph(nextRelationshipGraph);
-        setDivergence(nextDivergence);
         setPriceData(nextPriceData);
         setAlphaPropagation(nextAlphaPropagation);
       })
@@ -2989,7 +3868,6 @@ function EntitiesTab() {
         setRelationships([]);
         setCompetitors([]);
         setRelationshipGraph(null);
-        setDivergence(null);
         setPriceData(null);
         setAlphaPropagation(null);
         setDetailsError('Failed to load entity relationships.');
@@ -3001,7 +3879,154 @@ function EntitiesTab() {
     return () => {
       cancelled = true;
     };
+  }, [selectedEntity]);
+
+  useEffect(() => {
+    if (!selectedEntity) {
+      setDivergence(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    fetchEntityDivergenceData(selectedEntity.id, divergenceDays)
+      .then((nextDivergence) => {
+        if (cancelled) return;
+        setDivergence(nextDivergence);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDivergence(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedEntity, divergenceDays]);
+
+  useEffect(() => {
+    if (!selectedEntity) {
+      setEntityAuthors([]);
+      setAuthorsLoading(false);
+      setAuthorsError(null);
+      setSelectedAuthorId(null);
+      setAuthorProfile(null);
+      setAuthorProfileLoading(false);
+      setAuthorProfileError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthorsLoading(true);
+    setAuthorsError(null);
+
+    fetchEntityAuthorsData(selectedEntity.id)
+      .then((nextAuthors) => {
+        if (cancelled) return;
+        setEntityAuthors(nextAuthors);
+        setSelectedAuthorId((current) => {
+          const targetAuthorId = current ?? nextAuthors[0]?.id ?? null;
+          if (targetAuthorId && nextAuthors.some((author) => author.id === targetAuthorId)) {
+            return targetAuthorId;
+          }
+          return nextAuthors[0]?.id ?? null;
+        });
+        if (nextAuthors.length === 0) {
+          setAuthorProfile(null);
+          setAuthorProfileError(null);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEntityAuthors([]);
+        setSelectedAuthorId(null);
+        setAuthorProfile(null);
+        setAuthorsError('Failed to load top authors.');
+      })
+      .finally(() => {
+        if (!cancelled) setAuthorsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntity]);
+
+  useEffect(() => {
+    if (!selectedAuthorId) {
+      setAuthorProfile(null);
+      setAuthorProfileLoading(false);
+      setAuthorProfileError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthorProfileLoading(true);
+    setAuthorProfileError(null);
+
+    fetchAuthorProfileData(selectedAuthorId)
+      .then((nextProfile) => {
+        if (cancelled) return;
+        setAuthorProfile(nextProfile);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAuthorProfile(null);
+        setAuthorProfileError('Failed to load author profile.');
+      })
+      .finally(() => {
+        if (!cancelled) setAuthorProfileLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedAuthorId]);
+
+  async function reloadEntityAuthors(preferredAuthorId?: string): Promise<void> {
+    if (!selectedEntity) return;
+
+    setAuthorsLoading(true);
+    setAuthorsError(null);
+    try {
+      const nextAuthors = await fetchEntityAuthorsData(selectedEntity.id);
+      setEntityAuthors(nextAuthors);
+      setSelectedAuthorId((current) => {
+        const targetAuthorId = preferredAuthorId ?? current;
+        if (targetAuthorId && nextAuthors.some((author) => author.id === targetAuthorId)) {
+          return targetAuthorId;
+        }
+        return nextAuthors[0]?.id ?? null;
+      });
+      if (nextAuthors.length === 0) {
+        setAuthorProfile(null);
+        setAuthorProfileError(null);
+      }
+    } catch {
+      setEntityAuthors([]);
+      setSelectedAuthorId(null);
+      setAuthorProfile(null);
+      setAuthorsError('Failed to load top authors.');
+    } finally {
+      setAuthorsLoading(false);
+    }
+  }
+
+  async function reloadAuthorProfile(authorId = selectedAuthorId): Promise<void> {
+    if (!authorId) return;
+
+    setAuthorProfileLoading(true);
+    setAuthorProfileError(null);
+    try {
+      const nextProfile = await fetchAuthorProfileData(authorId);
+      setAuthorProfile(nextProfile);
+    } catch {
+      setAuthorProfile(null);
+      setAuthorProfileError('Failed to load author profile.');
+    } finally {
+      setAuthorProfileLoading(false);
+    }
+  }
 
   async function reloadSelectedEntityDetails(): Promise<void> {
     if (!selectedEntity) return;
@@ -3009,7 +4034,14 @@ function EntitiesTab() {
     setDetailsLoading(true);
     setDetailsError(null);
     try {
-      const [nextRelationships, nextCompetitors, nextRelationshipGraph, nextDivergence, nextPriceData, nextAlphaPropagation] = await Promise.all([
+      const [
+        nextRelationships,
+        nextCompetitors,
+        nextRelationshipGraph,
+        nextDivergence,
+        nextPriceData,
+        nextAlphaPropagation,
+      ] = await Promise.all([
         fetchEntityRelationshipsData(selectedEntity.id),
         fetchEntityCompetitorsData(selectedEntity.id),
         fetchEntityRelationshipGraphData(selectedEntity.id),
@@ -3043,6 +4075,12 @@ function EntitiesTab() {
     setActionError(null);
     setSelectedRelatedEntity(null);
     setRelatedEntityQuery('');
+    setEntityAuthors([]);
+    setAuthorsError(null);
+    setSelectedAuthorId(null);
+    setAuthorProfile(null);
+    setAuthorProfileError(null);
+    setResolvingAuthorCallId(null);
   }
 
   function selectRelatedEntity(entity: EntitySuggestion): void {
@@ -3122,17 +4160,38 @@ function EntitiesTab() {
     }
   }
 
+  async function handleResolveAuthorCall(callId: string, outcome: AuthorCallOutcome): Promise<void> {
+    if (!selectedAuthorId) return;
+
+    setResolvingAuthorCallId(callId);
+    setActionError(null);
+    try {
+      await resolveAuthorClaim(callId, outcome);
+      await Promise.all([reloadEntityAuthors(selectedAuthorId), reloadAuthorProfile(selectedAuthorId)]);
+    } catch {
+      setActionError('Failed to resolve author claim.');
+    } finally {
+      setResolvingAuthorCallId(null);
+    }
+  }
+
   const shouldShowEntitySuggestions =
     entityQuery.trim().length >= 2 &&
     (selectedEntity == null || entityQuery.trim().toLowerCase() !== selectedEntity.name.toLowerCase());
   const shouldShowRelatedEntitySuggestions =
     isAdmin &&
     relatedEntityQuery.trim().length >= 2 &&
-    (selectedRelatedEntity == null || relatedEntityQuery.trim().toLowerCase() !== selectedRelatedEntity.name.toLowerCase());
-  const graphConnections = selectedEntity ? buildEntityRelationshipGraphConnections(selectedEntity.id, relationships) : [];
+    (selectedRelatedEntity == null ||
+      relatedEntityQuery.trim().toLowerCase() !== selectedRelatedEntity.name.toLowerCase());
+  const graphConnections = selectedEntity
+    ? buildEntityRelationshipGraphConnections(selectedEntity.id, relationships)
+    : [];
   const focusedGraphConnection =
     graphConnections.find((connection) => connection.relatedEntityId === focusedRelationshipEntityId) ?? null;
   const visibleRelationships = focusedGraphConnection ? focusedGraphConnection.relationships : relationships;
+  const selectedEntityAuthor = entityAuthors.find((author) => author.id === selectedAuthorId) ?? null;
+  const selectedAuthor = selectedEntityAuthor ?? authorProfile?.author ?? null;
+  const authorCalls = authorProfile?.calls ?? [];
 
   function toggleGraphConnectionFocus(relatedEntityId: string): void {
     setFocusedRelationshipEntityId((current) => (current === relatedEntityId ? null : relatedEntityId));
@@ -3219,7 +4278,9 @@ function EntitiesTab() {
               </div>
               <div className="text-lg text-text-primary font-heading">{selectedEntity.name}</div>
               <div className="text-sm text-text-secondary font-body mt-2">
-                {selectedEntity.matchedAlias ? `Matched via alias: ${selectedEntity.matchedAlias}` : 'Matched on canonical name'}
+                {selectedEntity.matchedAlias
+                  ? `Matched via alias: ${selectedEntity.matchedAlias}`
+                  : 'Matched on canonical name'}
               </div>
             </div>
             <div className="bg-surface border border-border rounded-lg p-4">
@@ -3242,7 +4303,9 @@ function EntitiesTab() {
               <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
                   <div>
-                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Regional Divergence</h3>
+                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+                      Regional Divergence
+                    </h3>
                     <p className="text-text-secondary/70 text-sm font-body mt-1">
                       Sentiment comparison between English and Indonesian mentions.
                     </p>
@@ -3277,7 +4340,12 @@ function EntitiesTab() {
                           <span className="text-text-secondary">EN sentiment</span>
                           <span className="text-text-primary font-mono text-xs">
                             {divergence.engSentiment != null ? (
-                              <>{divergence.engSentiment.toFixed(2)} <span className="text-text-secondary/70">({divergence.engMentions} mention{divergence.engMentions !== 1 ? 's' : ''})</span></>
+                              <>
+                                {divergence.engSentiment.toFixed(2)}{' '}
+                                <span className="text-text-secondary/70">
+                                  ({divergence.engMentions} mention{divergence.engMentions !== 1 ? 's' : ''})
+                                </span>
+                              </>
                             ) : (
                               <span className="text-text-secondary/50">No data</span>
                             )}
@@ -3289,7 +4357,12 @@ function EntitiesTab() {
                               className="h-full rounded-full transition-all duration-300"
                               style={{
                                 width: `${Math.max(2, divergence.engSentiment * 100)}%`,
-                                backgroundColor: divergence.engSentiment >= 0.55 ? '#34d399' : divergence.engSentiment <= 0.45 ? '#f87171' : '#facc15',
+                                backgroundColor:
+                                  divergence.engSentiment >= 0.55
+                                    ? '#34d399'
+                                    : divergence.engSentiment <= 0.45
+                                      ? '#f87171'
+                                      : '#facc15',
                               }}
                             />
                           </div>
@@ -3301,7 +4374,12 @@ function EntitiesTab() {
                           <span className="text-text-secondary">ID sentiment</span>
                           <span className="text-text-primary font-mono text-xs">
                             {divergence.indSentiment != null ? (
-                              <>{divergence.indSentiment.toFixed(2)} <span className="text-text-secondary/70">({divergence.indMentions} mention{divergence.indMentions !== 1 ? 's' : ''})</span></>
+                              <>
+                                {divergence.indSentiment.toFixed(2)}{' '}
+                                <span className="text-text-secondary/70">
+                                  ({divergence.indMentions} mention{divergence.indMentions !== 1 ? 's' : ''})
+                                </span>
+                              </>
                             ) : (
                               <span className="text-text-secondary/50">No data</span>
                             )}
@@ -3313,7 +4391,12 @@ function EntitiesTab() {
                               className="h-full rounded-full transition-all duration-300"
                               style={{
                                 width: `${Math.max(2, divergence.indSentiment * 100)}%`,
-                                backgroundColor: divergence.indSentiment >= 0.55 ? '#34d399' : divergence.indSentiment <= 0.45 ? '#f87171' : '#facc15',
+                                backgroundColor:
+                                  divergence.indSentiment >= 0.55
+                                    ? '#34d399'
+                                    : divergence.indSentiment <= 0.45
+                                      ? '#f87171'
+                                      : '#facc15',
                               }}
                             />
                           </div>
@@ -3324,9 +4407,20 @@ function EntitiesTab() {
                     <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-border">
                       <div className="text-sm font-body text-text-secondary">
                         {(() => {
-                          if (divergence.engSentiment == null || divergence.indSentiment == null) return 'Insufficient data for comparison';
-                          const engLabel = divergence.engSentiment >= 0.55 ? 'bullish' : divergence.engSentiment <= 0.45 ? 'bearish' : 'neutral';
-                          const indLabel = divergence.indSentiment >= 0.55 ? 'bullish' : divergence.indSentiment <= 0.45 ? 'bearish' : 'neutral';
+                          if (divergence.engSentiment == null || divergence.indSentiment == null)
+                            return 'Insufficient data for comparison';
+                          const engLabel =
+                            divergence.engSentiment >= 0.55
+                              ? 'bullish'
+                              : divergence.engSentiment <= 0.45
+                                ? 'bearish'
+                                : 'neutral';
+                          const indLabel =
+                            divergence.indSentiment >= 0.55
+                              ? 'bullish'
+                              : divergence.indSentiment <= 0.45
+                                ? 'bearish'
+                                : 'neutral';
                           if (engLabel === indLabel) return `Both regions ${engLabel}`;
                           return `EN ${engLabel} / ID ${indLabel}`;
                         })()}
@@ -3358,136 +4452,476 @@ function EntitiesTab() {
                 )}
               </div>
 
-            {/* Price Data Card */}
-            {priceData?.latest && (
-              <div className="bg-surface border border-border rounded-lg overflow-hidden">
-                <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-                  <div>
-                    <h3 className="font-heading text-sm font-medium text-text-primary">Price Data</h3>
-                    <p className="text-xs text-text-secondary mt-0.5">CoinGecko market data</p>
-                  </div>
-                  <span className="font-mono text-xs text-text-secondary">
-                    {new Date(priceData.latest.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-                <div className="p-4 space-y-4">
-                  {/* Current Price */}
-                  <div className="flex items-baseline gap-3">
-                    <span className="font-heading text-2xl font-bold text-text-primary">
-                      ${priceData.latest.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: priceData.latest.priceUsd < 1 ? 6 : 2 })}
-                    </span>
-                    {priceData.latest.priceChange24h !== null && (
-                      <span className={`font-mono text-sm font-medium ${priceData.latest.priceChange24h >= 0 ? 'text-accent-green' : 'text-accent-red'}`}>
-                        {priceData.latest.priceChange24h >= 0 ? '+' : ''}{priceData.latest.priceChange24h.toFixed(1)}% 24h
-                      </span>
-                    )}
-                    {priceData.latest.priceChange7d !== null && (
-                      <span className={`font-mono text-sm ${priceData.latest.priceChange7d >= 0 ? 'text-accent-green/70' : 'text-accent-red/70'}`}>
-                        {priceData.latest.priceChange7d >= 0 ? '+' : ''}{priceData.latest.priceChange7d.toFixed(1)}% 7d
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Volume and Market Cap */}
-                  <div className="grid grid-cols-2 gap-4">
-                    {priceData.latest.volume24h !== null && (
-                      <div>
-                        <div className="text-xs text-text-secondary font-mono uppercase">24h Volume</div>
-                        <div className="text-sm font-body text-text-primary">${formatCompactNumber(priceData.latest.volume24h)}</div>
-                      </div>
-                    )}
-                    {priceData.latest.marketCap !== null && (
-                      <div>
-                        <div className="text-xs text-text-secondary font-mono uppercase">Market Cap</div>
-                        <div className="text-sm font-body text-text-primary">${formatCompactNumber(priceData.latest.marketCap)}</div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Price History (simple list) */}
-                  {priceData.history.length > 1 && (
+              {/* Price Data Card */}
+              {priceData?.latest && (
+                <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                     <div>
-                      <div className="text-xs text-text-secondary font-mono uppercase mb-2">Recent History</div>
-                      <div className="space-y-1">
-                        {priceData.history.slice(0, 7).map((snap) => (
-                          <div key={snap.id} className="flex justify-between items-center text-xs font-mono">
-                            <span className="text-text-secondary">
-                              {new Date(snap.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </span>
-                            <span className="text-text-primary">
-                              ${snap.priceUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: snap.priceUsd < 1 ? 6 : 2 })}
-                            </span>
-                            {snap.priceChange24h !== null && (
-                              <span className={snap.priceChange24h >= 0 ? 'text-accent-green' : 'text-accent-red'}>
-                                {snap.priceChange24h >= 0 ? '+' : ''}{snap.priceChange24h.toFixed(1)}%
-                              </span>
-                            )}
+                      <h3 className="font-heading text-sm font-medium text-text-primary">Price Data</h3>
+                      <p className="text-xs text-text-secondary mt-0.5">CoinGecko market data</p>
+                    </div>
+                    <span className="font-mono text-xs text-text-secondary">
+                      {new Date(priceData.latest.timestamp).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    {/* Current Price */}
+                    <div className="flex items-baseline gap-3">
+                      <span className="font-heading text-2xl font-bold text-text-primary">
+                        $
+                        {priceData.latest.priceUsd.toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: priceData.latest.priceUsd < 1 ? 6 : 2,
+                        })}
+                      </span>
+                      {priceData.latest.priceChange24h !== null && (
+                        <span
+                          className={`font-mono text-sm font-medium ${priceData.latest.priceChange24h >= 0 ? 'text-accent-green' : 'text-accent-red'}`}
+                        >
+                          {priceData.latest.priceChange24h >= 0 ? '+' : ''}
+                          {priceData.latest.priceChange24h.toFixed(1)}% 24h
+                        </span>
+                      )}
+                      {priceData.latest.priceChange7d !== null && (
+                        <span
+                          className={`font-mono text-sm ${priceData.latest.priceChange7d >= 0 ? 'text-accent-green/70' : 'text-accent-red/70'}`}
+                        >
+                          {priceData.latest.priceChange7d >= 0 ? '+' : ''}
+                          {priceData.latest.priceChange7d.toFixed(1)}% 7d
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Volume and Market Cap */}
+                    <div className="grid grid-cols-2 gap-4">
+                      {priceData.latest.volume24h !== null && (
+                        <div>
+                          <div className="text-xs text-text-secondary font-mono uppercase">24h Volume</div>
+                          <div className="text-sm font-body text-text-primary">
+                            ${formatCompactNumber(priceData.latest.volume24h)}
                           </div>
-                        ))}
+                        </div>
+                      )}
+                      {priceData.latest.marketCap !== null && (
+                        <div>
+                          <div className="text-xs text-text-secondary font-mono uppercase">Market Cap</div>
+                          <div className="text-sm font-body text-text-primary">
+                            ${formatCompactNumber(priceData.latest.marketCap)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Price History (simple list) */}
+                    {priceData.history.length > 1 && (
+                      <div>
+                        <div className="text-xs text-text-secondary font-mono uppercase mb-2">Recent History</div>
+                        <div className="space-y-1">
+                          {priceData.history.slice(0, 7).map((snap) => (
+                            <div key={snap.id} className="flex justify-between items-center text-xs font-mono">
+                              <span className="text-text-secondary">
+                                {new Date(snap.timestamp).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                })}
+                              </span>
+                              <span className="text-text-primary">
+                                $
+                                {snap.priceUsd.toLocaleString('en-US', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: snap.priceUsd < 1 ? 6 : 2,
+                                })}
+                              </span>
+                              {snap.priceChange24h !== null && (
+                                <span className={snap.priceChange24h >= 0 ? 'text-accent-green' : 'text-accent-red'}>
+                                  {snap.priceChange24h >= 0 ? '+' : ''}
+                                  {snap.priceChange24h.toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Alpha Propagation Card */}
+              <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-3 border-b border-border">
+                  <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Alpha Propagation</h3>
+                  <p className="text-text-secondary/70 text-sm font-body mt-1">7d tier timeline</p>
+                </div>
+                <div className="p-4">
+                  {alphaPropagation == null || alphaPropagation.summary.length === 0 ? (
+                    <p className="text-sm text-text-secondary font-body">No propagation data yet</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        {[...alphaPropagation.summary]
+                          .sort((a, b) => a.firstMentionTime - b.firstMentionTime)
+                          .map((entry, idx) => (
+                            <div
+                              key={`${entry.tier}-${entry.source}-${entry.sourceId}-${idx}`}
+                              className="flex items-center gap-3"
+                            >
+                              <span
+                                className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono uppercase tracking-wide ${
+                                  entry.tier === 'alpha'
+                                    ? 'bg-purple-500/15 text-purple-400'
+                                    : entry.tier === 'influencer'
+                                      ? 'bg-blue-500/15 text-blue-400'
+                                      : entry.tier === 'mainstream'
+                                        ? 'bg-green-500/15 text-green-400'
+                                        : 'bg-border/50 text-text-secondary'
+                                }`}
+                              >
+                                {entry.tier}
+                              </span>
+                              <span className="text-xs font-mono text-text-secondary">
+                                {formatRelativeTime(entry.firstMentionTime)}
+                              </span>
+                              <span className="text-xs font-body text-text-primary truncate">
+                                {entry.source}/{entry.sourceId}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+                      {alphaPropagation.summary.length >= 2 &&
+                        (() => {
+                          const sorted = [...alphaPropagation.summary].sort(
+                            (a, b) => a.firstMentionTime - b.firstMentionTime,
+                          );
+                          const first = sorted[0];
+                          const last = sorted[sorted.length - 1];
+                          const diffHours = (last.firstMentionTime - first.firstMentionTime) / 3_600_000;
+                          return (
+                            <div className="pt-2 border-t border-border">
+                              <span className="text-xs font-mono text-text-secondary">
+                                {first.tier} → {last.tier} in{' '}
+                                {diffHours < 1 ? `${Math.round(diffHours * 60)}m` : `${diffHours.toFixed(1)}h`}
+                              </span>
+                            </div>
+                          );
+                        })()}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] gap-6">
+                <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Top Authors</h3>
+                    <p className="text-text-secondary/70 text-sm font-body mt-1">
+                      Most-linked voices for this entity based on raw mention overlap and extracted calls. First-mover
+                      timing uses the earliest tracked call for this entity.
+                    </p>
+                  </div>
+                  {authorsError ? (
+                    <div className="p-4 text-red-400 text-sm font-body">{authorsError}</div>
+                  ) : entityAuthors.length === 0 ? (
+                    authorsLoading ? (
+                      <div className="p-4 text-text-secondary text-sm font-body">Loading top authors...</div>
+                    ) : (
+                      <EmptyState
+                        title="No tracked authors yet"
+                        description="Stage 1 has not recorded any author-linked claims for this entity yet."
+                      />
+                    )
+                  ) : (
+                    <div className="divide-y divide-border" aria-label="Entity top authors">
+                      {entityAuthors.map((author) => {
+                        const isSelected = author.id === selectedAuthorId;
+                        const displayHandle = formatAuthorHandle(author.platform, author.handle);
+                        const primaryName = author.displayName?.trim() || displayHandle;
+                        return (
+                          <button
+                            key={author.id}
+                            type="button"
+                            aria-pressed={isSelected}
+                            onClick={() => {
+                              setSelectedAuthorId(author.id);
+                              setActionError(null);
+                            }}
+                            className={`w-full text-left px-4 py-4 transition-colors ${
+                              isSelected ? 'bg-accent/10' : 'hover:bg-surface-raised'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="text-sm text-text-primary font-body truncate">{primaryName}</div>
+                                <div className="mt-1 text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                                  {formatAuthorPlatform(author.platform)} | {displayHandle}
+                                </div>
+                              </div>
+                              <span
+                                className={`px-2 py-1 rounded-full text-[11px] font-mono uppercase tracking-wide shrink-0 ${
+                                  isSelected
+                                    ? 'bg-accent/20 border border-accent/30 text-accent'
+                                    : 'bg-background border border-border text-text-secondary'
+                                }`}
+                              >
+                                {author.entityMentionCount} mention{author.entityMentionCount !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wide">
+                              <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+                                {author.mentionCount} total mention{author.mentionCount !== 1 ? 's' : ''}
+                              </span>
+                              <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+                                {author.totalCalls} resolved call{author.totalCalls !== 1 ? 's' : ''}
+                              </span>
+                              <span
+                                className={`px-2 py-1 rounded-full border ${
+                                  author.firstEntityCallTime == null
+                                    ? 'bg-background border-border text-text-secondary'
+                                    : author.firstMover
+                                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                                      : 'bg-background border-border text-text-secondary'
+                                }`}
+                              >
+                                {formatAuthorTiming(author)}
+                              </span>
+                              <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
+                                {formatAuthorReviewHistory(author)}
+                              </span>
+                            </div>
+                            {author.firstEntityCallTime != null && (
+                              <div className="mt-2 text-xs text-text-secondary font-body">
+                                First tracked call {formatRelativeTime(author.firstEntityCallTime)}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Author Profile</h3>
+                    <p className="text-text-secondary/70 text-sm font-body mt-1">
+                      Recent extracted calls and review controls for the selected author.
+                    </p>
+                  </div>
+                  {authorProfileError ? (
+                    <div className="p-4 text-red-400 text-sm font-body">{authorProfileError}</div>
+                  ) : selectedAuthor == null ? (
+                    authorsLoading ? (
+                      <div className="p-4 text-text-secondary text-sm font-body">Loading author profile...</div>
+                    ) : (
+                      <EmptyState
+                        title="Choose an author"
+                        description="Select an author from the list to inspect recent claims and review history."
+                      />
+                    )
+                  ) : authorProfile == null ? (
+                    <div className="p-4 text-text-secondary text-sm font-body">
+                      {authorProfileLoading ? 'Loading author profile...' : 'No author profile found.'}
+                    </div>
+                  ) : (
+                    <div className="p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-4 flex-wrap">
+                        <div className="min-w-0">
+                          <div className="text-lg text-text-primary font-heading">
+                            {authorProfile.author.displayName?.trim() ||
+                              formatAuthorHandle(authorProfile.author.platform, authorProfile.author.handle)}
+                          </div>
+                          <div className="mt-1 text-sm text-text-secondary font-body">
+                            {formatAuthorPlatform(authorProfile.author.platform)} |{' '}
+                            {formatAuthorHandle(authorProfile.author.platform, authorProfile.author.handle)}
+                          </div>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-full bg-background border border-border text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                          {formatAuthorReviewHistory(authorProfile.author)}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                        <div className="rounded-lg border border-border bg-background/70 p-3">
+                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                            Entity Mentions
+                          </div>
+                          <div className="mt-1 text-sm text-text-primary font-body">
+                            {selectedEntityAuthor?.entityMentionCount ?? 0}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-background/70 p-3">
+                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                            First Tracked Call
+                          </div>
+                          <div className="mt-1 text-sm text-text-primary font-body">
+                            {formatRelativeTime(selectedEntityAuthor?.firstEntityCallTime ?? null)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-background/70 p-3">
+                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                            Entity Timing
+                          </div>
+                          <div
+                            className={`mt-1 text-sm font-body ${
+                              selectedEntityAuthor?.firstEntityCallTime != null && selectedEntityAuthor.firstMover
+                                ? 'text-emerald-400'
+                                : 'text-text-primary'
+                            }`}
+                          >
+                            {formatAuthorTiming(selectedEntityAuthor)}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-background/70 p-3">
+                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                            Total Mentions
+                          </div>
+                          <div className="mt-1 text-sm text-text-primary font-body">
+                            {authorProfile.author.mentionCount}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-background/70 p-3">
+                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                            Correct Calls
+                          </div>
+                          <div className="mt-1 text-sm text-text-primary font-body">
+                            {authorProfile.author.correctCalls}/{authorProfile.author.totalCalls}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-border bg-background/70 p-3">
+                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
+                            Last Seen
+                          </div>
+                          <div className="mt-1 text-sm text-text-primary font-body">
+                            {formatRelativeTime(authorProfile.author.lastSeen)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 border-t border-border pt-4">
+                        <div className="flex items-center justify-between gap-3 flex-wrap">
+                          <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
+                            Recent Calls
+                          </div>
+                          {authorProfileLoading && (
+                            <div className="text-xs text-text-secondary font-body">Refreshing profile...</div>
+                          )}
+                        </div>
+                        {authorCalls.length === 0 ? (
+                          <EmptyState
+                            title="No calls to review"
+                            description="This author has been observed, but there are no extracted calls stored yet."
+                          />
+                        ) : (
+                          <div className="space-y-3">
+                            {authorCalls.map((call) => (
+                              <div
+                                key={call.id}
+                                className="rounded-lg border border-border bg-background/70 p-4 space-y-3"
+                              >
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${getAuthorClaimTypeStyles(call.claimType)}`}
+                                    >
+                                      {formatAuthorClaimType(call.claimType)}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${getAuthorOutcomeStyles(call.outcome, call.resolved)}`}
+                                    >
+                                      {formatAuthorOutcome(call.outcome, call.resolved)}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-text-secondary font-body">
+                                    {formatRelativeTime(call.timestamp)}
+                                  </div>
+                                </div>
+
+                                <p className="text-sm text-text-primary font-body leading-relaxed">{call.claimText}</p>
+
+                                <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                                  <span className="px-2 py-1 rounded-full bg-surface border border-border">
+                                    {call.entityName ?? 'Unknown entity'}
+                                  </span>
+                                  <span className="px-2 py-1 rounded-full bg-surface border border-border">
+                                    {Math.round(call.confidence * 100)}% confidence
+                                  </span>
+                                  {call.resolvedAt != null && (
+                                    <span className="px-2 py-1 rounded-full bg-surface border border-border">
+                                      Reviewed {formatRelativeTime(call.resolvedAt)}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                  {call.sourceItemId ? (
+                                    <Link
+                                      to={`/items/${call.sourceItemId}`}
+                                      className="inline-flex items-center text-xs font-mono uppercase tracking-wide text-accent hover:opacity-80 transition-opacity"
+                                    >
+                                      Open source item
+                                    </Link>
+                                  ) : (
+                                    <span className="text-xs text-text-secondary font-body">No source item linked</span>
+                                  )}
+                                  {isAdmin && !call.resolved && (
+                                    <div className="flex gap-2 flex-wrap">
+                                      <button
+                                        type="button"
+                                        aria-label={`Mark claim correct: ${call.claimText}`}
+                                        onClick={() => {
+                                          void handleResolveAuthorCall(call.id, 'correct');
+                                        }}
+                                        disabled={resolvingAuthorCallId === call.id}
+                                        className="px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-mono uppercase tracking-wide hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
+                                      >
+                                        {resolvingAuthorCallId === call.id ? 'Saving...' : 'Correct'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`Mark claim incorrect: ${call.claimText}`}
+                                        onClick={() => {
+                                          void handleResolveAuthorCall(call.id, 'incorrect');
+                                        }}
+                                        disabled={resolvingAuthorCallId === call.id}
+                                        className="px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-mono uppercase tracking-wide hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                                      >
+                                        Incorrect
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`Dismiss claim: ${call.claimText}`}
+                                        onClick={() => {
+                                          void handleResolveAuthorCall(call.id, 'unresolved');
+                                        }}
+                                        disabled={resolvingAuthorCallId === call.id}
+                                        className="px-3 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 text-xs font-mono uppercase tracking-wide hover:bg-yellow-500/20 transition-colors disabled:opacity-50"
+                                      >
+                                        Dismiss
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
               </div>
-            )}
-
-            {/* Alpha Propagation Card */}
-            <div className="bg-surface border border-border rounded-lg overflow-hidden">
-              <div className="px-4 py-3 border-b border-border">
-                <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Alpha Propagation</h3>
-                <p className="text-text-secondary/70 text-sm font-body mt-1">7d tier timeline</p>
-              </div>
-              <div className="p-4">
-                {alphaPropagation == null || alphaPropagation.summary.length === 0 ? (
-                  <p className="text-sm text-text-secondary font-body">No propagation data yet</p>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      {[...alphaPropagation.summary]
-                        .sort((a, b) => a.firstMentionTime - b.firstMentionTime)
-                        .map((entry, idx) => (
-                          <div key={`${entry.tier}-${entry.source}-${entry.sourceId}-${idx}`} className="flex items-center gap-3">
-                            <span
-                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono uppercase tracking-wide ${
-                                entry.tier === 'alpha'
-                                  ? 'bg-purple-500/15 text-purple-400'
-                                  : entry.tier === 'influencer'
-                                    ? 'bg-blue-500/15 text-blue-400'
-                                    : entry.tier === 'mainstream'
-                                      ? 'bg-green-500/15 text-green-400'
-                                      : 'bg-border/50 text-text-secondary'
-                              }`}
-                            >
-                              {entry.tier}
-                            </span>
-                            <span className="text-xs font-mono text-text-secondary">{formatRelativeTime(entry.firstMentionTime)}</span>
-                            <span className="text-xs font-body text-text-primary truncate">{entry.source}/{entry.sourceId}</span>
-                          </div>
-                        ))}
-                    </div>
-                    {alphaPropagation.summary.length >= 2 && (() => {
-                      const sorted = [...alphaPropagation.summary].sort((a, b) => a.firstMentionTime - b.firstMentionTime);
-                      const first = sorted[0];
-                      const last = sorted[sorted.length - 1];
-                      const diffHours = (last.firstMentionTime - first.firstMentionTime) / 3_600_000;
-                      return (
-                        <div className="pt-2 border-t border-border">
-                          <span className="text-xs font-mono text-text-secondary">
-                            {first.tier} → {last.tier} in {diffHours < 1 ? `${Math.round(diffHours * 60)}m` : `${diffHours.toFixed(1)}h`}
-                          </span>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-              </div>
-            </div>
 
               <div className="bg-surface border border-border rounded-lg overflow-hidden">
                 <div className="px-4 py-3 border-b border-border">
                   <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Relationship Graph</h3>
                   <p className="text-text-secondary/70 text-sm font-body mt-1">
-                    First-pass neighborhood view of direct links around the selected entity. Click a node to focus the list below.
+                    First-pass neighborhood view of direct links around the selected entity. Click a node to focus the
+                    list below.
                   </p>
                 </div>
                 <EntityRelationshipGraph
@@ -3529,7 +4963,8 @@ function EntitiesTab() {
                             </span>
                           </div>
                           <div className="text-xs text-text-secondary font-body">
-                            Confidence {relationship.confidence.toFixed(2)} | updated {formatRelativeTime(relationship.updatedAt)}
+                            Confidence {relationship.confidence.toFixed(2)} | updated{' '}
+                            {formatRelativeTime(relationship.updatedAt)}
                           </div>
                         </div>
                       ))}
@@ -3539,7 +4974,7 @@ function EntitiesTab() {
 
                 <div className="space-y-6">
                   <div className="bg-surface border border-border rounded-lg overflow-hidden">
-                  <div className="px-4 py-3 border-b border-border">
+                    <div className="px-4 py-3 border-b border-border">
                       <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Relationships</h3>
                       <p className="text-text-secondary/70 text-sm font-body mt-1">
                         {focusedGraphConnection
@@ -3562,7 +4997,8 @@ function EntitiesTab() {
                               </div>
                               <div className="text-sm text-text-primary font-body">
                                 Showing {visibleRelationships.length} mapped relationship
-                                {visibleRelationships.length !== 1 ? 's' : ''} with {focusedGraphConnection.relatedEntityName}.
+                                {visibleRelationships.length !== 1 ? 's' : ''} with{' '}
+                                {focusedGraphConnection.relatedEntityName}.
                               </div>
                               <div className="flex flex-wrap gap-2 text-[11px] font-mono uppercase tracking-wide">
                                 <span className="px-2 py-1 rounded-full bg-surface border border-border text-text-secondary">
@@ -3615,14 +5051,17 @@ function EntitiesTab() {
                                 </span>
                               </div>
                               <div className="text-xs text-text-secondary font-body">
-                                Confidence {relationship.confidence.toFixed(2)} | updated {formatRelativeTime(relationship.updatedAt)}
+                                Confidence {relationship.confidence.toFixed(2)} | updated{' '}
+                                {formatRelativeTime(relationship.updatedAt)}
                               </div>
                               {(relationship.sinceAt != null || relationship.untilAt != null) && (
                                 <div className="text-xs text-text-secondary font-body">
                                   {relationship.sinceAt != null
                                     ? `Since ${formatRelationshipBoundary(relationship.sinceAt)}`
                                     : 'Start unknown'}
-                                  {relationship.untilAt != null ? ` | Until ${formatRelationshipBoundary(relationship.untilAt)}` : ''}
+                                  {relationship.untilAt != null
+                                    ? ` | Until ${formatRelationshipBoundary(relationship.untilAt)}`
+                                    : ''}
                                 </div>
                               )}
                               {relationship.summaryId && (
@@ -3687,7 +5126,9 @@ function EntitiesTab() {
                           {shouldShowRelatedEntitySuggestions && (
                             <div className="bg-background border border-border rounded-lg overflow-hidden">
                               {relatedEntitySuggestionsLoading ? (
-                                <div className="px-3 py-2 text-text-secondary text-xs font-body">Searching entities...</div>
+                                <div className="px-3 py-2 text-text-secondary text-xs font-body">
+                                  Searching entities...
+                                </div>
                               ) : relatedEntitySuggestions.length > 0 ? (
                                 <div className="divide-y divide-border" aria-label="Relationship suggestions">
                                   {relatedEntitySuggestions.map((entity) => (

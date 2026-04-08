@@ -16,6 +16,62 @@ describe('ReportView', () => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const path = new URL(url, 'http://localhost').pathname;
 
+        if (path === '/api/v1/narratives') {
+          return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/macro') {
+          return new Response(JSON.stringify({ error: 'No macro data available yet' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/price-watch') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/unusual-activity') {
+          return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/divergence') {
+          return new Response(JSON.stringify({ divergences: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/first-movers') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/alpha-watch') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/calendar-events') {
+          return new Response(JSON.stringify({ events: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
         if (path === '/api/v1/reports/report-1') {
           return new Response(
             JSON.stringify({
@@ -91,6 +147,62 @@ describe('ReportView', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const path = new URL(url, 'http://localhost').pathname;
+
+        if (path === '/api/v1/narratives') {
+          return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/macro') {
+          return new Response(JSON.stringify({ error: 'No macro data available yet' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/price-watch') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/unusual-activity') {
+          return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/divergence') {
+          return new Response(JSON.stringify({ divergences: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/first-movers') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/alpha-watch') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/calendar-events') {
+          return new Response(JSON.stringify({ events: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
 
         if (path === '/api/v1/reports/report-1') {
           return new Response(

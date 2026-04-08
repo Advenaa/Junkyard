@@ -506,4 +506,133 @@ describe('summarize: poison pill (single oversized item)', () => {
       `Both items should be marked failed after splitting, got ${failedCalls.length} failed calls`,
     );
   });
+
+  it('only marks the succeeded split half as processed when the other half fails', async () => {
+    const items = [
+      {
+        id: 'good-item',
+        content: 'Bitcoin recovery discussion from the good split half.',
+        author: 'good-author',
+        engagement: 3,
+        timestamp: Date.now(),
+      },
+      {
+        id: 'bad-item',
+        content: 'Bad split half that keeps exceeding context.',
+        author: 'bad-author',
+        engagement: 1,
+        timestamp: Date.now() + 1,
+      },
+    ];
+
+    const llm = {
+      call: async (params: { messages: Array<{ content: string }> }) => {
+        const content = params.messages[0]!.content.toLowerCase();
+        const hasGood = content.includes('good split half');
+        const hasBad = content.includes('bad split half');
+
+        if (hasGood && hasBad) {
+          throw new ContextLengthExceededError('Token limit exceeded');
+        }
+        if (hasBad) {
+          throw new ContextLengthExceededError('Token limit exceeded');
+        }
+        return { content: validChunkJson() };
+      },
+      wrapWithNonce: (content: string) => ({
+        wrapped: content,
+        nonce: 'test',
+      }),
+    };
+
+    const pool = mockPool(items);
+    const summarizer = createSummarizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      noopEntityManager as never,
+    );
+
+    const result = await summarizer.runBatch('discord', 'test-src', Date.now() - 3600000, Date.now());
+
+    assert.equal(result.summaryCount, 1, 'Only the successful split half should produce a summary');
+
+    const processedCall = pool.calls.find((c) => c.text.includes("UPDATE items SET status = 'processed'"));
+    assert.ok(processedCall, 'Expected a processed-items update');
+    assert.deepStrictEqual(processedCall.values[0], ['good-item']);
+
+    const retryCall = pool.calls.find((c) => c.text.includes('retry_count = retry_count + 1'));
+    assert.ok(retryCall, 'Expected failed split-half cleanup update');
+    assert.deepStrictEqual(retryCall.values[0], ['bad-item']);
+  });
+
+  it('preserves all succeeded leaf item IDs across nested recursive splits', async () => {
+    const items = [
+      {
+        id: 'good-item-a',
+        content: 'First nested split success leaf discussing bitcoin recovery.',
+        author: 'good-author-a',
+        engagement: 4,
+        timestamp: Date.now(),
+      },
+      {
+        id: 'good-item-b',
+        content: 'Second nested split success leaf discussing ethereum rotation.',
+        author: 'good-author-b',
+        engagement: 2,
+        timestamp: Date.now() + 1,
+      },
+      {
+        id: 'bad-item',
+        content: 'Nested split leaf that keeps exceeding context length.',
+        author: 'bad-author',
+        engagement: 1,
+        timestamp: Date.now() + 2,
+      },
+    ];
+
+    const llm = {
+      call: async (params: { messages: Array<{ content: string }> }) => {
+        const content = params.messages[0]!.content.toLowerCase();
+        const hasGoodA = content.includes('first nested split success leaf');
+        const hasGoodB = content.includes('second nested split success leaf');
+        const hasBad = content.includes('nested split leaf that keeps exceeding context length');
+
+        if (hasBad) {
+          throw new ContextLengthExceededError('Token limit exceeded');
+        }
+        if (hasGoodA && hasGoodB) {
+          throw new ContextLengthExceededError('Token limit exceeded');
+        }
+
+        return { content: validChunkJson() };
+      },
+      wrapWithNonce: (content: string) => ({
+        wrapped: content,
+        nonce: 'test',
+      }),
+    };
+
+    const pool = mockPool(items);
+    const summarizer = createSummarizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      noopEntityManager as never,
+    );
+
+    const result = await summarizer.runBatch('discord', 'test-src', Date.now() - 3600000, Date.now());
+
+    assert.equal(result.summaryCount, 2, 'Both successful nested leaf chunks should produce summaries');
+
+    const processedCall = pool.calls.find((c) => c.text.includes("UPDATE items SET status = 'processed'"));
+    assert.ok(processedCall, 'Expected a processed-items update');
+    assert.deepStrictEqual([...processedCall.values[0]].sort(), ['good-item-a', 'good-item-b']);
+
+    const retryCall = pool.calls.find((c) => c.text.includes('retry_count = retry_count + 1'));
+    assert.ok(retryCall, 'Expected failed nested split cleanup update');
+    assert.deepStrictEqual(retryCall.values[0], ['bad-item']);
+  });
 });

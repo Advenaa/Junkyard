@@ -306,7 +306,9 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
   }
 
   async function seedCompetitorRelationships(): Promise<number> {
-    const preferredNames = [...new Set(COMPETITOR_SEEDS.flatMap((seed) => [seed.entityA, seed.entityB]).map(normalizeAlias))];
+    const preferredNames = [
+      ...new Set(COMPETITOR_SEEDS.flatMap((seed) => [seed.entityA, seed.entityB]).map(normalizeAlias)),
+    ];
     const entityIdByLookup = new Map<string, string>();
 
     if (preferredNames.length > 0) {

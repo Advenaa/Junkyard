@@ -781,6 +781,67 @@ const migrations: Migration[] = [
         ON author_calls(resolved, timestamp) WHERE resolved = false
     `);
   },
+
+  // Migration 30: Create macro_snapshots table for cross-market correlation (Feature 3.3)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS macro_snapshots (
+        id TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        indicator TEXT NOT NULL CHECK (indicator IN ('vix', 'dxy', 'us10y', 'spx')),
+        value REAL NOT NULL,
+        change_1d REAL,
+        change_7d REAL,
+        source TEXT NOT NULL DEFAULT 'fred',
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_macro_snapshots_indicator_date
+        ON macro_snapshots(indicator, date)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_macro_snapshots_date
+        ON macro_snapshots(date DESC)
+    `);
+  },
+
+  // Migration 31: Expand macro_snapshots indicators to include gold (Feature 3.3)
+  async (client) => {
+    await client.query(`
+      ALTER TABLE macro_snapshots
+      DROP CONSTRAINT IF EXISTS macro_snapshots_indicator_check
+    `);
+    await client.query(`
+      ALTER TABLE macro_snapshots
+      ADD CONSTRAINT macro_snapshots_indicator_check
+      CHECK (indicator IN ('vix', 'dxy', 'us10y', 'spx', 'gold'))
+    `);
+  },
+
+  // Migration 32: Persist daily macro regime history (Feature 3.4)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS macro_regimes (
+        id TEXT PRIMARY KEY,
+        report_id TEXT NOT NULL UNIQUE REFERENCES reports(id) ON DELETE CASCADE,
+        date TEXT NOT NULL,
+        report_type TEXT NOT NULL CHECK (report_type IN ('daily', 'pulse')),
+        classification TEXT NOT NULL CHECK (classification IN ('risk-on', 'risk-off', 'transition', 'unclear')),
+        confidence REAL NOT NULL,
+        rationale TEXT NOT NULL,
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_macro_regimes_type_date
+        ON macro_regimes(report_type, date DESC)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_macro_regimes_classification_date
+        ON macro_regimes(classification, date DESC)
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

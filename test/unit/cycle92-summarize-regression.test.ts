@@ -13,9 +13,9 @@ import { readFileSync } from 'node:fs';
 const src = readFileSync(new URL('../../src/process/summarize.ts', import.meta.url), 'utf-8');
 
 describe('SM-010: ProcessedChunk itemCount plumbing', () => {
-  it('defines ProcessedChunk interface or type with parsed and itemCount', () => {
-    const match = src.match(/(?:interface|type)\s+ProcessedChunk\b[^}]*\bparsed\b.*\bitemCount\b.*}/s);
-    assert.ok(match, 'ProcessedChunk definition with parsed + itemCount fields must exist');
+  it('defines ProcessedChunk interface or type with parsed, itemCount, and itemIds', () => {
+    const match = src.match(/(?:interface|type)\s+ProcessedChunk\b[^}]*\bparsed\b.*\bitemCount\b.*\bitemIds\b.*}/s);
+    assert.ok(match, 'ProcessedChunk definition with parsed + itemCount + itemIds fields must exist');
   });
 
   it('processChunk returns ProcessedChunk[]', () => {
@@ -23,16 +23,20 @@ describe('SM-010: ProcessedChunk itemCount plumbing', () => {
     assert.ok(match, 'processChunk must have return type Promise<ProcessedChunk[]>');
   });
 
-  it('processChunk leaf return contains itemCount: chunk.length', () => {
+  it('processChunk leaf return contains itemCount and itemIds for the processed subchunk', () => {
     // Extract the processChunk function body (up to the next top-level function)
     const fnStart = src.indexOf('async function processChunk');
     assert.ok(fnStart !== -1, 'processChunk must exist');
 
-    // Look for the leaf-level return with itemCount: chunk.length
+    // Look for the leaf-level return with both itemCount and itemIds from the current chunk
     const fnBody = src.slice(fnStart, fnStart + 3000);
     assert.ok(
-      /return\s*\[\s*\{\s*parsed\s*,\s*itemCount:\s*chunk\.length\s*\}\s*\]/.test(fnBody),
-      'processChunk must return [{ parsed, itemCount: chunk.length }] at the leaf level',
+      /itemCount:\s*chunk\.length/.test(fnBody),
+      'processChunk leaf return must preserve the processed subchunk itemCount',
+    );
+    assert.ok(
+      /itemIds:\s*chunk\.map\(\(item\)\s*=>\s*item\.id\)/.test(fnBody),
+      'processChunk leaf return must preserve the processed subchunk item IDs',
     );
   });
 

@@ -346,23 +346,27 @@ describe('graceful shutdown', () => {
 
 // ── SD-005 regression: onDaily pipeline ordering ──────────────────────
 
-describe('SD-005: onDaily runs embed + narratives before synthesis', () => {
-  it('embedPipeline.run() and narrativeDetector.detectNarratives() precede synthesizer.runDaily() in source', () => {
+describe('SD-005: onDaily runs dependency refresh before synthesis', () => {
+  it('embed, narrative, price, and macro steps precede synthesizer.runDaily() in source', () => {
     const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
 
     // Extract the onDaily function body
     const onDailyStart = source.indexOf('async function onDaily()');
     assert.ok(onDailyStart !== -1, 'onDaily function must exist in src/index.ts');
 
-    // Grab a generous slice starting from onDaily (the function may be 30+ lines with advisory lock)
-    const onDailySlice = source.slice(onDailyStart, onDailyStart + 1500);
+    // Grab a generous slice starting from onDaily (the function now includes price + macro refresh too)
+    const onDailySlice = source.slice(onDailyStart, onDailyStart + 2200);
 
     const embedPos = onDailySlice.indexOf('embedPipeline.run()');
     const narrativePos = onDailySlice.indexOf('narrativeDetector.detectNarratives()');
+    const pricePos = onDailySlice.indexOf('priceTracker.fetchAndStore()');
+    const macroPos = onDailySlice.indexOf('macroTracker.fetchAndStore()');
     const synthPos = onDailySlice.indexOf('synthesizer.runDaily()');
 
     assert.ok(embedPos !== -1, 'embedPipeline.run() must be called in onDaily');
     assert.ok(narrativePos !== -1, 'narrativeDetector.detectNarratives() must be called in onDaily');
+    assert.ok(pricePos !== -1, 'priceTracker.fetchAndStore() must be called in onDaily');
+    assert.ok(macroPos !== -1, 'macroTracker.fetchAndStore() must be called in onDaily');
     assert.ok(synthPos !== -1, 'synthesizer.runDaily() must be called in onDaily');
 
     assert.ok(
@@ -372,6 +376,14 @@ describe('SD-005: onDaily runs embed + narratives before synthesis', () => {
     assert.ok(
       narrativePos < synthPos,
       `narrativeDetector.detectNarratives() (pos ${narrativePos}) must come before synthesizer.runDaily() (pos ${synthPos})`,
+    );
+    assert.ok(
+      pricePos < synthPos,
+      `priceTracker.fetchAndStore() (pos ${pricePos}) must come before synthesizer.runDaily() (pos ${synthPos})`,
+    );
+    assert.ok(
+      macroPos < synthPos,
+      `macroTracker.fetchAndStore() (pos ${macroPos}) must come before synthesizer.runDaily() (pos ${synthPos})`,
     );
   });
 });

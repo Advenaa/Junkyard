@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, stripCodeFences, verifyEntities, verifyEvents, verifyRelationships } from '../../src/process/summarize.js';
+import {
+  buildSystemPrompt,
+  stripCodeFences,
+  verifyEntities,
+  verifyEvents,
+  verifyRelationships,
+} from '../../src/process/summarize.js';
 import { ChunkSummaryLLMSchema } from '../../src/process/schemas.js';
 import type { ChunkSummary } from '../../src/process/schemas.js';
 
@@ -26,6 +32,7 @@ function makeSummary(entities: ChunkSummary['entities']): ChunkSummary {
     keyEvents: [],
     events: [],
     relationships: [],
+    authorClaims: [],
   };
 }
 
@@ -250,6 +257,10 @@ describe('buildSystemPrompt', () => {
     assert.ok(prompt.includes('"entityNameA"'));
     assert.ok(prompt.includes('"entityNameB"'));
     assert.ok(prompt.includes('"relationshipType"'));
+    assert.ok(prompt.includes('"authorClaims"'));
+    assert.ok(prompt.includes('"authorHandle"'));
+    assert.ok(prompt.includes('"claimType"'));
+    assert.ok(prompt.includes('"claimText"'));
   });
 
   it('contains few-shot examples (H-013 fix)', () => {
@@ -290,6 +301,12 @@ describe('buildSystemPrompt', () => {
       assert.ok(prompt.includes(`"${t}"`) || prompt.includes(`"${t}`), `missing relationship type "${t}" in prompt`);
     }
   });
+
+  it('contains author claim type enum values', () => {
+    for (const t of ['bullish', 'bearish', 'event', 'neutral']) {
+      assert.ok(prompt.includes(`"${t}"`) || prompt.includes(`"${t}`), `missing author claim type "${t}" in prompt`);
+    }
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════
@@ -311,6 +328,15 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
           entityNameB: 'Bitcoin',
           relationshipType: 'competes_with',
           confidence: 0.6,
+        },
+      ],
+      authorClaims: [
+        {
+          authorHandle: 'traderx',
+          entityName: 'Ethereum',
+          claimType: 'bullish',
+          claimText: 'traderx said Ethereum looks ready to break higher.',
+          confidence: 0.7,
         },
       ],
     };
@@ -350,6 +376,30 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
         ],
       });
       assert.ok(result.success, `expected relationship type "${relationshipType}" to parse`);
+    }
+  });
+
+  it('accepts all supported author claim types', () => {
+    for (const claimType of ['bullish', 'bearish', 'event', 'neutral'] as const) {
+      const result = ChunkSummaryLLMSchema.safeParse({
+        summary: 'A valid summary that is long enough to satisfy the min(10) constraint.',
+        urgency: 'routine',
+        confidence: 7,
+        entities: [{ name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 }],
+        keyEvents: ['Something happened'],
+        events: [],
+        relationships: [],
+        authorClaims: [
+          {
+            authorHandle: 'traderx',
+            entityName: 'Ethereum',
+            claimType,
+            claimText: 'traderx posted a claim about Ethereum.',
+            confidence: 0.6,
+          },
+        ],
+      });
+      assert.ok(result.success, `expected author claim type "${claimType}" to parse`);
     }
   });
 
@@ -399,6 +449,8 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
     assert.deepStrictEqual(result.data!.entities, []);
     assert.deepStrictEqual(result.data!.keyEvents, []);
     assert.deepStrictEqual(result.data!.events, []);
+    assert.deepStrictEqual(result.data!.relationships, []);
+    assert.deepStrictEqual(result.data!.authorClaims, []);
   });
 
   it('clamps entities array to max 20', () => {

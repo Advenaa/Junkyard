@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router';
 import { apiFetch } from '../lib/api';
 import type { Report } from '../lib/types';
+import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
+import { getReportSecondaryPreview } from '../lib/reportPreview';
 import {
   areReportChainRefreshActionsEqual,
   areReportChainToggleActionsEqual,
@@ -22,6 +24,23 @@ import { EmptyState } from '../components/EmptyState';
 type FilterType = 'all' | 'daily' | 'flash' | 'pulse';
 const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse'];
 const PAGE_SIZE = 20;
+const NARRATIVE_PREVIEW_LIMIT = 3;
+
+type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
+
+interface NarrativeWatchlistEntry {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: NarrativeSignalStrength;
+}
+
+interface NarrativeWatchlistOverview {
+  latestDate: string | null;
+  entries: NarrativeWatchlistEntry[];
+}
 
 function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', {
@@ -31,9 +50,47 @@ function formatDate(dateStr: string): string {
   });
 }
 
+function formatNarrativeSignalLabel(signalStrength: NarrativeSignalStrength): string {
+  switch (signalStrength) {
+    case 'new':
+      return 'New';
+    case 'emerging':
+      return 'Emerging';
+    case 'strong':
+      return 'Strong';
+    case 'stable':
+      return 'Stable';
+    case 'fading':
+      return 'Fading';
+  }
+}
+
+function narrativeSignalClasses(signalStrength: NarrativeSignalStrength): string {
+  switch (signalStrength) {
+    case 'new':
+      return 'bg-accent/15 text-accent border border-accent/20';
+    case 'emerging':
+      return 'bg-accent-green/15 text-accent-green border border-accent-green/20';
+    case 'strong':
+      return 'bg-accent-orange/15 text-accent-orange border border-accent-orange/20';
+    case 'stable':
+      return 'bg-border text-text-secondary border border-border';
+    case 'fading':
+      return 'bg-accent-red/15 text-accent-red border border-accent-red/20';
+  }
+}
+
+function formatNarrativeSentiment(sentiment: number | null): string {
+  if (sentiment == null) {
+    return 'sentiment n/a';
+  }
+  return `sentiment ${sentiment > 0 ? '+' : ''}${sentiment.toFixed(2)}`;
+}
+
 export function ReportList() {
   const [filter, setFilter] = useState<FilterType>('all');
   const [reports, setReports] = useState<Report[]>([]);
+  const [narratives, setNarratives] = useState<NarrativeWatchlistOverview | null>(null);
   const [previewBodyOverrides, setPreviewBodyOverrides] = useState<Record<string, string>>({});
   const [leadChainLabelOverrides, setLeadChainLabelOverrides] = useState<Record<string, string>>({});
   const [leadChainHrefOverrides, setLeadChainHrefOverrides] = useState<Record<string, string>>({});
@@ -71,6 +128,28 @@ export function ReportList() {
       .catch(() => setError('Failed to load reports. Please try again.'))
       .finally(() => setLoading(false));
   }, [fetchReports]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    apiFetch<NarrativeWatchlistOverview>('/narratives')
+      .then((overview) => {
+        if (!cancelled) {
+          setNarratives(overview);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNarratives(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
 
   const loadMore = async () => {
     setLoadingMore(true);
@@ -231,6 +310,47 @@ export function ReportList() {
         ))}
       </div>
 
+      {narrativeEntries.length > 0 && (
+        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
+            <div>
+              <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Narrative Snapshot</h2>
+              <p className="text-text-secondary/70 text-sm font-body mt-1">
+                Latest clustered themes from the daily embedding pass. Detailed evidence remains in Settings &gt;
+                Pipeline.
+              </p>
+            </div>
+            <span className="px-2 py-1 rounded bg-border text-text-secondary text-[11px] font-mono uppercase tracking-wide">
+              {narratives?.latestDate ?? 'latest'}
+            </span>
+          </div>
+
+          <div className="p-4 grid gap-3 md:grid-cols-3">
+            {narrativeEntries.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-border bg-background p-3 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="text-text-primary text-sm font-body leading-snug">{entry.name}</h3>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${narrativeSignalClasses(entry.signalStrength)}`}
+                  >
+                    {formatNarrativeSignalLabel(entry.signalStrength)}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs font-mono">
+                  <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                    {entry.memberCount} summaries
+                  </span>
+                  <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                    {formatNarrativeSentiment(entry.avgSentiment)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 text-red-400">
@@ -284,6 +404,18 @@ export function ReportList() {
               hiddenActiveChainCount,
             });
             const refreshChipAction = refreshChipActionOverrides[report.id] ?? fallbackRefreshChipAction;
+            const secondaryPreview = getReportSecondaryPreview({
+              activeChainCount: activeChains.length,
+              eventChains: report.eventChains,
+              firstMovers: report.firstMovers,
+              priceAlerts: report.priceAlerts,
+              alphaSignals: report.alphaSignals,
+              marketCatalysts: report.marketCatalysts,
+              regionalDivergence: report.regionalDivergence,
+              narrativeShifts: report.narrativeShifts,
+              unusualActivity: report.unusualActivity,
+              macroAlerts: report.macroAlerts,
+            });
 
             return (
               <div
@@ -295,6 +427,14 @@ export function ReportList() {
                     <div className="flex items-center gap-3 flex-wrap">
                       <TypeBadge type={report.type} />
                       <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
+                      {report.macroRegime && (
+                        <span
+                          title={buildMacroRegimePreviewTitle(report.macroRegime, report.macroRegimeHistory)}
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${macroRegimeToneClasses(report.macroRegime.classification)}`}
+                        >
+                          Macro regime · {formatMacroRegimePreview(report.macroRegime, report.macroRegimeHistory)}
+                        </span>
+                      )}
                       {visibleChainCount > 0 &&
                         (storyChipAction.mode === 'none' ? (
                           <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
@@ -358,12 +498,12 @@ export function ReportList() {
                     className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm"
                   >
                     <p className="text-text-primary text-sm font-body leading-relaxed line-clamp-2">{previewBody}</p>
-                    {activeChains.length === 0 && report.eventChains && report.eventChains.length > 0 && (
+                    {secondaryPreview && (
                       <p className="mt-2 text-xs font-body text-text-secondary leading-relaxed line-clamp-1">
                         <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
-                          Event Chain
+                          {secondaryPreview.label}
                         </span>{' '}
-                        {report.eventChains[0]}
+                        {secondaryPreview.text}
                       </p>
                     )}
                   </Link>

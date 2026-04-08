@@ -138,10 +138,12 @@ describe('entity relationship graph query', () => {
         { id: 'ent-op', depth: 2 },
       ],
     );
-    assert.deepEqual(
-      graph.relationships.map((relationship) => relationship.id).sort(),
-      ['rel-1', 'rel-2', 'rel-3', 'rel-4'],
-    );
+    assert.deepEqual(graph.relationships.map((relationship) => relationship.id).sort(), [
+      'rel-1',
+      'rel-2',
+      'rel-3',
+      'rel-4',
+    ]);
   });
 
   it('returns null when the root entity does not exist', async () => {

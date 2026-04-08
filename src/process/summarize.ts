@@ -1,11 +1,19 @@
 import { z } from 'zod';
 import { ulid } from 'ulid';
 import { ChunkSummaryLLMSchema } from './schemas.js';
-import type { ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
+import type { AuthorClaim, ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk } from './chunk.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
-import { insertSummary, claimBatch, insertEvents, getMostRecentEventForEntity, upsertEntityRelationship } from '../db/queries.js';
+import {
+  insertSummary,
+  claimBatch,
+  insertEvents,
+  insertAuthorCall,
+  getMostRecentEventForEntity,
+  upsertEntityRelationship,
+  upsertAuthor,
+} from '../db/queries.js';
 import type { EntityRelationshipType, EventRow } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
@@ -55,6 +63,12 @@ interface ClaimedItem {
   original_language: string | null;
 }
 
+interface ChunkAuthorReference {
+  authorId: string;
+  sourceItemId: string;
+  timestamp: number;
+}
+
 // ── System prompt ─────────────────────────────────────────────────────
 
 export function buildSystemPrompt(source: string, sourceId: string, windowStart: number, windowEnd: number): string {
@@ -92,6 +106,15 @@ Return ONLY valid JSON matching this schema:
       "relationshipType": "competes_with" | "built_on" | "invested_in" | "forked_from" | "acquired" | "founded" | "advises" | "partnered_with" | "regulated_by",
       "confidence": 0.0 to 1.0
     }
+  ],
+  "authorClaims": [
+    {
+      "authorHandle": "Exact message author handle from the bracket prefix",
+      "entityName": "Canonical entity or project name from the entities list",
+      "claimType": "bullish" | "bearish" | "event" | "neutral",
+      "claimText": "Short factual paraphrase of the author's explicit claim",
+      "confidence": 0.0 to 1.0
+    }
   ]
 }
 
@@ -102,6 +125,7 @@ Rules:
 - keyEvents: factual only, no speculation.
 - events: include only concrete entity-linked developments that happened or were announced in this chunk. Reuse the canonical entity name from the entities list. Max 5.
 - relationships: include only direct relationships explicitly stated in this chunk. Reuse canonical names from the entities list. Prefer "competes_with" for comparisons or rivalries, "partnered_with" for collaborations, "acquired" for M&A, and "regulated_by" only for clear regulator-target statements. Max 5.
+- authorClaims: include only explicit author-attributed takes or concrete event claims stated by one named author in these messages. Use the exact handle shown in the bracket prefix, reuse the canonical entity name from the entities list, and paraphrase conservatively. Use "bullish" or "bearish" only for directional takes, "event" for concrete announced/developing events, and "neutral" for notable non-directional takes. If the author, entity, or claim is ambiguous, omit it. Max 8.
 - Content is in English. Always output in English.
 - Rate confidence 1-10 based on clarity and certainty.
 
@@ -124,6 +148,9 @@ Example 1 (routine):
   ],
   "relationships": [
     {"entityNameA": "Uniswap", "entityNameB": "Arbitrum", "relationshipType": "built_on", "confidence": 0.4}
+  ],
+  "authorClaims": [
+    {"authorHandle": "defidad", "entityName": "Uniswap", "claimType": "bullish", "claimText": "defidad said the clean audit should accelerate Uniswap v4 hook adoption.", "confidence": 0.74}
   ]
 }
 
@@ -144,7 +171,10 @@ Example 2 (breaking):
     {"entityName": "Wormhole", "eventType": "exploit", "description": "Wormhole bridge was exploited for roughly $120M in wrapped ETH."},
     {"entityName": "Wormhole", "eventType": "hack", "description": "Wormhole paused bridge operations while coordinating incident response."}
   ],
-  "relationships": []
+  "relationships": [],
+  "authorClaims": [
+    {"authorHandle": "bridgewatch", "entityName": "Wormhole", "claimType": "event", "claimText": "bridgewatch reported that Wormhole had been exploited and bridge operations were paused.", "confidence": 0.88}
+  ]
 }
 
 Now analyze the following messages and return ONLY valid JSON matching the schema above.`;
@@ -285,15 +315,97 @@ export function verifyRelationships(parsed: ChunkSummary, log: Logger, source: s
   return { ...parsed, relationships: verified };
 }
 
-function verifyChunkSummary(
+function verifyAuthorClaims(
   parsed: ChunkSummary,
-  rawText: string,
+  chunk: ClaimedItem[],
   log: Logger,
   source: string,
   sourceId: string,
 ): ChunkSummary {
-  return verifyRelationships(
-    verifyEvents(verifyEntities(parsed, rawText, log, source, sourceId), log, source, sourceId),
+  const validEntityKeys = new Set<string>();
+  for (const entity of parsed.entities) {
+    const canonical = normalizeAlias(entity.name);
+    if (canonical) validEntityKeys.add(canonical);
+    for (const alias of entity.aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
+    }
+  }
+
+  const chunkAuthors = new Set(
+    chunk.map((item) => item.author?.trim().toLowerCase()).filter((handle): handle is string => Boolean(handle)),
+  );
+
+  const seen = new Set<string>();
+  const verified: AuthorClaim[] = [];
+
+  for (const claim of parsed.authorClaims) {
+    const authorHandle = claim.authorHandle.trim().toLowerCase();
+    const entityName = normalizeAlias(claim.entityName);
+    const claimText = claim.claimText.trim();
+    const valid =
+      authorHandle !== '' &&
+      claimText !== '' &&
+      entityName !== '' &&
+      chunkAuthors.has(authorHandle) &&
+      validEntityKeys.has(entityName);
+
+    if (!valid) {
+      log.info(
+        {
+          authorHandle: claim.authorHandle,
+          entityName: claim.entityName,
+          claimType: claim.claimType,
+          source,
+          sourceId,
+        },
+        'Dropped author claim without verified author/entity match',
+      );
+      continue;
+    }
+
+    const dedupeKey = `${authorHandle}\0${entityName}\0${claim.claimType}\0${claimText.toLowerCase()}`;
+    if (seen.has(dedupeKey)) {
+      log.info(
+        {
+          authorHandle: claim.authorHandle,
+          entityName: claim.entityName,
+          claimType: claim.claimType,
+          source,
+          sourceId,
+        },
+        'Dropped duplicate verified author claim',
+      );
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    verified.push({
+      ...claim,
+      authorHandle,
+      claimText,
+    });
+  }
+
+  return { ...parsed, authorClaims: verified };
+}
+
+function verifyChunkSummary(
+  parsed: ChunkSummary,
+  rawText: string,
+  chunk: ClaimedItem[],
+  log: Logger,
+  source: string,
+  sourceId: string,
+): ChunkSummary {
+  return verifyAuthorClaims(
+    verifyRelationships(
+      verifyEvents(verifyEntities(parsed, rawText, log, source, sourceId), log, source, sourceId),
+      log,
+      source,
+      sourceId,
+    ),
+    chunk,
     log,
     source,
     sourceId,
@@ -324,7 +436,14 @@ function budgetExhausted(budget: CallBudget, log: Logger): boolean {
 
 // ── Factory ───────────────────────────────────────────────────────────
 
-export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: LLM, entityManager: EntityManager, alphaTracker?: AlphaTracker) {
+export function createSummarizer(
+  pool: Pool,
+  log: Logger,
+  config: Config,
+  llm: LLM,
+  entityManager: EntityManager,
+  alphaTracker?: AlphaTracker,
+) {
   /**
    * Parse LLM response as JSON, validate with zod.
    * On JSON parse failure: returns null (caller retries with fresh prompt).
@@ -428,6 +547,7 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
     systemPrompt: string,
     userContent: string,
     rawText: string,
+    chunk: ClaimedItem[],
     source: string,
     sourceId: string,
     callBudget: CallBudget,
@@ -454,7 +574,7 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
 
       const escalated = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped, callBudget);
       if (escalated !== null) {
-        return verifyChunkSummary(escalated, rawText, log, source, sourceId);
+        return verifyChunkSummary(escalated, rawText, chunk, log, source, sourceId);
       }
     } catch (err: unknown) {
       log.error({ err, source, sourceId }, 'Escalation to Sonnet failed');
@@ -466,6 +586,7 @@ export function createSummarizer(pool: Pool, log: Logger, config: Config, llm: L
   interface ProcessedChunk {
     parsed: ChunkSummary;
     itemCount: number;
+    itemIds: string[];
   }
 
   const processedChunkEventTimes = new WeakMap<ChunkSummary, number>();
@@ -599,14 +720,15 @@ Rules:
     );
   }
 
-  async function persistExtractedRelationships(
-    relationships: ChunkRelationship[],
-    summaryId: string,
-  ): Promise<void> {
+  async function persistExtractedRelationships(relationships: ChunkRelationship[], summaryId: string): Promise<void> {
     if (relationships.length === 0) return;
 
     const exactNames = [
-      ...new Set(relationships.flatMap((relationship) => [relationship.entityNameA, relationship.entityNameB]).map(normalizeAlias)),
+      ...new Set(
+        relationships
+          .flatMap((relationship) => [relationship.entityNameA, relationship.entityNameB])
+          .map(normalizeAlias),
+      ),
     ].filter(Boolean);
     const entityIdByLookup = new Map<string, string>();
 
@@ -670,6 +792,74 @@ Rules:
     }
   }
 
+  async function persistAuthorClaims(
+    authorClaims: AuthorClaim[],
+    chunkAuthors: Map<string, ChunkAuthorReference>,
+  ): Promise<void> {
+    if (authorClaims.length === 0 || chunkAuthors.size === 0) return;
+
+    const exactNames = [...new Set(authorClaims.map((claim) => normalizeAlias(claim.entityName)).filter(Boolean))];
+    const entityIdByLookup = new Map<string, string>();
+
+    if (exactNames.length > 0) {
+      const exactMatches = await pool.query<{ id: string; lookup_key: string }>(
+        `SELECT id, LOWER(name) AS lookup_key
+           FROM entities
+          WHERE LOWER(name) = ANY($1)`,
+        [exactNames],
+      );
+
+      for (const row of exactMatches.rows) {
+        entityIdByLookup.set(row.lookup_key, row.id);
+      }
+
+      const unresolved = exactNames.filter((name) => !entityIdByLookup.has(name));
+      if (unresolved.length > 0) {
+        const aliasMatches = await pool.query<{ id: string; lookup_key: string }>(
+          `SELECT DISTINCT ON (ea.alias)
+              ea.entity_id AS id,
+              ea.alias AS lookup_key
+             FROM entity_aliases ea
+             JOIN entities e ON e.id = ea.entity_id
+            WHERE ea.alias = ANY($1)
+            ORDER BY ea.alias, (e.status = 'active') DESC, (ea.context_key = '') DESC, ea.context_key, ea.entity_id`,
+          [unresolved],
+        );
+
+        for (const row of aliasMatches.rows) {
+          entityIdByLookup.set(row.lookup_key, row.id);
+        }
+      }
+    }
+
+    for (const claim of authorClaims) {
+      const author = chunkAuthors.get(claim.authorHandle);
+      const entityId = entityIdByLookup.get(normalizeAlias(claim.entityName));
+
+      if (!author || !entityId) {
+        log.info(
+          {
+            authorHandle: claim.authorHandle,
+            entityName: claim.entityName,
+            claimType: claim.claimType,
+          },
+          'Skipping author claim without resolved author/entity IDs',
+        );
+        continue;
+      }
+
+      await insertAuthorCall(pool, {
+        authorId: author.authorId,
+        entityId,
+        claimType: claim.claimType,
+        claimText: claim.claimText,
+        confidence: claim.confidence,
+        sourceItemId: author.sourceItemId,
+        timestamp: author.timestamp,
+      });
+    }
+  }
+
   /**
    * Process a single chunk end-to-end. Handles context-length splitting recursively.
    */
@@ -695,13 +885,19 @@ Rules:
       }
 
       // Entity + structured event post-verification
-      parsed = verifyChunkSummary(parsed, rawText, log, source, sourceId);
+      parsed = verifyChunkSummary(parsed, rawText, chunk, log, source, sourceId);
 
       // Confidence escalation
-      parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, source, sourceId, callBudget);
+      parsed = await maybeEscalate(parsed, systemPrompt, userContent, rawText, chunk, source, sourceId, callBudget);
 
       processedChunkEventTimes.set(parsed, getChunkEventTime(chunk, windowEnd));
-      return [{ parsed, itemCount: chunk.length }];
+      return [
+        {
+          parsed,
+          itemCount: chunk.length,
+          itemIds: chunk.map((item) => item.id),
+        },
+      ];
     } catch (err: unknown) {
       if (err instanceof ContextLengthExceededError) {
         if (depth >= 3) {
@@ -831,6 +1027,34 @@ Rules:
 
       let chunkSummaryCount = 0;
       let chunkHasBreaking = false;
+      const chunkAuthors = new Map<string, ChunkAuthorReference>();
+
+      // Extract and upsert unique authors from chunk items
+      try {
+        const authorsSeen = new Map<string, { sourceItemId: string; timestamp: number }>();
+        for (const item of chunk) {
+          const handle = item.author?.trim().toLowerCase();
+          if (handle) {
+            const prev = authorsSeen.get(handle);
+            if (prev === undefined || item.timestamp > prev.timestamp) {
+              authorsSeen.set(handle, { sourceItemId: item.id, timestamp: item.timestamp });
+            }
+          }
+        }
+        if (authorsSeen.size > 0) {
+          const upsertedAuthors = await Promise.all(
+            [...authorsSeen.entries()].map(async ([handle, { sourceItemId, timestamp }]) => {
+              const author = await upsertAuthor(pool, source, handle, null, timestamp);
+              return [handle, { authorId: author.id, sourceItemId, timestamp }] as const;
+            }),
+          );
+          for (const [handle, author] of upsertedAuthors) {
+            chunkAuthors.set(handle, author);
+          }
+        }
+      } catch (authorErr: unknown) {
+        log.warn({ err: authorErr, source, sourceId, batchId }, 'Author upsert failed for chunk, continuing');
+      }
 
       for (const { parsed, itemCount } of parsedResults) {
         if (parsed.urgency === 'breaking') {
@@ -870,7 +1094,12 @@ Rules:
             }
             const predominantLang = [...langCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
-            const resolvedEntityIds = await entityManager.resolveEntities(parsed.entities, source, summaryId, predominantLang);
+            const resolvedEntityIds = await entityManager.resolveEntities(
+              parsed.entities,
+              source,
+              summaryId,
+              predominantLang,
+            );
 
             // Track alpha propagation for resolved entities
             if (alphaTracker && resolvedEntityIds.length > 0) {
@@ -922,10 +1151,30 @@ Rules:
           }
         }
 
+        if (parsed.authorClaims.length > 0) {
+          try {
+            await persistAuthorClaims(parsed.authorClaims, chunkAuthors);
+          } catch (authorClaimErr: unknown) {
+            log.warn(
+              { summaryId, err: authorClaimErr, source, sourceId, authorClaimCount: parsed.authorClaims.length },
+              'Author claim persistence failed for summary, keeping summary without author claims',
+            );
+          }
+        }
+
         chunkSummaryCount++;
       }
 
-      return { succeeded: chunkItemIds, failed: [], summaryCount: chunkSummaryCount, hasBreaking: chunkHasBreaking };
+      const chunkSucceededIds = [...new Set(parsedResults.flatMap((result) => result.itemIds))];
+      const succeededSet = new Set(chunkSucceededIds);
+      const chunkFailedIds = chunkItemIds.filter((itemId) => !succeededSet.has(itemId));
+
+      return {
+        succeeded: chunkSucceededIds,
+        failed: chunkFailedIds,
+        summaryCount: chunkSummaryCount,
+        hasBreaking: chunkHasBreaking,
+      };
     }
 
     for (let i = 0; i < chunks.length; i += CHUNK_CONCURRENCY) {

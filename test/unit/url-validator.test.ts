@@ -1,7 +1,8 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
-import { validateUrl } from '../../src/url-validator.js';
+import { Agent } from 'undici';
+import { fetchValidated, validateUrl } from '../../src/url-validator.js';
 
 describe('validateUrl', () => {
   it('should accept a valid HTTPS URL', async () => {
@@ -28,11 +29,71 @@ describe('validateUrl', () => {
     assert.ok(result.reason);
   });
 
-  // NOTE: Raw private IPs as hostnames (10.x, 192.168.x, 172.16.x) bypass the
-  // hostname-level check (only 127.0.0.1 and ::1 are blocked there) and DNS
-  // resolution fails for raw IPs, so they currently pass validation. This is a
-  // known gap in the source. The DNS-based tests below verify that the private
-  // IP check works when DNS resolves a hostname to these ranges.
+  it('should reject raw private IP hostnames', async () => {
+    const result = await validateUrl('https://10.0.0.1');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+  });
+
+  it('should reject raw private IP hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://10.0.0.1');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should accept raw public IP hostnames', async () => {
+    const result = await validateUrl('https://93.184.216.34');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.resolvedIp, '93.184.216.34');
+  });
+
+  it('should accept raw public IPv6 hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://[2606:4700:4700::1111]');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.resolvedIp, '2606:4700:4700::1111');
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject raw private IPv6 hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://[fd00::1]');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
 
   it('should reject private IP 10.x.x.x via DNS resolution', async (t) => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['10.0.0.1']);
@@ -216,8 +277,7 @@ describe('validateUrl', () => {
     resolve6Mock.mock.restore();
   });
 
-  it('should pass when DNS has no records (both fail)', async (t) => {
-    // When both resolve4 and resolve6 reject, allIps is empty, no private check triggers
+  it('should reject when DNS has no records (both fail)', async (t) => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
       throw new Error('ENOTFOUND');
     });
@@ -226,8 +286,8 @@ describe('validateUrl', () => {
     });
 
     const result = await validateUrl('https://no-dns.example.com');
-    // No IPs resolved means no private IP check fails, so it passes
-    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /dns|resolve/i);
 
     resolve4Mock.mock.restore();
     resolve6Mock.mock.restore();
@@ -266,5 +326,107 @@ describe('validateUrl', () => {
     const result = await validateUrl('https://myserver.local');
     assert.strictEqual(result.valid, false);
     assert.ok(result.reason);
+  });
+});
+
+describe('fetchValidated', () => {
+  it('pins fetches with a dispatcher while preserving the original URL', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+
+    const result = await fetchValidated('https://safe.example.com', {
+      headers: { Accept: 'text/plain' },
+    });
+
+    assert.ok(result.response);
+    assert.strictEqual(result.validation.valid, true);
+    assert.strictEqual(await result.response.text(), 'ok');
+    assert.strictEqual(fetchMock.mock.callCount(), 1);
+
+    const [url, init] = fetchMock.mock.calls[0]!.arguments as [string, RequestInit & { dispatcher?: unknown }];
+    assert.strictEqual(url, 'https://safe.example.com');
+    assert.ok(init.dispatcher, 'fetchValidated should attach a pinned dispatcher');
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('closes the pinned dispatcher after response.text() consumes the body', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const closeMock = t.mock.method(Agent.prototype, 'close', async () => undefined);
+
+    const result = await fetchValidated('https://safe.example.com');
+
+    assert.ok(result.response);
+    assert.strictEqual(await result.response.text(), 'ok');
+    assert.strictEqual(closeMock.mock.callCount(), 1);
+
+    closeMock.mock.restore();
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('closes the pinned dispatcher when the caller cancels the response body', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const closeMock = t.mock.method(Agent.prototype, 'close', async () => undefined);
+
+    const result = await fetchValidated('https://safe.example.com');
+
+    assert.ok(result.response);
+    assert.ok(result.response.body, 'expected response body so cancel() can be exercised');
+    await result.response.body!.cancel();
+    assert.strictEqual(closeMock.mock.callCount(), 1);
+
+    closeMock.mock.restore();
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('reuses an existing validation without performing a fresh DNS lookup', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['203.0.113.10']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['2001:db8::10']);
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+
+    const result = await fetchValidated(
+      'https://safe.example.com',
+      { method: 'POST', body: 'payload' },
+      { valid: true, resolvedIp: '93.184.216.34' },
+    );
+
+    assert.ok(result.response);
+    await result.response.text();
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+    assert.strictEqual(fetchMock.mock.callCount(), 1);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('returns a null response and skips fetch when validation fails', async (t) => {
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+
+    const result = await fetchValidated('http://example.com');
+
+    assert.strictEqual(result.response, null);
+    assert.strictEqual(result.validation.valid, false);
+    assert.strictEqual(fetchMock.mock.callCount(), 0);
+
+    fetchMock.mock.restore();
   });
 });

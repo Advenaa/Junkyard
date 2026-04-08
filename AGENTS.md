@@ -111,6 +111,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 | `GEMINI_API_KEY` | Yes | Google Gemini API key for embeddings (free tier: 1500 req/day) |
 | `DISCORD_TOKENS` | No | Comma-separated user token strings (needed for Discord sources) |
 | `TWITTERAPI_KEY` | No | For Twitter/X scraping |
+| `FRED_API_KEY` | No | For macro indicator snapshots used by cross-market correlation |
 | `API_KEY` | No | Auto-generated on first run if missing |
 | `DATABASE_URL` | Yes | Postgres connection string (e.g. `postgresql://user:pass@localhost:5432/podders`) |
 | `DISCORD_CLIENT_ID` | Yes (for auth) | Discord OAuth2 application client ID |

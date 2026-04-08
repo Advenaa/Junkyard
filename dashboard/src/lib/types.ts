@@ -5,6 +5,18 @@ export interface User {
   role: 'admin' | 'viewer' | 'blocked';
 }
 
+export interface MacroRegime {
+  classification: 'risk-on' | 'risk-off' | 'transition' | 'unclear';
+  confidence: number;
+  rationale: string;
+}
+
+export interface MacroRegimeHistory {
+  streakDays: number;
+  regimeStartedAt: string;
+  previousClassification: MacroRegime['classification'] | null;
+}
+
 export interface Report {
   id: string;
   date: string;
@@ -17,7 +29,16 @@ export interface Report {
   chainDrilldowns?: ReportChainDrilldown[];
   hasMoreActiveChains?: boolean;
   hiddenActiveChainCount?: number;
+  marketCatalysts?: string[];
+  regionalDivergence?: string[];
+  narrativeShifts?: string[];
+  firstMovers?: string[];
+  alphaSignals?: string[];
   priceAlerts?: string[];
+  unusualActivity?: string[];
+  macroAlerts?: string[];
+  macroRegime?: MacroRegime | null;
+  macroRegimeHistory?: MacroRegimeHistory | null;
 }
 
 export interface ReportChainDrilldown {

@@ -56,7 +56,7 @@ describe('Twitter sourceId validation (src/server.ts)', () => {
 
   it('returns a helpful error message mentioning @username format', () => {
     const twitterIdx = src.indexOf("source === 'twitter'");
-    assert.ok(twitterIdx !== -1, "server.ts must have a twitter source check");
+    assert.ok(twitterIdx !== -1, 'server.ts must have a twitter source check');
 
     const validationSlice = src.slice(twitterIdx, twitterIdx + 500);
     assert.ok(
@@ -67,7 +67,7 @@ describe('Twitter sourceId validation (src/server.ts)', () => {
 
   it('error message suggests omitting @ for search queries', () => {
     const twitterIdx = src.indexOf("source === 'twitter'");
-    assert.ok(twitterIdx !== -1, "server.ts must have a twitter source check");
+    assert.ok(twitterIdx !== -1, 'server.ts must have a twitter source check');
 
     const validationSlice = src.slice(twitterIdx, twitterIdx + 500);
     assert.ok(
@@ -129,15 +129,12 @@ describe('Twitter API key in config (src/config.ts)', () => {
   const src = readSrc('src/config.ts');
 
   it('config declares twitterApiKey field', () => {
-    assert.ok(
-      src.includes('twitterApiKey'),
-      'config.ts must declare a twitterApiKey field',
-    );
+    assert.ok(src.includes('twitterApiKey'), 'config.ts must declare a twitterApiKey field');
   });
 
   it('twitterApiKey is loaded from TWITTERAPI_KEY env var', () => {
     assert.ok(
-      src.includes("TWITTERAPI_KEY") || src.includes('TWITTERAPI_KEY'),
+      src.includes('TWITTERAPI_KEY') || src.includes('TWITTERAPI_KEY'),
       'config.ts must load twitterApiKey from TWITTERAPI_KEY environment variable',
     );
   });

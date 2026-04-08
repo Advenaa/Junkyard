@@ -23,6 +23,7 @@ import { createDelivery } from './deliver/webhook.js';
 import { createDiscordAdapter } from './ingest/discord.js';
 import { createTwitterAdapter } from './ingest/twitter.js';
 import { createPriceTracker } from './prices/tracker.js';
+import { createMacroTracker } from './macro/tracker.js';
 import { pollFeed } from './ingest/rss.js';
 import { createScheduler } from './scheduler.js';
 import { createHealthMonitor } from './health.js';
@@ -185,6 +186,7 @@ program
 
     const twitterAdapter = createTwitterAdapter(config, pool, log);
     const priceTracker = createPriceTracker(pool, log, config.coingeckoApiKey ?? undefined);
+    const macroTracker = createMacroTracker(pool, log, config.fredApiKey ?? undefined);
 
     // ── 4. Scheduler callbacks ────────────────────────────────────────
 
@@ -362,6 +364,11 @@ program
         await priceTracker.fetchAndStore();
       } catch (err: unknown) {
         log.error({ err }, 'price fetch failed');
+      }
+      try {
+        await macroTracker.fetchAndStore();
+      } catch (err: unknown) {
+        log.error({ err }, 'macro fetch failed');
       }
       // Sentiment rollup: compute daily momentum before synthesis uses it
       try {

@@ -52,24 +52,23 @@ describe('CO-013 — CORRELATION_SQL json_agg has ORDER BY', () => {
 
 describe('SY-009 — schema string fields have .min(1) validation', () => {
   it('entitySentiment name field has .min(1)', () => {
-    // The entitySentiment block should contain name: z.string().min(1)
     assert.ok(
-      /entitySentiment[\s\S]*?name:\s*z\.string\(\)\.min\(1\)/.test(schemas),
-      'Expected entitySentiment name to have .min(1)',
+      /entitySentiment[\s\S]*?name:\s*(?:z\.string\(\)\.min\(1\)|nonEmptyText)/.test(schemas),
+      'Expected entitySentiment name to use direct .min(1) validation or the shared nonEmptyText helper',
     );
   });
 
   it('sections title field has .min(1)', () => {
     assert.ok(
-      /sections[\s\S]*?title:\s*z\.string\(\)\.min\(1\)/.test(schemas),
-      'Expected sections title to have .min(1)',
+      /sections[\s\S]*?title:\s*(?:z\.string\(\)\.min\(1\)|nonEmptyText)/.test(schemas),
+      'Expected sections title to use direct .min(1) validation or the shared nonEmptyText helper',
     );
   });
 
   it('newProjects name field has .min(1)', () => {
     assert.ok(
-      /newProjects[\s\S]*?name:\s*z\.string\(\)\.min\(1\)/.test(schemas),
-      'Expected newProjects name to have .min(1)',
+      /newProjects[\s\S]*?name:\s*(?:z\.string\(\)\.min\(1\)|nonEmptyText)/.test(schemas),
+      'Expected newProjects name to use direct .min(1) validation or the shared nonEmptyText helper',
     );
   });
 });

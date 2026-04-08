@@ -179,8 +179,7 @@ describe('Settings entity relationships', () => {
         rootEntityId: entityId,
         nodes,
         relationships: Array.from(includedRelationships.values()).filter(
-          (relationship) =>
-            includedNodeIds.has(relationship.entityIdA) && includedNodeIds.has(relationship.entityIdB),
+          (relationship) => includedNodeIds.has(relationship.entityIdA) && includedNodeIds.has(relationship.entityIdB),
         ),
       };
     }
@@ -324,7 +323,10 @@ describe('Settings entity relationships', () => {
     expect(screen.getAllByText('Solana').length).toBeGreaterThan(0);
     expect(screen.getByText('LLM inferred')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove Arbitrum Built On relationship' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Open evidence summary' })).toHaveAttribute('href', '/summaries/summary-rel-2');
+    expect(screen.getByRole('link', { name: 'Open evidence summary' })).toHaveAttribute(
+      'href',
+      '/summaries/summary-rel-2',
+    );
     expect(screen.getByText(/Since /i)).toBeInTheDocument();
     const coverageCard = screen.getByText('Coverage').parentElement;
     expect(coverageCard).not.toBeNull();
@@ -333,7 +335,7 @@ describe('Settings entity relationships', () => {
 
     await user.click(screen.getByRole('button', { name: 'Focus Arbitrum relationship list' }));
     expect(screen.getByText('Focused Connection')).toBeInTheDocument();
-    expect(screen.getByText("Showing 1 mapped relationship with Arbitrum.")).toBeInTheDocument();
+    expect(screen.getByText('Showing 1 mapped relationship with Arbitrum.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove Solana Competes With relationship' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Inspect Arbitrum' })).toBeInTheDocument();
 

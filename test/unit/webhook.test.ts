@@ -76,6 +76,8 @@ describe('buildFields', () => {
       tldr: 'test',
       keyEvents: ['Event A', 'Event B'],
       eventChains: [],
+      unusualActivity: [],
+      macroAlerts: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -96,6 +98,8 @@ describe('buildFields', () => {
       tldr: 'test',
       keyEvents: longEvents,
       eventChains: [],
+      unusualActivity: [],
+      macroAlerts: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -109,6 +113,8 @@ describe('buildFields', () => {
       tldr: 'test',
       keyEvents: [],
       eventChains: [],
+      unusualActivity: [],
+      macroAlerts: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -123,6 +129,8 @@ describe('buildFields', () => {
       tldr: 'test',
       keyEvents: ['Event A'],
       eventChains: ['Chain A'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroAlerts: ['Macro A'],
       entitySentiment: [
         { name: 'BTC', sentiment: 0.5, reason: 'bullish' },
         { name: 'ETH', sentiment: -0.5, reason: 'bearish' },
@@ -139,6 +147,9 @@ describe('buildFields', () => {
       tldr: 'test',
       keyEvents: [],
       eventChains: ['Exploit -> audit -> governance response', 'Unlock -> muted follow-through'],
+      firstMovers: [],
+      unusualActivity: [],
+      macroAlerts: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -148,6 +159,434 @@ describe('buildFields', () => {
     assert.strictEqual(fields[0]!.name, 'Event Chains');
     assert.ok(fields[0]!.value.includes('> Exploit -> audit -> governance response'));
     assert.ok(fields[0]!.value.includes('> Unlock -> muted follow-through'));
+  });
+
+  it('builds first movers field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [
+        'Ethereum was first tracked by DeFi Dad roughly 4h before the next monitored call.',
+        'Pendle was first tracked by Ignas 90m before broader monitored chatter picked up.',
+      ],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'First Movers');
+    assert.ok(
+      fields[0]!.value.includes('> Ethereum was first tracked by DeFi Dad roughly 4h before the next monitored call.'),
+    );
+    assert.ok(
+      fields[0]!.value.includes('> Pendle was first tracked by Ignas 90m before broader monitored chatter picked up.'),
+    );
+  });
+
+  it('builds price alerts field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      priceAlerts: [
+        'SOL price climbed 11% in 24h while sentiment stayed neutral.',
+        'ETH sentiment stayed bullish even as price slipped 4% on rising volume.',
+      ],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Price Alerts');
+    assert.ok(fields[0]!.value.includes('> SOL price climbed 11% in 24h while sentiment stayed neutral.'));
+    assert.ok(fields[0]!.value.includes('> ETH sentiment stayed bullish even as price slipped 4% on rising volume.'));
+  });
+
+  it('builds alpha signals field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      alphaSignals: [
+        'Hyperliquid stayed mostly in alpha channels before broader CT caught up roughly 3h later.',
+        'Monad testnet chatter jumped from influencer rooms into general feeds in under 2h.',
+      ],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Alpha Signals');
+    assert.ok(
+      fields[0]!.value.includes(
+        '> Hyperliquid stayed mostly in alpha channels before broader CT caught up roughly 3h later.',
+      ),
+    );
+    assert.ok(
+      fields[0]!.value.includes('> Monad testnet chatter jumped from influencer rooms into general feeds in under 2h.'),
+    );
+  });
+
+  it('builds market catalysts field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      marketCatalysts: [
+        'US CPI lands in 6h with BTC-linked risk appetite still elevated.',
+        'Fed speakers tomorrow could pressure rate-sensitive beta if yields stay firm.',
+      ],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Market Catalysts');
+    assert.ok(fields[0]!.value.includes('> US CPI lands in 6h with BTC-linked risk appetite still elevated.'));
+    assert.ok(
+      fields[0]!.value.includes('> Fed speakers tomorrow could pressure rate-sensitive beta if yields stay firm.'),
+    );
+  });
+
+  it('builds regional divergence field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      regionalDivergence: [
+        'Bitcoin: EN stayed bullish while ID leaned bearish after the latest breakout attempt.',
+        'Solana: ID momentum improved while EN chatter stayed cautious into the next catalyst window.',
+      ],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Regional Divergence');
+    assert.ok(
+      fields[0]!.value.includes(
+        '> Bitcoin: EN stayed bullish while ID leaned bearish after the latest breakout attempt.',
+      ),
+    );
+    assert.ok(
+      fields[0]!.value.includes(
+        '> Solana: ID momentum improved while EN chatter stayed cautious into the next catalyst window.',
+      ),
+    );
+  });
+
+  it('builds narrative shifts field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      narrativeShifts: [
+        'Solana fee rebound broadened from a niche trading theme into a wider alt rotation watch.',
+        'BTC treasury chatter faded after follow-through stalled in the latest summaries.',
+      ],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Narrative Shifts');
+    assert.ok(
+      fields[0]!.value.includes(
+        '> Solana fee rebound broadened from a niche trading theme into a wider alt rotation watch.',
+      ),
+    );
+    assert.ok(
+      fields[0]!.value.includes('> BTC treasury chatter faded after follow-through stalled in the latest summaries.'),
+    );
+  });
+
+  it('builds macro alerts field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      unusualActivity: [],
+      macroAlerts: ['Crypto stayed bid into a firmer dollar.', 'Risk-off macro tape clashes with bullish alt chatter.'],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Macro Alerts');
+    assert.ok(fields[0]!.value.includes('> Crypto stayed bid into a firmer dollar.'));
+    assert.ok(fields[0]!.value.includes('> Risk-off macro tape clashes with bullish alt chatter.'));
+  });
+
+  it('builds unusual activity field with bullet formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      unusualActivity: [
+        'Meme basket mentions surged 3.4x over baseline while average sentiment stayed neutral.',
+        'Copy-trade style author overlap hit a new 14-day high around one small-cap ticker.',
+      ],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Unusual Activity');
+    assert.ok(
+      fields[0]!.value.includes(
+        '> Meme basket mentions surged 3.4x over baseline while average sentiment stayed neutral.',
+      ),
+    );
+    assert.ok(
+      fields[0]!.value.includes('> Copy-trade style author overlap hit a new 14-day high around one small-cap ticker.'),
+    );
+  });
+
+  it('prioritizes unusual activity ahead of sentiment when the field cap is hit', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
+      firstMovers: ['Bitcoin was first tracked by chainwatcher roughly 3h before the next monitored call.'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroRegime: {
+        classification: 'risk-off' as const,
+        confidence: 0.82,
+        rationale: 'Dollar, yields, and gold all leaned defensive while crypto breadth stayed mixed.',
+      },
+      macroAlerts: ['Crypto stayed bid into a firmer dollar.'],
+      entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 4);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Key Events', 'Event Chains', 'Macro Regime', 'First Movers'],
+    );
+  });
+
+  it('prioritizes price alerts ahead of market catalysts and softer heuristics when first movers are absent', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
+      priceAlerts: ['BTC ripped higher even as sentiment stayed flat.'],
+      marketCatalysts: ['CPI in 6h could reset rate-sensitive positioning.'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroRegime: {
+        classification: 'risk-on' as const,
+        confidence: 0.71,
+        rationale: 'Equities, crypto, and breadth all improved while the defensive tape eased.',
+      },
+      macroAlerts: ['Crypto stayed bid into a softer dollar.'],
+      entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 4);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Key Events', 'Event Chains', 'Macro Regime', 'Price Alerts'],
+    );
+  });
+
+  it('prioritizes market catalysts ahead of unusual activity and macro alerts when price alerts are absent', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
+      marketCatalysts: ['CPI in 6h could reset rate-sensitive positioning.'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroRegime: {
+        classification: 'risk-on' as const,
+        confidence: 0.71,
+        rationale: 'Equities, crypto, and breadth all improved while the defensive tape eased.',
+      },
+      macroAlerts: ['Crypto stayed bid into a softer dollar.'],
+      entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 4);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Key Events', 'Event Chains', 'Macro Regime', 'Market Catalysts'],
+    );
+  });
+
+  it('prioritizes alpha signals ahead of market catalysts and softer heuristics when price alerts are absent', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
+      alphaSignals: ['Hyperliquid stayed concentrated in alpha rooms before broader chatter caught up 3h later.'],
+      marketCatalysts: ['Fed minutes tomorrow could move risk assets.'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroRegime: {
+        classification: 'transition' as const,
+        confidence: 0.64,
+        rationale: 'Risk assets and defensive signals both stayed active, leaving the tape mixed.',
+      },
+      macroAlerts: ['Crypto stayed bid even as yields remained sticky.'],
+      entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 4);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Key Events', 'Event Chains', 'Macro Regime', 'Alpha Signals'],
+    );
+  });
+
+  it('prioritizes regional divergence ahead of unusual activity and macro alerts when higher-priority watchlists are absent', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
+      regionalDivergence: ['Bitcoin: EN stayed bullish while ID leaned bearish after the latest breakout attempt.'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroRegime: {
+        classification: 'transition' as const,
+        confidence: 0.64,
+        rationale: 'Risk assets and defensive signals both stayed active, leaving the tape mixed.',
+      },
+      macroAlerts: ['Crypto stayed bid even as yields remained sticky.'],
+      entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 4);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Key Events', 'Event Chains', 'Macro Regime', 'Regional Divergence'],
+    );
+  });
+
+  it('prioritizes narrative shifts ahead of unusual activity and macro alerts when higher-priority watchlists are absent', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: ['Chain A'],
+      narrativeShifts: ['AI infra rotation broadened beyond the first-mover crowd into a wider beta watchlist.'],
+      unusualActivity: ['Author coordination spiked well above baseline.'],
+      macroRegime: {
+        classification: 'transition' as const,
+        confidence: 0.64,
+        rationale: 'Risk assets and defensive signals both stayed active, leaving the tape mixed.',
+      },
+      macroAlerts: ['Crypto stayed bid even as yields remained sticky.'],
+      entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 4);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Key Events', 'Event Chains', 'Macro Regime', 'Narrative Shifts'],
+    );
+  });
+
+  it('builds macro regime field with confidence and rationale', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      unusualActivity: [],
+      macroRegime: {
+        classification: 'risk-off' as const,
+        confidence: 0.82,
+        rationale: 'Dollar, yields, and gold all leaned defensive while crypto breadth stayed mixed.',
+      },
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Macro Regime');
+    assert.ok(fields[0]!.value.includes('> Risk-off (82% confidence)'));
+    assert.ok(
+      fields[0]!.value.includes('> Dollar, yields, and gold all leaned defensive while crypto breadth stayed mixed.'),
+    );
+  });
+
+  it('tolerates older parsed reports without unusualActivity or macroAlerts', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: ['Event A'],
+      eventChains: [],
+      firstMovers: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'Key Events');
+  });
+
+  it('accepts snake_case report bodies for new delivery fields', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      price_alerts: ['BTC price kept rising even as trader sentiment cooled.'],
+      alpha_signals: [
+        'BTC treasury chatter stayed concentrated in alpha rooms before broader CT picked it up hours later.',
+      ],
+      market_catalysts: ['Fed minutes tomorrow could move risk assets.'],
+      regional_divergence: ['Bitcoin: EN stayed bullish while ID leaned bearish after the latest breakout attempt.'],
+      narrative_shifts: ['Meme-beta rotation cooled after the latest follow-through failed to broaden.'],
+      unusual_activity: ['Mentions spiked far above the trailing baseline.'],
+      macro_alerts: ['Crypto held up despite firmer yields.'],
+      entity_sentiment: [{ name: 'BTC', sentiment: 0.4, reason: 'bullish' }],
+      sections: [],
+      new_projects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.deepStrictEqual(
+      fields.map((field) => field.name),
+      ['Price Alerts', 'Alpha Signals', 'Market Catalysts', 'Regional Divergence'],
+    );
   });
 });
 
@@ -159,6 +598,8 @@ describe('buildEmbed — description truncation', () => {
       tldr: longTldr,
       keyEvents: [],
       eventChains: [],
+      unusualActivity: [],
+      macroAlerts: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -261,6 +702,7 @@ describe('buildEmbed — full integration', () => {
       tldr: 'Market summary',
       keyEvents: ['BTC pumped'],
       eventChains: ['BTC exploit chain still active after audit response.'],
+      unusualActivity: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -276,6 +718,7 @@ describe('buildEmbed — full integration', () => {
       tldr: 'Market summary',
       keyEvents: [],
       eventChains: [],
+      unusualActivity: [],
       entitySentiment: [],
       sections: [],
       newProjects: [],
@@ -296,6 +739,10 @@ describe('buildEmbed — full integration', () => {
       eventChains: Array.from(
         { length: 5 },
         (_, i) => `Chain ${i} remains active after another step in the story with extra detail to add size`,
+      ),
+      unusualActivity: Array.from(
+        { length: 5 },
+        (_, i) => `Unusual cluster ${i} stayed elevated versus its 14-day baseline with extra context to add size`,
       ),
       entitySentiment: Array.from({ length: 10 }, (_, i) => ({
         name: `Token${i}`,
@@ -320,6 +767,7 @@ const VALID_REPORT_BODY = JSON.stringify({
   tldr: 'Market moved up',
   keyEvents: ['BTC pumped'],
   eventChains: ['BTC exploit chain remains active after the audit update.'],
+  unusualActivity: ['Meme basket mentions surged well above their baseline.'],
   entitySentiment: [{ name: 'BTC', sentiment: 0.5, reason: 'bullish' }],
   sections: [],
   newProjects: [],
@@ -465,6 +913,53 @@ describe('deliver — idempotency guard', () => {
     assert.strictEqual(updateQuery.values[0], 'delivered');
     assert.strictEqual(updateQuery.values[2], FAKE_REPORT.id);
 
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('reuses the original DNS validation across delivery retries', async (t) => {
+    const pool = mockPool([
+      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
+      { rows: [{ delivery_status: 'pending' }] },
+      { rowCount: 1 },
+    ]);
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    let fetchAttempt = 0;
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      fetchAttempt++;
+      return new Response(null, { status: fetchAttempt === 1 ? 500 : 200 });
+    });
+    const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void) => {
+      callback();
+      return 0;
+    }) as typeof setTimeout);
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+    const result = await deliver(FAKE_REPORT);
+
+    assert.strictEqual(result, true);
+    assert.strictEqual(fetchMock.mock.callCount(), 2, 'delivery should retry once after a 5xx response');
+    assert.strictEqual(
+      resolve4Mock.mock.callCount(),
+      1,
+      'delivery retries should reuse the first validated IPv4 result',
+    );
+    assert.strictEqual(resolve6Mock.mock.callCount(), 1, 'delivery retries should not re-run IPv6 resolution either');
+
+    const firstCall = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
+    const secondCall = fetchMock.mock.calls[1]!.arguments as [string, RequestInit];
+    assert.strictEqual(firstCall[0], 'https://discord.com/api/webhooks/123/abc');
+    assert.strictEqual(secondCall[0], 'https://discord.com/api/webhooks/123/abc');
+    assert.ok(firstCall[1].dispatcher, 'first delivery attempt should use a pinned dispatcher');
+    assert.ok(secondCall[1].dispatcher, 'retry should also use a pinned dispatcher');
+
+    setTimeoutMock.mock.restore();
     fetchMock.mock.restore();
     resolve4Mock.mock.restore();
     resolve6Mock.mock.restore();

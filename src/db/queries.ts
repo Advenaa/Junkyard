@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { decodeTime, ulid } from 'ulid';
+import { distance } from 'fastest-levenshtein';
 
 type Pool = pg.Pool;
 
@@ -244,7 +245,7 @@ export async function insertItem(
       $1, $2, $3, $4, $5, $6, $7, $8,
       $9, $10, $11, $12, $13,
       $14, $15, $16
-    ) ON CONFLICT (content_hash) DO NOTHING`,
+    ) ON CONFLICT (content_hash) WHERE content_hash IS NOT NULL DO NOTHING`,
     [
       item.id,
       item.source,
@@ -1040,6 +1041,450 @@ export async function computeDailySentiment(
   return rows;
 }
 
+export interface UnusualActivityEntry {
+  entityId: string;
+  entityName: string;
+  date: string;
+  mentionCount: number;
+  baselineMentionCount: number | null;
+  baselinePeakMentionCount: number | null;
+  baselineDays: number;
+  avgSentiment: number | null;
+  momentum: number | null;
+  spikeRatio: number | null;
+  relevanceScore: number | null;
+  lowRelevance: boolean;
+  duplicateClusterSize: number | null;
+  duplicateAuthorCount: number | null;
+  duplicateSourceCount: number | null;
+}
+
+export interface UnusualActivityOverview {
+  latestDate: string | null;
+  entries: UnusualActivityEntry[];
+}
+
+export type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
+
+export interface NarrativeWatchlistEntry {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: NarrativeSignalStrength;
+}
+
+export interface NarrativeWatchlistOverview {
+  latestDate: string | null;
+  entries: NarrativeWatchlistEntry[];
+}
+
+export interface NarrativeSummaryPreview {
+  id: string;
+  source: string;
+  sourceId: string;
+  sentiment: number | null;
+  urgency: string | null;
+  itemCount: number;
+  createdAt: number;
+  body: string;
+}
+
+export interface NarrativeDrilldown {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: NarrativeSignalStrength;
+  summaries: NarrativeSummaryPreview[];
+}
+
+const LOW_RELEVANCE_ACTIVITY_THRESHOLD = 5;
+
+function isLowRelevanceUnusualActivity(score: number | null): boolean {
+  return score != null && score < LOW_RELEVANCE_ACTIVITY_THRESHOLD;
+}
+
+function toUnusualActivityEntry(row: Record<string, unknown>): UnusualActivityEntry {
+  const relevanceScore = row.relevance_score == null ? null : Number.parseFloat(String(row.relevance_score));
+  return {
+    entityId: row.entity_id as string,
+    entityName: row.entity_name as string,
+    date: row.date as string,
+    mentionCount: Number(row.mention_count),
+    baselineMentionCount: row.baseline_mentions == null ? null : Number.parseFloat(String(row.baseline_mentions)),
+    baselinePeakMentionCount:
+      row.baseline_peak_mentions == null ? null : Number.parseInt(String(row.baseline_peak_mentions), 10),
+    baselineDays: Number.parseInt(String(row.baseline_days ?? 0), 10),
+    avgSentiment: row.avg_sentiment == null ? null : Number.parseFloat(String(row.avg_sentiment)),
+    momentum: row.momentum == null ? null : Number.parseFloat(String(row.momentum)),
+    spikeRatio: row.spike_ratio == null ? null : Number.parseFloat(String(row.spike_ratio)),
+    relevanceScore,
+    lowRelevance: isLowRelevanceUnusualActivity(relevanceScore),
+    duplicateClusterSize:
+      row.duplicate_cluster_size == null ? null : Number.parseInt(String(row.duplicate_cluster_size), 10),
+    duplicateAuthorCount:
+      row.duplicate_author_count == null ? null : Number.parseInt(String(row.duplicate_author_count), 10),
+    duplicateSourceCount:
+      row.duplicate_source_count == null ? null : Number.parseInt(String(row.duplicate_source_count), 10),
+  };
+}
+
+interface DuplicateClusterSignal {
+  duplicateClusterSize: number;
+  duplicateAuthorCount: number;
+  duplicateSourceCount: number;
+}
+
+interface DuplicateClusterItemRow {
+  entity_id: string;
+  item_id: string;
+  author: string;
+  source: string;
+  source_id: string;
+  duplicate_content: string | null;
+}
+
+interface DuplicateClusterAccumulator {
+  representative: string;
+  itemIds: Set<string>;
+  authors: Set<string>;
+  sources: Set<string>;
+}
+
+function normalizeDuplicateClusterContent(content: string): string {
+  return content
+    .toLowerCase()
+    .replace(/https?:\/\/\S+|www\.\S+/g, ' ')
+    .replace(/[^a-z0-9\s$]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 280);
+}
+
+function duplicateClusterSimilarity(a: string, b: string): number {
+  const maxLen = Math.max(a.length, b.length);
+  if (maxLen === 0) return 1;
+  return 1 - distance(a, b) / maxLen;
+}
+
+function detectDuplicateClusterSignal(rows: DuplicateClusterItemRow[]): DuplicateClusterSignal | null {
+  const clusters: DuplicateClusterAccumulator[] = [];
+
+  for (const row of rows) {
+    const rawContent = row.duplicate_content?.trim();
+    if (!rawContent) continue;
+
+    const normalized = normalizeDuplicateClusterContent(rawContent);
+    if (normalized.length < 24) continue;
+
+    const existingCluster = clusters.find(
+      (cluster) => duplicateClusterSimilarity(normalized, cluster.representative) >= 0.9,
+    );
+    if (existingCluster) {
+      existingCluster.itemIds.add(row.item_id);
+      existingCluster.authors.add(row.author.trim().toLowerCase());
+      existingCluster.sources.add(`${row.source}\0${row.source_id}`);
+      if (normalized.length > existingCluster.representative.length) {
+        existingCluster.representative = normalized;
+      }
+      continue;
+    }
+
+    clusters.push({
+      representative: normalized,
+      itemIds: new Set([row.item_id]),
+      authors: new Set([row.author.trim().toLowerCase()]),
+      sources: new Set([`${row.source}\0${row.source_id}`]),
+    });
+  }
+
+  const strongestCluster = clusters
+    .map((cluster) => ({
+      duplicateClusterSize: cluster.itemIds.size,
+      duplicateAuthorCount: [...cluster.authors].filter((author) => author.length > 0).length,
+      duplicateSourceCount: cluster.sources.size,
+    }))
+    .filter((cluster) => cluster.duplicateClusterSize >= 3 && cluster.duplicateAuthorCount >= 2)
+    .sort((a, b) => {
+      if (b.duplicateClusterSize !== a.duplicateClusterSize) {
+        return b.duplicateClusterSize - a.duplicateClusterSize;
+      }
+      if (b.duplicateAuthorCount !== a.duplicateAuthorCount) {
+        return b.duplicateAuthorCount - a.duplicateAuthorCount;
+      }
+      return b.duplicateSourceCount - a.duplicateSourceCount;
+    })[0];
+
+  return strongestCluster ?? null;
+}
+
+async function getDuplicateClusterSignalsForEntities(
+  pool: Pool,
+  entityIds: string[],
+  latestDate: string,
+  timezone: string,
+): Promise<Map<string, DuplicateClusterSignal>> {
+  if (entityIds.length === 0) {
+    return new Map();
+  }
+
+  const { rows } = await pool.query<DuplicateClusterItemRow>(
+    `SELECT DISTINCT
+       em.entity_id,
+       i.id AS item_id,
+       i.author,
+       i.source,
+       i.source_id,
+       COALESCE(NULLIF(i.content_anchor, ''), i.content) AS duplicate_content
+     FROM items i
+     JOIN summaries s ON s.source = i.source AND s.source_id = i.source_id
+     JOIN entity_mentions em ON em.summary_id = s.id
+     WHERE em.entity_id = ANY($1::text[])
+       AND i.status = 'ready'
+       AND i.timestamp >= s.window_start
+       AND i.timestamp <= s.window_end
+       AND DATE(to_timestamp(i.timestamp / 1000.0) AT TIME ZONE $2) = $3::date
+     ORDER BY i.timestamp DESC`,
+    [entityIds, timezone, latestDate],
+  );
+
+  const rowsByEntity = new Map<string, DuplicateClusterItemRow[]>();
+  for (const row of rows) {
+    const existing = rowsByEntity.get(row.entity_id);
+    if (existing) {
+      existing.push(row);
+    } else {
+      rowsByEntity.set(row.entity_id, [row]);
+    }
+  }
+
+  const signals = new Map<string, DuplicateClusterSignal>();
+  for (const entityId of entityIds) {
+    const signal = detectDuplicateClusterSignal(rowsByEntity.get(entityId) ?? []);
+    if (signal) {
+      signals.set(entityId, signal);
+    }
+  }
+
+  return signals;
+}
+
+export async function getUnusualActivityOverview(
+  pool: Pool,
+  limit = 8,
+  timezone = 'Asia/Jakarta',
+): Promise<UnusualActivityOverview> {
+  const {
+    rows: [latestRow],
+  } = await pool.query<{ latest_date: string | null }>(`SELECT MAX(date) AS latest_date FROM entity_sentiment_daily`);
+
+  const latestDate = latestRow?.latest_date ?? null;
+  if (!latestDate) {
+    return { latestDate: null, entries: [] };
+  }
+
+  const { rows } = await pool.query(
+    `WITH baseline AS (
+       SELECT
+         entity_id,
+         ROUND(AVG(mention_count)::numeric, 2)::float AS baseline_mentions,
+         MAX(mention_count)::integer AS baseline_peak_mentions,
+         COUNT(*)::integer AS baseline_days
+       FROM entity_sentiment_daily
+       WHERE date < $1
+         AND date >= ($1::date - ($2 * INTERVAL '1 day'))
+       GROUP BY entity_id
+     )
+     SELECT
+       sd.entity_id,
+       e.name AS entity_name,
+       e.relevance AS relevance_score,
+       sd.date,
+       sd.mention_count,
+       sd.avg_sentiment,
+       sd.momentum,
+       b.baseline_mentions,
+       b.baseline_peak_mentions,
+       COALESCE(b.baseline_days, 0) AS baseline_days,
+       CASE
+         WHEN b.baseline_mentions IS NOT NULL AND b.baseline_mentions > 0
+         THEN ROUND((sd.mention_count::numeric / b.baseline_mentions), 2)::float
+         ELSE NULL
+       END AS spike_ratio
+     FROM entity_sentiment_daily sd
+     JOIN entities e ON e.id = sd.entity_id
+     LEFT JOIN baseline b ON b.entity_id = sd.entity_id
+     WHERE sd.date = $1
+       AND sd.mention_count >= $3
+       AND (
+         (COALESCE(b.baseline_days, 0) = 0 AND sd.mention_count >= $4)
+         OR (
+           COALESCE(b.baseline_days, 0) > 0
+           AND b.baseline_mentions IS NOT NULL
+           AND sd.mention_count >= GREATEST($3, COALESCE(b.baseline_peak_mentions, 0) + $5)
+           AND (sd.mention_count::numeric / GREATEST(b.baseline_mentions, 1)) >= $6
+         )
+       )
+     ORDER BY spike_ratio DESC NULLS LAST, sd.mention_count DESC, e.name ASC
+     LIMIT $7`,
+    [latestDate, 7, 5, 12, 3, 2.5, limit],
+  );
+
+  const entries = rows.map((row) => toUnusualActivityEntry(row as Record<string, unknown>));
+  const duplicateSignals = await getDuplicateClusterSignalsForEntities(
+    pool,
+    entries.map((entry) => entry.entityId),
+    latestDate,
+    timezone,
+  );
+
+  return {
+    latestDate,
+    entries: entries.map((entry) => {
+      const duplicateSignal = duplicateSignals.get(entry.entityId);
+      if (!duplicateSignal) {
+        return entry;
+      }
+      return {
+        ...entry,
+        duplicateClusterSize: duplicateSignal.duplicateClusterSize,
+        duplicateAuthorCount: duplicateSignal.duplicateAuthorCount,
+        duplicateSourceCount: duplicateSignal.duplicateSourceCount,
+      };
+    }),
+  };
+}
+
+export async function getNarrativeWatchlist(pool: Pool, limit = 8): Promise<NarrativeWatchlistOverview> {
+  const {
+    rows: [latestRow],
+  } = await pool.query<{ latest_date: string | null }>(`SELECT MAX(date)::text AS latest_date FROM narratives`);
+
+  const latestDate = latestRow?.latest_date ?? null;
+  if (!latestDate) {
+    return { latestDate: null, entries: [] };
+  }
+
+  const { rows } = await pool.query<{
+    id: string;
+    name: string;
+    date: string;
+    member_count: number;
+    avg_sentiment: number | null;
+    signal_strength: NarrativeSignalStrength;
+  }>(
+    `SELECT
+       id,
+       name,
+       date::text AS date,
+       member_count,
+       avg_sentiment,
+       signal_strength
+     FROM narratives
+     WHERE date = $1::date
+     ORDER BY
+       CASE signal_strength
+         WHEN 'new' THEN 0
+         WHEN 'emerging' THEN 1
+         WHEN 'strong' THEN 2
+         WHEN 'stable' THEN 3
+         WHEN 'fading' THEN 4
+         ELSE 5
+       END,
+       member_count DESC,
+       name ASC
+     LIMIT $2`,
+    [latestDate, limit],
+  );
+
+  return {
+    latestDate,
+    entries: rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      date: row.date,
+      memberCount: Number.parseInt(String(row.member_count), 10),
+      avgSentiment: row.avg_sentiment == null ? null : Number.parseFloat(String(row.avg_sentiment)),
+      signalStrength: row.signal_strength,
+    })),
+  };
+}
+
+export async function getNarrativeDrilldownById(
+  pool: Pool,
+  narrativeId: string,
+  summaryLimit = 4,
+): Promise<NarrativeDrilldown | null> {
+  const {
+    rows: [narrativeRow],
+  } = await pool.query<{
+    id: string;
+    name: string;
+    date: string;
+    member_count: number;
+    avg_sentiment: number | null;
+    signal_strength: NarrativeSignalStrength;
+    summary_ids: string[];
+  }>(
+    `SELECT
+       id,
+       name,
+       date::text AS date,
+       member_count,
+       avg_sentiment,
+       signal_strength,
+       summary_ids
+     FROM narratives
+     WHERE id = $1
+     LIMIT 1`,
+    [narrativeId],
+  );
+
+  if (!narrativeRow) {
+    return null;
+  }
+
+  const summaryIds = Array.isArray(narrativeRow.summary_ids)
+    ? narrativeRow.summary_ids.filter((summaryId) => typeof summaryId === 'string' && summaryId.length > 0)
+    : [];
+
+  let summaries: NarrativeSummaryPreview[] = [];
+  if (summaryIds.length > 0 && summaryLimit > 0) {
+    const { rows } = await pool.query<SummaryRow>(
+      `SELECT *
+         FROM summaries
+        WHERE id = ANY($1::text[])
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [summaryIds, summaryLimit],
+    );
+
+    summaries = rows.map((row) => ({
+      id: row.id,
+      source: row.source,
+      sourceId: row.source_id,
+      sentiment: row.sentiment,
+      urgency: row.urgency,
+      itemCount: row.item_count,
+      createdAt: row.created_at,
+      body: row.body,
+    }));
+  }
+
+  return {
+    id: narrativeRow.id,
+    name: narrativeRow.name,
+    date: narrativeRow.date,
+    memberCount: Number.parseInt(String(narrativeRow.member_count), 10),
+    avgSentiment: narrativeRow.avg_sentiment == null ? null : Number.parseFloat(String(narrativeRow.avg_sentiment)),
+    signalStrength: narrativeRow.signal_strength,
+    summaries,
+  };
+}
+
 // ── Discord Tokens ────────────────────────────────────────────────────
 
 export interface DiscordTokenRow {
@@ -1585,6 +2030,30 @@ export interface PriceSnapshotRow {
   createdAt: number;
 }
 
+export type PriceContrarianSignal = 'price-up-sentiment-down' | 'price-down-sentiment-up';
+
+export interface PriceWatchEntry {
+  entityId: string;
+  entityName: string;
+  timestamp: number;
+  priceUsd: number;
+  priceChange24h: number | null;
+  priceChange7d: number | null;
+  volume24h: number | null;
+  marketCap: number | null;
+  avgSentiment: number | null;
+  momentum: number | null;
+  contrarianSignal: PriceContrarianSignal | null;
+}
+
+export interface PriceWatchOverview {
+  latestTimestamp: number | null;
+  entries: PriceWatchEntry[];
+}
+
+const PRICE_CONTRARIAN_SENTIMENT_THRESHOLD = 0.2;
+const PRICE_CONTRARIAN_MOVE_THRESHOLD = 3;
+
 /** Map a snake_case DB row to a camelCase PriceSnapshotRow. */
 function toPriceSnapshotRow(row: Record<string, unknown>): PriceSnapshotRow {
   return {
@@ -1598,6 +2067,41 @@ function toPriceSnapshotRow(row: Record<string, unknown>): PriceSnapshotRow {
     marketCap: (row.market_cap as number | null) ?? null,
     source: row.source as string,
     createdAt: row.created_at as number,
+  };
+}
+
+function derivePriceContrarianSignal(
+  avgSentiment: number | null,
+  priceChange24h: number | null,
+): PriceContrarianSignal | null {
+  if (avgSentiment == null || priceChange24h == null) {
+    return null;
+  }
+  if (avgSentiment <= -PRICE_CONTRARIAN_SENTIMENT_THRESHOLD && priceChange24h >= PRICE_CONTRARIAN_MOVE_THRESHOLD) {
+    return 'price-up-sentiment-down';
+  }
+  if (avgSentiment >= PRICE_CONTRARIAN_SENTIMENT_THRESHOLD && priceChange24h <= -PRICE_CONTRARIAN_MOVE_THRESHOLD) {
+    return 'price-down-sentiment-up';
+  }
+  return null;
+}
+
+function toPriceWatchEntry(row: Record<string, unknown>): PriceWatchEntry {
+  const avgSentiment = row.avg_sentiment == null ? null : Number.parseFloat(String(row.avg_sentiment));
+  const priceChange24h = row.price_change_24h == null ? null : Number.parseFloat(String(row.price_change_24h));
+
+  return {
+    entityId: row.entity_id as string,
+    entityName: row.entity_name as string,
+    timestamp: Number(row.timestamp),
+    priceUsd: Number(row.price_usd),
+    priceChange24h,
+    priceChange7d: row.price_change_7d == null ? null : Number.parseFloat(String(row.price_change_7d)),
+    volume24h: row.volume_24h == null ? null : Number.parseFloat(String(row.volume_24h)),
+    marketCap: row.market_cap == null ? null : Number.parseFloat(String(row.market_cap)),
+    avgSentiment,
+    momentum: row.momentum == null ? null : Number.parseFloat(String(row.momentum)),
+    contrarianSignal: derivePriceContrarianSignal(avgSentiment, priceChange24h),
   };
 }
 
@@ -1729,6 +2233,315 @@ export async function getLatestPricesForEntities(pool: Pool, entityIds: string[]
     [entityIds],
   );
   return rows.map(toPriceSnapshotRow);
+}
+
+export async function getPriceWatchOverview(pool: Pool, limit = 8): Promise<PriceWatchOverview> {
+  const {
+    rows: [latestRow],
+  } = await pool.query<{ latest_timestamp: number | null }>(
+    `SELECT MAX(timestamp) AS latest_timestamp
+       FROM price_snapshots`,
+  );
+
+  const latestTimestamp = latestRow?.latest_timestamp != null ? Number(latestRow.latest_timestamp) : null;
+  if (latestTimestamp == null) {
+    return { latestTimestamp: null, entries: [] };
+  }
+
+  const freshnessCutoff = latestTimestamp - 3 * 86_400_000;
+
+  const { rows } = await pool.query(
+    `WITH latest_prices AS (
+       SELECT DISTINCT ON (ps.entity_id)
+         ps.entity_id,
+         e.name AS entity_name,
+         e.relevance,
+         ps.timestamp,
+         ps.price_usd,
+         ps.price_change_24h,
+         ps.price_change_7d,
+         ps.volume_24h,
+         ps.market_cap,
+         sd.avg_sentiment,
+         sd.momentum
+       FROM price_snapshots ps
+       JOIN entities e ON e.id = ps.entity_id
+       LEFT JOIN LATERAL (
+         SELECT avg_sentiment, momentum
+           FROM entity_sentiment_daily
+          WHERE entity_id = ps.entity_id
+          ORDER BY date DESC
+          LIMIT 1
+       ) sd ON TRUE
+       WHERE e.status = 'active'
+         AND e.type = 'token'
+         AND ps.timestamp >= $1
+       ORDER BY ps.entity_id, ps.timestamp DESC
+     )
+     SELECT
+       entity_id,
+       entity_name,
+       timestamp,
+       price_usd,
+       price_change_24h,
+       price_change_7d,
+       volume_24h,
+       market_cap,
+       avg_sentiment,
+       momentum
+     FROM latest_prices
+     ORDER BY
+       CASE
+         WHEN avg_sentiment IS NOT NULL
+           AND price_change_24h IS NOT NULL
+           AND avg_sentiment <= $3
+           AND price_change_24h >= $4
+         THEN 0
+         WHEN avg_sentiment IS NOT NULL
+           AND price_change_24h IS NOT NULL
+           AND avg_sentiment >= $5
+           AND price_change_24h <= $6
+         THEN 0
+         ELSE 1
+       END,
+       ABS(COALESCE(price_change_24h, 0)) DESC,
+       COALESCE(volume_24h, 0) DESC,
+       COALESCE(market_cap, 0) DESC,
+       relevance DESC NULLS LAST,
+       entity_name ASC
+     LIMIT $2`,
+    [
+      freshnessCutoff,
+      limit,
+      -PRICE_CONTRARIAN_SENTIMENT_THRESHOLD,
+      PRICE_CONTRARIAN_MOVE_THRESHOLD,
+      PRICE_CONTRARIAN_SENTIMENT_THRESHOLD,
+      -PRICE_CONTRARIAN_MOVE_THRESHOLD,
+    ],
+  );
+
+  return {
+    latestTimestamp,
+    entries: rows.map((row) => toPriceWatchEntry(row as Record<string, unknown>)),
+  };
+}
+
+export type MacroIndicator = 'vix' | 'dxy' | 'us10y' | 'spx' | 'gold';
+export type MacroRegimeClassification = 'risk-on' | 'risk-off' | 'transition' | 'unclear';
+
+export interface MacroSnapshotRow {
+  id: string;
+  date: string;
+  indicator: MacroIndicator;
+  value: number;
+  change1d: number | null;
+  change7d: number | null;
+  source: string;
+  createdAt: number;
+}
+
+function toMacroSnapshotRow(row: Record<string, unknown>): MacroSnapshotRow {
+  return {
+    id: row.id as string,
+    date: row.date as string,
+    indicator: row.indicator as MacroIndicator,
+    value: row.value as number,
+    change1d: (row.change_1d as number | null) ?? null,
+    change7d: (row.change_7d as number | null) ?? null,
+    source: row.source as string,
+    createdAt: row.created_at as number,
+  };
+}
+
+export async function upsertMacroSnapshots(
+  pool: Pool,
+  snapshots: Array<{
+    date: string;
+    indicator: MacroIndicator;
+    value: number;
+    change1d?: number | null;
+    change7d?: number | null;
+    source?: string;
+  }>,
+): Promise<number> {
+  if (snapshots.length === 0) return 0;
+
+  const cols = 8;
+  const now = Date.now();
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
+
+  for (let i = 0; i < snapshots.length; i++) {
+    const snapshot = snapshots[i];
+    const offset = i * cols;
+    placeholders.push(
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8})`,
+    );
+    values.push(
+      ulid(),
+      snapshot.date,
+      snapshot.indicator,
+      snapshot.value,
+      snapshot.change1d ?? null,
+      snapshot.change7d ?? null,
+      snapshot.source ?? 'fred',
+      now,
+    );
+  }
+
+  const result = await pool.query(
+    `INSERT INTO macro_snapshots (
+      id, date, indicator, value, change_1d, change_7d, source, created_at
+    ) VALUES ${placeholders.join(', ')}
+    ON CONFLICT (indicator, date) DO UPDATE SET
+      value = EXCLUDED.value,
+      change_1d = EXCLUDED.change_1d,
+      change_7d = EXCLUDED.change_7d,
+      source = EXCLUDED.source`,
+    values,
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function getLatestMacroSnapshots(pool: Pool, indicators?: MacroIndicator[]): Promise<MacroSnapshotRow[]> {
+  const { rows } =
+    indicators && indicators.length > 0
+      ? await pool.query(
+          `SELECT DISTINCT ON (indicator) *
+            FROM macro_snapshots
+            WHERE indicator = ANY($1)
+            ORDER BY indicator, date DESC`,
+          [indicators],
+        )
+      : await pool.query(
+          `SELECT DISTINCT ON (indicator) *
+            FROM macro_snapshots
+            ORDER BY indicator, date DESC`,
+        );
+  return rows.map(toMacroSnapshotRow);
+}
+
+export async function getMacroHistory(pool: Pool, indicator: MacroIndicator, limit = 30): Promise<MacroSnapshotRow[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM macro_snapshots
+      WHERE indicator = $1
+      ORDER BY date DESC
+      LIMIT $2`,
+    [indicator, limit],
+  );
+  return rows.map(toMacroSnapshotRow);
+}
+
+export interface MacroRegimeRow {
+  id: string;
+  reportId: string;
+  date: string;
+  reportType: 'daily' | 'pulse';
+  classification: MacroRegimeClassification;
+  confidence: number;
+  rationale: string;
+  createdAt: number;
+}
+
+export interface MacroRegimeHistory {
+  streakDays: number;
+  regimeStartedAt: string;
+  previousClassification: MacroRegimeClassification | null;
+}
+
+function toMacroRegimeRow(row: Record<string, unknown>): MacroRegimeRow {
+  return {
+    id: row.id as string,
+    reportId: row.report_id as string,
+    date: row.date as string,
+    reportType: row.report_type as 'daily' | 'pulse',
+    classification: row.classification as MacroRegimeClassification,
+    confidence: row.confidence as number,
+    rationale: row.rationale as string,
+    createdAt: row.created_at as number,
+  };
+}
+
+function previousDay(date: string): string {
+  return new Date(new Date(`${date}T00:00:00.000Z`).getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+export async function insertMacroRegime(
+  pool: Pool,
+  regime: {
+    reportId: string;
+    date: string;
+    reportType: 'daily' | 'pulse';
+    classification: MacroRegimeClassification;
+    confidence: number;
+    rationale: string;
+    createdAt: number;
+  },
+): Promise<boolean> {
+  const result = await pool.query(
+    `INSERT INTO macro_regimes (
+      id, report_id, date, report_type, classification, confidence, rationale, created_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8
+    ) ON CONFLICT (report_id) DO NOTHING`,
+    [
+      ulid(),
+      regime.reportId,
+      regime.date,
+      regime.reportType,
+      regime.classification,
+      regime.confidence,
+      regime.rationale,
+      regime.createdAt,
+    ],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function getMacroRegimeHistoryByReport(pool: Pool, reportId: string): Promise<MacroRegimeHistory | null> {
+  const { rows: currentRows } = await pool.query(`SELECT * FROM macro_regimes WHERE report_id = $1 LIMIT 1`, [
+    reportId,
+  ]);
+  if (currentRows.length === 0) return null;
+
+  const current = toMacroRegimeRow(currentRows[0] as Record<string, unknown>);
+  const { rows } = await pool.query(
+    `SELECT date, classification
+       FROM macro_regimes
+       WHERE report_type = 'daily' AND date <= $1
+       ORDER BY date DESC
+       LIMIT 30`,
+    [current.date],
+  );
+
+  let streakDays = 0;
+  let regimeStartedAt = current.date;
+  let expectedDate = current.date;
+  let previousClassification: MacroRegimeClassification | null = null;
+
+  for (const row of rows as Array<Record<string, unknown>>) {
+    const date = row.date as string;
+    const classification = row.classification as MacroRegimeClassification;
+
+    if (date !== expectedDate) {
+      break;
+    }
+
+    if (classification !== current.classification) {
+      previousClassification = classification;
+      break;
+    }
+
+    streakDays += 1;
+    regimeStartedAt = date;
+    expectedDate = previousDay(date);
+  }
+
+  return {
+    streakDays,
+    regimeStartedAt,
+    previousClassification,
+  };
 }
 
 export interface TokenCoinGeckoMapping {
@@ -1886,6 +2699,138 @@ export async function getAlphaPropagationSummary(
   }));
 }
 
+export interface AlphaWatchEntryRow {
+  entityId: string;
+  entityName: string;
+  firstSignalTier: string;
+  firstSignalTime: number;
+  latestTier: string;
+  latestMentionTime: number;
+  propagationLagMs: number | null;
+  tierCount: number;
+  sourceCount: number;
+}
+
+export interface AlphaWatchOverview {
+  latestTimestamp: number | null;
+  entries: AlphaWatchEntryRow[];
+}
+
+function toAlphaWatchEntryRow(row: Record<string, unknown>): AlphaWatchEntryRow {
+  return {
+    entityId: row.entity_id as string,
+    entityName: row.entity_name as string,
+    firstSignalTier: row.first_signal_tier as string,
+    firstSignalTime: Number(row.first_signal_time),
+    latestTier: row.latest_tier as string,
+    latestMentionTime: Number(row.latest_mention_time),
+    propagationLagMs: row.propagation_lag_ms != null ? Number(row.propagation_lag_ms) : null,
+    tierCount: Number(row.tier_count),
+    sourceCount: Number(row.source_count),
+  };
+}
+
+export async function getRecentAlphaWatchlist(pool: Pool, sinceTime: number, limit = 8): Promise<AlphaWatchOverview> {
+  const {
+    rows: [latestRow],
+  } = await pool.query<{ latest_timestamp: number | null }>(
+    `SELECT MAX(ap.first_mention_time) AS latest_timestamp
+       FROM alpha_propagation ap
+       JOIN entities e ON e.id = ap.entity_id
+      WHERE ap.first_mention_time >= $1
+        AND e.status = 'active'
+        AND ap.tier IN ('alpha', 'influencer')`,
+    [sinceTime],
+  );
+
+  const latestTimestamp = latestRow?.latest_timestamp != null ? Number(latestRow.latest_timestamp) : null;
+  if (latestTimestamp == null) {
+    return { latestTimestamp: null, entries: [] };
+  }
+
+  const { rows } = await pool.query<{
+    entity_id: string;
+    entity_name: string;
+    first_signal_tier: string;
+    first_signal_time: number;
+    latest_tier: string;
+    latest_mention_time: number;
+    propagation_lag_ms: number | null;
+    tier_count: number;
+    source_count: number;
+  }>(
+    `WITH recent AS (
+       SELECT
+         ap.entity_id,
+         e.name AS entity_name,
+         ap.tier,
+         ap.source,
+         ap.source_id,
+         ap.first_mention_time,
+         ap.created_at,
+         ap.id
+       FROM alpha_propagation ap
+       JOIN entities e ON e.id = ap.entity_id
+       WHERE ap.first_mention_time >= $1
+         AND e.status = 'active'
+     ),
+     first_signal AS (
+       SELECT DISTINCT ON (entity_id)
+         entity_id,
+         entity_name,
+         tier AS first_signal_tier,
+         first_mention_time AS first_signal_time
+       FROM recent
+       WHERE tier IN ('alpha', 'influencer')
+       ORDER BY entity_id, first_mention_time ASC, created_at ASC, id ASC
+     ),
+     latest_hits AS (
+       SELECT DISTINCT ON (entity_id)
+         entity_id,
+         tier AS latest_tier,
+         first_mention_time AS latest_mention_time
+       FROM recent
+       WHERE entity_id IN (SELECT entity_id FROM first_signal)
+       ORDER BY entity_id, first_mention_time DESC, created_at DESC, id DESC
+     ),
+     aggregated AS (
+       SELECT
+         recent.entity_id,
+         MAX(recent.entity_name) AS entity_name,
+         COUNT(DISTINCT recent.tier) AS tier_count,
+         COUNT(DISTINCT recent.source || ':' || recent.source_id) AS source_count
+       FROM recent
+       WHERE recent.entity_id IN (SELECT entity_id FROM first_signal)
+       GROUP BY recent.entity_id
+     )
+     SELECT
+       aggregated.entity_id,
+       aggregated.entity_name,
+       first_signal.first_signal_tier,
+       first_signal.first_signal_time,
+       latest_hits.latest_tier,
+       latest_hits.latest_mention_time,
+       CASE
+         WHEN latest_hits.latest_mention_time > first_signal.first_signal_time
+         THEN latest_hits.latest_mention_time - first_signal.first_signal_time
+         ELSE NULL
+       END AS propagation_lag_ms,
+       aggregated.tier_count,
+       aggregated.source_count
+     FROM aggregated
+     JOIN first_signal ON first_signal.entity_id = aggregated.entity_id
+     JOIN latest_hits ON latest_hits.entity_id = aggregated.entity_id
+     ORDER BY latest_hits.latest_mention_time DESC, aggregated.tier_count DESC, aggregated.entity_name ASC
+     LIMIT $2`,
+    [sinceTime, limit],
+  );
+
+  return {
+    latestTimestamp,
+    entries: rows.map((row) => toAlphaWatchEntryRow(row as Record<string, unknown>)),
+  };
+}
+
 export async function updateSourceTier(pool: Pool, source: string, sourceId: string, tier: string): Promise<void> {
   await pool.query(`UPDATE sources SET tier = $3 WHERE source = $1 AND source_id = $2`, [source, sourceId, tier]);
 }
@@ -1906,10 +2851,44 @@ export interface AuthorRow {
   createdAt: number;
 }
 
+export interface EntityAuthorRow extends AuthorRow {
+  entityMentionCount: number;
+  firstEntityCallTime: number | null;
+  firstMover: boolean;
+  firstMoverLagMs: number | null;
+}
+
+export interface EntityFirstMoverRow {
+  entityId: string;
+  entityName: string;
+  authorId: string;
+  platform: string;
+  handle: string;
+  displayName: string | null;
+  claimType: string;
+  claimText: string;
+  sourceItemId: string | null;
+  timestamp: number;
+  nextTrackedCallTime: number | null;
+  leadWindowMs: number | null;
+}
+
+export interface FirstMoverWatchlistEntryRow extends EntityFirstMoverRow {
+  credibilityScore: number | null;
+  totalCalls: number;
+  correctCalls: number;
+}
+
+export interface FirstMoverWatchlistOverview {
+  latestTimestamp: number | null;
+  entries: FirstMoverWatchlistEntryRow[];
+}
+
 export interface AuthorCallRow {
   id: string;
   authorId: string;
   entityId: string;
+  entityName: string | null;
   claimType: string;
   claimText: string;
   confidence: number;
@@ -1942,6 +2921,7 @@ function toAuthorCallRow(row: Record<string, unknown>): AuthorCallRow {
     id: row.id as string,
     authorId: row.author_id as string,
     entityId: row.entity_id as string,
+    entityName: (row.entity_name as string) ?? null,
     claimType: row.claim_type as string,
     claimText: row.claim_text as string,
     confidence: Number(row.confidence),
@@ -1986,27 +2966,201 @@ export async function getAuthorById(pool: Pool, authorId: string): Promise<Autho
   return rows.length > 0 ? toAuthorRow(rows[0]) : null;
 }
 
-export async function getTopAuthorsByEntity(
-  pool: Pool,
-  entityId: string,
-  limit = 10,
-): Promise<Array<AuthorRow & { entityMentionCount: number }>> {
+export async function getTopAuthorsByEntity(pool: Pool, entityId: string, limit = 10): Promise<EntityAuthorRow[]> {
   const { rows } = await pool.query(
-    `SELECT a.*, COUNT(DISTINCT i.id) AS entity_mention_count
-     FROM authors a
-     JOIN items i ON i.author = a.handle AND i.source = a.platform
-     JOIN summaries s ON s.source = i.source AND s.source_id = i.source_id
-     JOIN entity_mentions em ON em.summary_id = s.id AND em.entity_id = $1
-     WHERE i.timestamp >= s.window_start AND i.timestamp <= s.window_end
-     GROUP BY a.id
-     ORDER BY entity_mention_count DESC
+    `WITH mention_counts AS (
+       SELECT a.id AS author_id, COUNT(DISTINCT i.id) AS entity_mention_count
+         FROM authors a
+         JOIN items i ON i.author = a.handle AND i.source = a.platform
+         JOIN summaries s ON s.source = i.source AND s.source_id = i.source_id
+         JOIN entity_mentions em ON em.summary_id = s.id AND em.entity_id = $1
+        WHERE i.timestamp >= s.window_start AND i.timestamp <= s.window_end
+        GROUP BY a.id
+     ),
+     first_calls AS (
+       SELECT ac.author_id, MIN(ac.timestamp) AS first_entity_call_time
+         FROM author_calls ac
+        WHERE ac.entity_id = $1
+        GROUP BY ac.author_id
+     ),
+     ranked_authors AS (
+       SELECT
+         a.*,
+         mc.entity_mention_count,
+         fc.first_entity_call_time,
+         MIN(fc.first_entity_call_time) OVER () AS earliest_entity_call_time
+       FROM mention_counts mc
+       JOIN authors a ON a.id = mc.author_id
+       LEFT JOIN first_calls fc ON fc.author_id = a.id
+     )
+     SELECT
+       ranked_authors.*,
+       CASE
+         WHEN ranked_authors.first_entity_call_time IS NOT NULL
+           AND ranked_authors.first_entity_call_time = ranked_authors.earliest_entity_call_time
+         THEN true
+         ELSE false
+       END AS first_mover,
+       CASE
+         WHEN ranked_authors.first_entity_call_time IS NULL OR ranked_authors.earliest_entity_call_time IS NULL
+         THEN NULL
+         ELSE ranked_authors.first_entity_call_time - ranked_authors.earliest_entity_call_time
+       END AS first_mover_lag_ms
+     FROM ranked_authors
+     ORDER BY entity_mention_count DESC, first_entity_call_time ASC NULLS LAST, last_seen DESC
      LIMIT $2`,
     [entityId, limit],
   );
   return rows.map((r) => ({
     ...toAuthorRow(r),
     entityMentionCount: Number(r.entity_mention_count),
+    firstEntityCallTime: r.first_entity_call_time != null ? Number(r.first_entity_call_time) : null,
+    firstMover: Boolean(r.first_mover),
+    firstMoverLagMs: r.first_mover_lag_ms != null ? Number(r.first_mover_lag_ms) : null,
   }));
+}
+
+function toEntityFirstMoverRow(row: Record<string, unknown>): EntityFirstMoverRow {
+  return {
+    entityId: row.entity_id as string,
+    entityName: row.entity_name as string,
+    authorId: row.author_id as string,
+    platform: row.platform as string,
+    handle: row.handle as string,
+    displayName: (row.display_name as string) ?? null,
+    claimType: row.claim_type as string,
+    claimText: row.claim_text as string,
+    sourceItemId: (row.source_item_id as string) ?? null,
+    timestamp: Number(row.timestamp),
+    nextTrackedCallTime: row.next_tracked_call_time != null ? Number(row.next_tracked_call_time) : null,
+    leadWindowMs: row.lead_window_ms != null ? Number(row.lead_window_ms) : null,
+  };
+}
+
+function toFirstMoverWatchlistEntryRow(row: Record<string, unknown>): FirstMoverWatchlistEntryRow {
+  return {
+    ...toEntityFirstMoverRow(row),
+    credibilityScore: row.credibility_score != null ? Number(row.credibility_score) : null,
+    totalCalls: Number(row.total_calls),
+    correctCalls: Number(row.correct_calls),
+  };
+}
+
+export async function getEntityFirstMovers(
+  pool: Pool,
+  entityIds: string[],
+  sinceTime: number,
+  limit = 6,
+): Promise<EntityFirstMoverRow[]> {
+  if (entityIds.length === 0) return [];
+
+  const { rows } = await pool.query(
+    `WITH ranked_calls AS (
+       SELECT
+         ac.entity_id,
+         e.name AS entity_name,
+         ac.author_id,
+         a.platform,
+         a.handle,
+         a.display_name,
+         ac.claim_type,
+         ac.claim_text,
+         ac.source_item_id,
+         ac.timestamp,
+         LEAD(ac.timestamp) OVER (
+           PARTITION BY ac.entity_id
+           ORDER BY ac.timestamp ASC, ac.created_at ASC, ac.id ASC
+         ) AS next_tracked_call_time,
+         ROW_NUMBER() OVER (
+           PARTITION BY ac.entity_id
+           ORDER BY ac.timestamp ASC, ac.created_at ASC, ac.id ASC
+         ) AS entity_rank
+       FROM author_calls ac
+       JOIN authors a ON a.id = ac.author_id
+       JOIN entities e ON e.id = ac.entity_id
+       WHERE ac.entity_id = ANY($1::text[])
+         AND ac.timestamp >= $2
+     )
+     SELECT
+       ranked_calls.*,
+       CASE
+         WHEN ranked_calls.next_tracked_call_time IS NULL THEN NULL
+         ELSE ranked_calls.next_tracked_call_time - ranked_calls.timestamp
+       END AS lead_window_ms
+     FROM ranked_calls
+     WHERE ranked_calls.entity_rank = 1
+     ORDER BY ranked_calls.timestamp ASC
+     LIMIT $3`,
+    [entityIds, sinceTime, limit],
+  );
+  return rows.map((row) => toEntityFirstMoverRow(row as Record<string, unknown>));
+}
+
+export async function getRecentFirstMoverWatchlist(
+  pool: Pool,
+  sinceTime: number,
+  limit = 8,
+): Promise<FirstMoverWatchlistOverview> {
+  const {
+    rows: [latestRow],
+  } = await pool.query<{ latest_timestamp: number | null }>(
+    `SELECT MAX(timestamp) AS latest_timestamp
+       FROM author_calls
+      WHERE timestamp >= $1`,
+    [sinceTime],
+  );
+
+  const latestTimestamp = latestRow?.latest_timestamp != null ? Number(latestRow.latest_timestamp) : null;
+  if (latestTimestamp == null) {
+    return { latestTimestamp: null, entries: [] };
+  }
+
+  const { rows } = await pool.query(
+    `WITH ranked_calls AS (
+       SELECT
+         ac.entity_id,
+         e.name AS entity_name,
+         ac.author_id,
+         a.platform,
+         a.handle,
+         a.display_name,
+         a.credibility_score,
+         a.total_calls,
+         a.correct_calls,
+         ac.claim_type,
+         ac.claim_text,
+         ac.source_item_id,
+         ac.timestamp,
+         LEAD(ac.timestamp) OVER (
+           PARTITION BY ac.entity_id
+           ORDER BY ac.timestamp ASC, ac.created_at ASC, ac.id ASC
+         ) AS next_tracked_call_time,
+         ROW_NUMBER() OVER (
+           PARTITION BY ac.entity_id
+           ORDER BY ac.timestamp ASC, ac.created_at ASC, ac.id ASC
+         ) AS entity_rank
+       FROM author_calls ac
+       JOIN authors a ON a.id = ac.author_id
+       JOIN entities e ON e.id = ac.entity_id
+       WHERE ac.timestamp >= $1
+     )
+     SELECT
+       ranked_calls.*,
+       CASE
+         WHEN ranked_calls.next_tracked_call_time IS NULL THEN NULL
+         ELSE ranked_calls.next_tracked_call_time - ranked_calls.timestamp
+       END AS lead_window_ms
+     FROM ranked_calls
+     WHERE ranked_calls.entity_rank = 1
+     ORDER BY ranked_calls.timestamp DESC, ranked_calls.entity_name ASC
+     LIMIT $2`,
+    [sinceTime, limit],
+  );
+
+  return {
+    latestTimestamp,
+    entries: rows.map((row) => toFirstMoverWatchlistEntryRow(row as Record<string, unknown>)),
+  };
 }
 
 export async function insertAuthorCall(
@@ -2044,7 +3198,12 @@ export async function insertAuthorCall(
 
 export async function getAuthorCalls(pool: Pool, authorId: string, limit = 20): Promise<AuthorCallRow[]> {
   const { rows } = await pool.query(
-    `SELECT * FROM author_calls WHERE author_id = $1 ORDER BY timestamp DESC LIMIT $2`,
+    `SELECT ac.*, e.name AS entity_name
+       FROM author_calls ac
+       JOIN entities e ON e.id = ac.entity_id
+      WHERE ac.author_id = $1
+      ORDER BY ac.timestamp DESC
+      LIMIT $2`,
     [authorId, limit],
   );
   return rows.map(toAuthorCallRow);
@@ -2062,7 +3221,7 @@ export async function resolveAuthorCall(
   pool: Pool,
   callId: string,
   outcome: 'correct' | 'incorrect' | 'unresolved',
-): Promise<void> {
+): Promise<boolean> {
   const now = Date.now();
   const { rows } = await pool.query(
     `UPDATE author_calls SET resolved = true, outcome = $2, resolved_at = $3
@@ -2070,6 +3229,9 @@ export async function resolveAuthorCall(
      RETURNING author_id`,
     [callId, outcome, now],
   );
+  if (rows.length === 0) {
+    return false;
+  }
   if (rows.length > 0 && outcome !== 'unresolved') {
     const authorId = rows[0].author_id as string;
     const correctIncrement = outcome === 'correct' ? 1 : 0;
@@ -2082,4 +3244,5 @@ export async function resolveAuthorCall(
       [authorId, correctIncrement],
     );
   }
+  return true;
 }

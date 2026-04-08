@@ -27,14 +27,12 @@ export function createAlphaTracker(pool: Pool, log: Logger): AlphaTracker {
 
     try {
       // Look up source tier
-      const tierResult = await pool.query(
-        'SELECT tier FROM sources WHERE source = $1 AND source_id = $2',
-        [source, sourceId],
-      );
+      const tierResult = await pool.query('SELECT tier FROM sources WHERE source = $1 AND source_id = $2', [
+        source,
+        sourceId,
+      ]);
       const tier: string =
-        tierResult.rows.length > 0 && tierResult.rows[0].tier != null
-          ? (tierResult.rows[0].tier as string)
-          : 'general';
+        tierResult.rows.length > 0 && tierResult.rows[0].tier != null ? (tierResult.rows[0].tier as string) : 'general';
 
       // Check which entity+tier combos already have records in the lookback window
       const lookbackStart = mentionTime - ALPHA_LOOKBACK_MS;
@@ -43,9 +41,7 @@ export function createAlphaTracker(pool: Pool, log: Logger): AlphaTracker {
          WHERE entity_id = ANY($1::text[]) AND tier = $2 AND first_mention_time >= $3`,
         [entityIds, tier, lookbackStart],
       );
-      const existingSet = new Set<string>(
-        existingResult.rows.map((r) => r.entity_id as string),
-      );
+      const existingSet = new Set<string>(existingResult.rows.map((r) => r.entity_id as string));
 
       // Insert new records for entities without existing entries
       const newEntityIds = entityIds.filter((id) => !existingSet.has(id));
@@ -70,10 +66,7 @@ export function createAlphaTracker(pool: Pool, log: Logger): AlphaTracker {
 
       return { tracked: newEntityIds.length, skipped };
     } catch (err) {
-      log.warn(
-        { err, source, sourceId, entityCount: entityIds.length },
-        'Alpha tracker: failed to track mentions',
-      );
+      log.warn({ err, source, sourceId, entityCount: entityIds.length }, 'Alpha tracker: failed to track mentions');
       return { tracked: 0, skipped: entityIds.length };
     }
   }

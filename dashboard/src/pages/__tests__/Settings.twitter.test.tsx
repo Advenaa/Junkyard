@@ -183,9 +183,7 @@ describe('Settings Twitter source management', () => {
 
     // Wait for the API key warning to appear (status endpoint is fetched when switching to twitter)
     await waitFor(() => {
-      expect(
-        screen.getByText(/TWITTERAPI_KEY.*not configured|Twitter API key.*not configured/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/TWITTERAPI_KEY.*not configured|Twitter API key.*not configured/i)).toBeInTheDocument();
     });
   });
 
@@ -236,9 +234,7 @@ describe('Settings Twitter source management', () => {
     });
 
     // The error message should be visible
-    expect(
-      screen.getByText(/401 Unauthorized|API key.*invalid|API key.*expired/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/401 Unauthorized|API key.*invalid|API key.*expired/i)).toBeInTheDocument();
   });
 
   it('shows Twitter handle source in the source list', async () => {

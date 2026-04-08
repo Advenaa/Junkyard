@@ -95,6 +95,27 @@ describe('Settings market calendar', () => {
           });
         }
 
+        if (path === '/api/v1/macro' && method === 'GET') {
+          return new Response(JSON.stringify({ error: 'No macro data available yet' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/unusual-activity' && method === 'GET') {
+          return new Response(JSON.stringify({ latestDate: '2026-04-08', entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/narratives' && method === 'GET') {
+          return new Response(JSON.stringify({ latestDate: '2026-04-08', entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
         if (path === '/api/v1/entities/search' && method === 'GET') {
           const q = requestUrl.searchParams.get('q')?.toLowerCase() ?? '';
           const entities = knownEntities.filter(

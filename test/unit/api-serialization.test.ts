@@ -179,6 +179,102 @@ describe('toCamelCase — structural (server.ts source)', () => {
     );
   });
 
+  it('GET /api/v1/reports parses body JSON for market catalyst previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.marketCatalysts'),
+      'GET /api/v1/reports should expose a market-catalyst preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.marketCatalysts\s*\?\?\s*parsed\?\.market_catalysts/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for regional divergence previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.regionalDivergence'),
+      'GET /api/v1/reports should expose a regional-divergence preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.regionalDivergence\s*\?\?\s*parsed\?\.regional_divergence/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for narrative shift previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.narrativeShifts'),
+      'GET /api/v1/reports should expose a narrative-shift preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.narrativeShifts\s*\?\?\s*parsed\?\.narrative_shifts/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for first-mover previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.firstMovers'),
+      'GET /api/v1/reports should expose a first-mover preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.firstMovers\s*\?\?\s*parsed\?\.first_movers/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for price alert previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.priceAlerts'),
+      'GET /api/v1/reports should expose a price-alert preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.priceAlerts\s*\?\?\s*parsed\?\.price_alerts/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for macro alert previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.macroAlerts'),
+      'GET /api/v1/reports should expose a macro alert preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.macroAlerts\s*\?\?\s*parsed\?\.macro_alerts/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for unusual activity previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.unusualActivity'),
+      'GET /api/v1/reports should expose an unusual-activity preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.unusualActivity\s*\?\?\s*parsed\?\.unusual_activity/);
+  });
+
+  it('GET /api/v1/reports parses body JSON for macro regime previews', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.macroRegime'),
+      'GET /api/v1/reports should expose a macro regime preview when stored report bodies include one',
+    );
+    assert.ok(
+      handlerSlice.includes('report.macroRegimeHistory'),
+      'GET /api/v1/reports should expose macro regime history alongside report previews when it exists',
+    );
+    assert.match(handlerSlice, /extractMacroRegime\(parsed\?\.macroRegime\s*\?\?\s*parsed\?\.macro_regime\)/);
+    assert.ok(
+      handlerSlice.includes('getMacroRegimeHistoryByReport'),
+      'GET /api/v1/reports should load persisted macro regime history for preview surfaces',
+    );
+  });
+
   it('GET /api/v1/reports can attach active chain drilldowns to report previews', () => {
     const reportsEndpoint = source.indexOf("'/api/v1/reports'");
     const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
@@ -246,10 +342,105 @@ describe('toCamelCase — structural (server.ts source)', () => {
     );
   });
 
+  it('GET /api/v1/search parses report bodies for market catalyst previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    assert.ok(
+      handlerSlice.includes('report.marketCatalysts'),
+      'GET /api/v1/search should expose a market-catalyst preview on report hits when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.marketCatalysts\s*\?\?\s*parsed\?\.market_catalysts/);
+  });
+
+  it('GET /api/v1/search parses report bodies for regional divergence previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    const handlerSlice = source.slice(searchEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.regionalDivergence'),
+      'GET /api/v1/search should expose a regional-divergence preview when report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.regionalDivergence\s*\?\?\s*parsed\?\.regional_divergence/);
+  });
+
+  it('GET /api/v1/search parses report bodies for narrative shift previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    assert.ok(
+      handlerSlice.includes('report.narrativeShifts'),
+      'GET /api/v1/search should expose a narrative-shift preview when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.narrativeShifts\s*\?\?\s*parsed\?\.narrative_shifts/);
+  });
+
+  it('GET /api/v1/search parses report bodies for first-mover previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    assert.ok(
+      handlerSlice.includes('report.firstMovers'),
+      'GET /api/v1/search should expose a first-mover preview on report hits when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.firstMovers\s*\?\?\s*parsed\?\.first_movers/);
+  });
+
+  it('GET /api/v1/search parses report bodies for price alert previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    assert.ok(
+      handlerSlice.includes('report.priceAlerts'),
+      'GET /api/v1/search should expose a price-alert preview on report hits when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.priceAlerts\s*\?\?\s*parsed\?\.price_alerts/);
+  });
+
+  it('GET /api/v1/search parses report bodies for macro alert previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    assert.ok(
+      handlerSlice.includes('report.macroAlerts'),
+      'GET /api/v1/search should expose a macro alert preview on report hits when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.macroAlerts\s*\?\?\s*parsed\?\.macro_alerts/);
+  });
+
+  it('GET /api/v1/search parses report bodies for unusual activity previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    assert.ok(
+      handlerSlice.includes('report.unusualActivity'),
+      'GET /api/v1/search should expose an unusual-activity preview on report hits when stored report bodies include one',
+    );
+    assert.match(handlerSlice, /parsed\?\.unusualActivity\s*\?\?\s*parsed\?\.unusual_activity/);
+  });
+
+  it('GET /api/v1/search parses report bodies for macro regime previews', () => {
+    const searchEndpoint = source.indexOf("'/api/v1/search'");
+    assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6200);
+    assert.ok(
+      handlerSlice.includes('report.macroRegime'),
+      'GET /api/v1/search should expose a macro regime preview on report hits when stored report bodies include one',
+    );
+    assert.ok(
+      handlerSlice.includes('report.macroRegimeHistory'),
+      'GET /api/v1/search should expose macro regime history on report hits when it exists',
+    );
+    assert.match(handlerSlice, /extractMacroRegime\(parsed\?\.macroRegime\s*\?\?\s*parsed\?\.macro_regime\)/);
+    assert.ok(
+      handlerSlice.includes('getMacroRegimeHistoryByReport'),
+      'GET /api/v1/search should load persisted macro regime history for report-hit previews',
+    );
+  });
+
   it('GET /api/v1/search can attach active chain drilldowns to report hits', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5000);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6500);
     assert.ok(
       handlerSlice.includes('getRecentReportChainDrilldowns'),
       'GET /api/v1/search should load recent chain drilldowns for report hits when event chain text is present',
@@ -267,7 +458,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search can expose exact hidden active chain counts beyond the preview cap', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6500);
     assert.ok(
       handlerSlice.includes('report.hiddenActiveChainCount'),
       'GET /api/v1/search should expose an exact hidden-chain count when extra active chains are omitted from report-hit previews',
@@ -448,7 +639,8 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
 
   it('can enrich reports/:id with persisted chain drilldowns', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
-    const handlerSlice = source.slice(reportIdStart, reportIdStart + 2600);
+    const summariesStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(reportIdStart, summariesStart);
     assert.ok(
       handlerSlice.includes('getRecentReportChainDrilldowns'),
       'reports/:id should load persisted chain drilldowns when report entity context is available',
@@ -465,7 +657,8 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
 
   it('extracts entitySentiment from parsed body', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
-    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    const summariesStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(reportIdStart, summariesStart);
     assert.ok(
       handlerSlice.includes('entitySentiment'),
       'reports/:id must extract entitySentiment from the parsed body',
@@ -474,7 +667,8 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
 
   it('extracts sections from parsed body', () => {
     const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
-    const handlerSlice = source.slice(reportIdStart, reportIdStart + 1500);
+    const summariesStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(reportIdStart, summariesStart);
     assert.ok(handlerSlice.includes('sections'), 'reports/:id must extract sections from the parsed body');
   });
 
@@ -663,12 +857,12 @@ describe('SV-004 — test-webhook DNS rebinding prevention (server.ts source)', 
     assert.ok(handlerSlice.includes('resolvedIp'), 'test-webhook must use resolvedIp from validateUrl result');
   });
 
-  it('test-webhook fetches the original url after validation succeeds', () => {
+  it('test-webhook uses the shared pinned fetch helper after validation succeeds', () => {
     const whStart = source.indexOf("'/api/v1/config/test-webhook'");
     const handlerSlice = source.slice(whStart, whStart + 2000);
     assert.ok(
-      handlerSlice.includes('fetch(url'),
-      'test-webhook must fetch the original url after validateUrl confirms it is safe',
+      handlerSlice.includes('fetchValidated('),
+      'test-webhook must use the shared pinned fetch helper after validateUrl confirms it is safe',
     );
   });
 });

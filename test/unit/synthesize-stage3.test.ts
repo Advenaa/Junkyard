@@ -100,7 +100,9 @@ function makeReportJson(overrides: Record<string, unknown> = {}): string {
 /**
  * Build standard mock pool responses for runDaily.
  * Query order: getAppConfig, dailyReportExists, getSummariesByTimeWindow,
- *              getYesterdayTldr, narratives, chain entity lookup, recent event chains, insertReport
+ *              getYesterdayTldr, narratives, chain entity lookup, recent event chains,
+ *              getUnusualActivityOverview(latest date), latest macro snapshots,
+ *              insertReport, insertMacroRegime
  */
 function dailyPoolResponses(
   summaryRows: unknown[],
@@ -114,6 +116,8 @@ function dailyPoolResponses(
     { rows: [] }, // narratives query
     { rows: [] }, // chain entity lookup
     { rows: [] }, // recent event chains query
+    { rows: [{ latest_date: null }] }, // getUnusualActivityOverview -> no daily rollup yet
+    { rows: [] }, // latest macro snapshots query
     {
       rows: [
         {
@@ -130,6 +134,7 @@ function dailyPoolResponses(
         },
       ],
     },
+    { rows: [], rowCount: 1 }, // insertMacroRegime
   ];
 }
 
@@ -379,6 +384,91 @@ describe('synthesize: runDaily', () => {
     assert.match(call.messages[0]!.content, /latest=Governance vote opened on the response plan\./);
   });
 
+  it('injects macro context into the daily synthesis prompt', async () => {
+    const responses = dailyPoolResponses([makeSummaryRow()]);
+    responses[8] = {
+      rows: [
+        {
+          id: 'macro-vix',
+          date: '2026-04-08',
+          indicator: 'vix',
+          value: 22.4,
+          change_1d: 1.2,
+          change_7d: 4.6,
+          source: 'fred',
+          created_at: Date.now(),
+        },
+        {
+          id: 'macro-spx',
+          date: '2026-04-08',
+          indicator: 'spx',
+          value: 5234.6,
+          change_1d: -35.4,
+          change_7d: -102.1,
+          source: 'fred',
+          created_at: Date.now(),
+        },
+        {
+          id: 'macro-gold',
+          date: '2026-04-08',
+          indicator: 'gold',
+          value: 2331.45,
+          change_1d: 18.2,
+          change_7d: 44.6,
+          source: 'fred',
+          created_at: Date.now(),
+        },
+      ],
+    };
+    const pool = mockPool(responses);
+    const llm = mockLlm();
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    const result = await synth.runDaily();
+    assert.notStrictEqual(result, null);
+    const call = llm.calls[0] as { messages: Array<{ content: string }> };
+    assert.match(call.messages[0]!.content, /<macro_context>/);
+    assert.match(call.messages[0]!.content, /macro bias: risk-off/i);
+    assert.match(call.messages[0]!.content, /crypto sentiment: bullish/i);
+    assert.match(call.messages[0]!.content, /VIX/);
+    assert.match(call.messages[0]!.content, /S&P 500/);
+    assert.match(call.messages[0]!.content, /Gold/);
+  });
+
+  it('persists daily macro regime history when the report includes macroRegime', async () => {
+    const pool = mockPool(dailyPoolResponses([makeSummaryRow()]));
+    const llm = mockLlm(
+      makeReportJson({
+        macroRegime: {
+          classification: 'risk-off',
+          confidence: 0.82,
+          rationale: 'Dollar, yields, and gold all leaned defensive while crypto breadth stayed mixed.',
+        },
+      }),
+    );
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    const result = await synth.runDaily();
+    assert.notStrictEqual(result, null);
+    assert.ok(pool.calls.some((call) => call.text.includes('INSERT INTO macro_regimes')));
+  });
+
   it('skips when all summary bodies fail to parse', async () => {
     const badRow = makeSummaryRow({ body: 'not-json{{{' });
     const pool = mockPool(dailyPoolResponses([badRow]));
@@ -438,10 +528,12 @@ describe('synthesize: runDaily', () => {
     assert.strictEqual(llmCall.stage, 'synthesize');
   });
 
-  it('retries once on LLM parse failure then succeeds', async () => {
+  it('retries malformed daily JSON without changing the original prompt payload', async () => {
+    const llmCalls: Array<{ system: string; messages: Array<{ content: string }> }> = [];
     let callCount = 0;
     const llm = {
-      call: async () => {
+      call: async (params: { system: string; messages: Array<{ content: string }> }) => {
+        llmCalls.push(params);
         callCount++;
         if (callCount === 1) return { content: 'not valid json!!!' };
         return { content: makeReportJson() };
@@ -463,6 +555,91 @@ describe('synthesize: runDaily', () => {
 
     assert.strictEqual(callCount, 2, 'Should have retried once');
     assert.notStrictEqual(result, null);
+    assert.strictEqual(
+      llmCalls[1]!.system,
+      llmCalls[0]!.system,
+      'Malformed JSON retries should reuse the original system prompt',
+    );
+    assert.ok(
+      !/validation errors/i.test(llmCalls[1]!.system),
+      'Malformed JSON retries should not append schema-validation feedback',
+    );
+    assert.strictEqual(
+      llmCalls[1]!.messages[0]!.content,
+      llmCalls[0]!.messages[0]!.content,
+      'Malformed JSON retries should preserve the original wrapped user payload',
+    );
+  });
+
+  it('retries once with validation feedback when the daily report JSON fails schema validation', async () => {
+    const llmCalls: Array<{ system: string; messages: Array<{ content: string }> }> = [];
+    let callCount = 0;
+    const llm = {
+      call: async (params: { system: string; messages: Array<{ content: string }> }) => {
+        llmCalls.push(params);
+        callCount++;
+        if (callCount === 1) {
+          return { content: makeReportJson({ tldr: 123 }) };
+        }
+        return { content: makeReportJson() };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    };
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    const result = await synth.runDaily();
+
+    assert.strictEqual(callCount, 2, 'Should retry once after schema validation failure');
+    assert.notStrictEqual(result, null);
+    assert.match(llmCalls[1]!.system, /validation errors/i);
+    assert.match(llmCalls[1]!.system, /tldr/);
+    assert.strictEqual(
+      llmCalls[1]!.messages[0]!.content,
+      llmCalls[0]!.messages[0]!.content,
+      'Schema-guided retries should preserve the original wrapped user payload',
+    );
+  });
+
+  it('retries once with validation feedback when the daily report contains a whitespace-only catalyst line', async () => {
+    const llmCalls: Array<{ system: string }> = [];
+    let callCount = 0;
+    const llm = {
+      call: async (params: { system: string }) => {
+        llmCalls.push(params);
+        callCount++;
+        if (callCount === 1) {
+          return { content: makeReportJson({ marketCatalysts: ['   '] }) };
+        }
+        return { content: makeReportJson() };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    };
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    const result = await synth.runDaily();
+
+    assert.strictEqual(callCount, 2, 'Should retry once after blank-string validation failure');
+    assert.notStrictEqual(result, null);
+    assert.match(llmCalls[1]!.system, /validation errors/i);
+    assert.match(llmCalls[1]!.system, /marketCatalysts\.0/);
   });
 
   it('returns null when both LLM attempts fail', async () => {
@@ -494,6 +671,8 @@ describe('synthesize: runDaily', () => {
       { rows: [] }, // narratives query
       { rows: [] }, // chain entity lookup
       { rows: [] }, // recent event chains query
+      { rows: [{ latest_date: null }] }, // getUnusualActivityOverview -> no daily rollup yet
+      { rows: [] }, // latest macro snapshots query
       {
         rows: [
           {
@@ -763,6 +942,64 @@ describe('synthesize: runFlash', () => {
     assert.strictEqual(callCount, 2);
     assert.notStrictEqual(result, null);
   });
+
+  it('retries flash synthesis with validation feedback when the JSON shape is wrong', async () => {
+    const llmCalls: Array<{ system: string }> = [];
+    let callCount = 0;
+    const llm = {
+      call: async (params: { system: string }) => {
+        llmCalls.push(params);
+        callCount++;
+        if (callCount === 1) {
+          return { content: makeReportJson({ keyEvents: Array.from({ length: 11 }, (_, i) => `Event ${i}`) }) };
+        }
+        return { content: makeReportJson() };
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    };
+    const entity = {
+      entityName: 'Bitcoin',
+      sources: [{ source: 'discord', sourceId: 'src-1', trustWeight: 1 }],
+      weightedSum: 6.0,
+      urgency: 'breaking',
+    };
+    const row = makeSummaryRow();
+    const pool = mockPool([
+      { rows: [row] },
+      { rows: [] },
+      { rows: [{ value: 'UTC' }] },
+      {
+        rows: [
+          {
+            id: 'report-4',
+            date: '2024-01-01',
+            type: 'flash',
+            body: makeReportJson(),
+            tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
+            sentiment: 0.7,
+            delivery_status: 'pending',
+            delivered_at: null,
+            created_at: Date.now(),
+          },
+        ],
+      },
+    ]);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    const result = await synth.runFlash([entity]);
+
+    assert.strictEqual(callCount, 2);
+    assert.notStrictEqual(result, null);
+    assert.match(llmCalls[1]!.system, /validation errors/i);
+    assert.match(llmCalls[1]!.system, /keyEvents/);
+  });
 });
 
 // ===========================================================================
@@ -999,6 +1236,70 @@ describe('synthesize: LLM response parsing', () => {
     ]);
   });
 
+  it('report body preserves regionalDivergence from LLM', async () => {
+    const reportWithRegionalDivergence = makeReportJson({
+      regionalDivergence: [
+        'Bitcoin: EN stayed bullish while ID leaned bearish after the latest breakout attempt.',
+        'Solana: ID momentum improved while EN chatter stayed cautious into the next catalyst window.',
+      ],
+    });
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const llm = mockLlm(reportWithRegionalDivergence);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    await synth.runDaily();
+
+    const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'Should have an INSERT INTO reports query');
+    const bodyParam = insertCall!.values.find((v) => typeof v === 'string' && v.includes('regionalDivergence'));
+    assert.ok(bodyParam, 'Body param should contain regionalDivergence');
+    const body = JSON.parse(bodyParam as string);
+    assert.deepStrictEqual(body.regionalDivergence, [
+      'Bitcoin: EN stayed bullish while ID leaned bearish after the latest breakout attempt.',
+      'Solana: ID momentum improved while EN chatter stayed cautious into the next catalyst window.',
+    ]);
+  });
+
+  it('report body preserves narrativeShifts from LLM', async () => {
+    const reportWithNarrativeShifts = makeReportJson({
+      narrativeShifts: [
+        'Solana fee rebound broadened from a niche trading theme into a wider alt rotation watch.',
+        'BTC treasury chatter faded after fresh follow-through failed to show up in the latest summaries.',
+      ],
+    });
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const llm = mockLlm(reportWithNarrativeShifts);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    await synth.runDaily();
+
+    const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'Should have an INSERT INTO reports query');
+    const bodyParam = insertCall!.values.find((v) => typeof v === 'string' && v.includes('narrativeShifts'));
+    assert.ok(bodyParam, 'Body param should contain narrativeShifts');
+    const body = JSON.parse(bodyParam as string);
+    assert.deepStrictEqual(body.narrativeShifts, [
+      'Solana fee rebound broadened from a niche trading theme into a wider alt rotation watch.',
+      'BTC treasury chatter faded after fresh follow-through failed to show up in the latest summaries.',
+    ]);
+  });
+
   it('report body preserves eventChains from LLM', async () => {
     const reportWithEventChains = makeReportJson({
       eventChains: [
@@ -1028,6 +1329,38 @@ describe('synthesize: LLM response parsing', () => {
     assert.deepStrictEqual(body.eventChains, [
       'Bitcoin exploit chain: exploit -> audit -> governance response remains active.',
       'Arbitrum unlock chain: unlock passed quietly but follow-up liquidity monitoring continues.',
+    ]);
+  });
+
+  it('report body preserves firstMovers from LLM', async () => {
+    const reportWithFirstMovers = makeReportJson({
+      firstMovers: [
+        'Ethereum was first tracked by DeFi Dad roughly 4h before the next monitored call.',
+        'Pendle was first tracked by Ignas 90m before broader monitored chatter picked up.',
+      ],
+    });
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const llm = mockLlm(reportWithFirstMovers);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    await synth.runDaily();
+
+    const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'Should have an INSERT INTO reports query');
+    const bodyParam = insertCall!.values.find((v) => typeof v === 'string' && v.includes('firstMovers'));
+    assert.ok(bodyParam, 'Body param should contain firstMovers');
+    const body = JSON.parse(bodyParam as string);
+    assert.deepStrictEqual(body.firstMovers, [
+      'Ethereum was first tracked by DeFi Dad roughly 4h before the next monitored call.',
+      'Pendle was first tracked by Ignas 90m before broader monitored chatter picked up.',
     ]);
   });
 });
@@ -1304,11 +1637,14 @@ describe('synthesize: XML escaping in prompts', () => {
     // 3: getYesterdayTldr
     // 4: entity ID lookup for sentiment momentum (alias fallback)
     // 5: getLatestPricesForEntities
-    // 6: getAlphaPropagationSummary (per entity)
-    // 7: narratives query
-    // 8: chain entity lookup
-    // 9: getRecentEventChains
-    // 10: insertReport
+    // 6: getEntityFirstMovers
+    // 7: getAlphaPropagationSummary (per entity)
+    // 8: narratives query
+    // 9: chain entity lookup
+    // 10: getRecentEventChains
+    // 11: getUnusualActivityOverview(latest date)
+    // 12: getLatestMacroSnapshots
+    // 13: insertReport
     const poolResponses = [
       { rows: [{ value: 'UTC' }] }, // getAppConfig
       { rows: [{ exists: false }] }, // dailyReportExists
@@ -1316,10 +1652,13 @@ describe('synthesize: XML escaping in prompts', () => {
       { rows: [] }, // getYesterdayTldr
       { rows: [{ id: 'entity-xss-1', name: '<script>alert(1)</script>' }] }, // entity ID lookup (alias fallback)
       { rows: [] }, // getLatestPricesForEntities
+      { rows: [] }, // getEntityFirstMovers
       { rows: [] }, // getAlphaPropagationSummary (entity-xss-1)
       { rows: [] }, // narratives query
       { rows: [] }, // chain entity lookup
       { rows: [] }, // getRecentEventChains
+      { rows: [{ latest_date: null }] }, // getUnusualActivityOverview -> no daily rollup yet
+      { rows: [] }, // getLatestMacroSnapshots
       {
         rows: [
           {

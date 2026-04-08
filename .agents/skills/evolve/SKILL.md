@@ -99,6 +99,8 @@ If the user explicitly asks for parallel agent work, you may delegate independen
 
 Run the narrowest useful validation for the slice:
 
+- always run `npm run format:check` after code changes
+- if `npm run format:check` fails because of your edits, run Prettier to fix the affected files before continuing, then rerun `npm run format:check`
 - always run `npm run build` after code changes
 - run focused tests for touched modules when they exist
 - also run `npm test` when shared infrastructure changed or a bug fix should be covered by existing unit tests

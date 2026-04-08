@@ -212,7 +212,10 @@ describe('Settings entity price card', () => {
     });
     const priceData: PriceData = { latest, history: [latest] };
 
-    vi.stubGlobal('fetch', buildFetchMock(() => priceData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => priceData),
+    );
 
     const user = userEvent.setup();
     render(
@@ -245,7 +248,10 @@ describe('Settings entity price card', () => {
   });
 
   it('does not show price card when price endpoint returns 404', async () => {
-    vi.stubGlobal('fetch', buildFetchMock(() => null));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => null),
+    );
 
     const user = userEvent.setup();
     render(
@@ -271,7 +277,10 @@ describe('Settings entity price card', () => {
     const history = makeHistorySnapshots();
     const priceData: PriceData = { latest: history[0], history };
 
-    vi.stubGlobal('fetch', buildFetchMock(() => priceData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => priceData),
+    );
 
     const user = userEvent.setup();
     render(
@@ -300,7 +309,10 @@ describe('Settings entity price card', () => {
   it('does not show price card when latest is null', async () => {
     const priceData: PriceData = { latest: null, history: [] };
 
-    vi.stubGlobal('fetch', buildFetchMock(() => priceData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => priceData),
+    );
 
     const user = userEvent.setup();
     render(

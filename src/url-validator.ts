@@ -1,5 +1,6 @@
 import dns from 'node:dns';
 import net from 'node:net';
+import { Agent, type Dispatcher } from 'undici';
 
 /**
  * Compress an IPv6 address string to its canonical shortest form.
@@ -114,6 +115,9 @@ export interface UrlValidationResult {
   resolvedIp?: string;
 }
 
+type ValidatedFetchInit = Parameters<typeof fetch>[1];
+type ValidatedFetchInitWithDispatcher = ValidatedFetchInit & { dispatcher?: Dispatcher };
+
 export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // 1. Parse URL
   let parsed: URL;
@@ -145,7 +149,17 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
     return { valid: false, reason: 'Localhost URLs not allowed' };
   }
 
-  // 5. DNS resolve — check all IPs against private ranges
+  // 5. Literal IP hostnames bypass DNS resolution entirely, so validate them directly.
+  const literalHost =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, hostname.length - 1) : hostname;
+  if (net.isIP(literalHost)) {
+    if (isPrivateIp(literalHost)) {
+      return { valid: false, reason: 'URL resolves to private IP' };
+    }
+    return { valid: true, resolvedIp: literalHost };
+  }
+
+  // 6. DNS resolve — check all IPs against private ranges
   const [ipv4Result, ipv6Result] = await Promise.allSettled([
     dns.promises.resolve4(hostname),
     dns.promises.resolve6(hostname),
@@ -160,14 +174,87 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
     allIps.push(...ipv6Result.value);
   }
 
+  if (allIps.length === 0) {
+    return { valid: false, reason: 'DNS resolution failed' };
+  }
+
   for (const ip of allIps) {
     if (isPrivateIp(ip)) {
       return { valid: false, reason: 'URL resolves to private IP' };
     }
   }
 
-  // 6. All checks passed — return first resolved IP so callers can pin to it
+  // 7. All checks passed — return first resolved IP so callers can pin to it
   return { valid: true, resolvedIp: allIps[0] };
+}
+
+function createPinnedDispatcher(resolvedIp: string): Dispatcher {
+  const family = net.isIP(resolvedIp);
+  return new Agent({
+    connections: 1,
+    pipelining: 0,
+    keepAliveTimeout: 1,
+    keepAliveMaxTimeout: 1,
+    connect: {
+      lookup(_hostname, _options, callback) {
+        callback(null, resolvedIp, family);
+      },
+    },
+  });
+}
+
+async function closeDispatcher(dispatcher: Dispatcher): Promise<void> {
+  try {
+    await dispatcher.close();
+  } catch {
+    // Best-effort cleanup only — original fetch/read errors are more useful.
+  }
+}
+
+function bindDispatcherLifecycle(response: Response, dispatcher: Dispatcher): Response {
+  let closed = false;
+  const closeOnce = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    await closeDispatcher(dispatcher);
+  };
+
+  const responseWithPatchedMethods = response as Response & Record<string, unknown>;
+  for (const methodName of ['arrayBuffer', 'blob', 'bytes', 'formData', 'json', 'text'] as const) {
+    const original = responseWithPatchedMethods[methodName];
+    if (typeof original !== 'function') continue;
+    Object.defineProperty(responseWithPatchedMethods, methodName, {
+      configurable: true,
+      value: async (...args: unknown[]) => {
+        try {
+          return await Reflect.apply(original, response, args);
+        } finally {
+          await closeOnce();
+        }
+      },
+    });
+  }
+
+  const body = response.body as (ReadableStream<Uint8Array> & { cancel?: (reason?: unknown) => Promise<void> }) | null;
+  if (body && typeof body.cancel === 'function') {
+    const originalCancel = body.cancel.bind(body);
+    Object.defineProperty(body, 'cancel', {
+      configurable: true,
+      value: async (reason?: unknown) => {
+        try {
+          return await originalCancel(reason);
+        } finally {
+          await closeOnce();
+        }
+      },
+    });
+  }
+
+  if (response.body === null) {
+    void closeOnce();
+  }
+
+  return response;
 }
 
 /**
@@ -181,21 +268,33 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
  */
 export async function fetchValidated(
   url: string,
-  init?: { signal?: AbortSignal; headers?: Record<string, string> },
+  init?: ValidatedFetchInit,
+  existingValidation?: UrlValidationResult,
 ): Promise<
   { response: Response; validation: UrlValidationResult } | { response: null; validation: UrlValidationResult }
 > {
-  const validation = await validateUrl(url);
+  const validation = existingValidation ?? (await validateUrl(url));
   if (!validation.valid || !validation.resolvedIp) {
     return { response: null, validation };
   }
 
-  // Use the original URL — validateUrl already verified the resolved IP is safe.
-  // DNS-pinning (replacing hostname with IP) breaks TLS cert verification for HTTPS.
-  const response = await fetch(url, {
-    signal: init?.signal,
-    headers: init?.headers,
-  });
+  const dispatcher = createPinnedDispatcher(validation.resolvedIp);
 
-  return { response, validation };
+  try {
+    // Use the original URL so TLS SNI and certificate verification still target
+    // the hostname, while the dispatcher lookup pins the actual socket to the
+    // validated IP address.
+    const response = await fetch(url, {
+      ...(init ?? {}),
+      dispatcher,
+    } as ValidatedFetchInitWithDispatcher);
+
+    return {
+      response: bindDispatcherLifecycle(response, dispatcher),
+      validation,
+    };
+  } catch (err) {
+    await closeDispatcher(dispatcher);
+    throw err;
+  }
 }

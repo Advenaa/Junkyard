@@ -48,17 +48,26 @@ import {
   type CalendarEventRow,
   getEntityDivergence,
   getTopDivergentEntities,
+  getLatestMacroSnapshots,
+  getUnusualActivityOverview,
+  getNarrativeWatchlist,
+  getNarrativeDrilldownById,
+  getMacroRegimeHistoryByReport,
   getLatestPriceSnapshot,
+  getPriceWatchOverview,
   getPriceHistory,
   type PriceSnapshotRow,
   updateSourceTier,
   getAlphaPropagationSummary,
   getAlphaPropagationByEntity,
+  getRecentAlphaWatchlist,
   getTopAuthorsByEntity,
+  getRecentFirstMoverWatchlist,
   getAuthorById,
   getAuthorCalls,
+  resolveAuthorCall,
 } from './db/queries.js';
-import { validateUrl } from './url-validator.js';
+import { fetchValidated, validateUrl } from './url-validator.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
 import { encryptSecret, decryptSecret, getEncryptionKey } from './crypto/token-encrypt.js';
 import {
@@ -70,6 +79,7 @@ import {
 } from './discord-tokens.js';
 import { getNextCalendarOccurrence, isCalendarRecurrenceRule } from './knowledge/calendar.js';
 import { normalizeAlias } from './knowledge/entities.js';
+import { buildMacroContext } from './macro/context.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
@@ -101,6 +111,37 @@ function parseSummaryBody(body: string): Record<string, unknown> | null {
 function extractStringArrayField(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((entry): entry is string => typeof entry === 'string').slice(0, limit);
+}
+
+function extractMacroRegime(value: unknown): {
+  classification: 'risk-on' | 'risk-off' | 'transition' | 'unclear';
+  confidence: number;
+  rationale: string;
+} | null {
+  if (!value || typeof value !== 'object') return null;
+
+  const record = value as Record<string, unknown>;
+  const classification = record.classification;
+  const confidenceRaw = record.confidence;
+  const rationale = record.rationale;
+
+  if (
+    classification !== 'risk-on' &&
+    classification !== 'risk-off' &&
+    classification !== 'transition' &&
+    classification !== 'unclear'
+  ) {
+    return null;
+  }
+
+  if (typeof confidenceRaw !== 'number' || !Number.isFinite(confidenceRaw)) return null;
+  if (typeof rationale !== 'string' || rationale.trim().length === 0) return null;
+
+  return {
+    classification,
+    confidence: Math.min(Math.max(confidenceRaw, 0), 1),
+    rationale: rationale.trim(),
+  };
 }
 
 function getSourceTargetFromRequest(
@@ -152,6 +193,20 @@ function getReportSearchPreview(tldr: string | null, body: string): string {
   if (eventChains[0]) return eventChains[0];
 
   return body;
+}
+
+function clampPreviewText(text: string, limit: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= limit) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, limit - 1).trimEnd()}…`;
+}
+
+function getNarrativeSummaryPreview(body: string): string {
+  const parsed = parseSummaryBody(body);
+  const summaryText = parsed && typeof parsed.summary === 'string' ? parsed.summary : body;
+  return clampPreviewText(summaryText, 220);
 }
 
 function parseItemRecord(row: ItemRow): Record<string, unknown> {
@@ -591,6 +646,49 @@ export async function createServer(
           const report = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
           if (typeof r.body === 'string') {
             const parsed = parseReportBody(r.body);
+            const marketCatalysts = extractStringArrayField(parsed?.marketCatalysts ?? parsed?.market_catalysts, 1);
+            if (marketCatalysts.length > 0) {
+              report.marketCatalysts = marketCatalysts;
+            }
+            const regionalDivergence = extractStringArrayField(
+              parsed?.regionalDivergence ?? parsed?.regional_divergence,
+              1,
+            );
+            if (regionalDivergence.length > 0) {
+              report.regionalDivergence = regionalDivergence;
+            }
+            const narrativeShifts = extractStringArrayField(parsed?.narrativeShifts ?? parsed?.narrative_shifts, 1);
+            if (narrativeShifts.length > 0) {
+              report.narrativeShifts = narrativeShifts;
+            }
+            const firstMovers = extractStringArrayField(parsed?.firstMovers ?? parsed?.first_movers, 1);
+            if (firstMovers.length > 0) {
+              report.firstMovers = firstMovers;
+            }
+            const priceAlerts = extractStringArrayField(parsed?.priceAlerts ?? parsed?.price_alerts, 1);
+            if (priceAlerts.length > 0) {
+              report.priceAlerts = priceAlerts;
+            }
+            const alphaSignals = extractStringArrayField(parsed?.alphaSignals ?? parsed?.alpha_signals, 1);
+            if (alphaSignals.length > 0) {
+              report.alphaSignals = alphaSignals;
+            }
+            const unusualActivity = extractStringArrayField(parsed?.unusualActivity ?? parsed?.unusual_activity, 1);
+            if (unusualActivity.length > 0) {
+              report.unusualActivity = unusualActivity;
+            }
+            const macroAlerts = extractStringArrayField(parsed?.macroAlerts ?? parsed?.macro_alerts, 1);
+            if (macroAlerts.length > 0) {
+              report.macroAlerts = macroAlerts;
+            }
+            const macroRegime = extractMacroRegime(parsed?.macroRegime ?? parsed?.macro_regime);
+            if (macroRegime) {
+              report.macroRegime = macroRegime;
+              const macroRegimeHistory = await getMacroRegimeHistoryByReport(pool, r.id);
+              if (macroRegimeHistory) {
+                report.macroRegimeHistory = macroRegimeHistory;
+              }
+            }
             const eventChains = extractStringArrayField(parsed?.eventChains ?? parsed?.event_chains, 1);
             if (eventChains.length > 0) {
               report.eventChains = eventChains;
@@ -633,10 +731,24 @@ export async function createServer(
       if (parsed) {
         report.keyEvents = (parsed.keyEvents ?? parsed.key_events ?? []) as unknown[];
         report.marketCatalysts = (parsed.marketCatalysts ?? parsed.market_catalysts ?? []) as unknown[];
+        report.regionalDivergence = (parsed.regionalDivergence ?? parsed.regional_divergence ?? []) as unknown[];
+        report.narrativeShifts = (parsed.narrativeShifts ?? parsed.narrative_shifts ?? []) as unknown[];
         report.eventChains = (parsed.eventChains ?? parsed.event_chains ?? []) as unknown[];
+        report.firstMovers = (parsed.firstMovers ?? parsed.first_movers ?? []) as unknown[];
+        report.alphaSignals = (parsed.alphaSignals ?? parsed.alpha_signals ?? []) as unknown[];
         report.priceAlerts = (parsed.priceAlerts ?? parsed.price_alerts ?? []) as unknown[];
+        report.unusualActivity = (parsed.unusualActivity ?? parsed.unusual_activity ?? []) as unknown[];
+        report.macroAlerts = (parsed.macroAlerts ?? parsed.macro_alerts ?? []) as unknown[];
         report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
         report.sections = (parsed.sections ?? []) as unknown[];
+        const macroRegime = extractMacroRegime(parsed.macroRegime ?? parsed.macro_regime);
+        if (macroRegime) {
+          report.macroRegime = macroRegime;
+          const macroRegimeHistory = await getMacroRegimeHistoryByReport(pool, rows[0].id);
+          if (macroRegimeHistory) {
+            report.macroRegimeHistory = macroRegimeHistory;
+          }
+        }
         const reportEntityNames = extractReportEntityNames(parsed.entitySentiment ?? parsed.entity_sentiment);
         const reportChainDrilldowns = serializeReportChainDrilldowns(
           await getRecentReportChainDrilldowns(
@@ -945,6 +1057,49 @@ export async function createServer(
                   result_type: 'report',
                 });
                 const parsed = parseReportBody(row.body);
+                const marketCatalysts = extractStringArrayField(parsed?.marketCatalysts ?? parsed?.market_catalysts, 1);
+                if (marketCatalysts.length > 0) {
+                  report.marketCatalysts = marketCatalysts;
+                }
+                const regionalDivergence = extractStringArrayField(
+                  parsed?.regionalDivergence ?? parsed?.regional_divergence,
+                  1,
+                );
+                if (regionalDivergence.length > 0) {
+                  report.regionalDivergence = regionalDivergence;
+                }
+                const narrativeShifts = extractStringArrayField(parsed?.narrativeShifts ?? parsed?.narrative_shifts, 1);
+                if (narrativeShifts.length > 0) {
+                  report.narrativeShifts = narrativeShifts;
+                }
+                const firstMovers = extractStringArrayField(parsed?.firstMovers ?? parsed?.first_movers, 1);
+                if (firstMovers.length > 0) {
+                  report.firstMovers = firstMovers;
+                }
+                const priceAlerts = extractStringArrayField(parsed?.priceAlerts ?? parsed?.price_alerts, 1);
+                if (priceAlerts.length > 0) {
+                  report.priceAlerts = priceAlerts;
+                }
+                const alphaSignals = extractStringArrayField(parsed?.alphaSignals ?? parsed?.alpha_signals, 1);
+                if (alphaSignals.length > 0) {
+                  report.alphaSignals = alphaSignals;
+                }
+                const unusualActivity = extractStringArrayField(parsed?.unusualActivity ?? parsed?.unusual_activity, 1);
+                if (unusualActivity.length > 0) {
+                  report.unusualActivity = unusualActivity;
+                }
+                const macroAlerts = extractStringArrayField(parsed?.macroAlerts ?? parsed?.macro_alerts, 1);
+                if (macroAlerts.length > 0) {
+                  report.macroAlerts = macroAlerts;
+                }
+                const macroRegime = extractMacroRegime(parsed?.macroRegime ?? parsed?.macro_regime);
+                if (macroRegime) {
+                  report.macroRegime = macroRegime;
+                  const macroRegimeHistory = await getMacroRegimeHistoryByReport(pool, row.id);
+                  if (macroRegimeHistory) {
+                    report.macroRegimeHistory = macroRegimeHistory;
+                  }
+                }
                 const eventChains = extractStringArrayField(parsed?.eventChains ?? parsed?.event_chains, 1);
                 if (eventChains.length > 0) {
                   report.eventChains = eventChains;
@@ -1865,6 +2020,119 @@ export async function createServer(
     };
   });
 
+  app.get('/api/v1/macro', { preHandler: [authPreHandler] }, async (_request, reply) => {
+    const snapshots = await getLatestMacroSnapshots(pool);
+    const macroContext = buildMacroContext(snapshots);
+
+    if (macroContext.entries.length === 0) {
+      return reply.code(404).send({ error: 'No macro data available yet' });
+    }
+
+    const latestDate = macroContext.entries.reduce(
+      (latest, entry) => (!latest || entry.date > latest ? entry.date : latest),
+      macroContext.entries[0]?.date ?? null,
+    );
+
+    return {
+      overallBias: macroContext.overallBias,
+      latestDate,
+      entries: macroContext.entries,
+    };
+  });
+
+  app.get('/api/v1/unusual-activity', { preHandler: [authPreHandler] }, async () => {
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    return getUnusualActivityOverview(pool, 8, timezone);
+  });
+
+  app.get('/api/v1/price-watch', { preHandler: [authPreHandler] }, async () => {
+    return getPriceWatchOverview(pool, 8);
+  });
+
+  app.get<{
+    Querystring: { limit?: number; days?: number };
+  }>(
+    '/api/v1/alpha-watch',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 20 },
+            days: { type: 'integer', minimum: 1, maximum: 30 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const limit = request.query.limit ?? 8;
+      const days = request.query.days ?? 7;
+      const sinceTime = Date.now() - days * 24 * 60 * 60 * 1000;
+      return getRecentAlphaWatchlist(pool, sinceTime, limit);
+    },
+  );
+
+  app.get<{
+    Querystring: { limit?: number; days?: number };
+  }>(
+    '/api/v1/first-movers',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 20 },
+            days: { type: 'integer', minimum: 1, maximum: 30 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const limit = request.query.limit ?? 8;
+      const days = request.query.days ?? 7;
+      const sinceTime = Date.now() - days * 24 * 60 * 60 * 1000;
+      return getRecentFirstMoverWatchlist(pool, sinceTime, limit);
+    },
+  );
+
+  app.get('/api/v1/narratives', { preHandler: [authPreHandler] }, async () => {
+    return getNarrativeWatchlist(pool, 8);
+  });
+
+  app.get('/api/v1/narratives/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const narrative = await getNarrativeDrilldownById(pool, id, 4);
+
+    if (!narrative) {
+      return reply.code(404).send({ error: 'Narrative not found' });
+    }
+
+    return {
+      narrative: {
+        id: narrative.id,
+        name: narrative.name,
+        date: narrative.date,
+        memberCount: narrative.memberCount,
+        avgSentiment: narrative.avgSentiment,
+        signalStrength: narrative.signalStrength,
+        summaries: narrative.summaries.map((summary) => ({
+          id: summary.id,
+          source: summary.source,
+          sourceId: summary.sourceId,
+          sentiment: summary.sentiment,
+          urgency: summary.urgency,
+          itemCount: summary.itemCount,
+          createdAt: summary.createdAt,
+          text: getNarrativeSummaryPreview(summary.body),
+        })),
+      },
+    };
+  });
+
   app.get<{ Querystring: { q: string; limit?: number } }>(
     '/api/v1/entities/search',
     {
@@ -2334,6 +2602,44 @@ export async function createServer(
     },
   );
 
+  app.patch<{
+    Params: { callId: string };
+    Body: { outcome: 'correct' | 'incorrect' | 'unresolved' };
+  }>(
+    '/api/v1/author-calls/:callId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['callId'],
+          properties: {
+            callId: { type: 'string', minLength: 1 },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['outcome'],
+          properties: {
+            outcome: {
+              type: 'string',
+              enum: ['correct', 'incorrect', 'unresolved'],
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const didResolve = await resolveAuthorCall(pool, request.params.callId, request.body.outcome);
+      if (!didResolve) {
+        return reply.code(404).send({ error: 'Author call not found or already resolved' });
+      }
+
+      return reply.code(204).send();
+    },
+  );
+
   // --- Calendar events (Cycle detection foundation) ---
   app.get('/api/v1/calendar-events', { preHandler: [authPreHandler] }, async () => {
     const events = await getCalendarEvents(pool, Date.now(), 25);
@@ -2551,18 +2857,26 @@ export async function createServer(
           ],
           allowed_mentions: { parse: [] },
         });
-        // Use the original URL — validateUrl already verified the resolved IP is safe.
-        // DNS-pinning (replacing hostname with IP) breaks TLS cert verification for HTTPS.
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload,
-          signal: AbortSignal.timeout(15_000),
-        });
+        const { response } = await fetchValidated(
+          url,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payload,
+            signal: AbortSignal.timeout(15_000),
+          },
+          validation,
+        );
+        if (!response) {
+          return reply
+            .code(400)
+            .send({ error: `Invalid webhook URL: ${validation.reason ?? 'DNS resolution failed'}` });
+        }
         if (!response.ok) {
           const text = await response.text().catch(() => '');
           return reply.code(400).send({ error: `Webhook returned ${response.status}`, detail: text.slice(0, 200) });
         }
+        await response.text().catch(() => '');
         return { success: true };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Unknown error';

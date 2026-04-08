@@ -197,10 +197,7 @@ describe('Regional Divergence routes (src/server.ts)', () => {
     const lineStart = src.lastIndexOf('\n', routeIdx);
     const routeBlock = src.slice(lineStart, routeIdx + 500);
 
-    assert.ok(
-      routeBlock.includes('authPreHandler'),
-      '/api/v1/divergence route must use authPreHandler',
-    );
+    assert.ok(routeBlock.includes('authPreHandler'), '/api/v1/divergence route must use authPreHandler');
   });
 
   it('/api/v1/entities/:entityId/divergence route uses authPreHandler', () => {
@@ -223,10 +220,7 @@ describe('Regional Divergence routes (src/server.ts)', () => {
     // Grab the handler body (up to 800 chars should cover the route handler)
     const handlerSlice = src.slice(routeIdx, routeIdx + 800);
 
-    assert.ok(
-      handlerSlice.includes('divergences'),
-      '/api/v1/divergence response must include a divergences field',
-    );
+    assert.ok(handlerSlice.includes('divergences'), '/api/v1/divergence response must include a divergences field');
   });
 
   it('/api/v1/entities/:entityId/divergence response includes divergence field', () => {
@@ -293,9 +287,6 @@ describe('Regional Divergence routes (src/server.ts)', () => {
 
     const handlerSlice = src.slice(routeIdx, routeIdx + 800);
 
-    assert.ok(
-      handlerSlice.includes('toCamelCase'),
-      '/api/v1/divergence response must apply toCamelCase serialization',
-    );
+    assert.ok(handlerSlice.includes('toCamelCase'), '/api/v1/divergence response must apply toCamelCase serialization');
   });
 });

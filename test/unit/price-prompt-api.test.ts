@@ -27,7 +27,7 @@ describe('MarketReportLLMSchema includes priceAlerts', () => {
   const schemas = readSrc('src/process/schemas.ts');
 
   it('has priceAlerts field in MarketReportLLMSchema', () => {
-    assert.match(schemas, /priceAlerts\s*:\s*z\.array\(z\.string\(\)\)/);
+    assert.match(schemas, /priceAlerts\s*:\s*z\.array\((?:z\.string\(\)|nonEmptyText)\)/);
   });
 
   it('priceAlerts has max 5 default empty', () => {

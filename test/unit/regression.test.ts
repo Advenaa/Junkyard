@@ -92,40 +92,27 @@ describe('TW-006: Twitter halt persistence', () => {
 });
 
 // ===========================================================================
-// FE-012: 401 handler returns never-resolving promise (no throw)
+// FE-012: 401 handler redirects and throws after notifying auth expiry
 // ===========================================================================
 
-describe('FE-012: 401 handler returns never-resolving promise', () => {
+describe('FE-012: 401 handler redirects and throws after notifying auth expiry', () => {
   const src = readSrc('dashboard/src/lib/api.ts');
 
-  it('returns new Promise(() => {}) on 401', () => {
-    assert.match(src, /new\s+Promise\(\s*\(\)\s*=>\s*\{\s*\}\s*\)/, 'must return a never-resolving promise on 401');
+  it('exports the auth-expired event constant', () => {
+    assert.match(src, /export\s+const\s+AUTH_EXPIRED_EVENT\s*=\s*['"][^'"]+['"]/);
   });
 
-  it('401 branch does NOT throw an error', () => {
-    // Extract the 401 handling block: from the 401 check to the next `if` or `return`
-    const lines = src.split('\n');
-    const start401 = lines.findIndex((l) => l.includes('401'));
-    assert.ok(start401 >= 0, '401 check must exist');
-
-    // Collect lines from the 401 check until the next top-level if/return (the non-ok check)
-    const block401Lines: string[] = [];
-    for (let i = start401; i < lines.length; i++) {
-      block401Lines.push(lines[i]);
-      // Stop when we hit the next condition (res.ok check or end of function)
-      if (i > start401 && (lines[i].includes('if (') || lines[i].trimStart().startsWith('return'))) break;
-    }
-    const block401 = block401Lines.join('\n');
-
-    assert.doesNotMatch(
-      block401,
-      /throw\s+new\s+Error/,
-      '401 handler must NOT throw — it should return a never-resolving promise to prevent cascading errors',
-    );
+  it('401 branch throws after firing the redirect flow', () => {
+    assert.match(src, /if\s*\(\s*res\.status\s*===\s*401\s*\)/);
+    assert.match(src, /window\.dispatchEvent\(new PopStateEvent\('popstate'\)\)/);
+    assert.match(src, /window\.dispatchEvent\(new CustomEvent\(AUTH_EXPIRED_EVENT\)\)/);
+    assert.match(src, /authRedirect\.toLogin\(\)/);
+    assert.match(src, /throw\s+new\s+Error/);
   });
 
   it('redirects to /login on 401', () => {
-    assert.match(src, /window\.location\.href\s*=\s*['"]\/login['"]/, 'must redirect to /login on 401');
+    assert.ok(src.includes("window.history.replaceState({}, '', '/login');"));
+    assert.ok(src.includes("window.location.assign('/login');"));
   });
 
   it('non-401 errors still throw', () => {

@@ -9,15 +9,31 @@ import {
   getSentimentShiftAroundTime,
   getRecentEventChains,
   getLatestPricesForEntities,
+  getLatestMacroSnapshots,
+  getUnusualActivityOverview,
   getAlphaPropagationSummary,
+  getEntityFirstMovers,
 } from '../db/queries.js';
-import type { ReportRow, EventChainRow, PriceSnapshotRow } from '../db/queries.js';
+import type {
+  ReportRow,
+  EventChainRow,
+  PriceSnapshotRow,
+  UnusualActivityOverview,
+  EntityFirstMoverRow,
+} from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import type { MomentumEntry } from '../knowledge/sentiment.js';
 import type { DivergenceEntry } from '../knowledge/divergence.js';
 import type { CalendarEventEntry } from '../knowledge/calendar.js';
+import {
+  buildMacroContext,
+  formatMacroContextLines,
+  summarizeCryptoSentiment,
+  type CryptoSentimentAggregate,
+  type MacroContextSummary,
+} from '../macro/context.js';
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
@@ -43,8 +59,15 @@ Return ONLY valid JSON matching this schema:
   "tldr": "1-2 sentence update (max 280 chars for mobile)",
   "keyEvents": ["what happened in the last 3 hours, max 5"],
   "marketCatalysts": ["up to 6 concise catalyst lines for positioning/risk"],
+  "regionalDivergence": ["up to 5 concise EN-vs-ID divergence lines when cross-language splits matter"],
+  "narrativeShifts": ["up to 5 concise narrative acceleration, fade, or broadening lines"],
   "eventChains": ["up to 5 concise chain summaries when ongoing stories matter"],
+  "firstMovers": ["up to 5 concise tracked first-mover lines when author timing matters"],
+  "alphaSignals": ["up to 5 concise higher-tier timing or propagation lines when early signal context matters"],
+  "unusualActivity": ["up to 5 concise unusual-activity or crowding watchlist lines"],
   "entitySentiment": [{"name": "Entity", "sentiment": -1 to 1, "reason": "brief reason (include momentum label if available)"}],
+  "macroAlerts": ["up to 5 concise macro-tape or crypto-vs-macro divergence alerts"],
+  "macroRegime": {"classification": "risk-on | risk-off | transition | unclear", "confidence": 0 to 1, "rationale": "1 concise sentence"},
   "sections": [{"title": "Theme", "body": "analysis"}],
   "newProjects": []
 }
@@ -60,7 +83,15 @@ When <alpha_propagation> data is provided:
 - These show entities that were first mentioned by higher-tier (alpha/influencer) sources before appearing in mainstream channels.
 - Fast propagation (alpha → mainstream in <6h) suggests the information is gaining traction rapidly.
 - Entities appearing ONLY in alpha tier may be early signals worth monitoring.
-- Use this to identify "smart money" positioning or information asymmetry.
+- Use this as anecdotal timing context, not proof of "smart money" correctness.
+- Highlight when a story is still concentrated in higher-tier channels versus already propagating broadly.
+- Populate "alphaSignals" with concise trader-facing lines like "X stayed mostly in alpha channels while broader chatter lagged by 6h."
+
+When <narrative_context> data is provided:
+- Treat it as descriptive narrative state, not a prediction engine.
+- Highlight which themes are emerging, broadening, cooling, or losing follow-through when the last few hours still support that shift.
+- Prefer lines that explain what changed in attention or breadth instead of repeating static narrative labels.
+- Populate "narrativeShifts" with the clearest trajectory changes or watchpoints (max 5).
 
 When <upcoming_calendar_events> data is provided:
 - Treat it as scheduled catalyst risk in the next 48 hours.
@@ -90,7 +121,34 @@ When <price_context> data is provided:
 - Compare price moves with sentiment direction. Flag CONTRARIAN signals.
 - Use price data to quantify ("BTC +5.2%"), not vague language ("rising").
 - Contrarian divergences between price and sentiment are potential alpha signals — highlight them.
-- Populate "priceAlerts" with notable price-sentiment divergences (max 5).`;
+- Populate "priceAlerts" with notable price-sentiment divergences (max 5).
+
+When <regional_divergence> data is provided:
+- Treat it as cross-language positioning context, not proof one region is right.
+- Highlight only the clearest EN-vs-ID sentiment splits that change how traders should read the tape.
+- Populate "regionalDivergence" with concise trader-facing lines when the split materially sharpens the pulse read (max 5).
+
+When <first_movers> data is provided:
+- Treat it as factual tracked-call timing, not a credibility score.
+- Use it when the current tape clearly follows one monitored voice surfacing an entity or claim before others.
+- Prefer concise trader-facing wording like "X was first tracked by Y several hours before the next monitored call."
+- Populate "firstMovers" with the clearest timing-attribution lines (max 5).
+
+When <unusual_activity> data is provided:
+- Treat it as a heuristic attention-spike watchlist, not proof of manipulation.
+- Use cautious language like "attention spike", "crowding risk", "watchlist", or "sudden focus" unless the recent summaries support something stronger.
+- Prioritize lower-relevance entities whose latest attention looks stretched versus their own baseline or recent peak, or whose latest items show strong near-duplicate phrasing across multiple authors.
+- Populate "unusualActivity" with the clearest crowding, attention-spike, or copy-paste cluster lines (max 5).
+
+When <macro_context> data is provided:
+- Treat it as cross-market backdrop, not a deterministic model.
+- Rising VIX, dollar, yields, or gold usually signal tighter risk conditions; a rising S&P 500 usually signals risk-on.
+- Flag when crypto sentiment drifts against the macro tape, because those divergences often fail or squeeze fast.
+- Populate "macroAlerts" with the sharpest macro-tape or divergence alerts when the backdrop changes positioning.
+- Populate "macroRegime" with one of: risk-on, risk-off, transition, or unclear.
+- Use "unclear" when the tape is too mixed for a confident directional call.
+- Reduce confidence when macro indicators disagree or when crypto-specific positioning clearly fights the macro backdrop.
+- Use macro context to sharpen positioning and risk framing, not to bury faster crypto-specific signals.`;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -139,6 +197,71 @@ interface AlphaPropagationContext {
   propagationSpeed: string | null; // e.g., "alpha → general in 4.2h"
 }
 
+interface NarrativeContext {
+  name: string;
+  growthRate: string;
+  summaryCount: number;
+  createdAt: number;
+}
+
+function formatUnusualActivityContext(overview: UnusualActivityOverview): string[] {
+  return overview.entries.map((entry) => {
+    const baseline =
+      entry.baselineMentionCount == null || entry.baselineDays === 0
+        ? 'baseline=new/no-history'
+        : `baseline=${entry.baselineMentionCount.toFixed(1)}/day over ${entry.baselineDays}d`;
+    const priorPeak =
+      entry.baselinePeakMentionCount == null ? 'prior_peak=n/a' : `prior_peak=${entry.baselinePeakMentionCount}`;
+    const ratio = entry.spikeRatio == null ? 'ratio=new-breakout' : `ratio=${entry.spikeRatio.toFixed(1)}x`;
+    const sentiment = entry.avgSentiment == null ? 'sentiment=n/a' : `sentiment=${entry.avgSentiment.toFixed(2)}`;
+    const momentum =
+      entry.momentum == null ? 'momentum=n/a' : `momentum=${entry.momentum > 0 ? '+' : ''}${entry.momentum.toFixed(2)}`;
+    const relevance =
+      entry.relevanceScore == null
+        ? 'relevance=n/a, low_relevance=unknown'
+        : `relevance=${entry.relevanceScore.toFixed(2)}, low_relevance=${entry.lowRelevance ? 'yes' : 'no'}`;
+    const duplicateCluster =
+      entry.duplicateClusterSize == null || entry.duplicateAuthorCount == null
+        ? null
+        : `dup_cluster=${entry.duplicateClusterSize} posts/${entry.duplicateAuthorCount} authors/${entry.duplicateSourceCount ?? 1} streams`;
+    return `${escapeXml(entry.entityName)}: mentions=${entry.mentionCount}, ${baseline}, ${priorPeak}, ${ratio}, ${relevance}, ${sentiment}, ${momentum}${duplicateCluster ? `, ${duplicateCluster}` : ''}`;
+  });
+}
+
+function formatFirstMoverLeadWindow(leadWindowMs: number | null): string {
+  if (leadWindowMs == null || leadWindowMs <= 0) {
+    return 'no later tracked call in the current lookback';
+  }
+
+  const hours = leadWindowMs / (1000 * 60 * 60);
+  if (hours < 1) {
+    return `${Math.max(1, Math.round(leadWindowMs / 60000))}m before the next tracked call`;
+  }
+  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)}h before the next tracked call`;
+}
+
+function formatFirstMoverTimestamp(timestamp: number, timezone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: timezone,
+  }).format(timestamp);
+}
+
+function formatFirstMoverContext(rows: EntityFirstMoverRow[], timezone: string): string[] {
+  return rows.map((row) => {
+    const displayName = row.displayName?.trim() || row.handle;
+    const authorLabel =
+      row.platform === 'twitter' && !row.handle.startsWith('@')
+        ? `${displayName} (@${row.handle})`
+        : `${displayName} (${row.handle})`;
+    return `${escapeXml(row.entityName)}: first tracked by ${escapeXml(authorLabel)} on ${row.platform} at ${formatFirstMoverTimestamp(row.timestamp, timezone)} ${timezone}; claim_type=${row.claimType}; lead_window=${formatFirstMoverLeadWindow(row.leadWindowMs)}; claim=${escapeXml(row.claimText)}`;
+  });
+}
+
 interface RecentEventAnalysisEntry {
   event: CalendarEventEntry;
   preAvgSentiment: number | null;
@@ -149,6 +272,7 @@ interface RecentEventAnalysisEntry {
 }
 
 const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const FIRST_MOVER_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -185,7 +309,11 @@ function parseSummaryBody(body: string): ParsedSummaryBody | null {
   }
 }
 
-function parseReportResponse(raw: string): MarketReport {
+type ReportParseResult =
+  | { success: true; report: MarketReport }
+  | { success: false; kind: 'json' | 'schema'; errorPaths?: string };
+
+function safeParseReportResponse(raw: string): ReportParseResult {
   let cleaned = raw.trim();
   if (cleaned.startsWith('```')) {
     const firstNewline = cleaned.indexOf('\n');
@@ -195,8 +323,82 @@ function parseReportResponse(raw: string): MarketReport {
       cleaned = cleaned.slice(0, lastFence);
     }
   }
-  const parsed: unknown = JSON.parse(cleaned);
-  return MarketReportLLMSchema.parse(parsed);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return { success: false, kind: 'json' };
+  }
+
+  const result = MarketReportLLMSchema.safeParse(parsed);
+  if (result.success) {
+    return { success: true, report: result.data };
+  }
+
+  const errorPaths = result.error.issues
+    .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : '(root)'}: ${issue.message}`)
+    .join('; ');
+  return { success: false, kind: 'schema', errorPaths };
+}
+
+function buildValidationRetrySystemPrompt(systemPrompt: string, errorPaths: string): string {
+  return `${systemPrompt}\n\nYour previous response had validation errors: ${errorPaths}. Please fix these fields.`;
+}
+
+async function callReportWithRetry(
+  llm: LLM,
+  log: Logger,
+  model: string,
+  systemPrompt: string,
+  wrappedContent: string,
+  maxTokens: number,
+  stage: string,
+  label: string,
+): Promise<MarketReport | null> {
+  const firstResult = await llm.call({
+    model,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: wrappedContent }],
+    maxTokens,
+    stage,
+  });
+
+  const firstParsed = safeParseReportResponse(firstResult.content);
+  if (firstParsed.success) {
+    return firstParsed.report;
+  }
+
+  const retrySystemPrompt =
+    firstParsed.kind === 'schema' && firstParsed.errorPaths
+      ? buildValidationRetrySystemPrompt(systemPrompt, firstParsed.errorPaths)
+      : systemPrompt;
+
+  if (firstParsed.kind === 'schema') {
+    log.warn({ errorPaths: firstParsed.errorPaths }, `${label} validation failed, retrying with error feedback`);
+  } else {
+    log.warn(`${label} parse failed, retrying LLM call once`);
+  }
+
+  const retryResult = await llm.call({
+    model,
+    system: retrySystemPrompt,
+    messages: [{ role: 'user', content: wrappedContent }],
+    maxTokens,
+    stage,
+  });
+
+  const retryParsed = safeParseReportResponse(retryResult.content);
+  if (retryParsed.success) {
+    return retryParsed.report;
+  }
+
+  if (retryParsed.kind === 'schema') {
+    log.error({ errorPaths: retryParsed.errorPaths }, `${label} validation failed on retry, skipping report`);
+  } else {
+    log.error(`${label} parse failed on retry, skipping report`);
+  }
+
+  return null;
 }
 
 function computeAvgSentiment(report: MarketReport): number | null {
@@ -336,7 +538,12 @@ export function createPulse(
     momentum: MomentumEntry[],
     divergence: DivergenceEntry[],
     priceContext: PriceContextEntry[],
+    firstMovers: EntityFirstMoverRow[],
+    unusualActivity: UnusualActivityOverview,
+    macroContext: MacroContextSummary,
+    cryptoAggregate: CryptoSentimentAggregate | null,
     alphaPropagation: AlphaPropagationContext[],
+    narratives: NarrativeContext[],
     recentCalendarEvents: CalendarEventEntry[],
     recentEventAnalysis: RecentEventAnalysisEntry[],
     recentEventChains: EventChainRow[],
@@ -381,13 +588,32 @@ export function createPulse(
 
     if (priceContext.length > 0) {
       const priceLines = priceContext.map((p) => {
-        const change24h = p.priceChange24h !== null ? `24h: ${p.priceChange24h > 0 ? '+' : ''}${p.priceChange24h.toFixed(1)}%` : '';
-        const change7d = p.priceChange7d !== null ? `7d: ${p.priceChange7d > 0 ? '+' : ''}${p.priceChange7d.toFixed(1)}%` : '';
+        const change24h =
+          p.priceChange24h !== null ? `24h: ${p.priceChange24h > 0 ? '+' : ''}${p.priceChange24h.toFixed(1)}%` : '';
+        const change7d =
+          p.priceChange7d !== null ? `7d: ${p.priceChange7d > 0 ? '+' : ''}${p.priceChange7d.toFixed(1)}%` : '';
         const changes = [change24h, change7d].filter(Boolean).join(', ');
         const contrarianTag = p.contrarian ? ` — CONTRARIAN: ${p.contrarian}` : ' — aligned';
         return `${escapeXml(p.entityName)}: $${p.priceUsd.toLocaleString('en-US', { maximumFractionDigits: 2 })} (${changes})${contrarianTag}`;
       });
       parts.push(`<price_context>\n${priceLines.join('\n')}\n</price_context>`);
+    }
+
+    if (firstMovers.length > 0) {
+      parts.push(`<first_movers>\n${formatFirstMoverContext(firstMovers, timezone).join('\n')}\n</first_movers>`);
+    }
+
+    if (unusualActivity.entries.length > 0) {
+      const unusualLines = formatUnusualActivityContext(unusualActivity);
+      const dateNote = unusualActivity.latestDate
+        ? `latest_daily_rollup=${unusualActivity.latestDate}`
+        : 'latest_daily_rollup=unknown';
+      parts.push(`<unusual_activity>\n${dateNote}\n${unusualLines.join('\n')}\n</unusual_activity>`);
+    }
+
+    if (macroContext.entries.length > 0) {
+      const macroLines = formatMacroContextLines(macroContext, cryptoAggregate);
+      parts.push(`<macro_context>\n${macroLines.join('\n')}\n</macro_context>`);
     }
 
     // Alpha propagation context
@@ -398,6 +624,13 @@ export function createPulse(
         return `${escapeXml(a.entityName)}: ${tierList}${speed}`;
       });
       parts.push(`<alpha_propagation>\n${alphaLines.join('\n')}\n</alpha_propagation>`);
+    }
+
+    if (narratives.length > 0) {
+      const narrativeLines = narratives.map(
+        (n) => `${escapeXml(n.name)}: growth=${n.growthRate}, summaries=${n.summaryCount}`,
+      );
+      parts.push(`<narrative_context>\n${narrativeLines.join('\n')}\n</narrative_context>`);
     }
 
     if (recentCalendarEvents.length > 0) {
@@ -476,7 +709,7 @@ export function createPulse(
       source: string;
       entities: string;
       urgency: string;
-      parsedEntities: { name: string; sentiment: number }[];
+      parsedEntities: { name: string; type: string; sentiment: number; mentionCount: number }[];
     }[] = [];
     let hasBreaking = false;
     let hasElevated = false;
@@ -501,7 +734,12 @@ export function createPulse(
         source: row.source,
         entities: entityStr,
         urgency,
-        parsedEntities: parsed.entities.map((e) => ({ name: e.name, sentiment: e.sentiment })),
+        parsedEntities: parsed.entities.map((e) => ({
+          name: e.name,
+          type: e.type,
+          sentiment: e.sentiment,
+          mentionCount: e.mentionCount,
+        })),
       });
     }
 
@@ -566,6 +804,8 @@ export function createPulse(
     // Fetch latest prices for token entities
     const priceSnapshots = entityIds.length > 0 ? await getLatestPricesForEntities(pool, entityIds) : [];
     const entityIdToName = new Map(entityIdRows.map((r) => [r.id, r.name]));
+    const firstMovers =
+      entityIds.length > 0 ? await getEntityFirstMovers(pool, entityIds, windowStart - FIRST_MOVER_LOOKBACK_MS, 6) : [];
 
     const priceContext: PriceContextEntry[] = priceSnapshots.map((snap) => {
       const name = entityIdToName.get(snap.entityId) ?? snap.entityId;
@@ -580,10 +820,24 @@ export function createPulse(
         }
       }
 
-      return { entityName: name, priceUsd: snap.priceUsd, priceChange24h: snap.priceChange24h, priceChange7d: snap.priceChange7d, sentiment, contrarian };
+      return {
+        entityName: name,
+        priceUsd: snap.priceUsd,
+        priceChange24h: snap.priceChange24h,
+        priceChange7d: snap.priceChange7d,
+        sentiment,
+        contrarian,
+      };
     });
 
-    log.info({ priceEntries: priceContext.length, contrarianCount: priceContext.filter((p) => p.contrarian).length }, 'Loaded price context for pulse');
+    log.info(
+      {
+        priceEntries: priceContext.length,
+        contrarianCount: priceContext.filter((p) => p.contrarian).length,
+        firstMoverEntries: firstMovers.length,
+      },
+      'Loaded price context for pulse',
+    );
 
     // Fetch alpha propagation for active entities (7-day window)
     const alphaLookbackMs = 7 * 24 * 60 * 60 * 1000;
@@ -606,9 +860,10 @@ export function createPulse(
           const latest = tiers[tiers.length - 1];
           const diffMs = latest.firstMentionTime - earliest.firstMentionTime;
           const diffHours = diffMs / (1000 * 60 * 60);
-          const propagationSpeed = diffHours < 1
-            ? `${earliest.tier} → ${latest.tier} in ${Math.round(diffMs / 60000)}m`
-            : `${earliest.tier} → ${latest.tier} in ${diffHours.toFixed(1)}h`;
+          const propagationSpeed =
+            diffHours < 1
+              ? `${earliest.tier} → ${latest.tier} in ${Math.round(diffMs / 60000)}m`
+              : `${earliest.tier} → ${latest.tier} in ${diffHours.toFixed(1)}h`;
           alphaPropagation.push({ entityName: name, tiers, propagationSpeed });
         }
         log.info({ alphaEntries: alphaPropagation.length }, 'Loaded alpha propagation context for pulse');
@@ -623,6 +878,28 @@ export function createPulse(
     const divergence = await divergenceTracker.getDivergence(windowStart, now);
 
     log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for pulse');
+
+    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+    const { rows: narrativeRows } = await pool.query<{
+      name: string;
+      signal_strength: string;
+      member_count: number;
+      created_at: number;
+    }>(
+      `SELECT name, signal_strength, member_count, created_at
+       FROM narratives
+       WHERE created_at > $1
+       ORDER BY member_count DESC LIMIT 10`,
+      [twoDaysAgo],
+    );
+    const narratives: NarrativeContext[] = narrativeRows.map((r) => ({
+      name: r.name,
+      growthRate: r.signal_strength,
+      summaryCount: r.member_count,
+      createdAt: r.created_at,
+    }));
+
+    log.info({ narrativeCount: narratives.length }, 'Loaded narrative context for pulse');
 
     const recentCalendarEvents = await calendarTracker.getRecentEvents(now - 24 * 60 * 60 * 1000, now);
     const recentEventAnalysis = (
@@ -648,6 +925,18 @@ export function createPulse(
     ).filter((entry): entry is RecentEventAnalysisEntry => entry !== null);
     const recentEventChains = await getRecentEventChains(pool, entityIds, now - EVENT_CHAIN_LOOKBACK_MS);
     const calendarEvents = await calendarTracker.getUpcomingEvents(now, now + 48 * 60 * 60 * 1000);
+    const unusualActivity = await getUnusualActivityOverview(pool, 8, timezone);
+    const macroSnapshots = await getLatestMacroSnapshots(pool);
+    const macroContext = buildMacroContext(macroSnapshots);
+    const cryptoAggregate = summarizeCryptoSentiment(
+      parsedSummaries.flatMap((summary) =>
+        summary.parsedEntities.map((entity) => ({
+          type: entity.type,
+          sentiment: entity.sentiment,
+          mentionCount: entity.mentionCount,
+        })),
+      ),
+    );
 
     log.info(
       {
@@ -657,6 +946,15 @@ export function createPulse(
         calendarEventCount: calendarEvents.length,
       },
       'Loaded calendar events for pulse',
+    );
+    log.info(
+      {
+        unusualActivityEntries: unusualActivity.entries.length,
+        narrativeCount: narratives.length,
+        macroEntries: macroContext.entries.length,
+        macroBias: macroContext.overallBias,
+      },
+      'Loaded macro context for pulse',
     );
 
     // Activity-scaled maxTokens
@@ -670,7 +968,12 @@ export function createPulse(
       momentum,
       divergence,
       priceContext,
+      firstMovers,
+      unusualActivity,
+      macroContext,
+      cryptoAggregate,
       alphaPropagation,
+      narratives,
       recentCalendarEvents,
       recentEventAnalysis,
       recentEventChains,
@@ -691,34 +994,17 @@ export function createPulse(
     // Wrap user message with nonce to defend against prompt injection
     const { wrapped } = llm.wrapWithNonce(userMessage);
 
-    // Call LLM — let network errors propagate (no retry for those)
-    const result = await llm.call({
-      model: config.models.sonnet,
-      system: PULSE_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: wrapped }],
+    const report = await callReportWithRetry(
+      llm,
+      log,
+      config.models.sonnet,
+      PULSE_SYSTEM_PROMPT,
+      wrapped,
       maxTokens,
-      stage: 'pulse',
-    });
-
-    let report: MarketReport;
-    try {
-      report = parseReportResponse(result.content);
-    } catch (firstParseErr: unknown) {
-      log.warn({ err: firstParseErr }, 'Pulse parse failed, retrying LLM call once');
-      const retryResult = await llm.call({
-        model: config.models.sonnet,
-        system: PULSE_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: wrapped }],
-        maxTokens,
-        stage: 'pulse',
-      });
-      try {
-        report = parseReportResponse(retryResult.content);
-      } catch (secondParseErr: unknown) {
-        log.error({ err: secondParseErr }, 'Pulse parse failed on retry, skipping report');
-        return null;
-      }
-    }
+      'pulse',
+      'Pulse synthesis',
+    );
+    if (!report) return null;
 
     // Insert report
     const reportId = ulid();

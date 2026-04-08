@@ -57,11 +57,7 @@ describe('H-001 normalize: English language tagging (src/normalize/index.ts)', (
   });
 
   it("includes 'eng' in the file (language value is referenced)", () => {
-    assert.match(
-      src,
-      /'eng'/,
-      "The string 'eng' must appear in normalize/index.ts",
-    );
+    assert.match(src, /'eng'/, "The string 'eng' must appear in normalize/index.ts");
   });
 
   it('else branch defaults to eng for non-Indonesian content', () => {
@@ -92,18 +88,11 @@ describe('H-001 summarize: null language fallback (src/process/summarize.ts)', (
   });
 
   it('builds a langCounts map from chunk items', () => {
-    assert.ok(
-      src.includes('langCounts'),
-      'summarize must maintain a langCounts map for language frequency counting',
-    );
+    assert.ok(src.includes('langCounts'), 'summarize must maintain a langCounts map for language frequency counting');
   });
 
   it('determines a predominant language from langCounts', () => {
-    assert.match(
-      src,
-      /predominantLang/,
-      'summarize must compute a predominantLang from language counts',
-    );
+    assert.match(src, /predominantLang/, 'summarize must compute a predominantLang from language counts');
   });
 
   it("references both 'eng' and 'ind' in the language counting logic", () => {
@@ -114,10 +103,7 @@ describe('H-001 summarize: null language fallback (src/process/summarize.ts)', (
 
     // The 'eng' appears as the fallback default, 'ind' appears elsewhere
     // in the pipeline (items come in with 'ind' from normalize)
-    assert.ok(
-      src.includes("'eng'"),
-      "summarize must reference 'eng' language value",
-    );
+    assert.ok(src.includes("'eng'"), "summarize must reference 'eng' language value");
   });
 
   it('passes predominant language to entity resolution', () => {
@@ -144,19 +130,11 @@ describe('H-001 migration: backfill NULL language (src/db/migrations.ts)', () =>
   });
 
   it('references H-001 in migration comments', () => {
-    assert.match(
-      src,
-      /H-001/,
-      'migration must reference the H-001 bug ID',
-    );
+    assert.match(src, /H-001/, 'migration must reference the H-001 bug ID');
   });
 
   it('adds CHECK constraint for confidence range on entity_relationships', () => {
-    assert.match(
-      src,
-      /chk_confidence_range/,
-      'migration must add chk_confidence_range constraint',
-    );
+    assert.match(src, /chk_confidence_range/, 'migration must add chk_confidence_range constraint');
     assert.match(
       src,
       /confidence\s*>=\s*0\s+AND\s+confidence\s*<=\s*1/,
@@ -165,11 +143,7 @@ describe('H-001 migration: backfill NULL language (src/db/migrations.ts)', () =>
   });
 
   it('adds CHECK constraint for temporal ordering on entity_relationships', () => {
-    assert.match(
-      src,
-      /chk_temporal_order/,
-      'migration must add chk_temporal_order constraint',
-    );
+    assert.match(src, /chk_temporal_order/, 'migration must add chk_temporal_order constraint');
     assert.match(
       src,
       /since_at\s+IS\s+NULL\s+OR\s+until_at\s+IS\s+NULL\s+OR\s+since_at\s*<=\s*until_at/,

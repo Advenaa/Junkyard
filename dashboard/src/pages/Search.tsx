@@ -1,7 +1,9 @@
 import { useCallback, useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { apiFetch } from '../lib/api';
-import type { ReportChainDrilldown } from '../lib/types';
+import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
+import { getReportSecondaryPreview } from '../lib/reportPreview';
+import type { MacroRegime, MacroRegimeHistory, ReportChainDrilldown } from '../lib/types';
 import {
   areReportChainRefreshActionsEqual,
   areReportChainToggleActionsEqual,
@@ -30,6 +32,16 @@ interface SearchResult {
   reportType?: 'daily' | 'flash' | 'pulse' | null;
   date?: string | null;
   eventChains?: string[];
+  marketCatalysts?: string[];
+  regionalDivergence?: string[];
+  narrativeShifts?: string[];
+  firstMovers?: string[];
+  priceAlerts?: string[];
+  alphaSignals?: string[];
+  unusualActivity?: string[];
+  macroAlerts?: string[];
+  macroRegime?: MacroRegime | null;
+  macroRegimeHistory?: MacroRegimeHistory | null;
   chainDrilldowns?: ReportChainDrilldown[];
   hasMoreActiveChains?: boolean;
   hiddenActiveChainCount?: number;
@@ -365,6 +377,18 @@ export function Search() {
               hiddenActiveChainCount,
             });
             const refreshChipAction = refreshChipActionOverrides[result.id] ?? fallbackRefreshChipAction;
+            const secondaryPreview = getReportSecondaryPreview({
+              activeChainCount: activeChains.length,
+              eventChains: result.eventChains,
+              marketCatalysts: result.marketCatalysts,
+              regionalDivergence: result.regionalDivergence,
+              narrativeShifts: result.narrativeShifts,
+              firstMovers: result.firstMovers,
+              priceAlerts: result.priceAlerts,
+              alphaSignals: result.alphaSignals,
+              unusualActivity: result.unusualActivity,
+              macroAlerts: result.macroAlerts,
+            });
 
             return (
               <div
@@ -377,6 +401,14 @@ export function Search() {
                       <TypeBadge type={result.reportType ?? 'report'} />
                       <span className="text-text-secondary text-xs font-mono uppercase tracking-wider">report</span>
                       {result.date && <span className="text-text-secondary text-xs font-mono">{result.date}</span>}
+                      {result.macroRegime && (
+                        <span
+                          title={buildMacroRegimePreviewTitle(result.macroRegime, result.macroRegimeHistory)}
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ${macroRegimeToneClasses(result.macroRegime.classification)}`}
+                        >
+                          Macro regime · {formatMacroRegimePreview(result.macroRegime, result.macroRegimeHistory)}
+                        </span>
+                      )}
                       {visibleChainCount > 0 &&
                         (storyChipAction.mode === 'none' ? (
                           <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
@@ -424,12 +456,12 @@ export function Search() {
                     className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm"
                   >
                     <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(previewBody, 200)}</p>
-                    {activeChains.length === 0 && result.eventChains && result.eventChains.length > 0 && (
+                    {secondaryPreview && (
                       <p className="text-xs font-body text-text-secondary leading-relaxed">
                         <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
-                          Event Chain
+                          {secondaryPreview.label}
                         </span>{' '}
-                        {result.eventChains[0]}
+                        {secondaryPreview.text}
                       </p>
                     )}
                   </Link>

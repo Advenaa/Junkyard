@@ -1,9 +1,19 @@
 import { z } from 'zod';
 
+const nonEmptyText = z.string().trim().min(1);
+
 export const ChunkEventLLMSchema = z.object({
   entityName: z.string().min(1),
   eventType: z.enum(['exploit', 'audit', 'governance', 'launch', 'partnership', 'funding', 'hack', 'legal']),
   description: z.string().min(1),
+});
+
+export const AuthorClaimLLMSchema = z.object({
+  authorHandle: z.string().min(1),
+  entityName: z.string().min(1),
+  claimType: z.enum(['bullish', 'bearish', 'event', 'neutral']),
+  claimText: z.string().min(1),
+  confidence: z.number().min(0).max(1).default(0.5),
 });
 
 export const ChunkRelationshipLLMSchema = z.object({
@@ -42,24 +52,39 @@ export const ChunkSummaryLLMSchema = z.object({
   keyEvents: z.array(z.string()).max(5).default([]),
   events: z.array(ChunkEventLLMSchema).max(5).default([]),
   relationships: z.array(ChunkRelationshipLLMSchema).max(5).default([]),
+  authorClaims: z.array(AuthorClaimLLMSchema).max(8).default([]),
 });
 
 export type ChunkSummary = z.infer<typeof ChunkSummaryLLMSchema>;
 export type ChunkEvent = z.infer<typeof ChunkEventLLMSchema>;
+export type AuthorClaim = z.infer<typeof AuthorClaimLLMSchema>;
 export type ChunkRelationship = z.infer<typeof ChunkRelationshipLLMSchema>;
 
+export const MacroRegimeLLMSchema = z.object({
+  classification: z.enum(['risk-on', 'risk-off', 'transition', 'unclear']),
+  confidence: z.number().min(0).max(1),
+  rationale: nonEmptyText.max(240),
+});
+
 export const MarketReportLLMSchema = z.object({
-  tldr: z.string().max(500),
-  keyEvents: z.array(z.string()).max(10).default([]),
-  marketCatalysts: z.array(z.string()).max(6).default([]),
-  eventChains: z.array(z.string()).max(5).default([]),
-  priceAlerts: z.array(z.string()).max(5).default([]),
+  tldr: nonEmptyText.max(500),
+  keyEvents: z.array(nonEmptyText).max(10).default([]),
+  marketCatalysts: z.array(nonEmptyText).max(6).default([]),
+  regionalDivergence: z.array(nonEmptyText).max(5).default([]),
+  narrativeShifts: z.array(nonEmptyText).max(5).default([]),
+  eventChains: z.array(nonEmptyText).max(5).default([]),
+  firstMovers: z.array(nonEmptyText).max(5).default([]),
+  alphaSignals: z.array(nonEmptyText).max(5).default([]),
+  priceAlerts: z.array(nonEmptyText).max(5).default([]),
+  unusualActivity: z.array(nonEmptyText).max(5).default([]),
+  macroAlerts: z.array(nonEmptyText).max(5).default([]),
+  macroRegime: MacroRegimeLLMSchema.nullable().default(null),
   entitySentiment: z
     .array(
       z.object({
-        name: z.string().min(1),
+        name: nonEmptyText,
         sentiment: z.number().min(-1).max(1),
-        reason: z.string().min(1),
+        reason: nonEmptyText,
       }),
     )
     .max(15)
@@ -67,8 +92,8 @@ export const MarketReportLLMSchema = z.object({
   sections: z
     .array(
       z.object({
-        title: z.string().min(1),
-        body: z.string().min(1),
+        title: nonEmptyText,
+        body: nonEmptyText,
       }),
     )
     .max(4)
@@ -76,8 +101,8 @@ export const MarketReportLLMSchema = z.object({
   newProjects: z
     .array(
       z.object({
-        name: z.string().min(1),
-        description: z.string().min(1),
+        name: nonEmptyText,
+        description: nonEmptyText,
       }),
     )
     .max(5)
@@ -85,3 +110,4 @@ export const MarketReportLLMSchema = z.object({
 });
 
 export type MarketReport = z.infer<typeof MarketReportLLMSchema>;
+export type MacroRegime = z.infer<typeof MacroRegimeLLMSchema>;

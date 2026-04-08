@@ -50,11 +50,7 @@ describe('Price Feeds migration (src/db/migrations.ts)', () => {
     assert.ok(tableStart !== -1, 'price_snapshots table must exist');
     const tableSlice = src.slice(tableStart, tableStart + 800);
 
-    assert.match(
-      tableSlice,
-      /price_usd\s+REAL/i,
-      'price_snapshots must have price_usd REAL column',
-    );
+    assert.match(tableSlice, /price_usd\s+REAL/i, 'price_snapshots must have price_usd REAL column');
   });
 
   it('price_snapshots has timestamp BIGINT column', () => {
@@ -62,11 +58,7 @@ describe('Price Feeds migration (src/db/migrations.ts)', () => {
     assert.ok(tableStart !== -1, 'price_snapshots table must exist');
     const tableSlice = src.slice(tableStart, tableStart + 800);
 
-    assert.match(
-      tableSlice,
-      /timestamp\s+BIGINT/i,
-      'price_snapshots must have timestamp BIGINT column',
-    );
+    assert.match(tableSlice, /timestamp\s+BIGINT/i, 'price_snapshots must have timestamp BIGINT column');
   });
 
   it('indexes exist on (entity_id, timestamp) and (timestamp)', () => {
@@ -110,15 +102,12 @@ describe('CoinGecko module (src/prices/coingecko.ts)', () => {
   });
 
   it('uses CoinGecko API URL (api.coingecko.com)', () => {
-    assert.ok(
-      src.includes('api.coingecko.com'),
-      'coingecko.ts must reference api.coingecko.com',
-    );
+    assert.ok(src.includes('api.coingecko.com'), 'coingecko.ts must reference api.coingecko.com');
   });
 
   it('requests include vs_currencies=usd', () => {
     assert.ok(
-      src.includes('vs_currencies=usd') || src.includes('vs_currencies') ,
+      src.includes('vs_currencies=usd') || src.includes('vs_currencies'),
       'coingecko.ts must include vs_currencies=usd in API requests',
     );
   });
@@ -188,11 +177,7 @@ describe('Price snapshot queries (src/db/queries.ts)', () => {
     assert.ok(fnStart !== -1, 'getPriceHistory must exist');
     const fnSlice = src.slice(fnStart, fnStart + 1500);
 
-    assert.match(
-      fnSlice,
-      /ORDER\s+BY\s+timestamp\s+DESC/i,
-      'getPriceHistory must ORDER BY timestamp DESC',
-    );
+    assert.match(fnSlice, /ORDER\s+BY\s+timestamp\s+DESC/i, 'getPriceHistory must ORDER BY timestamp DESC');
   });
 
   it('getLatestPricesForEntities uses DISTINCT ON or equivalent dedup', () => {

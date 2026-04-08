@@ -79,10 +79,7 @@ describe('Entity manager returns entity IDs (src/knowledge/entities.ts)', () => 
   });
 
   it('collects resolved entity IDs from entityIdMap', () => {
-    assert.ok(
-      src.includes('entityIdMap.values()') ||
-      src.includes('entityIdMap') && src.includes('resolvedIds'),
-    );
+    assert.ok(src.includes('entityIdMap.values()') || (src.includes('entityIdMap') && src.includes('resolvedIds')));
   });
 });
 

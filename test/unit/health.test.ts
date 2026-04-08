@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import dns from 'node:dns';
 import { createHealthMonitor } from '../../src/health.js';
 import type { Config } from '../../src/config.js';
 
@@ -177,6 +178,60 @@ describe('health monitor', () => {
       const { healthy } = await monitor.getStatus();
 
       assert.equal(healthy, false);
+    });
+  });
+
+  describe('alert webhook retries', () => {
+    it('reuses the original DNS validation across alert-webhook retries when DB is down', async (t) => {
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            throw new Error('db down');
+          }
+          return { rows: [] };
+        },
+      });
+
+      const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+      const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+        throw new Error('no AAAA record');
+      });
+      let fetchAttempt = 0;
+      const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+        fetchAttempt++;
+        return new Response(null, { status: fetchAttempt === 1 ? 500 : 200 });
+      });
+      const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void) => {
+        callback();
+        return 0;
+      }) as typeof setTimeout);
+
+      const monitor = createHealthMonitor(
+        pool,
+        silentLog,
+        fakeConfig({ alertWebhookUrl: 'https://alerts.example.com/hook' }),
+      );
+      await monitor.check();
+
+      assert.strictEqual(fetchMock.mock.callCount(), 2, 'alert webhook should retry once after a 5xx response');
+      assert.strictEqual(
+        resolve4Mock.mock.callCount(),
+        1,
+        'alert retries should reuse the first validated IPv4 result',
+      );
+      assert.strictEqual(resolve6Mock.mock.callCount(), 1, 'alert retries should not re-run IPv6 resolution either');
+
+      const firstCall = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
+      const secondCall = fetchMock.mock.calls[1]!.arguments as [string, RequestInit];
+      assert.strictEqual(firstCall[0], 'https://alerts.example.com/hook');
+      assert.strictEqual(secondCall[0], 'https://alerts.example.com/hook');
+      assert.ok(firstCall[1].dispatcher, 'first alert attempt should use a pinned dispatcher');
+      assert.ok(secondCall[1].dispatcher, 'retry should also use a pinned dispatcher');
+
+      setTimeoutMock.mock.restore();
+      fetchMock.mock.restore();
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
     });
   });
 

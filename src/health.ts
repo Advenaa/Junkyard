@@ -2,7 +2,7 @@ import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 import type { Config } from './config.js';
 import { ulid } from 'ulid';
-import { validateUrl } from './url-validator.js';
+import { fetchValidated, validateUrl } from './url-validator.js';
 import { getAppConfig } from './db/queries.js';
 
 export interface HealthCheckResult {
@@ -308,21 +308,29 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     let lastErr: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await fetch(config.alertWebhookUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(10_000),
-        });
+        const { response } = await fetchValidated(
+          config.alertWebhookUrl,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(10_000),
+          },
+          validation,
+        );
+        if (!response) {
+          log.error({ reason: validation.reason }, 'Alert webhook URL failed SSRF validation during delivery');
+          return;
+        }
         if (response.ok) {
-          await response.body?.cancel();
+          await response.body?.cancel().catch(() => undefined);
           return;
         }
         if (response.status < 500) {
-          await response.body?.cancel();
+          await response.body?.cancel().catch(() => undefined);
           return; // Client error, don't retry
         }
-        await response.body?.cancel();
+        await response.body?.cancel().catch(() => undefined);
         lastErr = new Error(`Alert webhook returned ${response.status}`);
       } catch (err: unknown) {
         lastErr = err;

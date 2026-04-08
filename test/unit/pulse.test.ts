@@ -78,6 +78,8 @@ function makePool(
     existingPulse?: any[];
     appConfig?: any[];
     entityRows?: any[];
+    narratives?: any[];
+    macroSnapshots?: any[];
     eventSentimentShift?: any[];
     eventChains?: any[];
   } = {},
@@ -103,6 +105,12 @@ function makePool(
       // Entity ID lookup: SELECT id FROM entities WHERE LOWER(name) = ANY($1)
       if (sql.includes('FROM entities')) {
         return { rows: opts.entityRows ?? [] };
+      }
+      if (sql.includes('FROM narratives')) {
+        return { rows: opts.narratives ?? [] };
+      }
+      if (sql.includes('FROM macro_snapshots')) {
+        return { rows: opts.macroSnapshots ?? [] };
       }
       if (sql.includes('FROM entity_mentions')) {
         return {
@@ -170,6 +178,7 @@ describe('pulse', { concurrency: 1 }, () => {
       assert.ok(result.success);
       assert.deepStrictEqual(result.data!.keyEvents, []);
       assert.deepStrictEqual(result.data!.marketCatalysts, []);
+      assert.deepStrictEqual(result.data!.narrativeShifts, []);
       assert.deepStrictEqual(result.data!.eventChains, []);
       assert.deepStrictEqual(result.data!.entitySentiment, []);
       assert.deepStrictEqual(result.data!.sections, []);
@@ -406,6 +415,92 @@ describe('pulse', { concurrency: 1 }, () => {
       assert.match(call.messages[0]!.content, /Bitcoin: 2 linked events/);
       assert.match(call.messages[0]!.content, /chain=hack -> audit/);
       assert.match(call.messages[0]!.content, /latest=Audit update narrowed the blast radius\./);
+    });
+
+    it('injects macro context into the pulse prompt', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        macroSnapshots: [
+          {
+            id: 'macro-vix',
+            date: '2026-04-08',
+            indicator: 'vix',
+            value: 21.9,
+            change_1d: 1.1,
+            change_7d: 3.9,
+            source: 'fred',
+            created_at: Date.now(),
+          },
+          {
+            id: 'macro-us10y',
+            date: '2026-04-08',
+            indicator: 'us10y',
+            value: 4.31,
+            change_1d: 0.08,
+            change_7d: 0.19,
+            source: 'fred',
+            created_at: Date.now(),
+          },
+          {
+            id: 'macro-gold',
+            date: '2026-04-08',
+            indicator: 'gold',
+            value: 2331.45,
+            change_1d: 18.2,
+            change_7d: 44.6,
+            source: 'fred',
+            created_at: Date.now(),
+          },
+        ],
+      });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+
+      const result = await runPulse();
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.match(call.messages[0]!.content, /<macro_context>/);
+      assert.match(call.messages[0]!.content, /macro bias: risk-off/i);
+      assert.match(call.messages[0]!.content, /crypto sentiment: bullish/i);
+      assert.match(call.messages[0]!.content, /VIX/);
+      assert.match(call.messages[0]!.content, /US 10Y/);
+      assert.match(call.messages[0]!.content, /Gold/);
+    });
+
+    it('injects narrative context into the pulse prompt', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        narratives: [
+          {
+            name: 'Solana fee rebound',
+            signal_strength: 'emerging',
+            member_count: 6,
+            created_at: Date.now(),
+          },
+        ],
+      });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+
+      const result = await runPulse();
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.match(call.messages[0]!.content, /<narrative_context>/);
+      assert.match(call.messages[0]!.content, /Solana fee rebound: growth=emerging, summaries=6/);
     });
 
     it('passes correct maxTokens to LLM based on summary count', async () => {
@@ -672,10 +767,12 @@ describe('pulse', { concurrency: 1 }, () => {
   // ═════════════════════════════════════════════════════════════════════
 
   describe('runPulse — LLM error handling', () => {
-    it('retries once on LLM parse failure and succeeds', async () => {
+    it('retries malformed pulse JSON without changing the original prompt payload', async () => {
+      const llmCalls: Array<{ system: string; messages: Array<{ content: string }> }> = [];
       let callCount = 0;
       const llm = {
-        call: async () => {
+        call: async (params: { system: string; messages: Array<{ content: string }> }) => {
+          llmCalls.push(params);
           callCount++;
           if (callCount === 1) return { content: 'not json' };
           return { content: JSON.stringify(makeValidReport()) };
@@ -688,6 +785,82 @@ describe('pulse', { concurrency: 1 }, () => {
       const result = await runPulse();
       assert.ok(result !== null);
       assert.equal(callCount, 2);
+      assert.strictEqual(
+        llmCalls[1]!.system,
+        llmCalls[0]!.system,
+        'Malformed JSON retries should reuse the original system prompt',
+      );
+      assert.ok(
+        !/validation errors/i.test(llmCalls[1]!.system),
+        'Malformed JSON retries should not append schema-validation feedback',
+      );
+      assert.strictEqual(
+        llmCalls[1]!.messages[0]!.content,
+        llmCalls[0]!.messages[0]!.content,
+        'Malformed JSON retries should preserve the original wrapped user payload',
+      );
+    });
+
+    it('retries once with validation feedback when pulse JSON fails schema validation', async () => {
+      const llmCalls: Array<{ system: string; messages: Array<{ content: string }> }> = [];
+      let callCount = 0;
+      const llm = {
+        call: async (params: { system: string; messages: Array<{ content: string }> }) => {
+          llmCalls.push(params);
+          callCount++;
+          if (callCount === 1) {
+            return { content: JSON.stringify({ ...makeValidReport(), tldr: 42 }) };
+          }
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const result = await runPulse();
+      assert.ok(result !== null);
+      assert.equal(callCount, 2);
+      assert.match(llmCalls[1]!.system, /validation errors/i);
+      assert.match(llmCalls[1]!.system, /tldr/);
+      assert.strictEqual(
+        llmCalls[1]!.messages[0]!.content,
+        llmCalls[0]!.messages[0]!.content,
+        'Schema-guided retries should preserve the original wrapped user payload',
+      );
+    });
+
+    it('retries once with validation feedback when pulse JSON has a blank macro-regime rationale', async () => {
+      const llmCalls: Array<{ system: string }> = [];
+      let callCount = 0;
+      const llm = {
+        call: async (params: { system: string }) => {
+          llmCalls.push(params);
+          callCount++;
+          if (callCount === 1) {
+            return {
+              content: JSON.stringify({
+                ...makeValidReport(),
+                macroRegime: {
+                  classification: 'transition',
+                  confidence: 0.55,
+                  rationale: '   ',
+                },
+              }),
+            };
+          }
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const result = await runPulse();
+      assert.ok(result !== null);
+      assert.equal(callCount, 2);
+      assert.match(llmCalls[1]!.system, /validation errors/i);
+      assert.match(llmCalls[1]!.system, /macroRegime\.rationale/);
     });
 
     it('returns null after both LLM attempts fail', async () => {

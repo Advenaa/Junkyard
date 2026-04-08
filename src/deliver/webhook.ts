@@ -2,7 +2,7 @@ import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { getAppConfig } from '../db/queries.js';
-import { validateUrl } from '../url-validator.js';
+import { fetchValidated, type UrlValidationResult, validateUrl } from '../url-validator.js';
 
 interface EntitySentiment {
   name: string;
@@ -14,9 +14,37 @@ interface MarketReportParsed {
   tldr: string;
   keyEvents: string[];
   eventChains: string[];
+  firstMovers?: string[];
+  first_movers?: string[];
+  alphaSignals?: string[];
+  alpha_signals?: string[];
+  marketCatalysts?: string[];
+  market_catalysts?: string[];
+  regionalDivergence?: string[];
+  regional_divergence?: string[];
+  narrativeShifts?: string[];
+  narrative_shifts?: string[];
+  priceAlerts?: string[];
+  price_alerts?: string[];
+  unusualActivity?: string[];
+  unusual_activity?: string[];
+  macroRegime?: {
+    classification: 'risk-on' | 'risk-off' | 'transition' | 'unclear';
+    confidence: number;
+    rationale: string;
+  } | null;
+  macro_regime?: {
+    classification: 'risk-on' | 'risk-off' | 'transition' | 'unclear';
+    confidence: number;
+    rationale: string;
+  } | null;
+  macroAlerts?: string[];
+  macro_alerts?: string[];
   entitySentiment: EntitySentiment[];
+  entity_sentiment?: EntitySentiment[];
   sections: { title: string; body: string }[];
   newProjects: { name: string; description: string }[];
+  new_projects?: { name: string; description: string }[];
 }
 
 interface Report {
@@ -98,6 +126,21 @@ function formatSentimentValue(sentiment: number): string {
   return `${sign}${sentiment.toFixed(1)}`;
 }
 
+function formatMacroRegimeLabel(
+  classification: NonNullable<MarketReportParsed['macroRegime']>['classification'],
+): string {
+  switch (classification) {
+    case 'risk-on':
+      return 'Risk-on';
+    case 'risk-off':
+      return 'Risk-off';
+    case 'transition':
+      return 'Transition';
+    case 'unclear':
+      return 'Unclear';
+  }
+}
+
 export function buildFields(parsed: MarketReportParsed): DiscordField[] {
   const fields: DiscordField[] = [];
 
@@ -119,8 +162,102 @@ export function buildFields(parsed: MarketReportParsed): DiscordField[] {
     });
   }
 
-  if (parsed.entitySentiment.length > 0) {
-    const sentimentLines = parsed.entitySentiment
+  const macroRegime = parsed.macroRegime ?? parsed.macro_regime;
+  if (macroRegime) {
+    const confidencePct = Math.round(macroRegime.confidence * 100);
+    fields.push({
+      name: 'Macro Regime',
+      value: truncate(
+        `> ${formatMacroRegimeLabel(macroRegime.classification)} (${confidencePct}% confidence)\n> ${macroRegime.rationale}`,
+        1024,
+      ),
+      inline: false,
+    });
+  }
+
+  const firstMovers = parsed.firstMovers ?? parsed.first_movers ?? [];
+  if (firstMovers.length > 0) {
+    const bulleted = firstMovers.map((entry) => `> ${entry}`).join('\n');
+    fields.push({
+      name: 'First Movers',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const priceAlerts = parsed.priceAlerts ?? parsed.price_alerts ?? [];
+  if (priceAlerts.length > 0) {
+    const bulleted = priceAlerts.map((alert) => `> ${alert}`).join('\n');
+    fields.push({
+      name: 'Price Alerts',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const alphaSignals = parsed.alphaSignals ?? parsed.alpha_signals ?? [];
+  if (alphaSignals.length > 0) {
+    const bulleted = alphaSignals.map((signal) => `> ${signal}`).join('\n');
+    fields.push({
+      name: 'Alpha Signals',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const marketCatalysts = parsed.marketCatalysts ?? parsed.market_catalysts ?? [];
+  if (marketCatalysts.length > 0) {
+    const bulleted = marketCatalysts.map((catalyst) => `> ${catalyst}`).join('\n');
+    fields.push({
+      name: 'Market Catalysts',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const regionalDivergence = parsed.regionalDivergence ?? parsed.regional_divergence ?? [];
+  if (regionalDivergence.length > 0) {
+    const bulleted = regionalDivergence.map((entry) => `> ${entry}`).join('\n');
+    fields.push({
+      name: 'Regional Divergence',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const narrativeShifts = parsed.narrativeShifts ?? parsed.narrative_shifts ?? [];
+  if (narrativeShifts.length > 0) {
+    const bulleted = narrativeShifts.map((entry) => `> ${entry}`).join('\n');
+    fields.push({
+      name: 'Narrative Shifts',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const unusualActivity = parsed.unusualActivity ?? parsed.unusual_activity ?? [];
+  if (unusualActivity.length > 0) {
+    const bulleted = unusualActivity.map((entry) => `> ${entry}`).join('\n');
+    fields.push({
+      name: 'Unusual Activity',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const macroAlerts = parsed.macroAlerts ?? parsed.macro_alerts ?? [];
+  if (macroAlerts.length > 0) {
+    const bulleted = macroAlerts.map((alert) => `> ${alert}`).join('\n');
+    fields.push({
+      name: 'Macro Alerts',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
+  const entitySentiment = parsed.entitySentiment ?? parsed.entity_sentiment ?? [];
+  if (entitySentiment.length > 0) {
+    const sentimentLines = entitySentiment
       .slice(0, 6)
       .map((e) => {
         const label = buildSentimentLabel(e.sentiment);
@@ -193,7 +330,12 @@ export function buildEmbed(report: Report, parsed: MarketReportParsed, config: C
   return embed;
 }
 
-async function postWithRetry(webhookUrl: string, payload: string, log: Logger): Promise<boolean> {
+async function postWithRetry(
+  webhookUrl: string,
+  payload: string,
+  validation: UrlValidationResult,
+  log: Logger,
+): Promise<boolean> {
   let rateLimitCount = 0;
   const startTime = Date.now();
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -202,19 +344,28 @@ async function postWithRetry(webhookUrl: string, payload: string, log: Logger): 
       return false;
     }
     try {
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-        signal: AbortSignal.timeout(15_000),
-      });
+      const { response } = await fetchValidated(
+        webhookUrl,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+          signal: AbortSignal.timeout(15_000),
+        },
+        validation,
+      );
+      if (!response) {
+        log.error({ webhookUrl, reason: validation.reason }, 'webhook POST blocked by SSRF validation');
+        return false;
+      }
 
       if (response.ok) {
+        await response.body?.cancel().catch(() => undefined);
         return true;
       }
 
       // Drain response body on all non-2xx paths to prevent socket leaks
-      await response.body?.cancel();
+      await response.body?.cancel().catch(() => undefined);
 
       if (response.status === 429) {
         rateLimitCount++;
@@ -321,7 +472,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       allowed_mentions: { parse: [] },
     });
 
-    const success = await postWithRetry(webhookUrl, payload, log);
+    const success = await postWithRetry(webhookUrl, payload, validation, log);
 
     if (success) {
       log.info({ reportId: report.id, type: report.type }, 'webhook delivered');

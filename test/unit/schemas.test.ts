@@ -263,6 +263,15 @@ describe('MarketReportLLMSchema', () => {
     );
   });
 
+  it('fails when tldr is blank after trimming', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        tldr: '   ',
+      }),
+    );
+  });
+
   /* -- Sentiment boundaries on entitySentiment -- */
 
   it('entitySentiment sentiment -1 passes', () => {
@@ -315,6 +324,15 @@ describe('MarketReportLLMSchema', () => {
     assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, keyEvents }));
   });
 
+  it('fails when keyEvents contains a blank string', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        keyEvents: ['Fed held rates steady', '   '],
+      }),
+    );
+  });
+
   it('6 marketCatalysts pass', () => {
     const marketCatalysts = Array.from({ length: 6 }, (_, i) => `Catalyst ${i}`);
     const result = MarketReportLLMSchema.parse({
@@ -327,6 +345,61 @@ describe('MarketReportLLMSchema', () => {
   it('7 marketCatalysts fail', () => {
     const marketCatalysts = Array.from({ length: 7 }, (_, i) => `Catalyst ${i}`);
     assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, marketCatalysts }));
+  });
+
+  it('fails when marketCatalysts contains a whitespace-only line', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        marketCatalysts: ['   '],
+      }),
+    );
+  });
+
+  it('5 regionalDivergence lines pass', () => {
+    const regionalDivergence = Array.from({ length: 5 }, (_, i) => `Regional divergence ${i}`);
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      regionalDivergence,
+    });
+    assert.equal(result.regionalDivergence.length, 5);
+  });
+
+  it('6 regionalDivergence lines fail', () => {
+    const regionalDivergence = Array.from({ length: 6 }, (_, i) => `Regional divergence ${i}`);
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, regionalDivergence }));
+  });
+
+  it('fails when regionalDivergence contains a whitespace-only line', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        regionalDivergence: ['   '],
+      }),
+    );
+  });
+
+  it('5 narrativeShifts pass', () => {
+    const narrativeShifts = Array.from({ length: 5 }, (_, i) => `Narrative shift ${i}`);
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      narrativeShifts,
+    });
+    assert.equal(result.narrativeShifts.length, 5);
+  });
+
+  it('6 narrativeShifts fail', () => {
+    const narrativeShifts = Array.from({ length: 6 }, (_, i) => `Narrative shift ${i}`);
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, narrativeShifts }));
+  });
+
+  it('fails when narrativeShifts contains a whitespace-only line', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        narrativeShifts: ['   '],
+      }),
+    );
   });
 
   it('5 eventChains pass', () => {
@@ -343,6 +416,94 @@ describe('MarketReportLLMSchema', () => {
     assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, eventChains }));
   });
 
+  it('5 firstMovers pass', () => {
+    const firstMovers = Array.from({ length: 5 }, (_, i) => `First mover ${i}`);
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      firstMovers,
+    });
+    assert.equal(result.firstMovers.length, 5);
+  });
+
+  it('6 firstMovers fail', () => {
+    const firstMovers = Array.from({ length: 6 }, (_, i) => `First mover ${i}`);
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, firstMovers }));
+  });
+
+  it('5 macroAlerts pass', () => {
+    const macroAlerts = Array.from({ length: 5 }, (_, i) => `Macro alert ${i}`);
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      macroAlerts,
+    });
+    assert.equal(result.macroAlerts.length, 5);
+  });
+
+  it('6 macroAlerts fail', () => {
+    const macroAlerts = Array.from({ length: 6 }, (_, i) => `Macro alert ${i}`);
+    assert.throws(() => MarketReportLLMSchema.parse({ ...validReport, macroAlerts }));
+  });
+
+  it('fails when priceAlerts contains a blank string', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        priceAlerts: [' '],
+      }),
+    );
+  });
+
+  it('accepts macroRegime when classification is valid', () => {
+    const result = MarketReportLLMSchema.parse({
+      ...validReport,
+      macroRegime: {
+        classification: 'risk-off',
+        confidence: 0.82,
+        rationale: 'Dollar, yields, and gold all strengthened while crypto breadth stayed mixed.',
+      },
+    });
+    assert.equal(result.macroRegime?.classification, 'risk-off');
+  });
+
+  it('rejects macroRegime when rationale is blank after trimming', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        macroRegime: {
+          classification: 'transition',
+          confidence: 0.55,
+          rationale: '   ',
+        },
+      }),
+    );
+  });
+
+  it('rejects macroRegime when classification is invalid', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        macroRegime: {
+          classification: 'bullish',
+          confidence: 0.82,
+          rationale: 'Invalid classification',
+        },
+      }),
+    );
+  });
+
+  it('rejects macroRegime when confidence is outside 0 to 1', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        macroRegime: {
+          classification: 'transition',
+          confidence: 1.2,
+          rationale: 'Too confident for mixed conditions.',
+        },
+      }),
+    );
+  });
+
   /* -- Default values -- */
 
   it('defaults keyEvents to [] when omitted', () => {
@@ -357,10 +518,42 @@ describe('MarketReportLLMSchema', () => {
     assert.deepStrictEqual(result.marketCatalysts, []);
   });
 
+  it('defaults regionalDivergence to [] when omitted', () => {
+    const { regionalDivergence, ...rest } = {
+      ...validReport,
+      regionalDivergence: ['Bitcoin: EN stayed bullish while ID leaned bearish after the latest catalyst.'],
+    };
+    const result = MarketReportLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.regionalDivergence, []);
+  });
+
+  it('defaults narrativeShifts to [] when omitted', () => {
+    const { narrativeShifts, ...rest } = { ...validReport, narrativeShifts: ['Breadth cooled around AI infra.'] };
+    const result = MarketReportLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.narrativeShifts, []);
+  });
+
   it('defaults eventChains to [] when omitted', () => {
     const { eventChains, ...rest } = validReport;
     const result = MarketReportLLMSchema.parse(rest);
     assert.deepStrictEqual(result.eventChains, []);
+  });
+
+  it('defaults firstMovers to [] when omitted', () => {
+    const { firstMovers, ...rest } = { ...validReport, firstMovers: ['Early author line'] };
+    const result = MarketReportLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.firstMovers, []);
+  });
+
+  it('defaults macroAlerts to [] when omitted', () => {
+    const { macroAlerts, ...rest } = { ...validReport, macroAlerts: ['Risk-off backdrop'] };
+    const result = MarketReportLLMSchema.parse(rest);
+    assert.deepStrictEqual(result.macroAlerts, []);
+  });
+
+  it('defaults macroRegime to null when omitted', () => {
+    const result = MarketReportLLMSchema.parse(validReport);
+    assert.equal(result.macroRegime, null);
   });
 
   it('defaults entitySentiment to [] when omitted', () => {
@@ -369,15 +562,42 @@ describe('MarketReportLLMSchema', () => {
     assert.deepStrictEqual(result.entitySentiment, []);
   });
 
+  it('fails when entitySentiment reason is blank after trimming', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        entitySentiment: [{ name: 'Bitcoin', sentiment: 0.3, reason: '   ' }],
+      }),
+    );
+  });
+
   it('defaults sections to [] when omitted', () => {
     const { sections, ...rest } = validReport;
     const result = MarketReportLLMSchema.parse(rest);
     assert.deepStrictEqual(result.sections, []);
   });
 
+  it('fails when section body is blank after trimming', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        sections: [{ title: 'Overview', body: '   ' }],
+      }),
+    );
+  });
+
   it('defaults newProjects to [] when omitted', () => {
     const { newProjects, ...rest } = validReport;
     const result = MarketReportLLMSchema.parse(rest);
     assert.deepStrictEqual(result.newProjects, []);
+  });
+
+  it('fails when newProjects description is blank after trimming', () => {
+    assert.throws(() =>
+      MarketReportLLMSchema.parse({
+        ...validReport,
+        newProjects: [{ name: 'CoolDAO', description: '   ' }],
+      }),
+    );
   });
 });

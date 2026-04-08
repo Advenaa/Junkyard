@@ -15,6 +15,7 @@ export interface Config {
   discordTokens: string[];
   twitterApiKey: string | null;
   coingeckoApiKey: string | null;
+  fredApiKey: string | null;
   apiKey: string;
   sessionSecret: string;
   port: number;
@@ -91,6 +92,7 @@ export function loadConfig(): Config {
   const discordTokens = commaSplit(process.env['DISCORD_TOKENS']);
   const twitterApiKey = process.env['TWITTERAPI_KEY'] || null;
   const coingeckoApiKey = process.env['COINGECKO_API_KEY'] || null;
+  const fredApiKey = process.env['FRED_API_KEY'] || null;
 
   let apiKey = process.env['API_KEY'] || null;
   if (!apiKey) {
@@ -98,7 +100,7 @@ export function loadConfig(): Config {
     console.error('╔══════════════════════════════════════════════════════════════╗');
     console.error('║ WARNING: API_KEY not set — auto-generated ephemeral key     ║');
     console.error('║ Sessions will be lost on restart. Set API_KEY in .env       ║');
-    console.error(`║ Generated: ${apiKey.slice(0, 11)}... (set API_KEY in .env)${' '.repeat(14)}║`);
+    console.error('║ Generated in memory only — value intentionally not printed  ║');
     console.error('╚══════════════════════════════════════════════════════════════╝');
   }
 
@@ -134,7 +136,7 @@ export function loadConfig(): Config {
       const parsed = new URL(rawAlertWebhookUrl);
       alertWebhookUrl = parsed.origin + parsed.pathname.replace(/\/+$/, '');
     } catch {
-      console.warn(`WARNING: ALERT_WEBHOOK_URL is not a valid URL ("${rawAlertWebhookUrl}") — alerts disabled`);
+      console.warn('WARNING: ALERT_WEBHOOK_URL is not a valid URL — alerts disabled');
     }
   }
 
@@ -154,6 +156,7 @@ export function loadConfig(): Config {
     discordClientSecret,
     twitterApiKey,
     coingeckoApiKey,
+    fredApiKey,
     apiKey,
     sessionSecret,
     alertWebhookUrl,
@@ -172,6 +175,7 @@ export function loadConfig(): Config {
     discordTokens,
     twitterApiKey,
     coingeckoApiKey,
+    fredApiKey,
     apiKey,
     sessionSecret,
     port,

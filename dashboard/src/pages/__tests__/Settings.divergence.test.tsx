@@ -148,6 +148,13 @@ function buildFetchMock(divergenceHandler: (entityId: string, days: number) => D
   });
 }
 
+function countRequests(fetchMock: ReturnType<typeof vi.fn>, pattern: RegExp): number {
+  return fetchMock.mock.calls.filter(([input]) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    return pattern.test(new URL(url, 'http://localhost').pathname);
+  }).length;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════
@@ -167,7 +174,10 @@ describe('Settings entity divergence', () => {
       divergence: 0.54,
     });
 
-    vi.stubGlobal('fetch', buildFetchMock(() => divergenceData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => divergenceData),
+    );
 
     const user = userEvent.setup();
     render(
@@ -214,7 +224,10 @@ describe('Settings entity divergence', () => {
       divergence: 0.03,
     });
 
-    vi.stubGlobal('fetch', buildFetchMock(() => divergenceData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => divergenceData),
+    );
 
     const user = userEvent.setup();
     render(
@@ -243,7 +256,10 @@ describe('Settings entity divergence', () => {
       divergence: 0.25,
     });
 
-    vi.stubGlobal('fetch', buildFetchMock(() => divergenceData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => divergenceData),
+    );
 
     const user = userEvent.setup();
     render(
@@ -266,7 +282,10 @@ describe('Settings entity divergence', () => {
   it('shows empty state when both mention counts are zero', async () => {
     const emptyData = makeEmptyDivergenceResponse();
 
-    vi.stubGlobal('fetch', buildFetchMock(() => emptyData));
+    vi.stubGlobal(
+      'fetch',
+      buildFetchMock(() => emptyData),
+    );
 
     const user = userEvent.setup();
     render(
@@ -285,9 +304,7 @@ describe('Settings entity divergence', () => {
 
     // When there are 0 mentions in both languages, the EmptyState component renders
     expect(screen.getByText('No regional data')).toBeInTheDocument();
-    expect(
-      screen.getByText(/no English or Indonesian mentions/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/no English or Indonesian mentions/i)).toBeInTheDocument();
   });
 
   it('changes lookback window when days selector is used', async () => {
@@ -323,6 +340,10 @@ describe('Settings entity divergence', () => {
 
     // Default is 7 days
     expect(lastRequestedDays).toBe(7);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/relationships$/)).toBe(1);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/competitors$/)).toBe(1);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/graph$/)).toBe(1);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/divergence$/)).toBe(1);
 
     // Click the "30d" button to change the lookback window
     const btn30 = screen.getByRole('button', { name: /30d/i });
@@ -332,5 +353,10 @@ describe('Settings entity divergence', () => {
     await waitFor(() => {
       expect(lastRequestedDays).toBe(30);
     });
+
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/relationships$/)).toBe(1);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/competitors$/)).toBe(1);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/graph$/)).toBe(1);
+    expect(countRequests(fetchMock, /^\/api\/v1\/entities\/[^/]+\/divergence$/)).toBe(2);
   });
 });
