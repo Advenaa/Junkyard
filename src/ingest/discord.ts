@@ -38,9 +38,19 @@ interface HelloData {
   heartbeat_interval: number;
 }
 
+interface ReadyGuildChannel {
+  id: string;
+}
+
+interface ReadyGuild {
+  id: string;
+  channels?: ReadyGuildChannel[];
+}
+
 interface ReadyData {
   session_id: string;
   resume_gateway_url: string;
+  guilds?: ReadyGuild[];
 }
 
 interface MessageAuthor {
@@ -304,6 +314,7 @@ class TokenConnection {
   private readonly concurrency = { active: 0, queue: [] as (() => void)[] };
   private readonly drops: DropAccumulator;
   private readonly proxyAgent: HttpsProxyAgent<string> | null;
+  private channelToGuild: Map<string, string> = new Map();
 
   readonly state: TokenState;
 
@@ -368,6 +379,60 @@ class TokenConnection {
 
   assignChannels(channels: Set<string>): void {
     this.state.assignedChannels = channels;
+    // Re-subscribe if already connected
+    if (this.state.status === 'connected') {
+      this.sendGuildSubscriptions();
+    }
+  }
+
+  /**
+   * Send opcode 14 (Lazy Request) for each guild that contains assigned channels.
+   * Discord v10 lazy guilds require this to receive MESSAGE_CREATE events.
+   */
+  private sendGuildSubscriptions(): void {
+    // Group assigned channels by guild
+    const guildChannels = new Map<string, string[]>();
+    for (const channelId of this.state.assignedChannels) {
+      const guildId = this.channelToGuild.get(channelId);
+      if (guildId) {
+        let channels = guildChannels.get(guildId);
+        if (!channels) {
+          channels = [];
+          guildChannels.set(guildId, channels);
+        }
+        channels.push(channelId);
+      } else {
+        this.log.warn(
+          { tokenIndex: this.tokenIndex, channelId },
+          'assigned channel not found in any guild — cannot subscribe',
+        );
+      }
+    }
+
+    // Send opcode 14 for each guild
+    for (const [guildId, channels] of guildChannels) {
+      const channelRanges: Record<string, number[][]> = {};
+      for (const ch of channels) {
+        channelRanges[ch] = [[0, 99]];
+      }
+
+      this.send({
+        op: 14,
+        d: {
+          guild_id: guildId,
+          typing: true,
+          threads: false,
+          activities: false,
+          members: [],
+          channels: channelRanges,
+        },
+      });
+
+      this.log.info(
+        { tokenIndex: this.tokenIndex, guildId, channels },
+        'sent guild subscription (opcode 14)',
+      );
+    }
   }
 
   // ---- socket lifecycle ----
@@ -503,7 +568,25 @@ class TokenConnection {
     this.state.status = 'connected';
     this.state.errorCount = 0;
     this.state.connectedAt = Date.now();
-    this.log.info({ tokenIndex: this.tokenIndex }, 'gateway session ready');
+
+    // Build channel → guild map from READY guilds
+    this.channelToGuild.clear();
+    if (d.guilds) {
+      for (const guild of d.guilds) {
+        if (guild.channels) {
+          for (const ch of guild.channels) {
+            this.channelToGuild.set(ch.id, guild.id);
+          }
+        }
+      }
+    }
+    this.log.info(
+      { tokenIndex: this.tokenIndex, guildCount: d.guilds?.length ?? 0, channelMapSize: this.channelToGuild.size },
+      'gateway session ready',
+    );
+
+    // Subscribe to guilds that contain assigned channels
+    this.sendGuildSubscriptions();
   }
 
   // ---- message handling ----
