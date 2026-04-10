@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 const nonEmptyText = z.string().trim().min(1);
+const normalizeEntityReference = (value: string): string => value.trim().toLowerCase();
 
 export const ChunkEventLLMSchema = z.object({
   entityName: z.string().min(1),
@@ -33,27 +34,87 @@ export const ChunkRelationshipLLMSchema = z.object({
   confidence: z.number().min(0).max(1).default(0.7),
 });
 
-export const ChunkSummaryLLMSchema = z.object({
-  summary: z.string().min(10),
-  urgency: z.enum(['routine', 'elevated', 'breaking']),
-  confidence: z.number().min(1).max(10),
-  entities: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        aliases: z.array(z.string()).default([]),
-        type: z.enum(['token', 'person', 'project', 'company', 'event']).default('project'),
-        mentionCount: z.number().int().min(1).default(1),
-        sentiment: z.number().min(-1).max(1).default(0),
-      }),
-    )
-    .max(20)
-    .default([]),
-  keyEvents: z.array(z.string()).max(5).default([]),
-  events: z.array(ChunkEventLLMSchema).max(5).default([]),
-  relationships: z.array(ChunkRelationshipLLMSchema).max(5).default([]),
-  authorClaims: z.array(AuthorClaimLLMSchema).max(8).default([]),
+const ChunkEntityLLMSchema = z.object({
+  name: z.string().min(1),
+  aliases: z.array(z.string()).default([]),
+  type: z.enum(['token', 'person', 'project', 'company', 'event']).default('project'),
+  mentionCount: z.number().int().min(1).default(1),
+  sentiment: z.number().min(-1).max(1).default(0),
 });
+
+export const ChunkSummaryLLMSchema = z
+  .object({
+    summary: z.string().min(10),
+    urgency: z.enum(['routine', 'elevated', 'breaking']),
+    confidence: z.number().min(1).max(10),
+    entities: z.array(ChunkEntityLLMSchema).max(20),
+    keyEvents: z.array(z.string()).max(5).default([]),
+    events: z.array(ChunkEventLLMSchema).max(5),
+    relationships: z.array(ChunkRelationshipLLMSchema).max(5),
+    authorClaims: z.array(AuthorClaimLLMSchema).max(8),
+  })
+  .superRefine((value, ctx) => {
+    const validEntityReferences = new Set<string>();
+    for (const entity of value.entities) {
+      const canonicalName = normalizeEntityReference(entity.name);
+      if (canonicalName) validEntityReferences.add(canonicalName);
+      for (const alias of entity.aliases) {
+        const normalizedAlias = normalizeEntityReference(alias);
+        if (normalizedAlias) validEntityReferences.add(normalizedAlias);
+      }
+    }
+
+    for (const [index, event] of value.events.entries()) {
+      const entityName = normalizeEntityReference(event.entityName);
+      if (entityName === '' || !validEntityReferences.has(entityName)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Must reference a name or alias from entities',
+          path: ['events', index, 'entityName'],
+        });
+      }
+    }
+
+    for (const [index, relationship] of value.relationships.entries()) {
+      const entityNameA = normalizeEntityReference(relationship.entityNameA);
+      const entityNameB = normalizeEntityReference(relationship.entityNameB);
+
+      if (entityNameA === '' || !validEntityReferences.has(entityNameA)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Must reference a name or alias from entities',
+          path: ['relationships', index, 'entityNameA'],
+        });
+      }
+
+      if (entityNameB === '' || !validEntityReferences.has(entityNameB)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Must reference a name or alias from entities',
+          path: ['relationships', index, 'entityNameB'],
+        });
+      }
+
+      if (entityNameA !== '' && entityNameA === entityNameB) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Must reference two distinct entities',
+          path: ['relationships', index, 'entityNameB'],
+        });
+      }
+    }
+
+    for (const [index, claim] of value.authorClaims.entries()) {
+      const entityName = normalizeEntityReference(claim.entityName);
+      if (entityName === '' || !validEntityReferences.has(entityName)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Must reference a name or alias from entities',
+          path: ['authorClaims', index, 'entityName'],
+        });
+      }
+    }
+  });
 
 export type ChunkSummary = z.infer<typeof ChunkSummaryLLMSchema>;
 export type ChunkEvent = z.infer<typeof ChunkEventLLMSchema>;

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSystemPrompt,
+  normalizeChunkSummaryCandidate,
   shouldFilterShortDiscordChunk,
   stripCodeFences,
   verifyEntities,
@@ -340,7 +341,10 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
       summary: 'A valid summary that is long enough to satisfy the min(10) constraint.',
       urgency: 'routine',
       confidence: 7,
-      entities: [{ name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 }],
+      entities: [
+        { name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 5, sentiment: 0.3 },
+        { name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 2, sentiment: 0.1 },
+      ],
       keyEvents: ['Something happened'],
       events: [{ entityName: 'Ethereum', eventType: 'funding', description: 'Ethereum funding announced.' }],
       relationships: [
@@ -395,6 +399,7 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
             confidence: 0.6,
           },
         ],
+        authorClaims: [],
       });
       assert.ok(result.success, `expected relationship type "${relationshipType}" to parse`);
     }
@@ -459,19 +464,34 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
     assert.ok(!ChunkSummaryLLMSchema.safeParse(tooHigh).success);
   });
 
-  it('defaults entities and keyEvents to empty arrays', () => {
+  it('requires entity-linked extraction arrays to be present', () => {
     const input = {
       summary: 'A valid summary that is long enough.',
       urgency: 'routine',
       confidence: 5,
     };
     const result = ChunkSummaryLLMSchema.safeParse(input);
+    assert.ok(!result.success);
+    const paths = result.error!.issues.map((issue) => issue.path.join('.'));
+    assert.ok(paths.includes('entities'));
+    assert.ok(paths.includes('events'));
+    assert.ok(paths.includes('relationships'));
+    assert.ok(paths.includes('authorClaims'));
+  });
+
+  it('summarize-path normalization backfills omitted extraction arrays before schema validation', () => {
+    const input = {
+      summary: 'A valid summary that is long enough.',
+      urgency: 'routine',
+      confidence: 5,
+    };
+    const result = ChunkSummaryLLMSchema.safeParse(normalizeChunkSummaryCandidate(input));
     assert.ok(result.success);
-    assert.deepStrictEqual(result.data!.entities, []);
-    assert.deepStrictEqual(result.data!.keyEvents, []);
-    assert.deepStrictEqual(result.data!.events, []);
-    assert.deepStrictEqual(result.data!.relationships, []);
-    assert.deepStrictEqual(result.data!.authorClaims, []);
+    assert.deepStrictEqual(result.data.entities, []);
+    assert.deepStrictEqual(result.data.events, []);
+    assert.deepStrictEqual(result.data.relationships, []);
+    assert.deepStrictEqual(result.data.authorClaims, []);
+    assert.deepStrictEqual(result.data.keyEvents, []);
   });
 
   it('clamps entities array to max 20', () => {
@@ -503,6 +523,31 @@ describe('ChunkSummaryLLMSchema (zod validation)', () => {
     assert.ok(!result.success);
     const paths = result.error!.issues.map((i) => i.path.join('.'));
     assert.ok(paths.some((p) => p === 'urgency'));
+  });
+
+  it('includes cross-field error paths for author claims that reference unknown entities', () => {
+    const input = {
+      summary: 'A valid summary that is long enough.',
+      urgency: 'routine',
+      confidence: 5,
+      entities: [{ name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 1, sentiment: 0.2 }],
+      keyEvents: [],
+      events: [],
+      relationships: [],
+      authorClaims: [
+        {
+          authorHandle: 'traderx',
+          entityName: 'Solana',
+          claimType: 'bullish',
+          claimText: 'traderx posted a claim about Solana.',
+          confidence: 0.6,
+        },
+      ],
+    };
+    const result = ChunkSummaryLLMSchema.safeParse(input);
+    assert.ok(!result.success);
+    const paths = result.error!.issues.map((issue) => issue.path.join('.'));
+    assert.ok(paths.includes('authorClaims.0.entityName'));
   });
 });
 
