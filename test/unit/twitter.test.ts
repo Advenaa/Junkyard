@@ -129,6 +129,28 @@ describe('Twitter adapter', () => {
       assert.equal(lastId, '1234567890');
     });
 
+    it('accepts nested data.tweets responses from user timeline endpoint', async () => {
+      const tweet = makeTweet();
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          status: 'success',
+          code: 0,
+          msg: 'success',
+          data: {
+            pin_tweet: null,
+            tweets: [tweet],
+          },
+          has_next_page: false,
+        });
+
+      const adapter = createTwitterAdapter(makeConfig(), mockPool, makeLogger());
+      const { items, lastId } = await adapter.poll('@testuser', null);
+
+      assert.equal(items.length, 1);
+      assert.equal(items[0].content, 'Hello world from twitter');
+      assert.equal(lastId, '1234567890');
+    });
+
     it('handles tweet without optional url', async () => {
       const tweet = makeTweet({ url: undefined });
       globalThis.fetch = () =>

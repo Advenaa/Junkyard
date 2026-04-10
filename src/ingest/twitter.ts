@@ -33,11 +33,31 @@ const TwitterTweetSchema = z.object({
   }),
 });
 
-const TwitterResponseSchema = z.object({
+const TwitterResponseSchema = z.preprocess((input) => {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return input;
+  }
+
+  const response = input as Record<string, unknown>;
+  if ('tweets' in response) {
+    return response;
+  }
+
+  const data = response['data'];
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return response;
+  }
+
+  return {
+    tweets: (data as Record<string, unknown>)['tweets'],
+    has_next_page: response['has_next_page'],
+    next_cursor: response['next_cursor'],
+  };
+}, z.object({
   tweets: z.array(TwitterTweetSchema).default([]),
   has_next_page: z.boolean().default(false),
   next_cursor: z.string().optional(),
-});
+}));
 
 type TwitterTweet = z.infer<typeof TwitterTweetSchema>;
 
