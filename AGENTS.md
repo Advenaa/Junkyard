@@ -103,6 +103,46 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 - **Overlap guard** — each cron job has a `running` mutex. If a job fires while the previous run is in-flight, skip and log warning.
 - **Backward-compatible migrations only** — migrations must not break the currently running code. ADD COLUMN, ADD INDEX, and widen types are safe. DROP COLUMN, rename, and CHECK constraint tightening must be split across two deploys (first deploy stops using the old schema, second deploy removes it).
 
+## Clankerism Workflow
+
+Work is queued as **GitHub Issues** labeled `state:ready | p0–p3 | type:* | source:*`. See `.clankerism/README.md` for the full taxonomy, the 4-role model (`/scout` produces, `/build` consumes, `/fix` triages, `/verify` regression-checks), and the safety model. When you consume a ready issue — whether via the Claude Code `/build` skill or procedurally from Codex — follow this exact flow:
+
+1. **Check the soft brake.** If `.clankerism/PAUSED` exists, exit immediately with a one-line status.
+2. **Claim atomically.** The push of `build/issue-<N>` IS the lock. If origin rejects it, another agent won the race — exit gracefully, do not retry under a different name.
+   ```bash
+   git checkout -b build/issue-<N>
+   git push -u origin build/issue-<N>
+   gh issue edit <N> --remove-label state:ready --add-label state:in-progress
+   ```
+3. **Implement the smallest diff** that fully solves the issue. Verify locally with `npm run build`, `npm run lint`, `npm run format:check`, and the narrowest relevant tests. Avoid drive-by refactors.
+4. **Open the PR** with a `Fixes #<N>` footer so GitHub auto-closes the issue on merge.
+5. **Watch CI synchronously.** Do NOT use `gh pr merge --auto` — it is unreliable on this free-plan repo (no branch protection means `--auto` either fires immediately or refuses to arm):
+   ```bash
+   gh run watch <run-id> --exit-status
+   ```
+6. **On green CI**, merge and explicitly clear the state label. GitHub auto-closes the issue via the `Fixes #N` footer, but the `state:in-progress` label does NOT clear on its own — closed issues accept label edits, so strip it explicitly:
+   ```bash
+   gh pr merge <pr> --squash --delete-branch
+   gh issue edit <N> --remove-label state:in-progress
+   ```
+7. **On red CI**, do NOT push a "fix" commit onto the same branch. Comment on the issue, flip it to `state:blocked`, exit. A human or `/fix` run will triage.
+
+### Safety model (no GitHub Pro)
+
+The repo is private on the free GitHub plan, so branch protection is unavailable. Enforcement lives in `scripts/hooks/pre-push`, auto-installed on every `npm ci` via the `postinstall` script. The hook:
+
+- Rejects any push to `main` (override: `CLANKERISM_ALLOW_MAIN=1`, logged to `.clankerism/override-log.txt`)
+- Rejects any non-fast-forward push anywhere (override: `CLANKERISM_ALLOW_FORCE=1`, never honored on main)
+
+Never bypass the hook with `--no-verify`. Never set both overrides at once.
+
+### Hard rules
+
+- **One issue per session.** No "bundled" PRs combining multiple issues.
+- **Never modify `.clankerism/scout-state.md`.** That file belongs to `/scout`.
+- **Never amend a published commit or force-push a branch with an open PR.**
+- **Never self-assign work.** Clankers consume what `/scout` or humans produce.
+
 ## Environment Variables
 
 | Var | Required | Notes |
