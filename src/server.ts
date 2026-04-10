@@ -2064,6 +2064,132 @@ export async function createServer(
     };
   });
 
+  // --- Diagnostic endpoints (admin-only, read-only) ---
+  // Surface production signals a local source audit cannot see: stuck
+  // items, backpressure, halted sources, recent error/critical health
+  // events. Consumed by /scout runtime to file findings from live data
+  // without needing SSH or direct DB access.
+
+  const STUCK_THRESHOLD_MS = 30 * 60 * 1000;
+
+  app.get('/api/v1/diag/stuck-items', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const nowMs = Date.now();
+    const { rows: aggRows } = await pool.query<{
+      stuck_count: string;
+      oldest_age_ms: string | null;
+    }>(
+      `SELECT
+        count(*) AS stuck_count,
+        ($1::bigint - MIN(created_at))::text AS oldest_age_ms
+      FROM items
+      WHERE status = 'processing' AND created_at < $1::bigint - $2::bigint`,
+      [nowMs, STUCK_THRESHOLD_MS],
+    );
+    const { rows: sampleRows } = await pool.query<{
+      id: string;
+      source: string;
+      source_id: string;
+      created_at: string;
+    }>(
+      `SELECT id, source, source_id, created_at::text
+       FROM items
+       WHERE status = 'processing' AND created_at < $1::bigint - $2::bigint
+       ORDER BY created_at ASC
+       LIMIT 10`,
+      [nowMs, STUCK_THRESHOLD_MS],
+    );
+    const agg = aggRows[0];
+    return {
+      thresholdMs: STUCK_THRESHOLD_MS,
+      stuckCount: parseInt(agg.stuck_count, 10),
+      oldestAgeMs: agg.oldest_age_ms === null ? 0 : parseInt(agg.oldest_age_ms, 10),
+      sample: sampleRows.map((r) => toCamelCase(r as unknown as Record<string, unknown>)),
+    };
+  });
+
+  app.get('/api/v1/diag/backpressure', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const nowMs = Date.now();
+    const { rows } = await pool.query<{
+      ready_count: string;
+      processing_count: string;
+      oldest_ready_age_ms: string | null;
+    }>(
+      `SELECT
+        (SELECT count(*) FROM items WHERE status = 'ready') AS ready_count,
+        (SELECT count(*) FROM items WHERE status = 'processing') AS processing_count,
+        (SELECT ($1::bigint - MIN(created_at))::text FROM items WHERE status = 'ready') AS oldest_ready_age_ms`,
+      [nowMs],
+    );
+    const row = rows[0];
+    return {
+      readyCount: parseInt(row.ready_count, 10),
+      processingCount: parseInt(row.processing_count, 10),
+      oldestReadyAgeMs: row.oldest_ready_age_ms === null ? 0 : parseInt(row.oldest_ready_age_ms, 10),
+    };
+  });
+
+  app.get('/api/v1/diag/halted-sources', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const { rows } = await pool.query<{
+      source: string;
+      source_id: string;
+      status: string;
+      error_count: number | null;
+      last_error: string | null;
+      last_fetched_at: string | null;
+    }>(
+      `SELECT s.source, s.source_id, ss.status, ss.error_count, ss.last_error, ss.last_fetched_at::text
+       FROM sources s
+       INNER JOIN source_state ss ON ss.source = s.source AND ss.source_id = s.source_id
+       WHERE ss.status = 'halted'
+       ORDER BY ss.error_count DESC NULLS LAST`,
+    );
+    return {
+      haltedSources: rows.map((r) => toCamelCase(r as unknown as Record<string, unknown>)),
+    };
+  });
+
+  app.get<{ Querystring: { sinceMs?: number; limit?: number } }>(
+    '/api/v1/diag/health-events',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            sinceMs: { type: 'integer', minimum: 0 },
+            limit: { type: 'integer', minimum: 1, maximum: 200 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const limit = request.query.limit ?? 50;
+      const sinceMs = request.query.sinceMs ?? Date.now() - 24 * 60 * 60 * 1000;
+      const { rows } = await pool.query<{
+        id: string;
+        category: string;
+        severity: string;
+        message: string;
+        metadata: unknown;
+        acknowledged: boolean;
+        created_at: string;
+      }>(
+        `SELECT id, category, severity, message, metadata, acknowledged, created_at::text
+         FROM health_events
+         WHERE severity IN ('error', 'critical') AND created_at >= $1::bigint
+         ORDER BY created_at DESC
+         LIMIT $2::int`,
+        [sinceMs, limit],
+      );
+      return {
+        sinceMs,
+        limit,
+        events: rows.map((r) => toCamelCase(r as unknown as Record<string, unknown>)),
+      };
+    },
+  );
+
   registerInsightRoutes({
     app,
     authPreHandler,
