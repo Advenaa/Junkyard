@@ -22,14 +22,13 @@ import type {
   SummaryRow,
   ReportRow,
   EventChainRow,
-  PriceSnapshotRow,
   UnusualActivityOverview,
   EntityFirstMoverRow,
 } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
-import type { LLMCallResult, Stage } from '../llm.js';
+import { getModelContextWindow, type LLMCallResult, type Stage } from '../llm.js';
 import type { CalendarEventEntry } from '../knowledge/calendar.js';
 import {
   buildMacroContext,
@@ -38,6 +37,7 @@ import {
   type CryptoSentimentAggregate,
   type MacroContextSummary,
 } from '../macro/context.js';
+import { estimateTokens } from './chunk.js';
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
@@ -224,6 +224,8 @@ const URGENCY_SCORES: Record<string, number> = {
 
 const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 const FIRST_MOVER_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+const SYNTHESIS_CONTEXT_WINDOW_FALLBACK = 128_000;
+const SYNTHESIS_TOKEN_SAFETY_BUFFER = 2_000;
 
 const ParsedSummaryBodySchema = z.object({
   summary: z.string(),
@@ -386,6 +388,106 @@ interface ScoredSummary {
   row: SummaryRow;
   parsed: ParsedSummaryBody;
   score: number;
+}
+
+interface BudgetedSynthesisPrompt {
+  summaries: ScoredSummary[];
+  wrappedContent: string;
+  estimatedInputTokens: number;
+  inputBudget: number;
+  contextWindow: number;
+}
+
+function getSynthesisInputBudget(model: string, maxTokens: number): { contextWindow: number; inputBudget: number } {
+  const contextWindow = getModelContextWindow(model) ?? SYNTHESIS_CONTEXT_WINDOW_FALLBACK;
+  return {
+    contextWindow,
+    inputBudget: Math.max(0, contextWindow - maxTokens - SYNTHESIS_TOKEN_SAFETY_BUFFER),
+  };
+}
+
+function removeLowestScoredSummary(summaries: ScoredSummary[]): ScoredSummary[] {
+  if (summaries.length === 0) return summaries;
+
+  let lowestIndex = 0;
+  for (let i = 1; i < summaries.length; i++) {
+    if (summaries[i]!.score < summaries[lowestIndex]!.score) {
+      lowestIndex = i;
+    }
+  }
+
+  return summaries.filter((_, index) => index !== lowestIndex);
+}
+
+function prepareBudgetedSynthesisPrompt(params: {
+  llm: LLM;
+  log: Logger;
+  model: string;
+  systemPrompt: string;
+  maxTokens: number;
+  label: string;
+  summaries: ScoredSummary[];
+  minSummaryCount: number;
+  buildUserMessage: (summaries: ScoredSummary[]) => string;
+}): BudgetedSynthesisPrompt | null {
+  const { contextWindow, inputBudget } = getSynthesisInputBudget(params.model, params.maxTokens);
+  let candidateSummaries = [...params.summaries];
+  let trimmedCount = 0;
+
+  const buildCandidate = (summaries: ScoredSummary[]): BudgetedSynthesisPrompt => {
+    const { wrapped } = params.llm.wrapWithNonce(params.buildUserMessage(summaries));
+    const estimatedInputTokens = estimateTokens(`${params.systemPrompt}\n${wrapped}`);
+    return {
+      summaries,
+      wrappedContent: wrapped,
+      estimatedInputTokens,
+      inputBudget,
+      contextWindow,
+    };
+  };
+
+  let candidate = buildCandidate(candidateSummaries);
+  const initialEstimatedInputTokens = candidate.estimatedInputTokens;
+  while (candidate.estimatedInputTokens > inputBudget && candidateSummaries.length > params.minSummaryCount) {
+    candidateSummaries = removeLowestScoredSummary(candidateSummaries);
+    trimmedCount++;
+    candidate = buildCandidate(candidateSummaries);
+  }
+
+  if (trimmedCount > 0 && candidate.estimatedInputTokens <= inputBudget) {
+    params.log.warn(
+      {
+        contextWindow,
+        inputBudget,
+        maxTokens: params.maxTokens,
+        initialEstimatedInputTokens,
+        finalEstimatedInputTokens: candidate.estimatedInputTokens,
+        initialSummaryCount: params.summaries.length,
+        finalSummaryCount: candidate.summaries.length,
+        trimmedSummaryCount: trimmedCount,
+      },
+      `${params.label} prompt exceeded estimated token budget, trimming summaries`,
+    );
+  }
+
+  if (candidate.estimatedInputTokens > inputBudget) {
+    params.log.warn(
+      {
+        contextWindow,
+        inputBudget,
+        maxTokens: params.maxTokens,
+        initialEstimatedInputTokens,
+        finalEstimatedInputTokens: candidate.estimatedInputTokens,
+        initialSummaryCount: params.summaries.length,
+        finalSummaryCount: candidate.summaries.length,
+        trimmedSummaryCount: trimmedCount,
+      },
+      `${params.label} prompt still exceeds estimated token budget after trimming, aborting before LLM call`,
+    );
+    return null;
+  }
+
+  return candidate;
 }
 
 function buildDailyUserMessage(
@@ -805,10 +907,6 @@ export function createSynthesizer(
     // Rank and trim if over 50
     summaries = rankAndTrim(summaries, 50, 30);
 
-    // Collect and deduplicate key events
-    const allEvents = summaries.flatMap((s) => s.parsed.keyEvents);
-    const dedupedEvents = deduplicateEvents(allEvents);
-
     // Get yesterday's TL;DR for comparison
     const yesterdayTldr = await getYesterdayTldr();
 
@@ -873,16 +971,6 @@ export function createSynthesizer(
         firstMoverEntries: firstMovers.length,
       },
       'Loaded price context for daily synthesis',
-    );
-
-    const cryptoAggregate = summarizeCryptoSentiment(
-      summaries.flatMap((summary) =>
-        summary.parsed.entities.map((entity) => ({
-          type: entity.type,
-          sentiment: entity.sentiment,
-          mentionCount: entity.mentionCount,
-        })),
-      ),
     );
 
     // Fetch alpha propagation for active entities (7-day window)
@@ -1015,43 +1103,72 @@ export function createSynthesizer(
       'Loaded macro context for daily synthesis',
     );
 
-    // Build prompt
-    const userMessage = buildDailyUserMessage(
+    const prompt = prepareBudgetedSynthesisPrompt({
+      llm,
+      log,
+      model: config.models.thinkalot,
+      systemPrompt: DAILY_SYSTEM_PROMPT,
+      maxTokens: 4000,
+      label: 'Daily synthesis',
       summaries,
-      dedupedEvents,
-      correlated,
-      yesterdayTldr,
-      momentum,
-      divergence,
-      priceContext,
-      firstMovers,
-      unusualActivity,
-      macroContext,
-      cryptoAggregate,
-      alphaPropagation,
-      narratives,
-      recentCalendarEvents,
-      recentEventAnalysis,
-      recentEventChains,
-      calendarEvents,
-      timezone,
-      quietDay,
-    );
+      minSummaryCount: quietDay ? 0 : 1,
+      buildUserMessage: (candidateSummaries) => {
+        const dedupedEvents = deduplicateEvents(candidateSummaries.flatMap((summary) => summary.parsed.keyEvents));
+        const cryptoAggregate = summarizeCryptoSentiment(
+          candidateSummaries.flatMap((summary) =>
+            summary.parsed.entities.map((entity) => ({
+              type: entity.type,
+              sentiment: entity.sentiment,
+              mentionCount: entity.mentionCount,
+            })),
+          ),
+        );
+
+        return buildDailyUserMessage(
+          candidateSummaries,
+          dedupedEvents,
+          correlated,
+          yesterdayTldr,
+          momentum,
+          divergence,
+          priceContext,
+          firstMovers,
+          unusualActivity,
+          macroContext,
+          cryptoAggregate,
+          alphaPropagation,
+          narratives,
+          recentCalendarEvents,
+          recentEventAnalysis,
+          recentEventChains,
+          calendarEvents,
+          timezone,
+          quietDay,
+        );
+      },
+    });
+    if (!prompt) return null;
+
+    summaries = prompt.summaries;
+    const dedupedEvents = deduplicateEvents(summaries.flatMap((summary) => summary.parsed.keyEvents));
 
     log.info(
-      { events: dedupedEvents.length, summaries: summaries.length, hasYesterday: !!yesterdayTldr },
+      {
+        events: dedupedEvents.length,
+        summaries: summaries.length,
+        hasYesterday: !!yesterdayTldr,
+        estimatedInputTokens: prompt.estimatedInputTokens,
+        inputBudget: prompt.inputBudget,
+      },
       'Sending daily synthesis to LLM',
     );
-
-    // Wrap user message with nonce to defend against prompt injection
-    const { wrapped: wrappedDaily } = llm.wrapWithNonce(userMessage);
 
     const report = await callReportWithRetry(
       llm,
       log,
       config.models.thinkalot,
       DAILY_SYSTEM_PROMPT,
-      wrappedDaily,
+      prompt.wrappedContent,
       4000,
       'synthesize',
       'Daily synthesis',
@@ -1146,20 +1263,37 @@ export function createSynthesizer(
       return null;
     }
 
-    // Build prompt
-    const userMessage = buildFlashUserMessage(relevant, correlatedEntities);
+    const prompt = prepareBudgetedSynthesisPrompt({
+      llm,
+      log,
+      model: config.models.thinkalot,
+      systemPrompt: FLASH_SYSTEM_PROMPT,
+      maxTokens: 2000,
+      label: 'Flash synthesis',
+      summaries: relevant,
+      minSummaryCount: 1,
+      buildUserMessage: (candidateSummaries) => buildFlashUserMessage(candidateSummaries, correlatedEntities),
+    });
+    if (!prompt) return null;
 
-    log.info({ entities: correlatedEntities.length, summaries: relevant.length }, 'Sending flash synthesis to LLM');
+    const relevantSummaries = prompt.summaries;
 
-    // Wrap user message with nonce to defend against prompt injection
-    const { wrapped: wrappedFlash } = llm.wrapWithNonce(userMessage);
+    log.info(
+      {
+        entities: correlatedEntities.length,
+        summaries: relevantSummaries.length,
+        estimatedInputTokens: prompt.estimatedInputTokens,
+        inputBudget: prompt.inputBudget,
+      },
+      'Sending flash synthesis to LLM',
+    );
 
     const report = await callReportWithRetry(
       llm,
       log,
       config.models.thinkalot,
       FLASH_SYSTEM_PROMPT,
-      wrappedFlash,
+      prompt.wrappedContent,
       2000,
       'synthesize',
       'Flash synthesis',
