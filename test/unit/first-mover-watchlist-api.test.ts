@@ -52,20 +52,26 @@ describe('First-mover watchlist API route (insight route module)', () => {
   });
 });
 
-describe('First-mover watchlist dashboard surface (dashboard/src/pages/ReportView.tsx)', () => {
-  const src = readSrc('dashboard/src/pages/ReportView.tsx');
+describe('First-mover watchlist dashboard surface', () => {
+  const reportViewSrc = readSrc('dashboard/src/pages/ReportView.tsx');
+  const sectionSrc = readSrc('dashboard/src/pages/ReportView/sections/FirstMoverSection.tsx');
+  const formattersSrc = readSrc('dashboard/src/pages/ReportView/formatters.tsx');
 
-  it('fetches the first-mover watchlist from /first-movers', () => {
-    assert.ok(src.includes("apiFetch<FirstMoverWatchlistOverview>('/first-movers')"));
+  it('ReportView fetches the first-mover watchlist from /first-movers', () => {
+    assert.ok(reportViewSrc.includes("apiFetch<FirstMoverWatchlistOverview>('/first-movers')"));
   });
 
-  it('renders the First Mover Watch card and Settings handoff copy', () => {
-    assert.ok(src.includes('First Mover Watch'));
-    assert.ok(src.includes('Detailed author timing and review history remain in'));
+  it('ReportView renders FirstMoverSection', () => {
+    assert.match(reportViewSrc, /<FirstMoverSection[\s\S]*?firstMoverEntries/);
   });
 
-  it('renders lead-window and reviewed-outcome helpers for first-mover entries', () => {
-    assert.ok(src.includes('solo tracked call'));
-    assert.ok(src.includes('reviewed correct'));
+  it('FirstMoverSection renders the First Mover Watch card and Settings handoff copy', () => {
+    assert.ok(sectionSrc.includes('First Mover Watch'));
+    assert.ok(sectionSrc.includes('Detailed author timing and review history remain in'));
+  });
+
+  it('formatters.tsx exposes lead-window and reviewed-outcome helpers', () => {
+    assert.ok(formattersSrc.includes('solo tracked call'));
+    assert.ok(formattersSrc.includes('reviewed correct'));
   });
 });
