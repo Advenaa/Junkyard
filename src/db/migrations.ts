@@ -860,6 +860,20 @@ const migrations: Migration[] = [
         ON chat_daily_usage(usage_day DESC)
     `);
   },
+
+  // Migration 34: Partial index for sentiment-bearing entity_mentions (M-085)
+  // The pulse, divergence, and sentiment-momentum queries all combine
+  // `WHERE created_at BETWEEN ... AND sentiment IS NOT NULL` and group by
+  // entity_id. The existing idx_mentions_entity_ts(created_at, entity_id)
+  // does not know that sentiment is often NULL — partial pruning here cuts
+  // the scanned rowset to just the sentiment-bearing slice.
+  async (client) => {
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_mentions_sentiment_ts
+        ON entity_mentions(created_at, entity_id)
+        WHERE sentiment IS NOT NULL
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
