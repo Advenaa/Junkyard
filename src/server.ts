@@ -68,6 +68,7 @@ import {
 import { normalizeAlias } from './knowledge/entities.js';
 import { registerCalendarRoutes } from './server-calendar-routes.js';
 import { registerInsightRoutes } from './server-insight-routes.js';
+import { featureDisabledResponse } from './features.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
@@ -988,6 +989,9 @@ export async function createServer(
       };
       const mode = rawMode ?? 'keyword';
       if (mode === 'semantic') {
+        if (config.disabledFeatures.embeddings.disabled) {
+          return reply.code(503).send(featureDisabledResponse(config.disabledFeatures, 'embeddings'));
+        }
         return reply.code(501).send({ error: 'semantic search is only available via the chat interface' });
       }
       const limit = Math.min(Math.max(rawLimit ?? 20, 1), 100);
@@ -2038,18 +2042,27 @@ export async function createServer(
       [timezone],
     );
     const row = rows[0];
+    const disabledFeatures = (Object.keys(config.disabledFeatures) as Array<keyof typeof config.disabledFeatures>)
+      .filter((key) => config.disabledFeatures[key].disabled)
+      .map((key) => ({
+        feature: key,
+        missingEnv: config.disabledFeatures[key].missingEnv,
+        disables: config.disabledFeatures[key].disables,
+      }));
     return {
       itemsReady: parseInt(row.items_ready, 10),
       itemsProcessing: parseInt(row.items_processing, 10),
       summariesToday: parseInt(row.summaries_today, 10),
       costToday: parseFloat(row.cost_today),
       twitterApiKeyConfigured: !!config.twitterApiKey,
+      disabledFeatures,
     };
   });
 
   registerInsightRoutes({
     app,
     authPreHandler,
+    config,
     pool,
     getNarrativeSummaryPreview,
   });
@@ -2390,6 +2403,10 @@ export async function createServer(
       },
     },
     async (request, reply) => {
+      if (config.disabledFeatures.prices.disabled) {
+        return reply.code(503).send(featureDisabledResponse(config.disabledFeatures, 'prices'));
+      }
+
       const { entityId } = request.params;
       const days = request.query.days ?? 7;
       const queryLimit = request.query.limit ?? 30;

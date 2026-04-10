@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import {
   getAppConfig,
@@ -10,6 +11,7 @@ import {
   getRecentFirstMoverWatchlist,
   getUnusualActivityOverview,
 } from './db/queries.js';
+import { featureDisabledResponse } from './features.js';
 import { buildMacroContext } from './macro/context.js';
 
 type AuthPreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -17,6 +19,7 @@ type AuthPreHandler = (request: FastifyRequest, reply: FastifyReply) => Promise<
 interface InsightRouteDeps {
   app: FastifyInstance;
   authPreHandler: AuthPreHandler;
+  config: Config;
   pool: Pool;
   getNarrativeSummaryPreview: (body: string) => string;
 }
@@ -42,10 +45,15 @@ function getRecentWindow(query: { limit?: number; days?: number }): { limit: num
 export function registerInsightRoutes({
   app,
   authPreHandler,
+  config,
   pool,
   getNarrativeSummaryPreview,
 }: InsightRouteDeps): void {
   app.get('/api/v1/macro', { preHandler: [authPreHandler] }, async (_request, reply) => {
+    if (config.disabledFeatures.macro.disabled) {
+      return reply.code(503).send(featureDisabledResponse(config.disabledFeatures, 'macro'));
+    }
+
     const snapshots = await getLatestMacroSnapshots(pool);
     const macroContext = buildMacroContext(snapshots);
 
@@ -70,7 +78,10 @@ export function registerInsightRoutes({
     return getUnusualActivityOverview(pool, 8, timezone);
   });
 
-  app.get('/api/v1/price-watch', { preHandler: [authPreHandler] }, async () => {
+  app.get('/api/v1/price-watch', { preHandler: [authPreHandler] }, async (_request, reply) => {
+    if (config.disabledFeatures.prices.disabled) {
+      return reply.code(503).send(featureDisabledResponse(config.disabledFeatures, 'prices'));
+    }
     return getPriceWatchOverview(pool, 8);
   });
 
@@ -106,11 +117,17 @@ export function registerInsightRoutes({
     },
   );
 
-  app.get('/api/v1/narratives', { preHandler: [authPreHandler] }, async () => {
+  app.get('/api/v1/narratives', { preHandler: [authPreHandler] }, async (_request, reply) => {
+    if (config.disabledFeatures.embeddings.disabled) {
+      return reply.code(503).send(featureDisabledResponse(config.disabledFeatures, 'embeddings'));
+    }
     return getNarrativeWatchlist(pool, 8);
   });
 
   app.get('/api/v1/narratives/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
+    if (config.disabledFeatures.embeddings.disabled) {
+      return reply.code(503).send(featureDisabledResponse(config.disabledFeatures, 'embeddings'));
+    }
     const { id } = request.params as { id: string };
     const narrative = await getNarrativeDrilldownById(pool, id, 4);
 

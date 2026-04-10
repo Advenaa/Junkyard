@@ -44,6 +44,23 @@ export function isFeatureDisabled(flags: DisabledFeatures, key: FeatureKey): boo
   return flags[key].disabled;
 }
 
+export interface FeatureDisabledResponse {
+  error: 'feature_disabled';
+  feature: FeatureKey;
+  missingEnv: string;
+  disables: readonly string[];
+}
+
+export function featureDisabledResponse(flags: DisabledFeatures, feature: FeatureKey): FeatureDisabledResponse {
+  const flag = flags[feature];
+  return {
+    error: 'feature_disabled',
+    feature,
+    missingEnv: flag.missingEnv,
+    disables: flag.disables,
+  };
+}
+
 export function formatStartupWarning(flags: DisabledFeatures): string | null {
   const disabled = (Object.keys(flags) as FeatureKey[]).filter((key) => flags[key].disabled);
   if (disabled.length === 0) return null;

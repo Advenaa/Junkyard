@@ -440,7 +440,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search can attach active chain drilldowns to report hits', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6500);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 7000);
     assert.ok(
       handlerSlice.includes('getRecentReportChainDrilldowns'),
       'GET /api/v1/search should load recent chain drilldowns for report hits when event chain text is present',
@@ -458,7 +458,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search can expose exact hidden active chain counts beyond the preview cap', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6500);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 7000);
     assert.ok(
       handlerSlice.includes('report.hiddenActiveChainCount'),
       'GET /api/v1/search should expose an exact hidden-chain count when extra active chains are omitted from report-hit previews',
