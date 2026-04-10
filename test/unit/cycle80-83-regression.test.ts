@@ -216,3 +216,23 @@ describe('AE-002: Migration 13 BIGINT', () => {
     }
   });
 });
+
+// ===========================================================================
+// M-085: Migration 34 partial index on entity_mentions(sentiment IS NOT NULL)
+// ===========================================================================
+
+describe('M-085: Migration 34 partial index on entity_mentions', () => {
+  const src = readSrc('src/db/migrations.ts');
+
+  it('migration references M-085', () => {
+    assert.match(src, /M-085/, 'migration must reference M-085 in a comment');
+  });
+
+  it('creates idx_mentions_sentiment_ts as a partial index', () => {
+    assert.match(
+      src,
+      /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_mentions_sentiment_ts\s+ON\s+entity_mentions\s*\(\s*created_at\s*,\s*entity_id\s*\)\s+WHERE\s+sentiment\s+IS\s+NOT\s+NULL/i,
+      'idx_mentions_sentiment_ts must be a partial index filtered by sentiment IS NOT NULL',
+    );
+  });
+});
