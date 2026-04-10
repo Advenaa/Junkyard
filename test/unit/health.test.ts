@@ -28,7 +28,7 @@ function fakeConfig(overrides: Partial<Config> = {}): Config {
     dataDir: './data',
     publicUrl: null,
     alertWebhookUrl: null,
-    models: { haiku: 'h', sonnet: 's' },
+    models: { normalizer: 'h', chunk: 'h', thinkalot: 's' },
     secrets: [],
     ...overrides,
   };

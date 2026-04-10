@@ -143,7 +143,7 @@ describe('createChatHandler budget enforcement', () => {
     const handler = createChatHandler(
       pool as never,
       noopLog,
-      { models: { haiku: 'haiku', sonnet: 'sonnet' } } as any,
+      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
       llm,
       stubVectorCache(),
       stubEmbedder,

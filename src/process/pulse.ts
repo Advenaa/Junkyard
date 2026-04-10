@@ -997,7 +997,7 @@ export function createPulse(
     const report = await callReportWithRetry(
       llm,
       log,
-      config.models.sonnet,
+      config.models.thinkalot,
       PULSE_SYSTEM_PROMPT,
       wrapped,
       maxTokens,

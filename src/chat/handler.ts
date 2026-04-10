@@ -389,7 +389,7 @@ export function createChatHandler(
 
       try {
         const translateResult = await llm.call({
-          model: config.models.haiku,
+          model: config.models.normalizer,
           system: 'Translate the following Indonesian text to English. Return only the translation, nothing else.',
           messages: [{ role: 'user', content: query }],
           maxTokens: 1024,
@@ -469,7 +469,7 @@ export function createChatHandler(
 
       try {
         result = await llm.call({
-          model: config.models.sonnet,
+          model: config.models.thinkalot,
           system: systemWithTools,
           messages,
           maxTokens: 4096,

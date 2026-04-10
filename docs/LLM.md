@@ -295,7 +295,7 @@ if (!zodResult.success) {
   ).join('\n');
 
   const retryResponse = await llm.call({
-    model: config.models.haiku,
+    model: config.models.chunk,
     system: STAGE1_SYSTEM_PROMPT,
     prompt: `Your previous output had these validation errors:\n${errorMessages}\n\nFix ONLY these fields. Keep everything else the same.\n\nOriginal input:\n${chunk.content}`,
     maxTokens: 3000

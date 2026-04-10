@@ -1,15 +1,22 @@
 # Pipeline — Prompt Engineering & Processing Details
 
+> **Tier rename + upgrade (Cycle 382).** The previous `MODEL_HAIKU` / `MODEL_SONNET` slots have been replaced by three role-named tiers:
+> - `NORMALIZER_MODEL` (translation, entity disambig, narrative naming, pre-summarize, event-link classifier)
+> - `CHUNK_MODEL` (Stage 1 summarize — upgraded from the former Haiku slot)
+> - `THINKALOT_MODEL` (Stage 3 synthesize, market pulse, chat tool loop, Stage 1 escalation — upgraded from the former Sonnet slot)
+>
+> Defaults ship as GPT (`openai-codex:gpt-5.4-mini` for normalizer/chunk, `openai-codex:gpt-5.4` for thinkalot) since the production VPS runs against the OpenAI Codex proxy. Cost figures in this document still reflect the Anthropic Haiku/Sonnet era and need updating alongside the next cost audit.
+
 ## Build Scope
 
 **Phase 1 includes:**
 - RSS ingestion
 - Normalize pipeline: spam filter, dedup, language detection, truncation (no LLM calls)
-- Pre-summarize: article pre-summarization for long RSS/news items (separate step, Haiku LLM call, decision tree skips Discord/Twitter and high-density/urgent articles)
+- Pre-summarize: article pre-summarization for long RSS/news items (separate step, normalizer-tier LLM call, decision tree skips Discord/Twitter and high-density/urgent articles)
 - Chronological token-budgeted chunking
-- Stage 1 summarize with Haiku
-- Market pulse: 3h Sonnet synthesis, output scales with activity
-- Stage 3 synthesize with Sonnet (daily reports + flash reports)
+- Stage 1 summarize with the chunk-tier model
+- Market pulse: 3h thinkalot synthesis, output scales with activity
+- Stage 3 synthesize with the thinkalot-tier model (daily reports + flash reports)
 - Discord webhook delivery
 - Quality gate (skip bland reports)
 - Entity post-verification (drop hallucinated entities)

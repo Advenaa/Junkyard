@@ -14,7 +14,11 @@ const noopLog = {
 } as any;
 
 const mockConfig = {
-  models: { haiku: 'claude-haiku-4-5-20251001' },
+  models: {
+    normalizer: 'claude-haiku-4-5-20251001',
+    chunk: 'claude-haiku-4-5-20251001',
+    thinkalot: 'claude-haiku-4-5-20251001',
+  },
 } as any;
 
 function longContent(len = 5000): string {

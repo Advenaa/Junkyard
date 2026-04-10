@@ -156,7 +156,7 @@ export function createPreSummarizer(pool: Pool, log: Logger, config: Config, llm
 
       try {
         const response = await llm.call({
-          model: config.models.haiku,
+          model: config.models.normalizer,
           system: systemPrompt,
           messages: [{ role: 'user' as const, content: batchedContent }],
           maxTokens: 500 * batch.length,

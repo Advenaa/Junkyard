@@ -48,7 +48,7 @@ function fakeConfig(overrides: Partial<Config> = {}): Config {
     dataDir: './data',
     publicUrl: null,
     alertWebhookUrl: null,
-    models: { haiku: 'haiku-test', sonnet: 'sonnet-test' },
+    models: { normalizer: 'haiku-test', chunk: 'haiku-test', thinkalot: 'sonnet-test' },
     secrets: [],
     ...overrides,
   };
@@ -507,11 +507,13 @@ describe('synthesize: runDaily', () => {
     assert.ok(llm.calls.length >= 1, 'LLM should have been called at least once');
   });
 
-  it('calls LLM with sonnet model', async () => {
+  it('calls LLM with thinkalot model', async () => {
     const row = makeSummaryRow();
     const pool = mockPool(dailyPoolResponses([row]));
     const llm = mockLlm();
-    const config = fakeConfig({ models: { haiku: 'h', sonnet: 'my-sonnet-model' } });
+    const config = fakeConfig({
+      models: { normalizer: 'h', chunk: 'h', thinkalot: 'my-thinkalot-model' },
+    });
     const synth = createSynthesizer(
       pool as never,
       silentLog,
@@ -524,7 +526,7 @@ describe('synthesize: runDaily', () => {
     await synth.runDaily();
 
     const llmCall = llm.calls[0] as Record<string, unknown>;
-    assert.strictEqual(llmCall.model, 'my-sonnet-model');
+    assert.strictEqual(llmCall.model, 'my-thinkalot-model');
     assert.strictEqual(llmCall.stage, 'synthesize');
   });
 

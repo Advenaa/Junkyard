@@ -129,7 +129,7 @@ describe('createChatHandler sources', () => {
     const handler = createChatHandler(
       pool,
       noopLog,
-      { models: { haiku: 'haiku', sonnet: 'sonnet' } } as any,
+      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
       llm,
       stubVectorCache([{ targetId: 'report-1', score: 0.91 }]),
       stubEmbedder,
@@ -194,7 +194,7 @@ describe('createChatHandler sources', () => {
     const handler = createChatHandler(
       pool,
       noopLog,
-      { models: { haiku: 'haiku', sonnet: 'sonnet' } } as any,
+      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
       llm,
       stubVectorCache([]),
       stubEmbedder,
@@ -287,7 +287,7 @@ describe('createChatHandler sources', () => {
     const handler = createChatHandler(
       pool,
       noopLog,
-      { models: { haiku: 'haiku', sonnet: 'sonnet' } } as any,
+      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
       llm,
       stubVectorCache([{ targetId: 'summary-1', score: 0.87 }]),
       stubEmbedder,
@@ -375,7 +375,7 @@ describe('createChatHandler sources', () => {
     const handler = createChatHandler(
       pool,
       noopLog,
-      { models: { haiku: 'haiku', sonnet: 'sonnet' } } as any,
+      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
       llm,
       stubVectorCache([{ targetId: 'report-attack', score: 0.91 }]),
       stubEmbedder,

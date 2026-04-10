@@ -23,10 +23,12 @@ export interface Config {
   publicUrl: string | null;
   alertWebhookUrl: string | null;
   models: {
-    haiku: string;
-    sonnet: string;
-    haikuFallback?: string | null;
-    sonnetFallback?: string | null;
+    normalizer: string;
+    chunk: string;
+    thinkalot: string;
+    normalizerFallback?: string | null;
+    chunkFallback?: string | null;
+    thinkalotFallback?: string | null;
   };
   secrets: string[];
 }
@@ -143,18 +145,24 @@ export function loadConfig(): Config {
   }
 
   const models = {
-    haiku: process.env['MODEL_HAIKU'] || 'claude-haiku-4-5-20251001',
-    sonnet: process.env['MODEL_SONNET'] || 'claude-sonnet-4-6',
-    haikuFallback: process.env['MODEL_HAIKU_FALLBACK'] || null,
-    sonnetFallback: process.env['MODEL_SONNET_FALLBACK'] || null,
+    normalizer: process.env['NORMALIZER_MODEL'] || 'openai-codex:gpt-5.4-mini',
+    chunk: process.env['CHUNK_MODEL'] || 'openai-codex:gpt-5.4-mini',
+    thinkalot: process.env['THINKALOT_MODEL'] || 'openai-codex:gpt-5.4',
+    normalizerFallback: process.env['NORMALIZER_MODEL_FALLBACK'] || null,
+    chunkFallback: process.env['CHUNK_MODEL_FALLBACK'] || null,
+    thinkalotFallback: process.env['THINKALOT_MODEL_FALLBACK'] || null,
   };
-  validateModelId(models.haiku, 'MODEL_HAIKU');
-  validateModelId(models.sonnet, 'MODEL_SONNET');
-  if (models.haikuFallback) {
-    validateModelId(models.haikuFallback, 'MODEL_HAIKU_FALLBACK');
+  validateModelId(models.normalizer, 'NORMALIZER_MODEL');
+  validateModelId(models.chunk, 'CHUNK_MODEL');
+  validateModelId(models.thinkalot, 'THINKALOT_MODEL');
+  if (models.normalizerFallback) {
+    validateModelId(models.normalizerFallback, 'NORMALIZER_MODEL_FALLBACK');
   }
-  if (models.sonnetFallback) {
-    validateModelId(models.sonnetFallback, 'MODEL_SONNET_FALLBACK');
+  if (models.chunkFallback) {
+    validateModelId(models.chunkFallback, 'CHUNK_MODEL_FALLBACK');
+  }
+  if (models.thinkalotFallback) {
+    validateModelId(models.thinkalotFallback, 'THINKALOT_MODEL_FALLBACK');
   }
 
   const secrets: string[] = [

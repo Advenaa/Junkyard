@@ -117,8 +117,10 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 | `DISCORD_CLIENT_SECRET` | Yes (for auth) | Discord OAuth2 application client secret |
 | `ADMIN_USER_IDS` | No | Comma-separated Discord user IDs with admin access. If unset, no bootstrap admins (API key auth still works) |
 | `SESSION_SECRET` | No | Auto-generated on first run if missing. Ephemeral — set explicitly in .env for persistence across restarts |
-| `MODEL_HAIKU` | No | Override Haiku model ID (default: `claude-haiku-4-5-20251001`) |
-| `MODEL_SONNET` | No | Override Sonnet model ID (default: `claude-sonnet-4-6-20250514`) |
+| `NORMALIZER_MODEL` | No | Override normalizer-tier model (translation, entity disambig, narrative naming, pre-summarize, event-link classifier). Default: `openai-codex:gpt-5.4-mini` |
+| `CHUNK_MODEL` | No | Override chunk-tier model (Stage 1 summarize). Default: `openai-codex:gpt-5.4-mini` |
+| `THINKALOT_MODEL` | No | Override thinkalot-tier model (Stage 3 synthesize, market pulse, chat tool loop, low-confidence Stage 1 escalation). Default: `openai-codex:gpt-5.4` |
+| `NORMALIZER_MODEL_FALLBACK` / `CHUNK_MODEL_FALLBACK` / `THINKALOT_MODEL_FALLBACK` | No | Optional secondary model IDs used by llm.ts when the primary provider trips the auth or transient-failure circuit |
 | `PORT` | No | Default 3000 |
 | `DATA_DIR` | No | Backups location, default ./data |
 | `PUBLIC_URL` | No | For "View full report" links in webhooks |

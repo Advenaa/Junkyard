@@ -181,13 +181,17 @@ function validateConfiguredModel(model: string, name: string): void {
 }
 
 export function validateConfiguredModels(config: Pick<Config, 'models'>): void {
-  validateConfiguredModel(config.models.haiku, 'MODEL_HAIKU');
-  validateConfiguredModel(config.models.sonnet, 'MODEL_SONNET');
-  if (config.models.haikuFallback) {
-    validateConfiguredModel(config.models.haikuFallback, 'MODEL_HAIKU_FALLBACK');
+  validateConfiguredModel(config.models.normalizer, 'NORMALIZER_MODEL');
+  validateConfiguredModel(config.models.chunk, 'CHUNK_MODEL');
+  validateConfiguredModel(config.models.thinkalot, 'THINKALOT_MODEL');
+  if (config.models.normalizerFallback) {
+    validateConfiguredModel(config.models.normalizerFallback, 'NORMALIZER_MODEL_FALLBACK');
   }
-  if (config.models.sonnetFallback) {
-    validateConfiguredModel(config.models.sonnetFallback, 'MODEL_SONNET_FALLBACK');
+  if (config.models.chunkFallback) {
+    validateConfiguredModel(config.models.chunkFallback, 'CHUNK_MODEL_FALLBACK');
+  }
+  if (config.models.thinkalotFallback) {
+    validateConfiguredModel(config.models.thinkalotFallback, 'THINKALOT_MODEL_FALLBACK');
   }
 }
 
@@ -310,7 +314,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
   }
 
   function getConfiguredFallbackModels(requestedModel: string): string[] {
-    const configuredModels = [_config.models?.haiku, _config.models?.sonnet].filter(
+    const configuredModels = [_config.models?.normalizer, _config.models?.chunk, _config.models?.thinkalot].filter(
       (candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0,
     );
 

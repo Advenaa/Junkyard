@@ -15,7 +15,7 @@ const noopLog = {
 } as any;
 
 const baseConfig = {
-  models: { haiku: 'haiku-test', sonnet: 'sonnet-test' },
+  models: { normalizer: 'haiku-test', chunk: 'haiku-test', thinkalot: 'sonnet-test' },
 } as any;
 
 const mockSentimentTracker = {

@@ -30,7 +30,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     dataDir: './data',
     publicUrl: null,
     alertWebhookUrl: null,
-    models: { haiku: 'test-haiku', sonnet: 'test-sonnet' },
+    models: { normalizer: 'test-haiku', chunk: 'test-haiku', thinkalot: 'test-sonnet' },
     secrets: [],
     ...overrides,
   };

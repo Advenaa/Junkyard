@@ -65,8 +65,9 @@ function makeLog(): unknown {
 function makeConfig(overrides: Record<string, unknown> = {}): unknown {
   return {
     models: {
-      haiku: 'claude-haiku-4-5-20251001',
-      sonnet: 'claude-sonnet-4-6',
+      normalizer: 'claude-haiku-4-5-20251001',
+      chunk: 'claude-sonnet-4-6',
+      thinkalot: 'claude-opus-4-6',
     },
     ...overrides,
   };
@@ -128,8 +129,9 @@ describe('validateConfiguredModels', () => {
     assert.doesNotThrow(() =>
       validateConfiguredModels({
         models: {
-          haiku: 'claude-haiku-4-5-20251001',
-          sonnet: 'claude-sonnet-4-6',
+          normalizer: 'claude-haiku-4-5-20251001',
+          chunk: 'claude-sonnet-4-6',
+          thinkalot: 'claude-opus-4-6',
         },
       }),
     );
@@ -140,11 +142,12 @@ describe('validateConfiguredModels', () => {
       () =>
         validateConfiguredModels({
           models: {
-            haiku: 'definitely-not-a-provider:model-x',
-            sonnet: 'claude-sonnet-4-6',
+            normalizer: 'definitely-not-a-provider:model-x',
+            chunk: 'claude-sonnet-4-6',
+            thinkalot: 'claude-opus-4-6',
           },
         }),
-      /MODEL_HAIKU "definitely-not-a-provider:model-x" uses unknown provider "definitely-not-a-provider"/,
+      /NORMALIZER_MODEL "definitely-not-a-provider:model-x" uses unknown provider "definitely-not-a-provider"/,
     );
   });
 
@@ -153,11 +156,12 @@ describe('validateConfiguredModels', () => {
       () =>
         validateConfiguredModels({
           models: {
-            haiku: 'openai-codex:gpt-5.4-nano',
-            sonnet: 'claude-sonnet-4-6',
+            normalizer: 'claude-haiku-4-5-20251001',
+            chunk: 'openai-codex:gpt-5.4-nano',
+            thinkalot: 'claude-opus-4-6',
           },
         }),
-      /MODEL_HAIKU "openai-codex:gpt-5\.4-nano" is not available.*Did you mean "openai-codex:gpt-5\.4-mini"\?/,
+      /CHUNK_MODEL "openai-codex:gpt-5\.4-nano" is not available.*Did you mean "openai-codex:gpt-5\.4-mini"\?/,
     );
   });
 
@@ -166,12 +170,13 @@ describe('validateConfiguredModels', () => {
       () =>
         validateConfiguredModels({
           models: {
-            haiku: 'claude-haiku-4-5-20251001',
-            sonnet: 'claude-sonnet-4-6',
-            haikuFallback: 'openai-codex:gpt-5.4-nano',
+            normalizer: 'claude-haiku-4-5-20251001',
+            chunk: 'claude-sonnet-4-6',
+            thinkalot: 'claude-opus-4-6',
+            normalizerFallback: 'openai-codex:gpt-5.4-nano',
           },
         }),
-      /MODEL_HAIKU_FALLBACK "openai-codex:gpt-5\.4-nano" is not available/,
+      /NORMALIZER_MODEL_FALLBACK "openai-codex:gpt-5\.4-nano" is not available/,
     );
   });
 });
@@ -462,8 +467,9 @@ describe('call — L3: 401 unauthorized opens a provider auth circuit', () => {
       },
       {
         models: {
-          haiku: 'claude-haiku-4-5-20251001',
-          sonnet: 'openai:gpt-4o-mini',
+          normalizer: 'claude-haiku-4-5-20251001',
+          chunk: 'claude-haiku-4-5-20251001',
+          thinkalot: 'openai:gpt-4o-mini',
         },
       },
     );
@@ -552,8 +558,9 @@ describe('call — transient provider failure circuit', () => {
       },
       {
         models: {
-          haiku: 'claude-haiku-4-5-20251001',
-          sonnet: 'openai-codex:gpt-5.4-mini',
+          normalizer: 'claude-haiku-4-5-20251001',
+          chunk: 'claude-haiku-4-5-20251001',
+          thinkalot: 'openai-codex:gpt-5.4-mini',
         },
       },
     );
@@ -586,8 +593,9 @@ describe('call — transient provider failure circuit', () => {
       },
       {
         models: {
-          haiku: 'claude-haiku-4-5-20251001',
-          sonnet: 'openai-codex:gpt-5.4-mini',
+          normalizer: 'claude-haiku-4-5-20251001',
+          chunk: 'claude-haiku-4-5-20251001',
+          thinkalot: 'openai-codex:gpt-5.4-mini',
         },
       },
     );

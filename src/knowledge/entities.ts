@@ -173,7 +173,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
         try {
           const result = await llm.call({
-            model: config.models.haiku,
+            model: config.models.normalizer,
             system:
               'You are resolving ambiguous entity names. For each entity, determine the most likely type and canonical name based on the context. Return JSON array: [{"name": "...", "type": "token|person|project|company|event", "context_key": "..."}]',
             messages: [

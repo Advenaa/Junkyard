@@ -1049,7 +1049,7 @@ export function createSynthesizer(
     const report = await callReportWithRetry(
       llm,
       log,
-      config.models.sonnet,
+      config.models.thinkalot,
       DAILY_SYSTEM_PROMPT,
       wrappedDaily,
       4000,
@@ -1157,7 +1157,7 @@ export function createSynthesizer(
     const report = await callReportWithRetry(
       llm,
       log,
-      config.models.sonnet,
+      config.models.thinkalot,
       FLASH_SYSTEM_PROMPT,
       wrappedFlash,
       2000,

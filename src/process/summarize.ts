@@ -528,7 +528,7 @@ export function createSummarizer(
 
     if (budgetExhausted(callBudget, log)) return null;
     const retryResult = await llm.call({
-      model: config.models.haiku,
+      model: config.models.chunk,
       system: augmentedSystem,
       messages: [{ role: 'user', content: wrappedContent }],
       maxTokens: 3000,
@@ -563,7 +563,7 @@ export function createSummarizer(
 
     if (budgetExhausted(callBudget, log)) return null;
     const result = await llm.call({
-      model: config.models.haiku,
+      model: config.models.chunk,
       system: systemPrompt,
       messages: [{ role: 'user', content: wrapped.wrapped }],
       maxTokens: 3000,
@@ -580,7 +580,7 @@ export function createSummarizer(
     const freshWrapped = llm.wrapWithNonce(userContent);
     if (budgetExhausted(callBudget, log)) return null;
     const retryResult = await llm.call({
-      model: config.models.haiku,
+      model: config.models.chunk,
       system: systemPrompt,
       messages: [{ role: 'user', content: freshWrapped.wrapped }],
       maxTokens: 3000,
@@ -628,7 +628,7 @@ export function createSummarizer(
       if (budgetExhausted(callBudget, log)) return parsed;
       callBudget.escalationCount++;
       const result = await llm.call({
-        model: config.models.sonnet,
+        model: config.models.thinkalot,
         system: systemPrompt,
         messages: [{ role: 'user', content: wrapped.wrapped }],
         maxTokens: 3000,
@@ -722,7 +722,7 @@ Rules:
       try {
         const wrapped = llm.wrapWithNonce(classifierInput);
         const result = await llm.call({
-          model: config.models.haiku,
+          model: config.models.normalizer,
           system: classifierPrompt,
           messages: [{ role: 'user', content: wrapped.wrapped }],
           maxTokens: 120,

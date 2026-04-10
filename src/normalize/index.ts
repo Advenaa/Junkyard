@@ -157,7 +157,7 @@ export function createNormalizer(pool: Pool, log: Logger, config: Config, llm: R
         try {
           const { wrapped, nonce } = llm.wrapWithNonce(item.content);
           const result = await llm.call({
-            model: config.models.haiku,
+            model: config.models.normalizer,
             system:
               'Translate the following Indonesian text to English. The text is wrapped in XML tags — translate ONLY the content inside the tags. Preserve all entity names, numbers, and technical terms. Output only the translation, without any XML tags.',
             messages: [{ role: 'user', content: wrapped }],

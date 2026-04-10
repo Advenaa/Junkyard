@@ -33,8 +33,9 @@ function createConfig(overrides: Partial<Config> = {}): Config {
     publicUrl: 'https://podders.test',
     alertWebhookUrl: null,
     models: {
-      haiku: 'haiku',
-      sonnet: 'sonnet',
+      normalizer: 'haiku',
+      chunk: 'haiku',
+      thinkalot: 'sonnet',
     },
     secrets: [],
     ...overrides,

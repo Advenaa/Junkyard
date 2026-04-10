@@ -456,7 +456,7 @@ function makeMockLog() {
 
 function makeMockConfig() {
   return {
-    models: { haiku: 'claude-3-haiku-20240307', sonnet: 'claude-3-sonnet' },
+    models: { normalizer: 'claude-3-haiku-20240307', chunk: 'claude-3-haiku-20240307', thinkalot: 'claude-3-sonnet' },
   } as any;
 }
 

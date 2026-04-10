@@ -316,7 +316,7 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
       let name: string;
       try {
         const nameResult = await llm.call({
-          model: config.models.haiku,
+          model: config.models.normalizer,
           system: 'Name this discussion cluster in 3-5 words. Return ONLY the name, nothing else.',
           messages: [{ role: 'user', content: snippets }],
           maxTokens: 20,

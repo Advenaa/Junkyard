@@ -53,7 +53,7 @@ const noopLog = {
 } as any;
 
 const defaultConfig = {
-  models: { haiku: 'test-haiku', sonnet: 'test-sonnet' },
+  models: { normalizer: 'test-haiku', chunk: 'test-haiku', thinkalot: 'test-sonnet' },
 } as any;
 
 /** Build a mock pool that returns configured rows for each query. */

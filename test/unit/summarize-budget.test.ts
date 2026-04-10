@@ -33,7 +33,7 @@ function fakeConfig(): Config {
     dataDir: './data',
     publicUrl: null,
     alertWebhookUrl: null,
-    models: { haiku: 'haiku-test', sonnet: 'sonnet-test' },
+    models: { normalizer: 'haiku-test', chunk: 'haiku-test', thinkalot: 'sonnet-test' },
     secrets: [],
   };
 }
