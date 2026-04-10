@@ -646,9 +646,9 @@ export function ReportView() {
   const disabledPrices = getDisabledFeature('prices');
   const disabledEmbeddings = getDisabledFeature('embeddings');
   const [report, setReport] = useState<FullReport | null>(null);
-  const [macroOverview, setMacroOverview] = useState<MacroOverview | null>(null);
-  const [priceWatch, setPriceWatch] = useState<PriceWatchOverview | null>(null);
-  const [narratives, setNarratives] = useState<NarrativeWatchlistOverview | null>(null);
+  const [macroOverviewState, setMacroOverviewState] = useState<MacroOverview | null>(null);
+  const [priceWatchState, setPriceWatchState] = useState<PriceWatchOverview | null>(null);
+  const [narrativesState, setNarrativesState] = useState<NarrativeWatchlistOverview | null>(null);
   const [unusualActivity, setUnusualActivity] = useState<UnusualActivityOverview | null>(null);
   const [regionalDivergences, setRegionalDivergences] = useState<RegionalDivergenceEntry[] | null>(null);
   const [firstMoverWatchlist, setFirstMoverWatchlist] = useState<FirstMoverWatchlistOverview | null>(null);
@@ -656,6 +656,9 @@ export function ReportView() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventSnapshotEntry[] | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const macroOverview = macroDisabled ? null : macroOverviewState;
+  const priceWatch = pricesDisabled ? null : priceWatchState;
+  const narratives = embeddingsDisabled ? null : narrativesState;
 
   useEffect(() => {
     let cancelled = false;
@@ -691,16 +694,13 @@ export function ReportView() {
 
   useEffect(() => {
     if (!statusReady) return;
-    if (macroDisabled) {
-      setMacroOverview(null);
-      return;
-    }
+    if (macroDisabled) return;
     let cancelled = false;
 
     apiFetch<MacroOverview>('/macro')
       .then((overview) => {
         if (!cancelled) {
-          setMacroOverview(overview);
+          setMacroOverviewState(overview);
         }
       })
       .catch((err) => {
@@ -708,7 +708,7 @@ export function ReportView() {
         if (isFeatureDisabledError(err)) {
           registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
         } else {
-          setMacroOverview(null);
+          setMacroOverviewState(null);
         }
       });
 
@@ -719,16 +719,13 @@ export function ReportView() {
 
   useEffect(() => {
     if (!statusReady) return;
-    if (pricesDisabled) {
-      setPriceWatch(null);
-      return;
-    }
+    if (pricesDisabled) return;
     let cancelled = false;
 
     apiFetch<PriceWatchOverview>('/price-watch')
       .then((overview) => {
         if (!cancelled) {
-          setPriceWatch(overview);
+          setPriceWatchState(overview);
         }
       })
       .catch((err) => {
@@ -736,7 +733,7 @@ export function ReportView() {
         if (isFeatureDisabledError(err)) {
           registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
         } else {
-          setPriceWatch(null);
+          setPriceWatchState(null);
         }
       });
 
@@ -769,16 +766,13 @@ export function ReportView() {
 
   useEffect(() => {
     if (!statusReady) return;
-    if (embeddingsDisabled) {
-      setNarratives(null);
-      return;
-    }
+    if (embeddingsDisabled) return;
     let cancelled = false;
 
     apiFetch<NarrativeWatchlistOverview>('/narratives')
       .then((overview) => {
         if (!cancelled) {
-          setNarratives(overview);
+          setNarrativesState(overview);
         }
       })
       .catch((err) => {
@@ -786,7 +780,7 @@ export function ReportView() {
         if (isFeatureDisabledError(err)) {
           registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
         } else {
-          setNarratives(null);
+          setNarrativesState(null);
         }
       });
 

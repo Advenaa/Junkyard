@@ -84,10 +84,16 @@ function defaultParams(overrides: Partial<LLMCallParams> = {}): LLMCallParams {
   };
 }
 
+// Default codex-oauth override — always returns undefined so codex-path tests
+// never touch `.oauth-codex.json` or the real refresh endpoint on dev machines
+// that happen to have a credential file present (see M-006).
+const noopGetCodexApiKey = async (_log: unknown): Promise<string | undefined> => undefined;
+
 function makeLLM(completeFn: LLMTestOverrides['completeFn'], configOverrides: Record<string, unknown> = {}) {
   return createLLM(makePool() as never, makeLog() as never, makeConfig(configOverrides) as never, {
     completeFn,
     sleepFn: noopSleep,
+    getCodexApiKeyFn: noopGetCodexApiKey as LLMTestOverrides['getCodexApiKeyFn'],
   });
 }
 

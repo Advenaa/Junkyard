@@ -44,7 +44,7 @@ A pre-translation step for Indonesian content. English content passes through un
 // In normalize pipeline, after language detection
 if (detectedLanguage === 'ind') {
   const translated = await llm.call({
-    model: config.models.haiku,
+    model: config.models.normalizer,
     system: 'Translate the following Indonesian text to English. Preserve all entity names, numbers, and technical terms. Output only the translation.',
     prompt: item.content,
     maxTokens: Math.ceil(item.content.length / 4) * 1.5 // ~1.5x input for translation
@@ -140,7 +140,7 @@ async function preSummarizeBatch(items: ReadyItem[]): Promise<Map<string, string
     ).join('\n\n');
 
     const response = await llm.call({
-      model: config.models.haiku,
+      model: config.models.normalizer,
       system: systemPrompt + '\n\nOutput format: label each summary with its number, e.g. [1] Summary text... [2] Summary text...',
       messages: [{ role: 'user', content: batchedContent }],
       maxTokens: 300 * batch.length,
@@ -353,7 +353,7 @@ if (!zodResult.success) {
   ).join('\n');
 
   const retryResponse = await llm.call({
-    model: config.models.haiku,
+    model: config.models.chunk,
     system: STAGE1_SYSTEM_PROMPT,
     prompt: `Your previous output had these validation errors:
 ${errorMessages}
@@ -445,7 +445,7 @@ if (ambiguousEntities.length > 0) {
   ).join('\n\n');
 
   const response = await llm.call({
-    model: config.models.haiku,
+    model: config.models.normalizer,
     system: 'For each ambiguous entity mention, select the correct candidate based on context. Output JSON array: [{"index": 1, "selected": "candidate name"}]',
     prompt,
     maxTokens: ambiguousEntities.length * 50
@@ -513,15 +513,15 @@ const shouldEscalate = stage1Result.confidence < 5
   && stage1Result.urgency !== 'routine';
 
 if (shouldEscalate) {
-  logger.info(`Escalating chunk ${chunk.id} to Sonnet (confidence: ${stage1Result.confidence}, urgency: ${stage1Result.urgency})`);
-  const sonnetResult = await llm.call({
-    model: config.models.sonnet,
+  logger.info(`Escalating chunk ${chunk.id} to thinkalot tier (confidence: ${stage1Result.confidence}, urgency: ${stage1Result.urgency})`);
+  const escalationResult = await llm.call({
+    model: config.models.thinkalot,
     system: systemPrompt,  // same Stage 1 system prompt
     messages: [{ role: 'user', content: chunkContent }],
     maxTokens: 3000,
     stage: 'escalate'
   });
-  return sonnetResult;
+  return escalationResult;
 }
 
 return stage1Result;
@@ -564,7 +564,7 @@ async function detectNarratives(summaries: Summary[]): Promise<Narrative[]> {
   for (const cluster of clusters.filter(c => c.members.length >= 3)) {
     const sampleSummaries = cluster.members.slice(0, 5).map(i => summaries[i].summary);
     const name = await llm.call({
-      model: config.models.haiku,
+      model: config.models.normalizer,
       system: 'Given these related market summaries, name the theme in 3-5 words. Output only the name.',
       prompt: sampleSummaries.join('\n---\n'),
       maxTokens: 20
@@ -1058,7 +1058,7 @@ Problem: per-source poll intervals mean breaking events wait up to one full poll
 async function classifyUrgency(message: string): Promise<'routine' | 'breaking'> {
   // ~100 token input, ~10 token output. Cost: ~$0.00001 per call
   const result = await llm.call({
-    model: config.models.haiku,
+    model: config.models.normalizer,
     system: 'Classify this message as "routine" or "breaking" (major exploit, crash, regulatory action). Return ONLY the word.',
     messages: [{ role: 'user', content: message.slice(0, 500) }],
     maxTokens: 10,

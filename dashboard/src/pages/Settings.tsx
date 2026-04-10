@@ -446,12 +446,12 @@ async function fetchEntityDivergenceData(entityId: string, days: number): Promis
   return res.divergence;
 }
 
-async function fetchEntityPriceData(entityId: string, days: number): Promise<EntityPriceData | null> {
-  try {
-    return await apiFetch<EntityPriceData>(`/entities/${entityId}/price?days=${days}`);
-  } catch {
-    return null;
-  }
+async function fetchEntityPriceData(entityId: string, days: number): Promise<EntityPriceData> {
+  return apiFetch<EntityPriceData>(`/entities/${entityId}/price?days=${days}`);
+}
+
+function isApi404(err: unknown): boolean {
+  return err instanceof Error && /^API 404\b/.test(err.message);
 }
 
 async function fetchAlphaPropagation(entityId: string, days: number): Promise<AlphaPropagationData | null> {
@@ -3912,7 +3912,8 @@ function EntitiesTab() {
             registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
             return null;
           }
-          throw err;
+          if (!isApi404(err)) console.warn('fetchEntityPriceData failed', err);
+          return null;
         });
 
     Promise.all([
@@ -4124,7 +4125,8 @@ function EntitiesTab() {
                 });
                 return null;
               }
-              throw err;
+              if (!isApi404(err)) console.warn('fetchEntityPriceData failed', err);
+              return null;
             }),
         fetchAlphaPropagation(selectedEntity.id, 7),
       ]);

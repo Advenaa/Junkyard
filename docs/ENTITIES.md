@@ -279,7 +279,7 @@ const prompt = ambiguousEntities.map((e, i) =>
 ).join('\n\n');
 
 const response = await llm.call({
-  model: config.models.haiku,
+  model: config.models.normalizer,
   system: 'For each ambiguous entity mention, select the correct candidate based on context. Output JSON array: [{"index": 1, "selected": "candidate name"}]',
   prompt,
   maxTokens: ambiguousEntities.length * 50,

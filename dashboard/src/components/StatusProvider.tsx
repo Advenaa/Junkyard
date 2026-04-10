@@ -38,13 +38,7 @@ export function StatusProvider({ children }: { children: ReactNode }) {
   const [discovered, setDiscovered] = useState<DisabledFeatureSummary[]>([]);
 
   useEffect(() => {
-    if (authLoading) return;
-    if (!user) {
-      setStatus(null);
-      setDiscovered([]);
-      setReady(true);
-      return;
-    }
+    if (authLoading || !user) return;
 
     let cancelled = false;
     setReady(false);
@@ -67,19 +61,23 @@ export function StatusProvider({ children }: { children: ReactNode }) {
     };
   }, [user, authLoading]);
 
+  const effectiveStatus = user ? status : null;
+  const effectiveReady = authLoading ? false : user ? ready : true;
+
   const disabledFeatures = useMemo<DisabledFeatureSummary[]>(() => {
-    const fromStatus = status?.disabledFeatures ?? [];
-    if (discovered.length === 0) return fromStatus;
+    const fromStatus = effectiveStatus?.disabledFeatures ?? [];
+    const discoveredEntries = user ? discovered : [];
+    if (discoveredEntries.length === 0) return fromStatus;
     const seen = new Set(fromStatus.map((entry) => entry.feature));
     const merged = [...fromStatus];
-    for (const entry of discovered) {
+    for (const entry of discoveredEntries) {
       if (!seen.has(entry.feature)) {
         merged.push(entry);
         seen.add(entry.feature);
       }
     }
     return merged;
-  }, [status, discovered]);
+  }, [effectiveStatus, discovered, user]);
 
   const isFeatureDisabled = useCallback(
     (feature: FeatureKey): boolean => disabledFeatures.some((entry) => entry.feature === feature),
@@ -100,8 +98,15 @@ export function StatusProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<StatusContextType>(
-    () => ({ ready, status, disabledFeatures, isFeatureDisabled, getDisabledFeature, registerDisabledFeature }),
-    [ready, status, disabledFeatures, isFeatureDisabled, getDisabledFeature, registerDisabledFeature],
+    () => ({
+      ready: effectiveReady,
+      status: effectiveStatus,
+      disabledFeatures,
+      isFeatureDisabled,
+      getDisabledFeature,
+      registerDisabledFeature,
+    }),
+    [effectiveReady, effectiveStatus, disabledFeatures, isFeatureDisabled, getDisabledFeature, registerDisabledFeature],
   );
 
   return <StatusContext.Provider value={value}>{children}</StatusContext.Provider>;

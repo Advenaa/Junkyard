@@ -103,7 +103,7 @@ function normalize(item: RawItem) {
   // 14-17pp accuracy loss avoided by translating before Stage 1 (XBridge architecture).
   if (lang === 'ind') {
     const translated = await llm.call({
-      model: config.models.haiku,
+      model: config.models.normalizer,
       system: 'Translate the following Indonesian text to English. Preserve all entity names, numbers, and technical terms. Output only the translation.',
       prompt: item.content,
       maxTokens: Math.ceil(item.content.length / 4) * 1.5
@@ -268,7 +268,7 @@ async function processSingleSource(source: string, sourceId: string) {
     ).join('\n\n');
     
     const response = await llm.call({
-      model: config.models.haiku,
+      model: config.models.normalizer,
       system: 'For each ambiguous entity, select the correct candidate. Output JSON: [{"index": 1, "selected": "name"}]',
       prompt,
       maxTokens: ambiguousEntities.length * 50,
@@ -321,7 +321,7 @@ async function summarizeChunk(
   
   // Call LLM through the wrapper (handles retries, errors, cost logging)
   const response = await llm.call({
-    model: config.models.haiku,  // from config.ts, default 'claude-haiku-4-5-20251001'
+    model: config.models.chunk,  // from config.ts, default 'openai-codex:gpt-5.4-mini'
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
     maxTokens: 3000,
@@ -337,7 +337,7 @@ async function summarizeChunk(
       // JSON parse failure — retry with fresh prompt, no history (attack #6 defense)
       logger.warn({ source, sourceId }, 'Stage 1 JSON parse failed, retrying with fresh prompt');
       const freshResponse = await llm.call({
-        model: config.models.haiku,
+        model: config.models.chunk,
         system: systemPrompt,
         messages: [{ role: 'user', content: userMessage }],
         maxTokens: 3000,
@@ -371,7 +371,7 @@ async function summarizeChunk(
     ).join('\n');
     
     const retryResponse = await llm.call({
-      model: config.models.haiku,
+      model: config.models.chunk,
       system: systemPrompt,
       messages: [
         { role: 'user', content: userMessage },
@@ -696,7 +696,7 @@ async function handleChat(userMessage: string, history: ChatMessage[]): Promise<
   const lang = detectLanguage(userMessage);
   if (lang === 'ind') {
     userMessage = await llm.call({
-      model: config.models.haiku,
+      model: config.models.normalizer,
       system: 'Translate Indonesian to English. Preserve entity names and technical terms. Output only the translation.',
       prompt: userMessage,
       maxTokens: 200
@@ -704,7 +704,7 @@ async function handleChat(userMessage: string, history: ChatMessage[]): Promise<
   }
   
   const response = await llm.call({
-    model: config.models.sonnet,
+    model: config.models.thinkalot,
     system: CHAT_SYSTEM_PROMPT,
     messages: [...history, { role: 'user', content: userMessage }],
     tools: chatTools,  // semantic_search, keyword_search, read_raw
@@ -727,7 +727,7 @@ async function handleChat(userMessage: string, history: ChatMessage[]): Promise<
       };
     });
     response = await llm.call({
-      model: config.models.sonnet,
+      model: config.models.thinkalot,
       system: CHAT_SYSTEM_PROMPT,
       messages: [...history, { role: 'user', content: userMessage }, ...framedResults],
       tools: chatTools,

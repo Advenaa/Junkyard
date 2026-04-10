@@ -4,14 +4,8 @@ interface FeatureDisabledCardProps {
   feature: DisabledFeatureSummary;
   title: string;
   description?: string;
-  variant?: 'panel' | 'inline' | 'chip';
+  variant?: 'panel' | 'inline';
 }
-
-const FEATURE_HEADINGS: Record<string, string> = {
-  embeddings: 'Embeddings feature disabled',
-  prices: 'Price feeds disabled',
-  macro: 'Macro snapshots disabled',
-};
 
 function formatDisablesList(disables: readonly string[]): string {
   if (disables.length === 0) return '';
@@ -21,22 +15,8 @@ function formatDisablesList(disables: readonly string[]): string {
 }
 
 export function FeatureDisabledCard({ feature, title, description, variant = 'panel' }: FeatureDisabledCardProps) {
-  const heading = FEATURE_HEADINGS[feature.feature] ?? `${feature.feature} disabled`;
   const impact = formatDisablesList(feature.disables);
   const body = description ?? (impact ? `Disabled: ${impact}.` : undefined);
-
-  if (variant === 'chip') {
-    return (
-      <span
-        data-testid="feature-disabled-chip"
-        data-feature={feature.feature}
-        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-border text-text-secondary text-[11px] font-mono uppercase tracking-wide"
-        title={`${heading}. Set ${feature.missingEnv} on the server to restore.`}
-      >
-        {heading}
-      </span>
-    );
-  }
 
   if (variant === 'inline') {
     return (

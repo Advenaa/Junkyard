@@ -275,11 +275,16 @@ export interface LLMTestOverrides {
   completeFn?: (model: unknown, context: unknown, opts: unknown) => Promise<unknown>;
   /** Replace the sleep() call with a mock (avoids real delays in tests). */
   sleepFn?: (ms: number) => Promise<void>;
+  // Replace the codex-oauth key lookup so codex-path tests never touch
+  // `.oauth-codex.json` or the real refresh endpoint on dev machines that
+  // happen to have a credential file present.
+  getCodexApiKeyFn?: (log: Logger) => Promise<string | undefined>;
 }
 
 export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrides?: LLMTestOverrides) {
   const _sleep = _testOverrides?.sleepFn ?? sleep;
   const _complete = _testOverrides?.completeFn ?? complete;
+  const _getCodexApiKey = _testOverrides?.getCodexApiKeyFn ?? getCodexApiKey;
   const providerAuthCircuitOpenUntil = new Map<string, number>();
   const providerFailureCircuitOpenUntil = new Map<string, number>();
 
@@ -398,7 +403,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         // with {"detail":"Unsupported parameter: temperature"}. Omit it for that provider.
         const isCodexProvider = provider === 'openai-codex';
         const effectiveTemperature = params.temperature ?? STAGE_TEMPERATURES[params.stage] ?? 0.5;
-        const codexKey = isCodexProvider ? await getCodexApiKey(log) : undefined;
+        const codexKey = isCodexProvider ? await _getCodexApiKey(log) : undefined;
         const response = await (_complete as typeof complete)(model, context, {
           maxTokens: params.maxTokens,
           ...(isCodexProvider ? {} : { temperature: effectiveTemperature }),
