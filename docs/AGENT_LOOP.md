@@ -13,11 +13,18 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 
 ## Canonical Artifacts
 
-- `.research-queue.md` — source of truth for actionable findings and fixable tasks.
-- `.evolve-state.md` — long-running product and roadmap context; useful background, but not the task-level source of truth.
-- `.build-lessons.md` — reusable build/test lessons only. Append sparingly.
-- `.research-lessons.md` — reusable research or architecture lessons only. Append sparingly.
-- `git status` and `git diff` — current execution state and the fastest handoff surface.
+- **GitHub Issues** (labeled `state:ready`, `p0`–`p3`, `type:*`, `source:*`) —
+  source of truth for actionable findings and fixable tasks. Under Clankerism
+  this replaced the old `.research-queue.md` / `.evolve-state.md` files.
+- `.clankerism/README.md` — 4-role model, label taxonomy, soft-brake
+  mechanism.
+- `.clankerism/lessons.md` — reusable build / test / research lessons.
+  Append sparingly; delete stale entries.
+- `.clankerism/scout-state.md` — `/scout` cursor and next-sweep plan.
+- `.clankerism/archive/` — frozen legacy state files (`evolve-state.md`,
+  `research-queue.md`, etc.) for historical context only. Don't write here.
+- `git status` and `git diff` — current execution state and the fastest
+  handoff surface.
 
 ## Shared Slice Loop
 
@@ -26,9 +33,10 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 3. Inspect the real code before changing anything.
 4. Make the smallest diff that fully solves the slice. Avoid drive-by refactors.
 5. Verify with `npm run build` and the narrowest relevant tests. If the change touches shared infrastructure or a bug fix with existing unit coverage, also run `npm test` when practical.
-6. If the task comes from `.research-queue.md`, update that entry after the fix and verification:
-   - `open` -> `pending` when implemented and verified
-   - `open` -> `blocked` when a real blocker prevents completion
+6. If the task comes from a GitHub issue, update its labels after the fix and verification:
+   - flip `state:ready` → `state:in-progress` when you claim it (open the branch)
+   - close the issue when the PR that resolves it merges
+   - flip to `state:blocked` if a real blocker prevents completion, with a comment explaining the block
 7. Leave a clean handoff in the final report:
    - what changed
    - files touched
@@ -46,7 +54,7 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 When resuming work started by the other agent:
 
 1. Start with `git status --short`.
-2. Read the relevant `.research-queue.md` entry or user task statement.
+2. Read the relevant GitHub issue (the one the branch name references) or the user task statement.
 3. Read the touched files before editing further.
 4. Continue from the existing diff; do not redo settled work unless you find a concrete problem.
 5. Preserve uncommitted user changes and prior agent changes unless the user explicitly asks for a revert.
@@ -55,7 +63,7 @@ When resuming work started by the other agent:
 
 Prefer these slice sizes:
 
-- one finding from `.research-queue.md`
+- one `state:ready` GitHub issue
 - one feature slice that can be verified end-to-end
 - one narrowly scoped module fix
 
