@@ -36,8 +36,12 @@ export function Login() {
     setRequestSaving(true);
     setRequestError(null);
     try {
+      const { csrfToken } = await apiFetch<{ csrfToken: string }>('/access-requests/csrf');
       await apiFetch('/access-requests', {
         method: 'POST',
+        headers: {
+          'X-CSRF-Token': csrfToken,
+        },
         body: JSON.stringify({
           discordId: trimmedDiscordId,
           requestedRole,
@@ -50,6 +54,8 @@ export function Login() {
       const message = err instanceof Error ? err.message : 'Failed to send request.';
       if (message.includes('429')) {
         setRequestError('Too many requests from this network. Please try again later.');
+      } else if (message.includes('403')) {
+        setRequestError('Request verification expired. Please try again.');
       } else if (message.includes('400')) {
         setRequestError('Discord IDs must be 17-20 digits.');
       } else {

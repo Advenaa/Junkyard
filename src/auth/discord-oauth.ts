@@ -20,6 +20,12 @@ interface DiscordUser {
   discriminator: string;
 }
 
+interface OAuthStateEntry {
+  ip: string;
+  expiresAt: number;
+  consumed: boolean;
+}
+
 type PreHandler = (request: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>;
 
 export function registerOAuthRoutes(
@@ -30,11 +36,114 @@ export function registerOAuthRoutes(
   authPreHandler: PreHandler | undefined,
   sessionManager: ReturnType<typeof createSessionManager>,
 ): void {
-  // Track consumed OAuth states to prevent replay (AU-007)
+  // Track pending + consumed OAuth states to prevent replay (AU-007) while
+  // keeping initiation limits scoped to the caller IP rather than one global bucket.
   // NOTE: In-memory set is safe for single-process deployment (pm2/systemd, NOT cluster mode).
   // If deploying multi-process, move state tracking to Postgres.
-  const consumedStates = new Set<string>();
-  const CONSUMED_STATES_MAX = 10_000;
+  const oauthStates = new Map<string, OAuthStateEntry>();
+  const OAUTH_PENDING_STATES_MAX = 10_000;
+  const OAUTH_PENDING_STATES_PER_IP_MAX = 5;
+  const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+  const OAUTH_REJECTION_MIN_DELAY_MS = 100;
+  const OAUTH_PADDING_DISCORD_ID = '000000000000000000';
+  const pendingStateCountsByIp = new Map<string, number>();
+
+  function incrementPendingStateCount(ip: string): void {
+    pendingStateCountsByIp.set(ip, (pendingStateCountsByIp.get(ip) ?? 0) + 1);
+  }
+
+  function decrementPendingStateCount(ip: string): void {
+    const current = pendingStateCountsByIp.get(ip) ?? 0;
+    if (current <= 1) {
+      pendingStateCountsByIp.delete(ip);
+      return;
+    }
+    pendingStateCountsByIp.set(ip, current - 1);
+  }
+
+  function getPendingStateCount(ip: string): number {
+    return pendingStateCountsByIp.get(ip) ?? 0;
+  }
+
+  function getTotalPendingStateCount(): number {
+    let total = 0;
+    for (const count of pendingStateCountsByIp.values()) {
+      total += count;
+    }
+    return total;
+  }
+
+  function cleanupExpiredOAuthStates(now = Date.now()): void {
+    for (const [state, entry] of oauthStates.entries()) {
+      if (entry.expiresAt > now) {
+        continue;
+      }
+
+      oauthStates.delete(state);
+      if (!entry.consumed) {
+        decrementPendingStateCount(entry.ip);
+      }
+    }
+  }
+
+  function registerPendingOAuthState(
+    ip: string,
+    now = Date.now(),
+  ): { ok: true; state: string } | { ok: false; reason: 'per_ip_limit' | 'global_capacity' } {
+    cleanupExpiredOAuthStates(now);
+
+    if (getPendingStateCount(ip) >= OAUTH_PENDING_STATES_PER_IP_MAX) {
+      return { ok: false, reason: 'per_ip_limit' };
+    }
+
+    if (getTotalPendingStateCount() >= OAUTH_PENDING_STATES_MAX) {
+      return { ok: false, reason: 'global_capacity' };
+    }
+
+    const state = crypto.randomBytes(32).toString('hex');
+    oauthStates.set(state, {
+      ip,
+      expiresAt: now + OAUTH_STATE_TTL_MS,
+      consumed: false,
+    });
+    incrementPendingStateCount(ip);
+    return { ok: true, state };
+  }
+
+  function consumeOAuthState(state: string, now = Date.now()): 'consumed' | 'missing' | 'already_consumed' {
+    cleanupExpiredOAuthStates(now);
+
+    const entry = oauthStates.get(state);
+    if (!entry) {
+      return 'missing';
+    }
+
+    if (entry.consumed) {
+      return 'already_consumed';
+    }
+
+    entry.consumed = true;
+    decrementPendingStateCount(entry.ip);
+    return 'consumed';
+  }
+
+  async function padOAuthRejection(startedAt: number, discordId: string | null = null): Promise<void> {
+    try {
+      // Keep rejected OAuth callbacks in the same rough latency bucket so invite-only
+      // access decisions do not leak through obvious fast-vs-slow timing differences.
+      await pool.query('SELECT discord_id FROM users WHERE discord_id = $1 LIMIT 1', [
+        discordId ?? OAUTH_PADDING_DISCORD_ID,
+      ]);
+    } catch (err: unknown) {
+      log.warn({ err }, 'OAuth rejection padding query failed');
+    }
+
+    const elapsed = Date.now() - startedAt;
+    const remainingDelay = OAUTH_REJECTION_MIN_DELAY_MS - elapsed;
+    if (remainingDelay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+    }
+  }
 
   // --- GET /api/v1/auth/discord ---
   app.get('/api/v1/auth/discord', async (request, reply) => {
@@ -42,16 +151,19 @@ export function registerOAuthRoutes(
       return reply.status(503).send({ error: 'Discord OAuth is not configured' });
     }
 
-    // Cap consumed states to prevent memory leak (AU-020 / AU-023)
-    if (consumedStates.size >= CONSUMED_STATES_MAX) {
-      log.warn({ size: consumedStates.size }, 'OAuth consumed states at capacity — rejecting new initiation');
+    const requestIp = request.ip || 'unknown';
+    const stateRegistration = registerPendingOAuthState(requestIp);
+    if (!stateRegistration.ok && stateRegistration.reason === 'per_ip_limit') {
+      log.warn({ ip: requestIp, count: getPendingStateCount(requestIp) }, 'OAuth pending-state per-IP limit reached');
+      return reply.status(429).send({ error: 'Too many pending OAuth sessions from this IP. Please try again later.' });
+    }
+
+    if (!stateRegistration.ok) {
+      log.warn({ size: getTotalPendingStateCount() }, 'OAuth pending states at capacity — rejecting new initiation');
       return reply.status(503).send({ error: 'Too many pending OAuth sessions. Please try again later.' });
     }
 
-    const state = crypto.randomBytes(32).toString('hex');
-
-    // Auto-expire after 10 minutes
-    setTimeout(() => consumedStates.delete(state), 10 * 60 * 1000).unref();
+    const state = stateRegistration.state;
 
     reply.setCookie('oauth_state', state, {
       httpOnly: true,
@@ -59,7 +171,7 @@ export function registerOAuthRoutes(
       secure: config.publicUrl?.startsWith('https') ?? false,
       sameSite: 'lax',
       path: '/',
-      maxAge: 10 * 60, // 10 minutes
+      maxAge: OAUTH_STATE_TTL_MS / 1000,
     });
 
     const redirectUri = encodeURIComponent(config.publicUrl + '/api/v1/auth/discord/callback');
@@ -79,6 +191,7 @@ export function registerOAuthRoutes(
   app.get<{
     Querystring: { code?: string; state?: string; error?: string; error_description?: string };
   }>('/api/v1/auth/discord/callback', async (request, reply) => {
+    const callbackStartedAt = Date.now();
     const { code, state, error } = request.query;
 
     if (!config.discordClientId || !config.discordClientSecret || !config.publicUrl) {
@@ -91,22 +204,32 @@ export function registerOAuthRoutes(
     reply.clearCookie('oauth_state', { path: '/' });
 
     if (!stateCookie.valid || !stateCookie.value || !state || stateCookie.value !== state) {
+      await padOAuthRejection(callbackStartedAt);
       log.warn('OAuth state mismatch — possible CSRF');
       return reply.status(403).send({ error: 'Invalid OAuth state' });
     }
 
-    if (consumedStates.has(state)) {
+    const stateStatus = consumeOAuthState(state);
+    if (stateStatus === 'missing') {
+      await padOAuthRejection(callbackStartedAt);
+      log.warn({ state: state.slice(0, 8) }, 'OAuth state missing or expired');
+      return reply.status(403).send({ error: 'Invalid OAuth state' });
+    }
+
+    if (stateStatus === 'already_consumed') {
+      await padOAuthRejection(callbackStartedAt);
       log.warn({ state: state.slice(0, 8) }, 'OAuth state already consumed (replay attempt)');
       return reply.status(403).send({ error: 'OAuth state already used' });
     }
-    consumedStates.add(state);
 
     if (error) {
+      await padOAuthRejection(callbackStartedAt);
       log.warn({ error }, 'Discord OAuth denied by user');
       return reply.redirect(`/login?error=${error === 'access_denied' ? 'denied' : 'oauth_error'}`);
     }
 
     if (!code) {
+      await padOAuthRejection(callbackStartedAt);
       return reply.redirect('/login?error=missing_code');
     }
 
@@ -127,6 +250,7 @@ export function registerOAuthRoutes(
     });
 
     if (!tokenResponse.ok) {
+      await padOAuthRejection(callbackStartedAt);
       const errText = await tokenResponse.text();
       log.error({ status: tokenResponse.status, body: errText }, 'Discord token exchange failed');
       return reply.status(502).send({ error: 'Discord token exchange failed' });
@@ -141,6 +265,7 @@ export function registerOAuthRoutes(
     });
 
     if (!userResponse.ok) {
+      await padOAuthRejection(callbackStartedAt);
       log.error({ status: userResponse.status }, 'Discord user fetch failed');
       return reply.status(502).send({ error: 'Failed to fetch Discord user' });
     }
@@ -158,6 +283,7 @@ export function registerOAuthRoutes(
     const isAdmin = config.adminUserIds.includes(discordUser.id);
 
     if (existingUser.rows.length === 0 && !isAdmin) {
+      await padOAuthRejection(callbackStartedAt, discordUser.id);
       log.warn(
         { discordId: discordUser.id, username: discordUser.username },
         'Unknown user attempted login — invite-only',
@@ -175,6 +301,7 @@ export function registerOAuthRoutes(
 
     // 6b. Block check — reject before creating session (PD-041)
     if (role === 'blocked') {
+      await padOAuthRejection(callbackStartedAt, discordUser.id);
       log.warn({ discordId: discordUser.id }, 'Blocked user attempted login');
       return reply.redirect('/login?error=blocked');
     }

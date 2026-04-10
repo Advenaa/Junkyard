@@ -24,7 +24,14 @@ import type { AlphaTracker } from '../knowledge/alpha-tracker.js';
 
 /** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
 const MAX_ITEM_RETRIES = 3;
+const MAX_SONNET_ESCALATIONS_PER_BATCH = 3;
+const MIN_SUMMARIZABLE_DISCORD_CHUNK_CHARS = 50;
 const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+const SHORT_DISCORD_TICKER_SIGNAL_PATTERN = /(?:^|[^A-Za-z0-9_])(?:\$[A-Za-z]{2,10}|[A-Z]{2,10})(?=$|[^A-Za-z0-9_])/;
+const SHORT_DISCORD_NUMERIC_SIGNAL_PATTERN = /\b\d+(?:\.\d+)?%?\b/;
+const SHORT_DISCORD_URL_SIGNAL_PATTERN = /https?:\/\//i;
+const SHORT_DISCORD_KEYWORD_SIGNAL_PATTERN =
+  /(?:exploit|hack|hacked|lawsuit|sues?|etf|listed?|listing|delist|launch|airdrop|audit|partnership|acquire[ds]?|governance|vote|approval|approved|rejected|fomc|cpi|inflation|rate cut|rate hike|bullish|bearish|strong|weak|compared|versus|vs\.?|higher|lower)\b/i;
 
 const EventFollowUpSchema = z.object({
   followUp: z.boolean(),
@@ -194,6 +201,23 @@ function buildUserContent(chunk: ClaimedItem[]): string {
   return chunk.map((item) => `[${item.author}] (engagement: ${item.engagement}) ${item.content}`).join('\n');
 }
 
+function buildChunkRawText<T extends { content: string }>(chunk: T[]): string {
+  return chunk
+    .map((item) => item.content.trim())
+    .filter((content) => content.length > 0)
+    .join(' ')
+    .trim();
+}
+
+function hasShortDiscordSignalMarker(text: string): boolean {
+  return (
+    SHORT_DISCORD_TICKER_SIGNAL_PATTERN.test(text) ||
+    SHORT_DISCORD_NUMERIC_SIGNAL_PATTERN.test(text) ||
+    SHORT_DISCORD_URL_SIGNAL_PATTERN.test(text) ||
+    SHORT_DISCORD_KEYWORD_SIGNAL_PATTERN.test(text)
+  );
+}
+
 function buildChunkSystemPrompt(
   source: string,
   sourceId: string,
@@ -210,6 +234,17 @@ function buildChunkSystemPrompt(
   }
 
   return systemPrompt;
+}
+
+export function shouldFilterShortDiscordChunk<T extends { content: string }>(source: string, chunk: T[]): boolean {
+  if (source !== 'discord') return false;
+
+  const rawChunkText = buildChunkRawText(chunk);
+
+  if (rawChunkText.length === 0) return true;
+  if (rawChunkText.length >= MIN_SUMMARIZABLE_DISCORD_CHUNK_CHARS) return false;
+
+  return !hasShortDiscordSignalMarker(rawChunkText);
 }
 
 export function verifyEntities(
@@ -422,6 +457,9 @@ function getChunkEventTime(chunk: ClaimedItem[], fallback: number): number {
 interface CallBudget {
   count: number;
   readonly max: number;
+  escalationCount: number;
+  readonly maxEscalations: number;
+  escalationLimitLogged: boolean;
 }
 
 /** Increment budget and return true if exhausted. */
@@ -432,6 +470,19 @@ function budgetExhausted(budget: CallBudget, log: Logger): boolean {
     return true;
   }
   return false;
+}
+
+function escalationBudgetExhausted(budget: CallBudget, log: Logger): boolean {
+  if (budget.escalationCount < budget.maxEscalations) {
+    return false;
+  }
+
+  if (!budget.escalationLimitLogged) {
+    budget.escalationLimitLogged = true;
+    log.warn({ count: budget.escalationCount, max: budget.maxEscalations }, 'Batch Sonnet escalation cap reached');
+  }
+
+  return true;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────
@@ -556,14 +607,26 @@ export function createSummarizer(
       return parsed;
     }
 
+    if (escalationBudgetExhausted(callBudget, log)) {
+      return parsed;
+    }
+
     log.info(
-      { confidence: parsed.confidence, urgency: parsed.urgency, source, sourceId },
+      {
+        confidence: parsed.confidence,
+        urgency: parsed.urgency,
+        source,
+        sourceId,
+        escalationNumber: callBudget.escalationCount + 1,
+        maxEscalations: callBudget.maxEscalations,
+      },
       'Low confidence non-routine chunk, escalating to Sonnet',
     );
 
     try {
       const wrapped = llm.wrapWithNonce(userContent);
       if (budgetExhausted(callBudget, log)) return parsed;
+      callBudget.escalationCount++;
       const result = await llm.call({
         model: config.models.sonnet,
         system: systemPrompt,
@@ -860,6 +923,47 @@ Rules:
     }
   }
 
+  async function loadChunkAuthors(
+    chunk: ClaimedItem[],
+    source: string,
+    sourceId: string,
+    batchId: string,
+  ): Promise<Map<string, ChunkAuthorReference>> {
+    const chunkAuthors = new Map<string, ChunkAuthorReference>();
+
+    try {
+      const authorsSeen = new Map<string, { sourceItemId: string; timestamp: number }>();
+      for (const item of chunk) {
+        const handle = item.author?.trim().toLowerCase();
+        if (!handle) continue;
+
+        const previous = authorsSeen.get(handle);
+        if (previous === undefined || item.timestamp > previous.timestamp) {
+          authorsSeen.set(handle, { sourceItemId: item.id, timestamp: item.timestamp });
+        }
+      }
+
+      if (authorsSeen.size === 0) {
+        return chunkAuthors;
+      }
+
+      const upsertedAuthors = await Promise.all(
+        [...authorsSeen.entries()].map(async ([handle, { sourceItemId, timestamp }]) => {
+          const author = await upsertAuthor(pool, source, handle, null, timestamp);
+          return [handle, { authorId: author.id, sourceItemId, timestamp }] as const;
+        }),
+      );
+
+      for (const [handle, author] of upsertedAuthors) {
+        chunkAuthors.set(handle, author);
+      }
+    } catch (authorErr: unknown) {
+      log.warn({ err: authorErr, source, sourceId, batchId }, 'Author upsert failed for chunk, continuing');
+    }
+
+    return chunkAuthors;
+  }
+
   /**
    * Process a single chunk end-to-end. Handles context-length splitting recursively.
    */
@@ -1002,7 +1106,13 @@ Rules:
     const chunks = chunkByTokens(items, CHUNK_TOKEN_BUDGET);
 
     // d-g. Process chunks with bounded concurrency (max 3 parallel)
-    const callBudget: CallBudget = { count: 0, max: 50 };
+    const callBudget: CallBudget = {
+      count: 0,
+      max: 50,
+      escalationCount: 0,
+      maxEscalations: MAX_SONNET_ESCALATIONS_PER_BATCH,
+      escalationLimitLogged: false,
+    };
     const CHUNK_CONCURRENCY = 3;
     const succeededIds: string[] = [];
     const failedIds: string[] = [];
@@ -1016,8 +1126,42 @@ Rules:
       hasBreaking: boolean;
     }
 
+    async function maybeFilterShortDiscordChunk(chunk: ClaimedItem[]): Promise<boolean> {
+      if (!shouldFilterShortDiscordChunk(source, chunk)) {
+        return false;
+      }
+
+      const chunkItemIds = chunk.map((item) => item.id);
+      const rawChunkText = buildChunkRawText(chunk);
+
+      await pool.query(
+        `UPDATE items
+           SET status = 'filtered',
+               batch_id = NULL,
+               filter_reason = 'short_content'
+         WHERE id = ANY($1::text[])`,
+        [chunkItemIds],
+      );
+
+      log.info(
+        {
+          source,
+          sourceId,
+          chunkSize: chunk.length,
+          contentLength: rawChunkText.length,
+          hadSignalMarker: hasShortDiscordSignalMarker(rawChunkText),
+        },
+        'Filtered short Discord chunk before summarize',
+      );
+
+      return true;
+    }
+
     async function handleChunk(chunk: ClaimedItem[]): Promise<ChunkResult> {
       const chunkItemIds = chunk.map((item) => item.id);
+      if (await maybeFilterShortDiscordChunk(chunk)) {
+        return { succeeded: [], failed: [], summaryCount: 0, hasBreaking: false };
+      }
 
       const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0, callBudget);
 
@@ -1027,34 +1171,7 @@ Rules:
 
       let chunkSummaryCount = 0;
       let chunkHasBreaking = false;
-      const chunkAuthors = new Map<string, ChunkAuthorReference>();
-
-      // Extract and upsert unique authors from chunk items
-      try {
-        const authorsSeen = new Map<string, { sourceItemId: string; timestamp: number }>();
-        for (const item of chunk) {
-          const handle = item.author?.trim().toLowerCase();
-          if (handle) {
-            const prev = authorsSeen.get(handle);
-            if (prev === undefined || item.timestamp > prev.timestamp) {
-              authorsSeen.set(handle, { sourceItemId: item.id, timestamp: item.timestamp });
-            }
-          }
-        }
-        if (authorsSeen.size > 0) {
-          const upsertedAuthors = await Promise.all(
-            [...authorsSeen.entries()].map(async ([handle, { sourceItemId, timestamp }]) => {
-              const author = await upsertAuthor(pool, source, handle, null, timestamp);
-              return [handle, { authorId: author.id, sourceItemId, timestamp }] as const;
-            }),
-          );
-          for (const [handle, author] of upsertedAuthors) {
-            chunkAuthors.set(handle, author);
-          }
-        }
-      } catch (authorErr: unknown) {
-        log.warn({ err: authorErr, source, sourceId, batchId }, 'Author upsert failed for chunk, continuing');
-      }
+      const chunkAuthors = await loadChunkAuthors(chunk, source, sourceId, batchId);
 
       for (const { parsed, itemCount } of parsedResults) {
         if (parsed.urgency === 'breaking') {

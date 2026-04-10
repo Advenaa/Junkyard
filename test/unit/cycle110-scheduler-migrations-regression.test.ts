@@ -26,16 +26,29 @@ describe('SC-012: refreshDailyCron build-before-stop ordering', () => {
     assert.ok(fnMatch, 'refreshDailyCron function not found in scheduler.ts');
   });
 
-  it('buildDailyCron() is called BEFORE dailyTask.stop()', () => {
+  it('buildDailyCron() is called BEFORE the previous task is stopped', () => {
     const body = fnMatch![0];
     const buildIdx = body.indexOf('buildDailyCron()');
-    const stopIdx = body.indexOf('dailyTask.stop()');
+    const stopIdx = body.indexOf('previousDailyTask.stop()');
 
     assert.ok(buildIdx !== -1, 'buildDailyCron() call not found in refreshDailyCron');
-    assert.ok(stopIdx !== -1, 'dailyTask.stop() call not found in refreshDailyCron');
+    assert.ok(stopIdx !== -1, 'previousDailyTask.stop() call not found in refreshDailyCron');
     assert.ok(
       buildIdx < stopIdx,
-      `buildDailyCron() (pos ${buildIdx}) must appear before dailyTask.stop() (pos ${stopIdx})`,
+      `buildDailyCron() (pos ${buildIdx}) must appear before previousDailyTask.stop() (pos ${stopIdx})`,
+    );
+  });
+
+  it('creates the replacement cron BEFORE the previous task is stopped', () => {
+    const body = fnMatch![0];
+    const scheduleIdx = body.indexOf('cron.schedule(');
+    const stopIdx = body.indexOf('previousDailyTask.stop()');
+
+    assert.ok(scheduleIdx !== -1, 'cron.schedule() call not found in refreshDailyCron');
+    assert.ok(stopIdx !== -1, 'previousDailyTask.stop() call not found in refreshDailyCron');
+    assert.ok(
+      scheduleIdx < stopIdx,
+      `cron.schedule() (pos ${scheduleIdx}) must appear before previousDailyTask.stop() (pos ${stopIdx})`,
     );
   });
 

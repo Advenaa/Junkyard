@@ -3,7 +3,8 @@
  *
  * Verifies:
  * - queries.ts exports the recent first-mover watchlist helper
- * - server.ts exposes GET /api/v1/first-movers
+ * - server.ts wires the extracted insight routes module
+ * - the insight route module exposes GET /api/v1/first-movers
  * - ReportView fetches /first-movers and renders a First Mover Watch card
  */
 import { describe, it } from 'node:test';
@@ -34,15 +35,20 @@ describe('First-mover watchlist queries (src/db/queries.ts)', () => {
   });
 });
 
-describe('First-mover watchlist API route (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+describe('First-mover watchlist API route (insight route module)', () => {
+  const serverSrc = readSrc('src/server.ts');
+  const routesSrc = readSrc('src/server-insight-routes.ts');
+
+  it('server wires registerInsightRoutes', () => {
+    assert.ok(serverSrc.includes('registerInsightRoutes'));
+  });
 
   it('defines GET /api/v1/first-movers', () => {
-    assert.match(src, /['"]\/api\/v1\/first-movers['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/first-movers['"]/);
   });
 
   it('uses getRecentFirstMoverWatchlist from queries', () => {
-    assert.ok(src.includes('getRecentFirstMoverWatchlist'));
+    assert.ok(routesSrc.includes('getRecentFirstMoverWatchlist'));
   });
 });
 

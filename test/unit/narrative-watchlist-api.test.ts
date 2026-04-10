@@ -3,7 +3,8 @@
  *
  * Verifies:
  * - queries.ts exports the narrative watchlist helper and reads from narratives
- * - server.ts exposes GET /api/v1/narratives and GET /api/v1/narratives/:id
+ * - server.ts wires the extracted insight routes module
+ * - the insight route module exposes GET /api/v1/narratives and GET /api/v1/narratives/:id
  * - Settings fetches /narratives and can drill into /narratives/:id
  * - Settings renders a Narrative Watchlist card with inline summary evidence
  */
@@ -39,24 +40,29 @@ describe('Narrative watchlist queries (src/db/queries.ts)', () => {
   });
 });
 
-describe('Narrative watchlist API route (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+describe('Narrative watchlist API route (insight route module)', () => {
+  const serverSrc = readSrc('src/server.ts');
+  const routesSrc = readSrc('src/server-insight-routes.ts');
+
+  it('server wires registerInsightRoutes', () => {
+    assert.ok(serverSrc.includes('registerInsightRoutes'));
+  });
 
   it('defines GET /api/v1/narratives', () => {
-    assert.match(src, /['"]\/api\/v1\/narratives['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/narratives['"]/);
   });
 
   it('uses getNarrativeWatchlist from queries', () => {
-    assert.ok(src.includes('getNarrativeWatchlist'));
+    assert.ok(routesSrc.includes('getNarrativeWatchlist'));
   });
 
   it('defines GET /api/v1/narratives/:id', () => {
-    assert.match(src, /['"]\/api\/v1\/narratives\/:id['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/narratives\/:id['"]/);
   });
 
   it('uses getNarrativeDrilldownById from queries', () => {
-    assert.ok(src.includes('getNarrativeDrilldownById'));
-    assert.ok(src.includes('Narrative not found'));
+    assert.ok(routesSrc.includes('getNarrativeDrilldownById'));
+    assert.ok(routesSrc.includes('Narrative not found'));
   });
 });
 

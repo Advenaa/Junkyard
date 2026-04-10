@@ -2,8 +2,9 @@
  * Structural regression tests for Cross-Market Correlation 3.3 API/UI surface (Cycle 288).
  *
  * Verifies:
- * - server.ts exposes GET /api/v1/macro
- * - the route uses getLatestMacroSnapshots + buildMacroContext
+ * - server.ts wires the extracted insight routes module
+ * - the insight route module exposes GET /api/v1/macro
+ * - the route module uses getLatestMacroSnapshots + buildMacroContext
  * - the route returns overallBias/latestDate and 404s when empty
  * - Settings fetches /macro and renders a Macro Backdrop card
  */
@@ -19,29 +20,34 @@ function readSrc(relPath: string): string {
   return readFileSync(path.join(ROOT, relPath), 'utf-8');
 }
 
-describe('Macro API route (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+describe('Macro API route (insight route module)', () => {
+  const serverSrc = readSrc('src/server.ts');
+  const routesSrc = readSrc('src/server-insight-routes.ts');
+
+  it('server wires registerInsightRoutes', () => {
+    assert.ok(serverSrc.includes('registerInsightRoutes'));
+  });
 
   it('defines GET /api/v1/macro', () => {
-    assert.match(src, /['"]\/api\/v1\/macro['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/macro['"]/);
   });
 
   it('imports getLatestMacroSnapshots from queries', () => {
-    assert.ok(src.includes('getLatestMacroSnapshots'));
+    assert.ok(routesSrc.includes('getLatestMacroSnapshots'));
   });
 
   it('imports buildMacroContext from macro/context', () => {
-    assert.ok(src.includes("from './macro/context.js'"));
-    assert.ok(src.includes('buildMacroContext'));
+    assert.ok(routesSrc.includes("from './macro/context.js'"));
+    assert.ok(routesSrc.includes('buildMacroContext'));
   });
 
   it('returns 404 when no macro data is available', () => {
-    assert.ok(src.includes('No macro data available yet'));
+    assert.ok(routesSrc.includes('No macro data available yet'));
   });
 
   it('returns overallBias and latestDate fields', () => {
-    assert.ok(src.includes('overallBias'));
-    assert.ok(src.includes('latestDate'));
+    assert.ok(routesSrc.includes('overallBias'));
+    assert.ok(routesSrc.includes('latestDate'));
   });
 });
 

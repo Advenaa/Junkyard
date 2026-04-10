@@ -81,6 +81,8 @@ const MAX_RATE_LIMIT_RETRIES = 5;
 const MAX_RETRY_AFTER_MS = 60_000;
 const MAX_TOTAL_RETRY_MS = 120_000;
 const BACKOFF_MS = [2000, 8000, 32000];
+const MAX_CONSECUTIVE_DELIVERY_FAILURES = 5;
+const DELIVERY_CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000;
 
 export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -430,6 +432,113 @@ async function updateDeliveryStatus(pool: Pool, reportId: string, status: 'deliv
 }
 
 export function createDelivery(pool: Pool, log: Logger, config: Config) {
+  let consecutiveDeliveryFailures = 0;
+  let deliveryCircuitOpenUntil: number | null = null;
+  let deliveryCircuitAlertSent = false;
+
+  function isDeliveryCircuitOpen(now = Date.now()): boolean {
+    if (deliveryCircuitOpenUntil == null) {
+      return false;
+    }
+
+    if (now >= deliveryCircuitOpenUntil) {
+      deliveryCircuitOpenUntil = null;
+      deliveryCircuitAlertSent = false;
+      log.info('webhook delivery circuit breaker cooldown elapsed — resuming delivery attempts');
+      return false;
+    }
+
+    return true;
+  }
+
+  function resetDeliveryFailures(): void {
+    if (consecutiveDeliveryFailures === 0 && deliveryCircuitOpenUntil == null) {
+      return;
+    }
+
+    consecutiveDeliveryFailures = 0;
+    deliveryCircuitOpenUntil = null;
+    deliveryCircuitAlertSent = false;
+  }
+
+  async function sendCircuitBreakerAlert(failureCount: number): Promise<void> {
+    if (!config.alertWebhookUrl || deliveryCircuitAlertSent) {
+      return;
+    }
+
+    deliveryCircuitAlertSent = true;
+
+    const validation = await validateUrl(config.alertWebhookUrl);
+    if (!validation.valid || !validation.resolvedIp) {
+      log.error({ reason: validation.reason }, 'delivery circuit breaker alert webhook failed SSRF validation');
+      return;
+    }
+
+    const cooldownMinutes = Math.round(DELIVERY_CIRCUIT_BREAKER_COOLDOWN_MS / 60_000);
+    const body = {
+      embeds: [
+        {
+          title: 'Webhook Delivery Halted',
+          description: `Report delivery failed ${failureCount} times in a row and is paused for ${cooldownMinutes} minutes.`,
+          color: 0xff0000,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      allowed_mentions: { parse: [] as string[] },
+    };
+
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { response } = await fetchValidated(
+          config.alertWebhookUrl,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(10_000),
+          },
+          validation,
+        );
+        if (!response) {
+          log.error({ reason: validation.reason }, 'delivery circuit breaker alert webhook blocked during delivery');
+          return;
+        }
+        if (response.ok) {
+          await response.body?.cancel().catch(() => undefined);
+          return;
+        }
+        if (response.status < 500) {
+          await response.body?.cancel().catch(() => undefined);
+          return;
+        }
+        await response.body?.cancel().catch(() => undefined);
+        lastErr = new Error(`delivery circuit breaker alert returned ${response.status}`);
+      } catch (err: unknown) {
+        lastErr = err;
+      }
+
+      if (attempt === 0) {
+        await sleep(2000);
+      }
+    }
+
+    log.error({ err: lastErr }, 'delivery circuit breaker alert failed after 2 attempts');
+  }
+
+  async function recordDeliveryFailure(): Promise<void> {
+    consecutiveDeliveryFailures++;
+    if (consecutiveDeliveryFailures < MAX_CONSECUTIVE_DELIVERY_FAILURES) {
+      return;
+    }
+
+    if (!isDeliveryCircuitOpen()) {
+      deliveryCircuitOpenUntil = Date.now() + DELIVERY_CIRCUIT_BREAKER_COOLDOWN_MS;
+      log.error({ consecutiveDeliveryFailures, deliveryCircuitOpenUntil }, 'webhook delivery circuit breaker tripped');
+      await sendCircuitBreakerAlert(consecutiveDeliveryFailures);
+    }
+  }
+
   async function deliver(report: Report): Promise<boolean> {
     let parsed: MarketReportParsed;
     try {
@@ -466,6 +575,15 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       return true;
     }
 
+    if (isDeliveryCircuitOpen()) {
+      log.warn(
+        { reportId: report.id, deliveryCircuitOpenUntil },
+        'webhook delivery circuit breaker is open, skipping delivery attempt',
+      );
+      await updateDeliveryStatus(pool, report.id, 'failed');
+      return false;
+    }
+
     const embed = buildEmbed(report, parsed, config);
     const payload = JSON.stringify({
       embeds: [embed],
@@ -475,6 +593,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     const success = await postWithRetry(webhookUrl, payload, validation, log);
 
     if (success) {
+      resetDeliveryFailures();
       log.info({ reportId: report.id, type: report.type }, 'webhook delivered');
       try {
         await updateDeliveryStatus(pool, report.id, 'delivered');
@@ -487,6 +606,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       return true;
     }
 
+    await recordDeliveryFailure();
     log.error({ reportId: report.id, type: report.type }, 'webhook delivery failed after retries');
     await updateDeliveryStatus(pool, report.id, 'failed');
     return false;
@@ -494,6 +614,14 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
 
   // D-020: Retry recently failed deliveries (last 1 hour, max 5 per run)
   async function retryFailed(): Promise<number> {
+    if (isDeliveryCircuitOpen()) {
+      log.warn(
+        { deliveryCircuitOpenUntil },
+        'webhook delivery circuit breaker is open, skipping failed-delivery retry',
+      );
+      return 0;
+    }
+
     const { rows } = await pool.query<{ id: string; type: string; body: string; date: string }>(
       `SELECT id, type, body, date FROM reports
        WHERE delivery_status = 'failed'

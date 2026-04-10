@@ -842,6 +842,24 @@ const migrations: Migration[] = [
         ON macro_regimes(classification, date DESC)
     `);
   },
+
+  // Migration 33: Persist chat daily token budget usage (H-050)
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_daily_usage (
+        user_id TEXT NOT NULL,
+        usage_day TEXT NOT NULL,
+        token_count INTEGER NOT NULL,
+        created_at BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, usage_day)
+      )
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_chat_daily_usage_day
+        ON chat_daily_usage(usage_day DESC)
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

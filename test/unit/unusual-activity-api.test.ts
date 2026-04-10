@@ -3,7 +3,8 @@
  *
  * Verifies:
  * - queries.ts exports the overview helper and uses entity_sentiment_daily baselines
- * - server.ts exposes GET /api/v1/unusual-activity
+ * - server.ts wires the extracted insight routes module
+ * - the insight route module exposes GET /api/v1/unusual-activity
  * - Settings fetches /unusual-activity and renders an Unusual Activity card
  */
 import { describe, it } from 'node:test';
@@ -38,15 +39,20 @@ describe('Unusual activity queries (src/db/queries.ts)', () => {
   });
 });
 
-describe('Unusual activity API route (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+describe('Unusual activity API route (insight route module)', () => {
+  const serverSrc = readSrc('src/server.ts');
+  const routesSrc = readSrc('src/server-insight-routes.ts');
+
+  it('server wires registerInsightRoutes', () => {
+    assert.ok(serverSrc.includes('registerInsightRoutes'));
+  });
 
   it('defines GET /api/v1/unusual-activity', () => {
-    assert.match(src, /['"]\/api\/v1\/unusual-activity['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/unusual-activity['"]/);
   });
 
   it('uses getUnusualActivityOverview from queries', () => {
-    assert.ok(src.includes('getUnusualActivityOverview'));
+    assert.ok(routesSrc.includes('getUnusualActivityOverview'));
   });
 });
 

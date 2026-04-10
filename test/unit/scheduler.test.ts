@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import cron from 'node-cron';
 import { createScheduler, type SchedulerDeps } from '../../src/scheduler.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
 let warnings: { key?: string; msg?: string }[] = [];
-let errors: { key?: string }[] = [];
+let errors: { key?: string; msg?: string }[] = [];
 
 const silentLog = {
   info: () => {},
@@ -16,7 +17,7 @@ const silentLog = {
   },
   error: (...args: unknown[]) => {
     const obj = typeof args[0] === 'object' ? (args[0] as Record<string, unknown>) : {};
-    errors.push({ key: obj.key as string | undefined });
+    errors.push({ key: obj.key as string | undefined, msg: args[1] as string | undefined });
   },
   debug: () => {},
   child: () => silentLog,
@@ -52,6 +53,18 @@ function baseDeps(overrides: Partial<SchedulerDeps> = {}): SchedulerDeps {
     onHealthCheck: async () => {},
     onCrashRecovery: async () => 0,
     ...overrides,
+  };
+}
+
+function createMockTask() {
+  return {
+    stopCalled: false,
+    stop() {
+      this.stopCalled = true;
+    },
+  } as unknown as {
+    stop(): void;
+    stopCalled: boolean;
   };
 }
 
@@ -297,6 +310,56 @@ describe('buildDailyCron', () => {
     assert.ok(daily);
     assert.equal(daily.cron, '00 09 * * *');
 
+    await scheduler.stop();
+  });
+
+  it('keeps the existing daily task when refreshDailyCron fails to schedule a replacement', async (t) => {
+    errors = [];
+
+    const createdTasks: Array<ReturnType<typeof createMockTask>> = [];
+    const scheduleMock = t.mock.method(cron, 'schedule', ((expression: string) => {
+      if (expression === '00 09 * * *' && createdTasks.length === 4) {
+        throw new Error('invalid timezone');
+      }
+      const task = createMockTask();
+      createdTasks.push(task);
+      return task as never;
+    }) as typeof cron.schedule);
+
+    const deps = baseDeps({ pool: createMockPool({ digest_time: '09:00', timezone: 'Asia/Jakarta' }) });
+    const scheduler = createScheduler(deps);
+    await scheduler.start();
+
+    const initialDailyTask = createdTasks[3];
+    assert.ok(initialDailyTask, 'start() should create the initial daily task');
+
+    await scheduler.refreshDailyCron();
+
+    assert.equal(initialDailyTask.stopCalled, false, 'failed refresh should leave the existing daily task running');
+    assert.equal(createdTasks.length, 4, 'failed refresh should not replace the active daily task');
+    assert.ok(
+      errors.some((entry) => entry.msg === 'failed to rebuild daily cron'),
+      'failed refresh should log a rebuild error',
+    );
+
+    scheduleMock.mock.restore();
+    await scheduler.stop();
+  });
+
+  it('still fails startup if the initial daily cron cannot be scheduled', async (t) => {
+    const scheduleMock = t.mock.method(cron, 'schedule', ((expression: string) => {
+      if (expression === '00 09 * * *') {
+        throw new Error('invalid timezone');
+      }
+      return createMockTask() as never;
+    }) as typeof cron.schedule);
+
+    const deps = baseDeps({ pool: createMockPool({ digest_time: '09:00', timezone: 'Asia/Jakarta' }) });
+    const scheduler = createScheduler(deps);
+
+    await assert.rejects(() => scheduler.start(), /invalid timezone/);
+
+    scheduleMock.mock.restore();
     await scheduler.stop();
   });
 });

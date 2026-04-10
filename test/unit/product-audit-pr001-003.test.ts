@@ -23,19 +23,19 @@ function readSrc(relPath: string): string {
 
 describe('PR-001: OAuth callback handles Discord error', () => {
   const src = readSrc('src/auth/discord-oauth.ts');
+  const callbackStart = src.indexOf('/auth/discord/callback');
+  const authMeStart = src.indexOf('/api/v1/auth/me');
+  const callbackBody = src.slice(callbackStart, authMeStart === -1 ? undefined : authMeStart);
 
   it('Querystring type includes error parameter', () => {
     // The callback route generic defines Querystring with error
-    const callbackSection = src.slice(src.indexOf('/auth/discord/callback'));
     assert.ok(
-      callbackSection.includes('error?:') || callbackSection.includes('error :'),
+      callbackBody.includes('error?:') || callbackBody.includes('error :'),
       'Callback Querystring must include error parameter',
     );
   });
 
   it('checks error before checking code', () => {
-    const callbackStart = src.indexOf('/auth/discord/callback');
-    const callbackBody = src.slice(callbackStart, callbackStart + 2000);
     const errorCheck = callbackBody.indexOf('if (error)');
     const codeCheck = callbackBody.indexOf('if (!code)');
     assert.ok(errorCheck !== -1, 'Must check for error parameter');
@@ -44,8 +44,6 @@ describe('PR-001: OAuth callback handles Discord error', () => {
   });
 
   it('redirects to login on error instead of raw JSON', () => {
-    const callbackStart = src.indexOf('/auth/discord/callback');
-    const callbackBody = src.slice(callbackStart, callbackStart + 2000);
     const errorSection = callbackBody.slice(callbackBody.indexOf('if (error)'), callbackBody.indexOf('if (!code)'));
     assert.ok(errorSection.includes('/login?error='), 'Error case must redirect to /login with error param');
   });

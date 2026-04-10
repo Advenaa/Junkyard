@@ -8,6 +8,7 @@ import {
   isContextLengthError,
   extractRetryAfter,
   parseModel,
+  validateConfiguredModels,
   type LLMCallParams,
   type LLMTestOverrides,
 } from '../../src/llm.js';
@@ -61,8 +62,14 @@ function makeLog(): unknown {
   };
 }
 
-function makeConfig(): unknown {
-  return {};
+function makeConfig(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    models: {
+      haiku: 'claude-haiku-4-5-20251001',
+      sonnet: 'claude-sonnet-4-6',
+    },
+    ...overrides,
+  };
 }
 
 function defaultParams(overrides: Partial<LLMCallParams> = {}): LLMCallParams {
@@ -76,8 +83,11 @@ function defaultParams(overrides: Partial<LLMCallParams> = {}): LLMCallParams {
   };
 }
 
-function makeLLM(completeFn: LLMTestOverrides['completeFn']) {
-  return createLLM(makePool() as never, makeLog() as never, makeConfig() as never, { completeFn, sleepFn: noopSleep });
+function makeLLM(completeFn: LLMTestOverrides['completeFn'], configOverrides: Record<string, unknown> = {}) {
+  return createLLM(makePool() as never, makeLog() as never, makeConfig(configOverrides) as never, {
+    completeFn,
+    sleepFn: noopSleep,
+  });
 }
 
 // ── parseModel ────────────────────────────────────────────────────────
@@ -108,6 +118,61 @@ describe('parseModel', () => {
     const result = parseModel('google:gemini:1.5-pro');
     assert.equal(result.provider, 'google');
     assert.equal(result.modelId, 'gemini:1.5-pro');
+  });
+});
+
+// ── validateConfiguredModels ────────────────────────────────────────
+
+describe('validateConfiguredModels', () => {
+  it('accepts known configured models', () => {
+    assert.doesNotThrow(() =>
+      validateConfiguredModels({
+        models: {
+          haiku: 'claude-haiku-4-5-20251001',
+          sonnet: 'claude-sonnet-4-6',
+        },
+      }),
+    );
+  });
+
+  it('rejects unknown providers with a helpful error', () => {
+    assert.throws(
+      () =>
+        validateConfiguredModels({
+          models: {
+            haiku: 'definitely-not-a-provider:model-x',
+            sonnet: 'claude-sonnet-4-6',
+          },
+        }),
+      /MODEL_HAIKU "definitely-not-a-provider:model-x" uses unknown provider "definitely-not-a-provider"/,
+    );
+  });
+
+  it('rejects unknown model ids with a close suggestion', () => {
+    assert.throws(
+      () =>
+        validateConfiguredModels({
+          models: {
+            haiku: 'openai-codex:gpt-5.4-nano',
+            sonnet: 'claude-sonnet-4-6',
+          },
+        }),
+      /MODEL_HAIKU "openai-codex:gpt-5\.4-nano" is not available.*Did you mean "openai-codex:gpt-5\.4-mini"\?/,
+    );
+  });
+
+  it('rejects unknown fallback model ids with a helpful error', () => {
+    assert.throws(
+      () =>
+        validateConfiguredModels({
+          models: {
+            haiku: 'claude-haiku-4-5-20251001',
+            sonnet: 'claude-sonnet-4-6',
+            haikuFallback: 'openai-codex:gpt-5.4-nano',
+          },
+        }),
+      /MODEL_HAIKU_FALLBACK "openai-codex:gpt-5\.4-nano" is not available/,
+    );
   });
 });
 
@@ -347,7 +412,7 @@ describe('call — L2: 400 bad request', () => {
   });
 });
 
-describe('call — L3: 401 unauthorized halts all calls', () => {
+describe('call — L3: 401 unauthorized opens a provider auth circuit', () => {
   it('throws LLMHaltedError on 401', async () => {
     const llm = makeLLM(async () => {
       throw makeErrorWithStatus(401, 'HTTP error 401');
@@ -362,7 +427,7 @@ describe('call — L3: 401 unauthorized halts all calls', () => {
     );
   });
 
-  it('rejects all subsequent calls after 401', async () => {
+  it('rejects all subsequent calls for the same provider while the auth circuit is open', async () => {
     let callCount = 0;
     const llm = makeLLM(async () => {
       callCount++;
@@ -382,7 +447,63 @@ describe('call — L3: 401 unauthorized halts all calls', () => {
         return true;
       },
     );
-    assert.equal(callCount, 1, 'completeFn should not be called again after halt');
+    assert.equal(callCount, 1, 'completeFn should not be called again while the auth circuit is open');
+  });
+
+  it('fails over to the alternate configured model when the original provider 401s', async () => {
+    let callCount = 0;
+    const llm = makeLLM(
+      async () => {
+        callCount++;
+        if (callCount === 1) {
+          throw makeErrorWithStatus(401, 'HTTP error 401');
+        }
+        return makeResponse('ok via failover');
+      },
+      {
+        models: {
+          haiku: 'claude-haiku-4-5-20251001',
+          sonnet: 'openai:gpt-4o-mini',
+        },
+      },
+    );
+
+    const params = defaultParams({ model: 'claude-haiku-4-5-20251001' });
+    const firstResult = await llm.call(params);
+    assert.equal(firstResult.content, 'ok via failover');
+    assert.equal(callCount, 2, 'first call should retry once on the alternate provider');
+
+    const secondResult = await llm.call(params);
+    assert.equal(secondResult.content, 'ok via failover');
+    assert.equal(callCount, 3, 'subsequent call should skip the halted provider and use the fallback directly');
+  });
+
+  it('retries the original provider after the auth circuit cooldown expires', async (t) => {
+    let now = 1_700_000_000_000;
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+
+    let callCount = 0;
+    const llm = makeLLM(async () => {
+      callCount++;
+      if (callCount === 1) {
+        throw makeErrorWithStatus(401, 'HTTP error 401');
+      }
+      return makeResponse('provider recovered');
+    });
+
+    await assert.rejects(() => llm.call(defaultParams()));
+    assert.equal(callCount, 1);
+
+    await assert.rejects(() => llm.call(defaultParams()));
+    assert.equal(callCount, 1, 'auth circuit should block immediate retries');
+
+    now += 30 * 60 * 1000 + 1;
+
+    const result = await llm.call(defaultParams());
+    assert.equal(result.content, 'provider recovered');
+    assert.equal(callCount, 2, 'original provider should be tried again after cooldown');
+
+    dateNowMock.mock.restore();
   });
 });
 
@@ -410,6 +531,87 @@ describe('call — L4: 429 rate limit', () => {
     await assert.rejects(() => llm.call(defaultParams()), { message: 'rate limited 429' });
     // MAX_RETRIES = 3, loop runs attempt 0..3 = 4 calls total
     assert.equal(callCount, 4);
+  });
+});
+
+describe('call — transient provider failure circuit', () => {
+  it('fails over to the alternate configured model when the primary provider exhausts 503 retries', async () => {
+    let anthropicCalls = 0;
+    let fallbackCalls = 0;
+
+    const llm = makeLLM(
+      async (model) => {
+        const provider = (model as { provider?: string }).provider;
+        if (provider === 'anthropic') {
+          anthropicCalls++;
+          throw makeErrorWithStatus(503, 'server error 503');
+        }
+
+        fallbackCalls++;
+        return makeResponse('ok via transient failover');
+      },
+      {
+        models: {
+          haiku: 'claude-haiku-4-5-20251001',
+          sonnet: 'openai-codex:gpt-5.4-mini',
+        },
+      },
+    );
+
+    const result = await llm.call(defaultParams({ model: 'claude-haiku-4-5-20251001' }));
+    assert.equal(result.content, 'ok via transient failover');
+    assert.equal(anthropicCalls, 4, 'primary provider should exhaust all retries before failover');
+    assert.equal(fallbackCalls, 1, 'fallback provider should serve the request once the circuit opens');
+  });
+
+  it('skips the failed provider while the transient circuit is open and retries it after cooldown', async (t) => {
+    let now = 1_700_000_000_000;
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+
+    let anthropicCalls = 0;
+    let fallbackCalls = 0;
+    const llm = makeLLM(
+      async (model) => {
+        const provider = (model as { provider?: string }).provider;
+        if (provider === 'anthropic') {
+          anthropicCalls++;
+          if (anthropicCalls <= 4) {
+            throw makeErrorWithStatus(503, 'server error 503');
+          }
+          return makeResponse('primary recovered');
+        }
+
+        fallbackCalls++;
+        return makeResponse('fallback ok');
+      },
+      {
+        models: {
+          haiku: 'claude-haiku-4-5-20251001',
+          sonnet: 'openai-codex:gpt-5.4-mini',
+        },
+      },
+    );
+
+    const params = defaultParams({ model: 'claude-haiku-4-5-20251001' });
+
+    const firstResult = await llm.call(params);
+    assert.equal(firstResult.content, 'fallback ok');
+    assert.equal(anthropicCalls, 4);
+    assert.equal(fallbackCalls, 1);
+
+    const secondResult = await llm.call(params);
+    assert.equal(secondResult.content, 'fallback ok');
+    assert.equal(anthropicCalls, 4, 'open circuit should skip the failed provider on the next call');
+    assert.equal(fallbackCalls, 2);
+
+    now += 5 * 60 * 1000 + 1;
+
+    const thirdResult = await llm.call(params);
+    assert.equal(thirdResult.content, 'primary recovered');
+    assert.equal(anthropicCalls, 5, 'primary provider should be retried after the transient circuit cooldown');
+    assert.equal(fallbackCalls, 2);
+
+    dateNowMock.mock.restore();
   });
 });
 

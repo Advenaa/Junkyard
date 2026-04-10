@@ -1,13 +1,21 @@
-import { describe, it, mock } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { Agent } from 'undici';
 import { fetchValidated, validateUrl } from '../../src/url-validator.js';
 
 describe('validateUrl', () => {
-  it('should accept a valid HTTPS URL', async () => {
+  it('should accept a valid HTTPS URL', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
     const result = await validateUrl('https://example.com');
     assert.strictEqual(result.valid, true);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
   });
 
   it('should reject HTTP URLs', async () => {
@@ -301,9 +309,17 @@ describe('validateUrl', () => {
     assert.match(result.reason!, /port/i);
   });
 
-  it('should accept explicit port 443', async () => {
+  it('should accept explicit port 443', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
     const result = await validateUrl('https://example.com:443');
     assert.strictEqual(result.valid, true);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
   });
 
   // --- HTTPS-only enforcement ---

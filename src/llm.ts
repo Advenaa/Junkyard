@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { complete, getModel } from '@mariozechner/pi-ai';
+import { complete, getApiProvider, getModel, getModels, getProviders } from '@mariozechner/pi-ai';
 import { refreshOpenAICodexToken } from '@mariozechner/pi-ai/oauth';
 import type { Context, KnownProvider, Message, TextContent } from '@mariozechner/pi-ai';
+import { distance } from 'fastest-levenshtein';
 import { ulid } from 'ulid';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
@@ -118,6 +119,8 @@ export class LLMHaltedError extends Error {
 // ── Helpers ────────────────────────────────────────────────────────────
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const AUTH_FAILURE_COOLDOWN_MS = 30 * 60 * 1000;
+const TRANSIENT_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
 
 export function parseModel(model: string): { provider: string; modelId: string } {
   const colonIdx = model.indexOf(':');
@@ -128,6 +131,64 @@ export function parseModel(model: string): { provider: string; modelId: string }
     };
   }
   return { provider: 'anthropic', modelId: model };
+}
+
+function suggestClosestModelId(modelId: string, candidates: string[]): string | null {
+  if (candidates.length === 0) return null;
+
+  let closest = candidates[0]!;
+  let closestDistance = distance(modelId, closest);
+
+  for (const candidate of candidates.slice(1)) {
+    const candidateDistance = distance(modelId, candidate);
+    if (candidateDistance < closestDistance) {
+      closest = candidate;
+      closestDistance = candidateDistance;
+    }
+  }
+
+  const maxSuggestionDistance = Math.max(4, Math.ceil(modelId.length * 0.35));
+  return closestDistance <= maxSuggestionDistance ? closest : null;
+}
+
+function validateConfiguredModel(model: string, name: string): void {
+  const { provider, modelId } = parseModel(model);
+  const providerModels = getModels(provider as KnownProvider);
+
+  if (providerModels.length === 0) {
+    const knownProviders = getProviders().sort().join(', ');
+    throw new Error(`${name} "${model}" uses unknown provider "${provider}". Known providers: ${knownProviders}`);
+  }
+
+  const resolvedModel = getModel(provider as KnownProvider, modelId as never);
+  if (!resolvedModel) {
+    const suggestion = suggestClosestModelId(
+      modelId,
+      providerModels.map((candidate) => candidate.id),
+    );
+    const hint = suggestion
+      ? ` Did you mean "${provider}:${suggestion}"?`
+      : ` Example ${provider} models: ${providerModels
+          .slice(0, 5)
+          .map((candidate) => candidate.id)
+          .join(', ')}`;
+    throw new Error(`${name} "${model}" is not available in pi-ai for provider "${provider}".${hint}`);
+  }
+
+  if (!resolvedModel.api || !getApiProvider(resolvedModel.api)) {
+    throw new Error(`${name} "${model}" resolved to an unavailable API backend "${resolvedModel.api ?? 'unknown'}"`);
+  }
+}
+
+export function validateConfiguredModels(config: Pick<Config, 'models'>): void {
+  validateConfiguredModel(config.models.haiku, 'MODEL_HAIKU');
+  validateConfiguredModel(config.models.sonnet, 'MODEL_SONNET');
+  if (config.models.haikuFallback) {
+    validateConfiguredModel(config.models.haikuFallback, 'MODEL_HAIKU_FALLBACK');
+  }
+  if (config.models.sonnetFallback) {
+    validateConfiguredModel(config.models.sonnetFallback, 'MODEL_SONNET_FALLBACK');
+  }
 }
 
 export function extractHttpStatus(err: unknown): number | null {
@@ -213,18 +274,98 @@ export interface LLMTestOverrides {
 }
 
 export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrides?: LLMTestOverrides) {
-  let halted = false;
   const _sleep = _testOverrides?.sleepFn ?? sleep;
   const _complete = _testOverrides?.completeFn ?? complete;
+  const providerAuthCircuitOpenUntil = new Map<string, number>();
+  const providerFailureCircuitOpenUntil = new Map<string, number>();
 
-  async function call(params: LLMCallParams): Promise<LLMCallResult> {
-    if (halted) {
-      throw new LLMHaltedError('LLM subsystem halted due to auth failure');
+  function isProviderAuthCircuitOpen(provider: string, now = Date.now()): boolean {
+    const openUntil = providerAuthCircuitOpenUntil.get(provider);
+    if (openUntil == null) return false;
+    if (now >= openUntil) {
+      providerAuthCircuitOpenUntil.delete(provider);
+      log.info({ provider }, 'LLM auth circuit cooldown elapsed; provider restored');
+      return false;
+    }
+    return true;
+  }
+
+  function openProviderAuthCircuit(provider: string, now = Date.now()): void {
+    providerAuthCircuitOpenUntil.set(provider, now + AUTH_FAILURE_COOLDOWN_MS);
+  }
+
+  function isProviderFailureCircuitOpen(provider: string, now = Date.now()): boolean {
+    const openUntil = providerFailureCircuitOpenUntil.get(provider);
+    if (openUntil == null) return false;
+    if (now >= openUntil) {
+      providerFailureCircuitOpenUntil.delete(provider);
+      log.info({ provider }, 'LLM transient failure circuit cooldown elapsed; provider restored');
+      return false;
+    }
+    return true;
+  }
+
+  function openProviderFailureCircuit(provider: string, now = Date.now()): void {
+    providerFailureCircuitOpenUntil.set(provider, now + TRANSIENT_FAILURE_COOLDOWN_MS);
+  }
+
+  function getConfiguredFallbackModels(requestedModel: string): string[] {
+    const configuredModels = [_config.models?.haiku, _config.models?.sonnet].filter(
+      (candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0,
+    );
+
+    return [...new Set(configuredModels)].filter((candidate) => candidate !== requestedModel);
+  }
+
+  function findFallbackModel(requestedModel: string, authFailedModels: ReadonlySet<string>): string | null {
+    const { provider: requestedProvider } = parseModel(requestedModel);
+
+    for (const candidate of getConfiguredFallbackModels(requestedModel)) {
+      if (authFailedModels.has(candidate)) continue;
+
+      const { provider: candidateProvider } = parseModel(candidate);
+      if (candidateProvider === requestedProvider) continue;
+      if (isProviderAuthCircuitOpen(candidateProvider)) continue;
+      if (isProviderFailureCircuitOpen(candidateProvider)) continue;
+
+      return candidate;
     }
 
-    const { provider, modelId } = parseModel(params.model);
-    const model = getModel(provider as KnownProvider, modelId as never);
+    return null;
+  }
 
+  function resolveModelForAttempt(
+    requestedModel: string,
+    authFailedModels: ReadonlySet<string>,
+  ): { modelName: string; fallbackFrom: string | null; fallbackReason: 'auth' | 'failure' | null } {
+    const { provider: requestedProvider } = parseModel(requestedModel);
+
+    const authCircuitOpen = isProviderAuthCircuitOpen(requestedProvider) || authFailedModels.has(requestedModel);
+    const failureCircuitOpen = isProviderFailureCircuitOpen(requestedProvider);
+
+    if (!authCircuitOpen && !failureCircuitOpen) {
+      return { modelName: requestedModel, fallbackFrom: null, fallbackReason: null };
+    }
+
+    const fallbackModel = findFallbackModel(requestedModel, authFailedModels);
+    if (fallbackModel) {
+      return {
+        modelName: fallbackModel,
+        fallbackFrom: requestedModel,
+        fallbackReason: authCircuitOpen ? 'auth' : 'failure',
+      };
+    }
+
+    if (authCircuitOpen) {
+      throw new LLMHaltedError(
+        `LLM provider "${requestedProvider}" temporarily halted after authentication failures (401)`,
+      );
+    }
+
+    throw new LLMHaltedError(`LLM provider "${requestedProvider}" temporarily unavailable after repeated failures`);
+  }
+
+  async function call(params: LLMCallParams): Promise<LLMCallResult> {
     const piMessages = toPiMessages(params.messages);
     const context: Context = {
       systemPrompt: params.system,
@@ -232,9 +373,22 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
     };
 
     const MAX_RETRIES = 3;
+    let retryAttempt = 0;
     let emptyRetried = false;
+    const authFailedModels = new Set<string>();
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    while (retryAttempt <= MAX_RETRIES) {
+      const { modelName, fallbackFrom, fallbackReason } = resolveModelForAttempt(params.model, authFailedModels);
+      const { provider, modelId } = parseModel(modelName);
+      const model = getModel(provider as KnownProvider, modelId as never);
+
+      if (fallbackFrom) {
+        log.warn(
+          { stage: params.stage, requestedModel: fallbackFrom, fallbackModel: modelName, reason: fallbackReason },
+          'LLM provider circuit open, failing over to alternate configured model',
+        );
+      }
+
       try {
         const effectiveTemperature = params.temperature ?? STAGE_TEMPERATURES[params.stage] ?? 0.5;
         const codexKey = provider === 'openai-codex' ? await getCodexApiKey(log) : undefined;
@@ -269,7 +423,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         // L7: empty content — retry once
         if (!text.trim() && !emptyRetried) {
           emptyRetried = true;
-          log.warn({ stage: params.stage, attempt }, 'Empty LLM response, retrying once');
+          log.warn({ stage: params.stage, attempt: retryAttempt }, 'Empty LLM response, retrying once');
           continue;
         }
 
@@ -283,7 +437,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         await insertLlmUsage(pool, {
           id: ulid(),
           stage: params.stage,
-          model: params.model,
+          model: modelName,
           inputTokens: usage.input_tokens,
           outputTokens: usage.output_tokens,
           costUsd: cost,
@@ -292,6 +446,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
           log.error({ err: dbErr }, 'Failed to log LLM usage');
         });
 
+        providerFailureCircuitOpenUntil.delete(provider);
         return { content: text, usage, cost };
       } catch (err: unknown) {
         // If it's already one of our typed errors, rethrow
@@ -306,11 +461,20 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
 
         const status = extractHttpStatus(err);
 
-        // L3: 401 — halt everything
+        // L3: 401 — open a provider-scoped auth circuit and fail over if possible
         if (status === 401) {
-          halted = true;
-          log.fatal({ stage: params.stage }, 'LLM auth failure (401) — halting all LLM calls');
-          throw new LLMHaltedError('Authentication failed (401)');
+          authFailedModels.add(modelName);
+          openProviderAuthCircuit(provider);
+          log.fatal(
+            { stage: params.stage, provider, model: modelName },
+            'LLM auth failure (401) — opening provider auth circuit',
+          );
+
+          if (findFallbackModel(params.model, authFailedModels)) {
+            continue;
+          }
+
+          throw new LLMHaltedError(`LLM provider "${provider}" temporarily halted after authentication failures (401)`);
         }
 
         // L2: 400 other — no retry
@@ -321,48 +485,69 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
 
         // L4: 429 — rate limited
         if (status === 429) {
-          if (attempt >= MAX_RETRIES) {
+          if (retryAttempt >= MAX_RETRIES) {
             log.error({ stage: params.stage }, 'LLM rate limited (429), exhausted retries');
+            openProviderFailureCircuit(provider);
+            if (findFallbackModel(params.model, authFailedModels)) {
+              retryAttempt = 0;
+              emptyRetried = false;
+              continue;
+            }
             throw err;
           }
           const retryAfter = extractRetryAfter(err) ?? 60;
           const delayMs = retryAfter * 1000 + Math.random() * retryAfter * 500;
           log.warn(
-            { stage: params.stage, retryAfter, delayMs: Math.round(delayMs), attempt },
+            { stage: params.stage, retryAfter, delayMs: Math.round(delayMs), attempt: retryAttempt },
             'LLM rate limited (429), waiting',
           );
           await _sleep(delayMs);
+          retryAttempt++;
           continue;
         }
 
         // L5: 529 — overloaded
         if (status === 529) {
-          if (attempt >= MAX_RETRIES) {
+          if (retryAttempt >= MAX_RETRIES) {
             log.error({ stage: params.stage }, 'LLM overloaded (529), exhausted retries');
+            openProviderFailureCircuit(provider);
+            if (findFallbackModel(params.model, authFailedModels)) {
+              retryAttempt = 0;
+              emptyRetried = false;
+              continue;
+            }
             throw err;
           }
           const overloadDelayMs = 30_000 + Math.random() * 15_000;
           log.warn(
-            { stage: params.stage, delayMs: Math.round(overloadDelayMs), attempt },
+            { stage: params.stage, delayMs: Math.round(overloadDelayMs), attempt: retryAttempt },
             'LLM overloaded (529), backing off',
           );
           await _sleep(overloadDelayMs);
+          retryAttempt++;
           continue;
         }
 
         // L6: 500/502/503 — exponential backoff
         if (status === 500 || status === 502 || status === 503) {
-          if (attempt >= MAX_RETRIES) {
+          if (retryAttempt >= MAX_RETRIES) {
             log.error({ stage: params.stage, status }, 'LLM server error, exhausted retries');
+            openProviderFailureCircuit(provider);
+            if (findFallbackModel(params.model, authFailedModels)) {
+              retryAttempt = 0;
+              emptyRetried = false;
+              continue;
+            }
             throw err;
           }
-          const baseBackoffMs = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s
+          const baseBackoffMs = 2000 * Math.pow(2, retryAttempt); // 2s, 4s, 8s
           const backoffMs = baseBackoffMs * (0.5 + Math.random());
           log.warn(
-            { stage: params.stage, status, backoffMs: Math.round(backoffMs), attempt },
+            { stage: params.stage, status, backoffMs: Math.round(backoffMs), attempt: retryAttempt },
             'LLM server error, backing off',
           );
           await _sleep(backoffMs);
+          retryAttempt++;
           continue;
         }
 
@@ -380,16 +565,23 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
             err.message.toLowerCase().includes('timeout') ||
             err.message.toLowerCase().includes('aborted'))
         ) {
-          if (attempt < MAX_RETRIES) {
-            log.warn({ err, attempt, stage: params.stage }, 'LLM call timed out, retrying');
-            await _sleep(2000 * Math.pow(2, attempt));
+          if (retryAttempt < MAX_RETRIES) {
+            log.warn({ err, attempt: retryAttempt, stage: params.stage }, 'LLM call timed out, retrying');
+            await _sleep(2000 * Math.pow(2, retryAttempt));
+            retryAttempt++;
+            continue;
+          }
+          openProviderFailureCircuit(provider);
+          if (findFallbackModel(params.model, authFailedModels)) {
+            retryAttempt = 0;
+            emptyRetried = false;
             continue;
           }
           throw err;
         }
 
         // Unknown error — don't retry
-        log.error({ stage: params.stage, err, attempt }, 'LLM unknown error, not retrying');
+        log.error({ stage: params.stage, err, attempt: retryAttempt }, 'LLM unknown error, not retrying');
         throw err;
       }
     }

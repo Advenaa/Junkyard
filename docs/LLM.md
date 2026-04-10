@@ -35,12 +35,12 @@ Model IDs live in `config.ts` as Pi model identifiers. Never hardcode model stri
 | Stage | Model | Default ID (Pi format) |
 |-------|-------|------------|
 | Stage 1 (summarize) | Haiku | `claude-haiku-4-5-20251001` |
-| Stage 3 (synthesize) | Sonnet | `claude-sonnet-4-6-20250514` |
+| Stage 3 (synthesize) | Sonnet | `claude-sonnet-4-6` |
 | Urgency classify | Haiku | `claude-haiku-4-5-20251001` |
-| Market pulse | Sonnet | `claude-sonnet-4-6-20250514` |
-| Chat (RAG) | Sonnet | `claude-sonnet-4-6-20250514` | Tool calling enabled (semantic_search, keyword_search, read_raw) |
+| Market pulse | Sonnet | `claude-sonnet-4-6` |
+| Chat (RAG) | Sonnet | `claude-sonnet-4-6` | Tool calling enabled (semantic_search, keyword_search, read_raw) |
 | Translation (Indonesian→English) | Haiku | `claude-haiku-4-5-20251001` |
-| Stage 1 escalation (low-confidence) | Sonnet | `claude-sonnet-4-6-20250514` |
+| Stage 1 escalation (low-confidence) | Sonnet | `claude-sonnet-4-6` |
 | Narrative cluster naming | Haiku | `claude-haiku-4-5-20251001` |
 | Entity disambiguation (batched) | Haiku | `claude-haiku-4-5-20251001` |
 
@@ -54,7 +54,7 @@ Models are configured in `config.ts` using Pi's `provider:model` format:
 
 ```
 anthropic:claude-haiku-4-5-20251001
-anthropic:claude-sonnet-4-6-20250514
+anthropic:claude-sonnet-4-6
 openai:gpt-4o-mini
 groq:llama-3.1-70b-versatile
 ```

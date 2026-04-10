@@ -25,6 +25,8 @@ export interface Config {
   models: {
     haiku: string;
     sonnet: string;
+    haikuFallback?: string | null;
+    sonnetFallback?: string | null;
   };
   secrets: string[];
 }
@@ -142,10 +144,18 @@ export function loadConfig(): Config {
 
   const models = {
     haiku: process.env['MODEL_HAIKU'] || 'claude-haiku-4-5-20251001',
-    sonnet: process.env['MODEL_SONNET'] || 'claude-sonnet-4-6-20250514',
+    sonnet: process.env['MODEL_SONNET'] || 'claude-sonnet-4-6',
+    haikuFallback: process.env['MODEL_HAIKU_FALLBACK'] || null,
+    sonnetFallback: process.env['MODEL_SONNET_FALLBACK'] || null,
   };
   validateModelId(models.haiku, 'MODEL_HAIKU');
   validateModelId(models.sonnet, 'MODEL_SONNET');
+  if (models.haikuFallback) {
+    validateModelId(models.haikuFallback, 'MODEL_HAIKU_FALLBACK');
+  }
+  if (models.sonnetFallback) {
+    validateModelId(models.sonnetFallback, 'MODEL_SONNET_FALLBACK');
+  }
 
   const secrets: string[] = [
     anthropicApiKey,

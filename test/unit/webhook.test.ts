@@ -807,6 +807,35 @@ function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []
   };
 }
 
+function createDeliveryCircuitPool(webhookUrl = 'https://discord.com/api/webhooks/123/abc') {
+  const calls: Array<{ text: string; values: unknown[] }> = [];
+
+  return {
+    calls,
+    async query(text: string, values?: unknown[]) {
+      calls.push({ text, values: values ?? [] });
+
+      if (text.includes('SELECT value FROM app_config WHERE key = $1')) {
+        return { rows: [{ value: webhookUrl }], rowCount: 1 };
+      }
+
+      if (text.includes("UPDATE reports SET delivery_status = 'pending'") && text.includes('RETURNING')) {
+        return { rows: [{ delivery_status: 'pending' }], rowCount: 1 };
+      }
+
+      if (text.includes('UPDATE reports SET delivery_status = $1')) {
+        return { rows: [], rowCount: 1 };
+      }
+
+      if (text.includes('SELECT id, type, body, date FROM reports')) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      return { rows: [], rowCount: 0 };
+    },
+  };
+}
+
 describe('deliver — missing webhook_url marks failed (SD-001 regression)', () => {
   it('marks report as failed when webhook_url is not configured', async () => {
     // Pool responses:
@@ -961,6 +990,172 @@ describe('deliver — idempotency guard', () => {
 
     setTimeoutMock.mock.restore();
     fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+});
+
+describe('deliver — circuit breaker', () => {
+  it('halts after five consecutive failed deliveries, alerts once, and skips retryFailed while open', async (t) => {
+    const pool = createDeliveryCircuitPool();
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    let reportPostCount = 0;
+    let alertPostCount = 0;
+    const fetchMock = t.mock.method(globalThis, 'fetch', async (input) => {
+      const url = String(input);
+      if (url.includes('/999/alert')) {
+        alertPostCount++;
+        return new Response(null, { status: 204 });
+      }
+
+      reportPostCount++;
+      return new Response(null, { status: 500 });
+    });
+
+    const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void) => {
+      callback();
+      return 0;
+    }) as typeof setTimeout);
+
+    const config = { alertWebhookUrl: 'https://discord.com/api/webhooks/999/alert' } as any;
+    const { deliver, retryFailed } = createDelivery(pool as any, silentLog as any, config);
+
+    for (let index = 0; index < 6; index++) {
+      const result = await deliver({ ...FAKE_REPORT, id: `rpt-breaker-${index}` });
+      assert.strictEqual(result, false);
+    }
+
+    assert.strictEqual(
+      reportPostCount,
+      15,
+      'the sixth delivery should be skipped after the breaker trips on the fifth consecutive failure',
+    );
+    assert.strictEqual(alertPostCount, 1, 'breaker should alert ops once when it trips');
+
+    const retried = await retryFailed();
+    assert.strictEqual(retried, 0, 'retryFailed should skip while the breaker is open');
+    assert.strictEqual(reportPostCount, 15, 'retryFailed should not hit the report webhook while halted');
+    assert.ok(
+      !pool.calls.some((call) => call.text.includes('SELECT id, type, body, date FROM reports')),
+      'retryFailed should return before querying failed reports while the breaker is open',
+    );
+
+    setTimeoutMock.mock.restore();
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('resets the consecutive-failure counter after a successful delivery', async (t) => {
+    const pool = createDeliveryCircuitPool();
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    const reportStatuses = [...Array(12).fill(500), 200, ...Array(12).fill(500)];
+    let reportPostCount = 0;
+    let alertPostCount = 0;
+    const fetchMock = t.mock.method(globalThis, 'fetch', async (input) => {
+      const url = String(input);
+      if (url.includes('/999/alert')) {
+        alertPostCount++;
+        return new Response(null, { status: 204 });
+      }
+
+      const status = reportStatuses[reportPostCount] ?? 500;
+      reportPostCount++;
+      return new Response(null, { status });
+    });
+
+    const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void) => {
+      callback();
+      return 0;
+    }) as typeof setTimeout);
+
+    const config = { alertWebhookUrl: 'https://discord.com/api/webhooks/999/alert' } as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+
+    for (let index = 0; index < 4; index++) {
+      const result = await deliver({ ...FAKE_REPORT, id: `rpt-reset-fail-${index}` });
+      assert.strictEqual(result, false);
+    }
+
+    const success = await deliver({ ...FAKE_REPORT, id: 'rpt-reset-success' });
+    assert.strictEqual(success, true);
+
+    for (let index = 0; index < 4; index++) {
+      const result = await deliver({ ...FAKE_REPORT, id: `rpt-reset-after-${index}` });
+      assert.strictEqual(result, false);
+    }
+
+    assert.strictEqual(alertPostCount, 0, 'a success in the middle should reset the consecutive failure count');
+    assert.strictEqual(reportPostCount, 25, 'deliveries after the reset should continue attempting the webhook');
+
+    setTimeoutMock.mock.restore();
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('resumes delivery attempts after the cooldown elapses', async (t) => {
+    const pool = createDeliveryCircuitPool();
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    let now = 1_700_000_000_000;
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+
+    let reportPostCount = 0;
+    let alertPostCount = 0;
+    const fetchMock = t.mock.method(globalThis, 'fetch', async (input) => {
+      const url = String(input);
+      if (url.includes('/999/alert')) {
+        alertPostCount++;
+        return new Response(null, { status: 204 });
+      }
+
+      reportPostCount++;
+      return new Response(null, { status: reportPostCount <= 15 ? 500 : 200 });
+    });
+
+    const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void) => {
+      callback();
+      return 0;
+    }) as typeof setTimeout);
+
+    const config = { alertWebhookUrl: 'https://discord.com/api/webhooks/999/alert' } as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+
+    for (let index = 0; index < 5; index++) {
+      const result = await deliver({ ...FAKE_REPORT, id: `rpt-cooldown-fail-${index}` });
+      assert.strictEqual(result, false);
+    }
+
+    now += 60 * 60 * 1000 + 1;
+
+    const resultAfterCooldown = await deliver({ ...FAKE_REPORT, id: 'rpt-cooldown-success' });
+    assert.strictEqual(resultAfterCooldown, true);
+    assert.strictEqual(alertPostCount, 1, 'cooldown recovery should reuse the original breaker alert');
+    assert.strictEqual(reportPostCount, 16, 'delivery should resume with a fresh webhook POST after cooldown');
+
+    const deliveredUpdate = pool.calls.find(
+      (call) => call.text.includes('UPDATE reports SET delivery_status = $1') && call.values[0] === 'delivered',
+    );
+    assert.ok(deliveredUpdate, 'post-cooldown success should persist delivered status');
+
+    setTimeoutMock.mock.restore();
+    fetchMock.mock.restore();
+    dateNowMock.mock.restore();
     resolve4Mock.mock.restore();
     resolve6Mock.mock.restore();
   });

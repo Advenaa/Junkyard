@@ -1,11 +1,15 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
+import { registerOAuthRoutes } from '../../src/auth/discord-oauth.js';
 import {
   MAX_SESSIONS_PER_USER,
   SESSION_LIFETIME_DAYS,
   SLIDING_REFRESH_HOURS,
   createSessionManager,
   normalizeUA,
+  type SessionManager,
 } from '../../src/auth/sessions.js';
 import { requireAuth, requireAdmin } from '../../src/auth/middleware.js';
 import type { Config } from '../../src/config.js';
@@ -46,6 +50,8 @@ const silentLog = {
   debug: () => {},
   child: () => silentLog,
 } as never;
+
+const originalFetch = globalThis.fetch;
 
 /** Partial Config for middleware tests. */
 function fakeConfig(overrides: Partial<Config> = {}): Config {
@@ -117,6 +123,60 @@ function fakeReply() {
     },
   };
   return reply;
+}
+
+function fakeSessionManager(overrides: Partial<SessionManager> = {}): SessionManager {
+  return {
+    create: async () => 'session-id',
+    validate: async () => null,
+    delete: async () => {},
+    deleteAllForUser: async () => 0,
+    cleanupExpired: async () => 0,
+    ...overrides,
+  };
+}
+
+async function buildOAuthApp(
+  pool: ReturnType<typeof mockPool>,
+  configOverrides: Partial<Config> = {},
+  sessionManagerOverrides: Partial<SessionManager> = {},
+) {
+  const app = Fastify();
+  await app.register(cookie, { secret: 'test-cookie-secret' });
+  registerOAuthRoutes(
+    app,
+    pool as never,
+    silentLog,
+    fakeConfig({
+      discordClientId: 'discord-client-id',
+      discordClientSecret: 'discord-client-secret',
+      publicUrl: 'https://podders.test',
+      ...configOverrides,
+    }),
+    undefined,
+    fakeSessionManager(sessionManagerOverrides) as never,
+  );
+  await app.ready();
+  return app;
+}
+
+beforeEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+function getOAuthCookieHeader(response: { headers: Record<string, string | string[] | undefined> }): string {
+  const setCookieHeader = response.headers['set-cookie'];
+  const rawCookie = Array.isArray(setCookieHeader) ? setCookieHeader[0] : setCookieHeader;
+  assert.ok(rawCookie, 'OAuth initiation should set an oauth_state cookie');
+  return rawCookie.split(';', 1)[0]!;
+}
+
+function getOAuthStateFromRedirect(response: { headers: Record<string, string | string[] | undefined> }): string {
+  const location = response.headers.location;
+  assert.equal(typeof location, 'string');
+  const state = new URL(location).searchParams.get('state');
+  assert.ok(state, 'OAuth initiation should include a state query parameter');
+  return state;
 }
 
 // ===========================================================================
@@ -363,6 +423,383 @@ describe('createSessionManager', () => {
       const count = await mgr.cleanupExpired();
       assert.strictEqual(count, 0);
     });
+  });
+});
+
+// ===========================================================================
+// OAuth callback rejection timing guards
+// ===========================================================================
+
+describe('registerOAuthRoutes', () => {
+  it('limits pending OAuth initiations per IP without blocking other IPs', async () => {
+    const app = await buildOAuthApp(mockPool());
+
+    try {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const response = await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/discord',
+          remoteAddress: '203.0.113.10',
+        });
+
+        assert.equal(response.statusCode, 302);
+      }
+
+      const blockedResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+
+      assert.equal(blockedResponse.statusCode, 429);
+      assert.deepStrictEqual(JSON.parse(blockedResponse.payload), {
+        error: 'Too many pending OAuth sessions from this IP. Please try again later.',
+      });
+
+      const otherIpResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.11',
+      });
+
+      assert.equal(otherIpResponse.statusCode, 302);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('frees a pending OAuth slot after the callback consumes the state', async () => {
+    const pool = mockPool([
+      { rows: [], rowCount: 0 }, // existing user lookup
+      { rows: [], rowCount: 0 }, // rejection padding lookup
+    ]);
+    const app = await buildOAuthApp(pool);
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.includes('/oauth2/token')) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'oauth-token',
+            token_type: 'Bearer',
+            expires_in: 3600,
+            scope: 'identify',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      if (url.includes('/users/@me')) {
+        return new Response(
+          JSON.stringify({
+            id: '123456789012345678',
+            username: 'outsider',
+            avatar: null,
+            discriminator: '0001',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const firstInitiation = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+      assert.equal(firstInitiation.statusCode, 302);
+
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const response = await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/discord',
+          remoteAddress: '203.0.113.10',
+        });
+        assert.equal(response.statusCode, 302);
+      }
+
+      const blockedResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+      assert.equal(blockedResponse.statusCode, 429);
+
+      const callbackResponse = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${getOAuthStateFromRedirect(firstInitiation)}`,
+        remoteAddress: '203.0.113.10',
+        headers: {
+          cookie: getOAuthCookieHeader(firstInitiation),
+        },
+      });
+      assert.equal(callbackResponse.statusCode, 302);
+      assert.equal(callbackResponse.headers.location, '/login?error=unauthorized');
+
+      const releasedSlotResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+
+      assert.equal(releasedSlotResponse.statusCode, 302);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('cleans up expired pending OAuth states before enforcing the per-IP limit', async (t) => {
+    let now = Date.now();
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+    const app = await buildOAuthApp(mockPool());
+
+    try {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const response = await app.inject({
+          method: 'GET',
+          url: '/api/v1/auth/discord',
+          remoteAddress: '203.0.113.10',
+        });
+
+        assert.equal(response.statusCode, 302);
+      }
+
+      const blockedResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+      assert.equal(blockedResponse.statusCode, 429);
+
+      now += 10 * 60 * 1000 + 1;
+
+      const expiredStateResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+
+      assert.equal(expiredStateResponse.statusCode, 302);
+    } finally {
+      dateNowMock.mock.restore();
+      await app.close();
+    }
+  });
+
+  it('invalid OAuth state still performs users-table padding before rejecting', async () => {
+    const pool = mockPool([{ rows: [], rowCount: 0 }]);
+    const app = await buildOAuthApp(pool);
+
+    globalThis.fetch = (async () => {
+      throw new Error('fetch should not be called for invalid state');
+    }) as typeof fetch;
+
+    try {
+      const signedState = app.signCookie('expected-state');
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord/callback?code=test-code&state=wrong-state',
+        headers: {
+          cookie: `oauth_state=${signedState}`,
+        },
+      });
+
+      assert.equal(response.statusCode, 403);
+      assert.deepStrictEqual(JSON.parse(response.payload), { error: 'Invalid OAuth state' });
+      assert.ok(
+        pool.calls.some((call) => call.text.includes('SELECT discord_id FROM users WHERE discord_id = $1 LIMIT 1')),
+        'Invalid-state rejection should still hit the users table for timing padding',
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('replayed OAuth state still performs users-table padding before rejecting', async () => {
+    const pool = mockPool([
+      { rows: [], rowCount: 0 }, // first callback: existing user lookup
+      { rows: [], rowCount: 0 }, // first callback: rejection padding lookup
+      { rows: [], rowCount: 0 }, // replay callback: rejection padding lookup
+    ]);
+    const app = await buildOAuthApp(pool);
+    let fetchCalls = 0;
+
+    globalThis.fetch = (async (input) => {
+      fetchCalls++;
+      const url = String(input);
+      if (url.includes('/oauth2/token')) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'oauth-token',
+            token_type: 'Bearer',
+            expires_in: 3600,
+            scope: 'identify',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      if (url.includes('/users/@me')) {
+        return new Response(
+          JSON.stringify({
+            id: '123456789012345678',
+            username: 'outsider',
+            avatar: null,
+            discriminator: '0001',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      assert.equal(initiationResponse.statusCode, 302);
+      const state = getOAuthStateFromRedirect(initiationResponse);
+      const cookie = getOAuthCookieHeader(initiationResponse);
+
+      const firstResponse = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${state}`,
+        headers: {
+          cookie,
+        },
+      });
+
+      assert.equal(firstResponse.statusCode, 302);
+      assert.equal(firstResponse.headers.location, '/login?error=unauthorized');
+      assert.equal(
+        fetchCalls,
+        2,
+        'The initial invite-only rejection should perform the Discord token and user fetches',
+      );
+      assert.equal(
+        pool.calls.filter((call) => call.text.includes('FROM users WHERE discord_id = $1')).length,
+        2,
+        'The initial invite-only rejection should include the real lookup plus a padding lookup',
+      );
+
+      const replayResponse = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${state}`,
+        headers: {
+          cookie,
+        },
+      });
+
+      assert.equal(replayResponse.statusCode, 403);
+      assert.deepStrictEqual(JSON.parse(replayResponse.payload), { error: 'OAuth state already used' });
+      assert.equal(fetchCalls, 2, 'Replay rejection should stop before Discord token or user fetches');
+      assert.equal(
+        pool.calls.filter((call) => call.text.includes('FROM users WHERE discord_id = $1')).length,
+        3,
+        'Replay rejection should still hit the users table for timing padding',
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('unknown invite-only users are rejected without creating a session after padding lookup work', async () => {
+    const pool = mockPool([
+      { rows: [], rowCount: 0 }, // existing user lookup
+      { rows: [], rowCount: 0 }, // rejection padding lookup
+    ]);
+    let createdSessions = 0;
+    const app = await buildOAuthApp(
+      pool,
+      {},
+      {
+        create: async () => {
+          createdSessions++;
+          return 'should-not-happen';
+        },
+      },
+    );
+
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      if (url.includes('/oauth2/token')) {
+        return new Response(
+          JSON.stringify({
+            access_token: 'oauth-token',
+            token_type: 'Bearer',
+            expires_in: 3600,
+            scope: 'identify',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      if (url.includes('/users/@me')) {
+        return new Response(
+          JSON.stringify({
+            id: '123456789012345678',
+            username: 'outsider',
+            avatar: null,
+            discriminator: '0001',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof fetch;
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      assert.equal(initiationResponse.statusCode, 302);
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(response.statusCode, 302);
+      assert.equal(response.headers.location, '/login?error=unauthorized');
+      assert.equal(createdSessions, 0, 'Unauthorized users must not create sessions');
+      assert.equal(
+        pool.calls.filter((call) => call.text.includes('FROM users WHERE discord_id = $1')).length,
+        2,
+        'Unauthorized rejection should include the real lookup plus a padding lookup',
+      );
+      assert.ok(!pool.calls.some((call) => call.text.includes('INSERT INTO users')));
+    } finally {
+      await app.close();
+    }
   });
 });
 

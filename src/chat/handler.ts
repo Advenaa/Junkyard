@@ -4,6 +4,7 @@ import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import type { VectorCache } from '../vector-cache.js';
 import type { LLMCallParams, LLMCallResult } from '../llm.js';
+import { refundChatDailyTokens, reserveChatDailyTokens } from '../db/queries.js';
 import { createConversationManager } from './conversations.js';
 import { createChatTools } from './tools.js';
 import type { ChatTool, Embedder, LLM as ToolLLM } from './tools.js';
@@ -41,6 +42,9 @@ interface ChatSource {
 const MAX_TOOL_ROUNDS = 5;
 const MAX_TOOL_RESULT_CHARS = 2000;
 const MAX_TOTAL_TOOL_RESULT_CHARS = 30_000;
+const MAX_DAILY_TOKENS_PER_USER = 100_000; // ~$1.50/day/user at Sonnet pricing
+const CHAT_RESPONSE_TOKEN_RESERVATION = 5_120;
+const TRANSLATION_TOKEN_RESERVATION = 1_280;
 
 const SYSTEM_PROMPT = `You are Podders, a market intelligence assistant for crypto and Indonesian macro markets. Answer questions using ONLY the data retrieved by your tools. If you don't have data on a topic, say so — never speculate.
 
@@ -125,8 +129,29 @@ function truncateToolResult(result: string, limit: number): string {
   return result.slice(0, limit) + '\n...[truncated]';
 }
 
-function buildToolResultMessage(toolName: string, result: string): string {
-  return `<tool_result name="${toolName}">\n${result}\n</tool_result>`;
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function currentBudgetDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function extractWrappedToolPayload(wrapped: string, nonce: string): string {
+  const openTag = `<scraped_content_${nonce}>`;
+  const closeTag = `</scraped_content_${nonce}>`;
+  if (!wrapped.startsWith(openTag) || !wrapped.endsWith(closeTag)) {
+    return wrapped;
+  }
+  return wrapped.slice(openTag.length, wrapped.length - closeTag.length);
+}
+
+function buildToolResultMessage(llm: ChatLLM, toolName: string, result: string): string {
+  // Frame the entire tool payload as untrusted data so a malicious tool name or result
+  // cannot break out of the tool-result wrapper and inject follow-up instructions.
+  const { wrapped, nonce } = llm.wrapWithNonce(`Tool: ${toolName}\n${result}`);
+  const payload = extractWrappedToolPayload(wrapped, nonce);
+  return `<tool_result_${nonce}>\n${payload}\n</tool_result_${nonce}>`;
 }
 
 function formatToolUsageLabel(tool: ChatTool, args: Record<string, unknown>): string {
@@ -279,47 +304,51 @@ export function createChatHandler(
   const conversations = createConversationManager();
   const tools = createChatTools(pool, log, vectorCache, embedder, llm);
 
-  // Per-user daily token budget tracking (D-020)
-  // In-memory — resets on process restart. Acceptable for single-process deploy (pm2/systemd).
-  // Budget resets daily at midnight UTC regardless. A restart mid-day gives users a fresh budget.
-  const userTokens = new Map<string, { count: number; day: string }>();
-  const MAX_DAILY_TOKENS_PER_USER = 100_000; // ~$1.50/day/user at Sonnet pricing
-
-  function checkUserBudget(userId: string): boolean {
-    const today = new Date().toISOString().slice(0, 10);
-    const entry = userTokens.get(userId);
-    if (!entry || entry.day !== today) {
-      userTokens.set(userId, { count: 0, day: today });
-      return true;
-    }
-    return entry.count < MAX_DAILY_TOKENS_PER_USER;
-  }
-
-  function trackTokens(userId: string, tokens: number): void {
-    const today = new Date().toISOString().slice(0, 10);
-    const entry = userTokens.get(userId);
-    if (!entry || entry.day !== today) {
-      userTokens.set(userId, { count: tokens, day: today });
-    } else {
-      entry.count += tokens;
-    }
-  }
-
   const toolMap = new Map<string, ChatTool>();
   for (const tool of tools) {
     toolMap.set(tool.name, tool);
   }
 
-  // Periodic cleanup of idle conversations and stale token entries
+  async function reserveTrackedTokens(userId: string, tokens: number): Promise<'ok' | 'limit' | 'error'> {
+    if (tokens <= 0) return 'ok';
+
+    try {
+      const reservation = await reserveChatDailyTokens(
+        pool,
+        userId,
+        currentBudgetDay(),
+        tokens,
+        MAX_DAILY_TOKENS_PER_USER,
+        Date.now(),
+      );
+      return reservation.allowed ? 'ok' : 'limit';
+    } catch (err: unknown) {
+      log.error({ err, userId, tokens }, 'chat: failed to reserve daily token budget');
+      return 'error';
+    }
+  }
+
+  async function refundTrackedTokens(userId: string, tokens: number): Promise<void> {
+    if (tokens <= 0) return;
+
+    try {
+      await refundChatDailyTokens(pool, userId, currentBudgetDay(), tokens, Date.now());
+    } catch (err: unknown) {
+      log.warn({ err, userId, tokens }, 'chat: failed to refund daily token budget');
+    }
+  }
+
+  function budgetExceededResult(): ChatResult {
+    return {
+      response: 'You have reached your daily query limit. Your budget resets at midnight UTC. Please try again later.',
+      toolsUsed: [],
+      sources: [],
+    };
+  }
+
+  // Periodic cleanup of idle conversations
   const cleanupInterval = setInterval(() => {
     conversations.cleanup();
-
-    const today = new Date().toISOString().slice(0, 10);
-    for (const [uid, entry] of userTokens) {
-      if (entry.day !== today) {
-        userTokens.delete(uid);
-      }
-    }
   }, 600_000); // every 10 minutes
 
   // Allow cleanup interval to not block process exit
@@ -328,15 +357,7 @@ export function createChatHandler(
   }
 
   async function handle(query: string, conversationId: string, userId: string): Promise<ChatResult> {
-    if (!checkUserBudget(userId)) {
-      return {
-        response:
-          'You have reached your daily query limit. Your budget resets at midnight UTC. Please try again later.',
-        toolsUsed: [],
-        sources: [],
-      };
-    }
-
+    // When the budget is exhausted, tell the user it resets at midnight UTC.
     if (query.length > 4000) {
       return { response: 'Query is too long. Please keep it under 4000 characters.', toolsUsed: [], sources: [] };
     }
@@ -351,6 +372,21 @@ export function createChatHandler(
     const detectedLang = franc(query, { minLength: 3 });
     if (detectedLang === 'ind') {
       log.info({ conversationId }, 'chat: detected Indonesian, translating');
+      const translationBudget = await reserveTrackedTokens(
+        userId,
+        estimateTokens(query) + TRANSLATION_TOKEN_RESERVATION,
+      );
+      if (translationBudget === 'limit') {
+        return budgetExceededResult();
+      }
+      if (translationBudget === 'error') {
+        return {
+          response: 'Chat service is temporarily unavailable. Please try again later.',
+          toolsUsed: [],
+          sources: [],
+        };
+      }
+
       try {
         const translateResult = await llm.call({
           model: config.models.haiku,
@@ -359,8 +395,8 @@ export function createChatHandler(
           maxTokens: 1024,
           stage: 'translate',
         });
-        // Track translation token usage
-        trackTokens(userId, Math.ceil(query.length / 4 + (translateResult.content?.length ?? 0) / 4));
+        const translationActual = estimateTokens(query) + estimateTokens(translateResult.content ?? '');
+        await refundTrackedTokens(userId, estimateTokens(query) + TRANSLATION_TOKEN_RESERVATION - translationActual);
         // Validate translation result — fall back to original on failure (D-022)
         // Indonesian text is often significantly longer than its English translation,
         // so use a generous 5x multiplier to avoid false rejections.
@@ -381,6 +417,7 @@ export function createChatHandler(
           processedQuery = query;
         }
       } catch (err: unknown) {
+        await refundTrackedTokens(userId, estimateTokens(query) + TRANSLATION_TOKEN_RESERVATION);
         log.warn({ conversationId, err }, 'chat: Indonesian translation failed, using original query');
       }
     }
@@ -403,7 +440,17 @@ export function createChatHandler(
 
     // Count input tokens once (user query + history)
     const inputTokens = Math.ceil(messages.reduce((sum, m) => sum + m.content.length / 4, 0));
-    trackTokens(userId, inputTokens);
+    const inputBudget = await reserveTrackedTokens(userId, inputTokens);
+    if (inputBudget === 'limit') {
+      return budgetExceededResult();
+    }
+    if (inputBudget === 'error') {
+      return {
+        response: 'Chat service is temporarily unavailable. Please try again later.',
+        toolsUsed: [],
+        sources: [],
+      };
+    }
 
     const toolFailures = new Map<string, number>();
     let totalToolResultChars = 0;
@@ -412,6 +459,14 @@ export function createChatHandler(
       rounds++;
 
       let result: LLMCallResult;
+      const responseBudget = await reserveTrackedTokens(userId, CHAT_RESPONSE_TOKEN_RESERVATION);
+      if (responseBudget === 'limit') {
+        return budgetExceededResult();
+      }
+      if (responseBudget === 'error') {
+        return { response: 'Chat service is temporarily unavailable. Please try again later.', toolsUsed, sources: [] };
+      }
+
       try {
         result = await llm.call({
           model: config.models.sonnet,
@@ -421,6 +476,7 @@ export function createChatHandler(
           stage: 'chat',
         });
       } catch (err: unknown) {
+        await refundTrackedTokens(userId, CHAT_RESPONSE_TOKEN_RESERVATION);
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes('halted') || msg.includes('401') || msg.includes('unauthorized')) {
           log.error({ err, conversationId }, 'chat: LLM service halted');
@@ -442,9 +498,8 @@ export function createChatHandler(
         return { response: 'An error occurred processing your request. Please try again.', toolsUsed, sources: [] };
       }
 
-      // Track only new tokens this round — response + any tool results added
-      const responseTokens = Math.ceil((result.content?.length ?? 0) / 4);
-      trackTokens(userId, responseTokens);
+      const responseTokens = estimateTokens(result.content ?? '');
+      await refundTrackedTokens(userId, CHAT_RESPONSE_TOKEN_RESERVATION - responseTokens);
 
       const toolCalls = parseToolCalls(result.content);
 
@@ -467,6 +522,7 @@ export function createChatHandler(
           );
           toolResults.push(
             buildToolResultMessage(
+              llm,
               call.name,
               'Skipped: tool result budget exhausted. Work with the data you already have.',
             ),
@@ -476,7 +532,7 @@ export function createChatHandler(
 
         const tool = toolMap.get(call.name);
         if (!tool) {
-          toolResults.push(buildToolResultMessage(call.name, `Error: unknown tool "${call.name}"`));
+          toolResults.push(buildToolResultMessage(llm, call.name, `Error: unknown tool "${call.name}"`));
           continue;
         }
 
@@ -494,7 +550,7 @@ export function createChatHandler(
             sources.set(`${source.type}:${source.id}`, source);
           }
           totalToolResultChars += truncatedResult.length;
-          toolResults.push(buildToolResultMessage(call.name, truncatedResult));
+          toolResults.push(buildToolResultMessage(llm, call.name, truncatedResult));
           // Reset failure counter on success
           toolFailures.delete(call.name);
         } catch (err: unknown) {
@@ -505,12 +561,13 @@ export function createChatHandler(
           if (failures >= 2) {
             toolResults.push(
               buildToolResultMessage(
+                llm,
                 call.name,
                 `Error: tool "${call.name}" has failed ${failures} times and is temporarily unavailable. Use a different approach.`,
               ),
             );
           } else {
-            toolResults.push(buildToolResultMessage(call.name, `Error: ${errMsg}`));
+            toolResults.push(buildToolResultMessage(llm, call.name, `Error: ${errMsg}`));
           }
         }
       }

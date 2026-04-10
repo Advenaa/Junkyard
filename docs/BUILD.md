@@ -86,7 +86,7 @@ interface Config {
   alertWebhookUrl: string | null;
   models: {
     haiku: string;                    // default 'claude-haiku-4-5-20251001'
-    sonnet: string;                   // default 'claude-sonnet-4-6-20250514'
+    sonnet: string;                   // default 'claude-sonnet-4-6'
   };
   secrets: string[];                  // assembled from above, for logger masking
 }

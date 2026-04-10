@@ -286,7 +286,7 @@ describe('summarize: call budget', () => {
     }));
 
     let llmCallCount = 0;
-    let escalationAttempted = false;
+    let _escalationAttempted = false;
 
     // Return low-confidence breaking result to trigger escalation
     const lowConfidenceJson = JSON.stringify({
@@ -301,7 +301,7 @@ describe('summarize: call budget', () => {
       call: async (params: { model: string; stage: string }) => {
         llmCallCount++;
         if (params.stage === 'escalate') {
-          escalationAttempted = true;
+          _escalationAttempted = true;
         }
         return { content: lowConfidenceJson };
       },
@@ -370,6 +370,226 @@ describe('summarize: call budget', () => {
     assert.ok(result.summaryCount > 0, `Should produce summaries, got ${result.summaryCount}`);
     assert.equal(result.summaryCount, llmCallCount, 'Each chunk should use exactly 1 LLM call');
     assert.ok(llmCallCount <= 50, `All calls within budget, got ${llmCallCount}`);
+  });
+
+  it('caps Sonnet escalations per batch even when many chunks qualify', async () => {
+    const longContent = 'b'.repeat(2000);
+    const items = Array.from({ length: 100 }, (_, i) => ({
+      id: `item-${i}`,
+      content: `Breaking exploit chatter ${longContent} item-${i}`,
+      author: 'user6',
+      engagement: 1,
+      timestamp: Date.now() + i,
+    }));
+
+    const callsByStage: string[] = [];
+    const lowConfidenceJson = JSON.stringify({
+      summary:
+        'Multiple sources are discussing a fast-moving exploit with unclear details and possible cascading liquidations.',
+      urgency: 'breaking',
+      confidence: 3,
+      entities: [{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 5, sentiment: -0.4 }],
+      keyEvents: ['Exploit chatter spreading quickly'],
+    });
+    const escalatedJson = JSON.stringify({
+      summary:
+        'Escalated review confirms a breaking exploit narrative with continuing uncertainty around losses and follow-on risk.',
+      urgency: 'breaking',
+      confidence: 7,
+      entities: [{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 5, sentiment: -0.5 }],
+      keyEvents: ['Escalated review confirmed exploit discussion'],
+    });
+
+    const llm = {
+      call: async (params: { stage: string }) => {
+        callsByStage.push(params.stage);
+        if (params.stage === 'escalate') {
+          return { content: escalatedJson };
+        }
+        return { content: lowConfidenceJson };
+      },
+      wrapWithNonce: (content: string) => ({
+        wrapped: `<nonce-test>${content}</nonce-test>`,
+        nonce: 'test',
+      }),
+    };
+
+    const pool = mockPool(items);
+    const summarizer = createSummarizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      noopEntityManager as never,
+    );
+
+    const result = await summarizer.runBatch('discord', 'test-src', Date.now() - 3600000, Date.now());
+    const escalationCalls = callsByStage.filter((stage) => stage === 'escalate').length;
+    const summarizeCalls = callsByStage.filter((stage) => stage === 'summarize').length;
+
+    assert.equal(escalationCalls, 3, `Expected exactly 3 Sonnet escalations, got ${escalationCalls}`);
+    assert.ok(
+      summarizeCalls > escalationCalls,
+      `Expected more summarize calls than escalations so the cap is exercised, got ${summarizeCalls} summarize calls`,
+    );
+    assert.ok(
+      result.summaryCount > escalationCalls,
+      `Expected summaries beyond the escalation cap, got ${result.summaryCount}`,
+    );
+    assert.ok(
+      callsByStage.length <= 50,
+      `Batch call budget should still cap total calls at 50, got ${callsByStage.length}`,
+    );
+  });
+
+  it('filters too-short Discord chunks before calling the LLM', async () => {
+    const items = [
+      {
+        id: 'short-discord-1',
+        content: 'back to stone age',
+        author: 'user7',
+        engagement: 0,
+        timestamp: Date.now(),
+      },
+    ];
+
+    let llmCallCount = 0;
+    const llm = {
+      call: async () => {
+        llmCallCount++;
+        return { content: validChunkJson() };
+      },
+      wrapWithNonce: (content: string) => ({
+        wrapped: `<nonce-test>${content}</nonce-test>`,
+        nonce: 'test',
+      }),
+    };
+
+    const pool = mockPool(items);
+    const summarizer = createSummarizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      noopEntityManager as never,
+    );
+
+    const result = await summarizer.runBatch('discord', 'test-src', Date.now() - 3600000, Date.now());
+
+    assert.equal(result.summaryCount, 0);
+    assert.equal(result.hasBreaking, false);
+    assert.equal(llmCallCount, 0, 'Short Discord chunks should be filtered before any LLM call');
+
+    const filteredCall = pool.calls.find(
+      (call) => call.text.includes("status = 'filtered'") && call.text.includes("filter_reason = 'short_content'"),
+    );
+    assert.ok(filteredCall, 'Expected short Discord chunk to be marked filtered');
+
+    const retryCountCall = pool.calls.find(
+      (call) => call.text.includes('retry_count = retry_count + 1') && call.text.includes('UPDATE items'),
+    );
+    assert.equal(retryCountCall, undefined, 'Short filtered chunks should not be treated as summarize failures');
+  });
+
+  it('still summarizes Discord chunks once combined short messages clear the minimum length', async () => {
+    const items = [
+      {
+        id: 'short-discord-2',
+        content: 'First short market note with enough detail',
+        author: 'user8',
+        engagement: 0,
+        timestamp: Date.now(),
+      },
+      {
+        id: 'short-discord-3',
+        content: 'Second short market note adds more context',
+        author: 'user8',
+        engagement: 0,
+        timestamp: Date.now() + 1,
+      },
+    ];
+
+    let llmCallCount = 0;
+    const llm = {
+      call: async () => {
+        llmCallCount++;
+        return { content: validChunkJson() };
+      },
+      wrapWithNonce: (content: string) => ({
+        wrapped: `<nonce-test>${content}</nonce-test>`,
+        nonce: 'test',
+      }),
+    };
+
+    const pool = mockPool(items);
+    const summarizer = createSummarizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      noopEntityManager as never,
+    );
+
+    const result = await summarizer.runBatch('discord', 'test-src', Date.now() - 3600000, Date.now());
+
+    assert.equal(result.summaryCount, 1);
+    assert.equal(
+      llmCallCount,
+      1,
+      'Combined short Discord messages should still reach summarize when they have enough context',
+    );
+
+    const filteredCall = pool.calls.find(
+      (call) => call.text.includes("status = 'filtered'") && call.text.includes("filter_reason = 'short_content'"),
+    );
+    assert.equal(
+      filteredCall,
+      undefined,
+      'Chunk should not be filtered once combined content clears the minimum length',
+    );
+  });
+
+  it('still summarizes short Discord chunks when they contain clear signal markers', async () => {
+    const items = [
+      {
+        id: 'short-discord-4',
+        content: 'SEC sues Binance',
+        author: 'user9',
+        engagement: 0,
+        timestamp: Date.now(),
+      },
+    ];
+
+    let llmCallCount = 0;
+    const llm = {
+      call: async () => {
+        llmCallCount++;
+        return { content: validChunkJson() };
+      },
+      wrapWithNonce: (content: string) => ({
+        wrapped: `<nonce-test>${content}</nonce-test>`,
+        nonce: 'test',
+      }),
+    };
+
+    const pool = mockPool(items);
+    const summarizer = createSummarizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      noopEntityManager as never,
+    );
+
+    const result = await summarizer.runBatch('discord', 'test-src', Date.now() - 3600000, Date.now());
+
+    assert.equal(result.summaryCount, 1);
+    assert.equal(llmCallCount, 1, 'Signal-bearing short Discord chunks should still reach the LLM');
+
+    const filteredCall = pool.calls.find(
+      (call) => call.text.includes("status = 'filtered'") && call.text.includes("filter_reason = 'short_content'"),
+    );
+    assert.equal(filteredCall, undefined, 'Signal-bearing short chunks should not be filtered');
   });
 });
 

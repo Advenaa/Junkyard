@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -23,11 +24,6 @@ import {
   updateDiscordTokenStatus,
   updateDiscordTokenLabel,
   updateDiscordTokenProxy,
-  getCalendarEvents,
-  insertCalendarEvent,
-  getCalendarEventById,
-  updateCalendarEvent,
-  deleteCalendarEvent,
   getEntityRelationshipGraph,
   getEntityRelationships,
   getCompetitors,
@@ -45,24 +41,16 @@ import {
   type ReportChainDrilldownRow,
   type SourceRow,
   type ItemRow,
-  type CalendarEventRow,
   getEntityDivergence,
   getTopDivergentEntities,
-  getLatestMacroSnapshots,
-  getUnusualActivityOverview,
-  getNarrativeWatchlist,
-  getNarrativeDrilldownById,
   getMacroRegimeHistoryByReport,
   getLatestPriceSnapshot,
-  getPriceWatchOverview,
   getPriceHistory,
   type PriceSnapshotRow,
   updateSourceTier,
   getAlphaPropagationSummary,
   getAlphaPropagationByEntity,
-  getRecentAlphaWatchlist,
   getTopAuthorsByEntity,
-  getRecentFirstMoverWatchlist,
   getAuthorById,
   getAuthorCalls,
   resolveAuthorCall,
@@ -77,9 +65,9 @@ import {
   normalizeProxyUrl,
   type DiscordRuntimeToken,
 } from './discord-tokens.js';
-import { getNextCalendarOccurrence, isCalendarRecurrenceRule } from './knowledge/calendar.js';
 import { normalizeAlias } from './knowledge/entities.js';
-import { buildMacroContext } from './macro/context.js';
+import { registerCalendarRoutes } from './server-calendar-routes.js';
+import { registerInsightRoutes } from './server-insight-routes.js';
 
 /** Convert object keys from snake_case to camelCase. Shallow — does not recurse into nested objects. */
 function toCamelCase<T>(obj: Record<string, unknown>): T {
@@ -106,6 +94,19 @@ function parseSummaryBody(body: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+const ACCESS_REQUEST_CSRF_COOKIE = 'podders_access_request_csrf';
+const ACCESS_REQUEST_CSRF_COOKIE_PATH = '/api/v1/access-requests';
+const ACCESS_REQUEST_CSRF_HEADER = 'x-csrf-token';
+const ACCESS_REQUEST_CSRF_TTL_MS = 10 * 60 * 1000;
+
+function timingSafeEqualString(left: string, right: string): boolean {
+  if (Buffer.byteLength(left) !== Buffer.byteLength(right)) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(Buffer.from(left), Buffer.from(right));
 }
 
 function extractStringArrayField(value: unknown, limit: number): string[] {
@@ -429,11 +430,6 @@ interface DiscordTokenHealthState {
   maskedProxy: string | null;
 }
 
-interface CalendarEntityLookupRow {
-  id: string;
-  name: string;
-}
-
 interface EntitySearchSuggestionRow {
   id: string;
   name: string;
@@ -492,26 +488,6 @@ async function getManagedDiscordTokenViews(pool: Pool, encKey: string): Promise<
       plainProxyUrl,
     };
   });
-}
-
-async function resolveCalendarEntity(
-  pool: Pool,
-  rawEntityName: string | null | undefined,
-): Promise<CalendarEntityLookupRow | null> {
-  const trimmed = rawEntityName?.trim();
-  if (!trimmed) return null;
-  const normalized = normalizeAlias(trimmed);
-  const { rows } = await pool.query<CalendarEntityLookupRow>(
-    `SELECT DISTINCT e.id, e.name
-       FROM entities e
-       LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
-      WHERE LOWER(e.name) = LOWER($1)
-         OR ea.alias = $2
-      ORDER BY e.name ASC
-      LIMIT 1`,
-    [trimmed, normalized],
-  );
-  return rows[0] ?? null;
 }
 
 async function recordUserAuditEvent(
@@ -1300,6 +1276,26 @@ export async function createServer(
     return { requests: rows.map((row) => toCamelCase(row as unknown as Record<string, unknown>)) };
   });
 
+  app.get(
+    '/api/v1/access-requests/csrf',
+    {
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (_request, reply) => {
+      const csrfToken = crypto.randomBytes(32).toString('hex');
+      reply.setCookie(ACCESS_REQUEST_CSRF_COOKIE, csrfToken, {
+        httpOnly: true,
+        signed: true,
+        secure: config.publicUrl?.startsWith('https') ?? false,
+        sameSite: 'strict',
+        path: ACCESS_REQUEST_CSRF_COOKIE_PATH,
+        maxAge: ACCESS_REQUEST_CSRF_TTL_MS / 1000,
+      });
+      reply.header('Cache-Control', 'no-store');
+      return { csrfToken };
+    },
+  );
+
   app.get('/api/v1/users/audit', { preHandler: [authPreHandler, requireAdmin] }, async () => {
     const { rows } = await pool.query<UserAuditRow>(`SELECT * FROM user_audit_log ORDER BY created_at DESC LIMIT 20`);
     return { events: rows.map((row) => toCamelCase(row as unknown as Record<string, unknown>)) };
@@ -1323,6 +1319,15 @@ export async function createServer(
       },
     },
     async (request, reply) => {
+      const csrfHeader = request.headers[ACCESS_REQUEST_CSRF_HEADER];
+      const csrfToken = Array.isArray(csrfHeader) ? csrfHeader[0] : csrfHeader;
+      const csrfCookie = request.unsignCookie((request.cookies?.[ACCESS_REQUEST_CSRF_COOKIE] as string) ?? '');
+      if (!csrfToken || !csrfCookie.valid || !csrfCookie.value || !timingSafeEqualString(csrfToken, csrfCookie.value)) {
+        reply.clearCookie(ACCESS_REQUEST_CSRF_COOKIE, { path: ACCESS_REQUEST_CSRF_COOKIE_PATH });
+        return reply.code(403).send({ error: 'Invalid CSRF token' });
+      }
+      reply.clearCookie(ACCESS_REQUEST_CSRF_COOKIE, { path: ACCESS_REQUEST_CSRF_COOKIE_PATH });
+
       const { discordId, requestedRole, note } = request.body as {
         discordId: string;
         requestedRole: 'viewer' | 'admin';
@@ -2042,117 +2047,19 @@ export async function createServer(
     };
   });
 
-  app.get('/api/v1/macro', { preHandler: [authPreHandler] }, async (_request, reply) => {
-    const snapshots = await getLatestMacroSnapshots(pool);
-    const macroContext = buildMacroContext(snapshots);
-
-    if (macroContext.entries.length === 0) {
-      return reply.code(404).send({ error: 'No macro data available yet' });
-    }
-
-    const latestDate = macroContext.entries.reduce(
-      (latest, entry) => (!latest || entry.date > latest ? entry.date : latest),
-      macroContext.entries[0]?.date ?? null,
-    );
-
-    return {
-      overallBias: macroContext.overallBias,
-      latestDate,
-      entries: macroContext.entries,
-    };
+  registerInsightRoutes({
+    app,
+    authPreHandler,
+    pool,
+    getNarrativeSummaryPreview,
   });
 
-  app.get('/api/v1/unusual-activity', { preHandler: [authPreHandler] }, async () => {
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    return getUnusualActivityOverview(pool, 8, timezone);
-  });
-
-  app.get('/api/v1/price-watch', { preHandler: [authPreHandler] }, async () => {
-    return getPriceWatchOverview(pool, 8);
-  });
-
-  app.get<{
-    Querystring: { limit?: number; days?: number };
-  }>(
-    '/api/v1/alpha-watch',
-    {
-      preHandler: [authPreHandler],
-      schema: {
-        querystring: {
-          type: 'object',
-          properties: {
-            limit: { type: 'integer', minimum: 1, maximum: 20 },
-            days: { type: 'integer', minimum: 1, maximum: 30 },
-          },
-          additionalProperties: false,
-        },
-      },
-    },
-    async (request) => {
-      const limit = request.query.limit ?? 8;
-      const days = request.query.days ?? 7;
-      const sinceTime = Date.now() - days * 24 * 60 * 60 * 1000;
-      return getRecentAlphaWatchlist(pool, sinceTime, limit);
-    },
-  );
-
-  app.get<{
-    Querystring: { limit?: number; days?: number };
-  }>(
-    '/api/v1/first-movers',
-    {
-      preHandler: [authPreHandler],
-      schema: {
-        querystring: {
-          type: 'object',
-          properties: {
-            limit: { type: 'integer', minimum: 1, maximum: 20 },
-            days: { type: 'integer', minimum: 1, maximum: 30 },
-          },
-          additionalProperties: false,
-        },
-      },
-    },
-    async (request) => {
-      const limit = request.query.limit ?? 8;
-      const days = request.query.days ?? 7;
-      const sinceTime = Date.now() - days * 24 * 60 * 60 * 1000;
-      return getRecentFirstMoverWatchlist(pool, sinceTime, limit);
-    },
-  );
-
-  app.get('/api/v1/narratives', { preHandler: [authPreHandler] }, async () => {
-    return getNarrativeWatchlist(pool, 8);
-  });
-
-  app.get('/api/v1/narratives/:id', { preHandler: [authPreHandler] }, async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const narrative = await getNarrativeDrilldownById(pool, id, 4);
-
-    if (!narrative) {
-      return reply.code(404).send({ error: 'Narrative not found' });
-    }
-
-    return {
-      narrative: {
-        id: narrative.id,
-        name: narrative.name,
-        date: narrative.date,
-        memberCount: narrative.memberCount,
-        avgSentiment: narrative.avgSentiment,
-        signalStrength: narrative.signalStrength,
-        summaries: narrative.summaries.map((summary) => ({
-          id: summary.id,
-          source: summary.source,
-          sourceId: summary.sourceId,
-          sentiment: summary.sentiment,
-          urgency: summary.urgency,
-          itemCount: summary.itemCount,
-          createdAt: summary.createdAt,
-          text: getNarrativeSummaryPreview(summary.body),
-        })),
-      },
-    };
+  registerCalendarRoutes({
+    app,
+    authPreHandler,
+    requireAdmin,
+    pool,
+    toCamelCase,
   });
 
   app.get<{ Querystring: { q: string; limit?: number } }>(
@@ -2659,188 +2566,6 @@ export async function createServer(
       }
 
       return reply.code(204).send();
-    },
-  );
-
-  // --- Calendar events (Cycle detection foundation) ---
-  app.get('/api/v1/calendar-events', { preHandler: [authPreHandler] }, async () => {
-    const events = await getCalendarEvents(pool, Date.now(), 25);
-    return { events: events.map((row) => toCamelCase<CalendarEventRow>(row as unknown as Record<string, unknown>)) };
-  });
-
-  app.post(
-    '/api/v1/calendar-events',
-    {
-      preHandler: [authPreHandler, requireAdmin],
-      schema: {
-        body: {
-          type: 'object',
-          required: ['name', 'category', 'scheduledFor'],
-          properties: {
-            name: { type: 'string', minLength: 1, maxLength: 120 },
-            category: {
-              type: 'string',
-              enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'],
-            },
-            entityName: {
-              anyOf: [{ type: 'string', minLength: 1, maxLength: 120 }, { type: 'null' }],
-            },
-            description: {
-              anyOf: [{ type: 'string', maxLength: 500 }, { type: 'null' }],
-            },
-            scheduledFor: { type: 'integer', minimum: 0 },
-            recurrenceRule: {
-              anyOf: [{ type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly'] }, { type: 'null' }],
-            },
-          },
-          additionalProperties: false,
-        },
-      },
-    },
-    async (request, reply) => {
-      const { name, category, entityName, description, scheduledFor, recurrenceRule } = request.body as {
-        name: string;
-        category: CalendarEventRow['category'];
-        entityName?: string | null;
-        description?: string;
-        scheduledFor: number;
-        recurrenceRule?: CalendarEventRow['recurrence_rule'];
-      };
-      const trimmedName = name.trim();
-      const trimmedDescription = description?.trim() ? description.trim() : null;
-      if (!trimmedName) {
-        return reply.code(400).send({ error: 'Event name is required' });
-      }
-      if (recurrenceRule != null && !isCalendarRecurrenceRule(recurrenceRule)) {
-        return reply.code(400).send({ error: 'Invalid recurrence rule' });
-      }
-      if (scheduledFor < Date.now() - 60_000 && recurrenceRule == null) {
-        return reply.code(400).send({ error: 'Calendar events must be scheduled in the future' });
-      }
-      const entity = await resolveCalendarEntity(pool, entityName);
-      if (entityName?.trim() && !entity) {
-        return reply.code(400).send({ error: 'Linked entity not found' });
-      }
-
-      const { ulid } = await import('ulid');
-      const row = await insertCalendarEvent(pool, {
-        id: ulid(),
-        name: trimmedName,
-        category,
-        description: trimmedDescription,
-        recurrenceRule: recurrenceRule ?? null,
-        entityId: entity?.id ?? null,
-        nextOccurrence: getNextCalendarOccurrence(scheduledFor, recurrenceRule ?? null),
-        createdAt: Date.now(),
-      });
-      reply.code(201);
-      return { event: toCamelCase<CalendarEventRow>(row as unknown as Record<string, unknown>) };
-    },
-  );
-
-  app.patch<{ Params: { eventId: string } }>(
-    '/api/v1/calendar-events/:eventId',
-    {
-      preHandler: [authPreHandler, requireAdmin],
-      schema: {
-        params: {
-          type: 'object',
-          required: ['eventId'],
-          properties: {
-            eventId: { type: 'string', minLength: 1 },
-          },
-        },
-        body: {
-          type: 'object',
-          required: ['name', 'category', 'scheduledFor'],
-          properties: {
-            name: { type: 'string', minLength: 1, maxLength: 120 },
-            category: {
-              type: 'string',
-              enum: ['macro', 'unlock', 'expiry', 'governance', 'launch', 'legal', 'custom'],
-            },
-            entityName: {
-              anyOf: [{ type: 'string', minLength: 1, maxLength: 120 }, { type: 'null' }],
-            },
-            description: {
-              anyOf: [{ type: 'string', maxLength: 500 }, { type: 'null' }],
-            },
-            scheduledFor: { type: 'integer', minimum: 0 },
-            recurrenceRule: {
-              anyOf: [{ type: 'string', enum: ['daily', 'weekly', 'monthly', 'quarterly'] }, { type: 'null' }],
-            },
-          },
-          additionalProperties: false,
-        },
-      },
-    },
-    async (request, reply) => {
-      const existing = await getCalendarEventById(pool, request.params.eventId);
-      if (!existing) {
-        return reply.code(404).send({ error: 'Calendar event not found' });
-      }
-
-      const { name, category, entityName, description, scheduledFor, recurrenceRule } = request.body as {
-        name: string;
-        category: CalendarEventRow['category'];
-        entityName?: string | null;
-        description?: string | null;
-        scheduledFor: number;
-        recurrenceRule?: CalendarEventRow['recurrence_rule'];
-      };
-
-      const trimmedName = name.trim();
-      const trimmedDescription = description?.trim() ? description.trim() : null;
-      if (!trimmedName) {
-        return reply.code(400).send({ error: 'Event name is required' });
-      }
-      if (recurrenceRule != null && !isCalendarRecurrenceRule(recurrenceRule)) {
-        return reply.code(400).send({ error: 'Invalid recurrence rule' });
-      }
-      if (scheduledFor < Date.now() - 60_000 && recurrenceRule == null) {
-        return reply.code(400).send({ error: 'Calendar events must be scheduled in the future' });
-      }
-      const entity = await resolveCalendarEntity(pool, entityName);
-      if (entityName?.trim() && !entity) {
-        return reply.code(400).send({ error: 'Linked entity not found' });
-      }
-
-      const row = await updateCalendarEvent(pool, {
-        id: existing.id,
-        name: trimmedName,
-        category,
-        description: trimmedDescription,
-        recurrenceRule: recurrenceRule ?? null,
-        entityId: entity?.id ?? null,
-        nextOccurrence: getNextCalendarOccurrence(scheduledFor, recurrenceRule ?? null),
-      });
-      if (!row) {
-        return reply.code(404).send({ error: 'Calendar event not found' });
-      }
-      return { event: toCamelCase<CalendarEventRow>(row as unknown as Record<string, unknown>) };
-    },
-  );
-
-  app.delete<{ Params: { eventId: string } }>(
-    '/api/v1/calendar-events/:eventId',
-    {
-      preHandler: [authPreHandler, requireAdmin],
-      schema: {
-        params: {
-          type: 'object',
-          required: ['eventId'],
-          properties: {
-            eventId: { type: 'string', minLength: 1 },
-          },
-        },
-      },
-    },
-    async (request, reply) => {
-      const deleted = await deleteCalendarEvent(pool, request.params.eventId);
-      if (!deleted) {
-        return reply.code(404).send({ error: 'Calendar event not found' });
-      }
-      reply.code(204).send();
     },
   );
 

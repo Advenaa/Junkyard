@@ -1,6 +1,7 @@
-import { describe, it, beforeEach, afterEach, type TestContext } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import dns from 'node:dns';
 import RssParser from 'rss-parser';
 import type { Logger } from '../../src/logger.js';
 
@@ -84,10 +85,19 @@ describe('syntheticGuid (via pollFeed metadata)', () => {
 describe('pollFeed', () => {
   let originalParseString: typeof RssParser.prototype.parseString;
   let originalFetch: typeof globalThis.fetch;
+  let restoreDnsMocks = () => {};
 
   beforeEach(() => {
     originalParseString = RssParser.prototype.parseString;
     originalFetch = globalThis.fetch;
+    const resolve4Mock = mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    restoreDnsMocks = () => {
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
+    };
     // Mock fetch for fetchValidated — return valid RSS XML response
     globalThis.fetch = (async () => ({
       ok: true,
@@ -100,6 +110,8 @@ describe('pollFeed', () => {
   afterEach(() => {
     RssParser.prototype.parseString = originalParseString;
     globalThis.fetch = originalFetch;
+    restoreDnsMocks();
+    restoreDnsMocks = () => {};
   });
 
   // Lazy import so the mock is in place when the module runs

@@ -3,7 +3,8 @@
  *
  * Verifies:
  * - queries.ts exports the alpha watch overview helper
- * - server.ts exposes GET /api/v1/alpha-watch
+ * - server.ts wires the extracted insight routes module
+ * - the insight route module exposes GET /api/v1/alpha-watch
  * - ReportView fetches /alpha-watch and renders an Alpha Watch card
  */
 import { describe, it } from 'node:test';
@@ -32,15 +33,20 @@ describe('Alpha watch queries (src/db/queries.ts)', () => {
   });
 });
 
-describe('Alpha watch API route (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+describe('Alpha watch API route (insight route module)', () => {
+  const serverSrc = readSrc('src/server.ts');
+  const routesSrc = readSrc('src/server-insight-routes.ts');
+
+  it('server wires registerInsightRoutes', () => {
+    assert.ok(serverSrc.includes('registerInsightRoutes'));
+  });
 
   it('defines GET /api/v1/alpha-watch', () => {
-    assert.match(src, /['"]\/api\/v1\/alpha-watch['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/alpha-watch['"]/);
   });
 
   it('uses getRecentAlphaWatchlist from queries', () => {
-    assert.ok(src.includes('getRecentAlphaWatchlist'));
+    assert.ok(routesSrc.includes('getRecentAlphaWatchlist'));
   });
 });
 

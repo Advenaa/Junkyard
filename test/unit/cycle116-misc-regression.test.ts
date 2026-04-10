@@ -111,9 +111,12 @@ describe('LM-032: handler.ts wraps translated query with nonce', () => {
 
   it('calls llm.wrapWithNonce after the translation block', () => {
     const translateIdx = src.indexOf("detectedLang === 'ind'");
-    const nonceIdx = src.indexOf('llm.wrapWithNonce(');
+    const nonceIdx = src.indexOf('llm.wrapWithNonce(translated)');
     assert.ok(translateIdx > -1, 'handler.ts must contain Indonesian detection block');
-    assert.ok(nonceIdx > -1, 'handler.ts must call llm.wrapWithNonce()');
-    assert.ok(nonceIdx > translateIdx, 'llm.wrapWithNonce() must appear after the Indonesian translation block');
+    assert.ok(nonceIdx > -1, 'handler.ts must call llm.wrapWithNonce(translated) for translated queries');
+    assert.ok(
+      nonceIdx > translateIdx,
+      'llm.wrapWithNonce(translated) must appear after the Indonesian translation block',
+    );
   });
 });

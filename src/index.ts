@@ -5,7 +5,7 @@ import { createPool } from './db/connection.js';
 import { runMigrations } from './db/migrations.js';
 import { createServer, startServer } from './server.js';
 import { createChatHandler } from './chat/handler.js';
-import { createLLM } from './llm.js';
+import { createLLM, validateConfiguredModels } from './llm.js';
 import { createEmbedder } from './embed.js';
 import { createVectorCache } from './vector-cache.js';
 import { createNormalizer } from './normalize/index.js';
@@ -225,6 +225,14 @@ program
   .action(async () => {
     const config = loadConfig();
     const log = createLogger(config.secrets);
+
+    try {
+      validateConfiguredModels(config);
+    } catch (err: unknown) {
+      log.fatal({ err }, 'Configured LLM model validation failed during startup');
+      process.exit(1);
+    }
+
     const pool = createPool(config.databaseUrl);
 
     try {

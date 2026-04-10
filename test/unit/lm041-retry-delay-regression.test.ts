@@ -90,8 +90,9 @@ describe('LM-041 — 429 delay formula is structurally correct (no sub-minimum j
     const block429Idx = llmSrc.indexOf('status === 429');
     assert.ok(block429Idx > -1, 'should find 429 handling block');
 
-    // Scope to the 429 block (next status check or ~30 lines)
-    const block = llmSrc.slice(block429Idx, block429Idx + 500);
+    // Scope to a generous slice of the 429 block so unrelated refactors
+    // do not break the assertion before it reaches the delay formula.
+    const block = llmSrc.slice(block429Idx, block429Idx + 1200);
 
     // The delay formula must be: retryAfter * 1000 + Math.random() * ...
     // This ensures the base is retryAfter * 1000 and jitter is added on top.

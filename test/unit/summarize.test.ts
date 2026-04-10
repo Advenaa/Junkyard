@@ -2,11 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSystemPrompt,
+  shouldFilterShortDiscordChunk,
   stripCodeFences,
   verifyEntities,
   verifyEvents,
   verifyRelationships,
 } from '../../src/process/summarize.js';
+import type { Logger } from '../../src/logger.js';
 import { ChunkSummaryLLMSchema } from '../../src/process/schemas.js';
 import type { ChunkSummary } from '../../src/process/schemas.js';
 
@@ -19,7 +21,7 @@ const noopLog = {
   debug: () => {},
   fatal: () => {},
   child: () => noopLog,
-} as any;
+} as unknown as Logger;
 
 // ── Helper to build a valid ChunkSummary with entity overrides ───────
 
@@ -69,6 +71,25 @@ describe('stripCodeFences', () => {
   it('handles content with internal newlines', () => {
     const input = '```json\n{\n  "key": "value"\n}\n```';
     assert.equal(stripCodeFences(input), '{\n  "key": "value"\n}');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// short Discord chunk filtering
+// ═════════════════════════════════════════════════════════════════════
+
+describe('shouldFilterShortDiscordChunk', () => {
+  it('filters short low-information Discord chatter', () => {
+    assert.equal(shouldFilterShortDiscordChunk('discord', [{ content: 'back to stone age' }]), true);
+  });
+
+  it('keeps short Discord messages that carry signal markers', () => {
+    assert.equal(shouldFilterShortDiscordChunk('discord', [{ content: 'SEC sues Binance' }]), false);
+    assert.equal(shouldFilterShortDiscordChunk('discord', [{ content: '$BTC exploit' }]), false);
+  });
+
+  it('does not apply the short-content guard to non-Discord sources', () => {
+    assert.equal(shouldFilterShortDiscordChunk('twitter', [{ content: 'back to stone age' }]), false);
   });
 });
 

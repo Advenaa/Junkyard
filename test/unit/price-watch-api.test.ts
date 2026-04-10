@@ -3,7 +3,8 @@
  *
  * Verifies:
  * - queries.ts exports the price watch overview helper
- * - server.ts exposes GET /api/v1/price-watch
+ * - server.ts wires the extracted insight routes module
+ * - the insight route module exposes GET /api/v1/price-watch
  * - ReportView fetches /price-watch and renders a Price Watch card
  */
 import { describe, it } from 'node:test';
@@ -33,15 +34,20 @@ describe('Price watch queries (src/db/queries.ts)', () => {
   });
 });
 
-describe('Price watch API route (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+describe('Price watch API route (insight route module)', () => {
+  const serverSrc = readSrc('src/server.ts');
+  const routesSrc = readSrc('src/server-insight-routes.ts');
+
+  it('server wires registerInsightRoutes', () => {
+    assert.ok(serverSrc.includes('registerInsightRoutes'));
+  });
 
   it('defines GET /api/v1/price-watch', () => {
-    assert.match(src, /['"]\/api\/v1\/price-watch['"]/);
+    assert.match(routesSrc, /['"]\/api\/v1\/price-watch['"]/);
   });
 
   it('uses getPriceWatchOverview from queries', () => {
-    assert.ok(src.includes('getPriceWatchOverview'));
+    assert.ok(routesSrc.includes('getPriceWatchOverview'));
   });
 });
 

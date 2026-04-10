@@ -119,7 +119,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 | `ADMIN_USER_IDS` | No | Comma-separated Discord user IDs with admin access. If unset, no bootstrap admins (API key auth still works) |
 | `SESSION_SECRET` | No | Auto-generated on first run if missing. Ephemeral — set explicitly in .env for persistence across restarts |
 | `MODEL_HAIKU` | No | Override Haiku model ID (default: `Codex-haiku-4-5-20251001`) |
-| `MODEL_SONNET` | No | Override Sonnet model ID (default: `Codex-sonnet-4-6-20250514`) |
+| `MODEL_SONNET` | No | Override Sonnet model ID (default: `claude-sonnet-4-6`) |
 | `PORT` | No | Default 3000 |
 | `DATA_DIR` | No | Backups location, default ./data |
 | `PUBLIC_URL` | No | For "View full report" links in webhooks |

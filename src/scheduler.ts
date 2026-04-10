@@ -81,20 +81,33 @@ export function createScheduler(deps: SchedulerDeps) {
   async function refreshDailyCron(): Promise<void> {
     if (shuttingDown) return;
     const { expression, timezone } = await buildDailyCron();
-    // Only stop old task after new config is successfully built
-    if (dailyTask) {
-      dailyTask.stop();
-      const idx = tasks.indexOf(dailyTask);
+    const previousDailyTask = dailyTask;
+
+    let nextDailyTask: cron.ScheduledTask;
+    try {
+      nextDailyTask = cron.schedule(
+        expression,
+        () => {
+          void withMutex('daily-synthesis', deps.onDaily);
+        },
+        { timezone },
+      );
+    } catch (err) {
+      log.error({ err, cron: expression, timezone }, 'failed to rebuild daily cron');
+      if (previousDailyTask) {
+        return;
+      }
+      throw err;
+    }
+
+    // Only stop the old task once the replacement has been created successfully.
+    if (previousDailyTask) {
+      previousDailyTask.stop();
+      const idx = tasks.indexOf(previousDailyTask);
       if (idx !== -1) tasks.splice(idx, 1);
     }
-    dailyTask = cron.schedule(
-      expression,
-      () => {
-        void withMutex('daily-synthesis', deps.onDaily);
-      },
-      { timezone },
-    );
-    tasks.push(dailyTask);
+    dailyTask = nextDailyTask;
+    tasks.push(nextDailyTask);
     log.info({ job: 'daily-synthesis', cron: expression, timezone }, 'daily cron rebuilt');
   }
 
