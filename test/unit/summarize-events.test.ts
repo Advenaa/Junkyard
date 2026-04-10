@@ -192,7 +192,7 @@ describe('summarize: structured event persistence', () => {
     assert.equal(eventInsert!.values[9], 'evt-root');
   });
 
-  it('drops structured events that do not match a verified entity', async () => {
+  it('rejects structured events that do not match a declared entity', async () => {
     const pool = makePool([makeItem('Bitcoin is grinding higher on ETF chatter.')], [], []);
     const llm = makeLlmResponse({
       summary: 'Bitcoin moved higher on ETF chatter.',
@@ -212,7 +212,8 @@ describe('summarize: structured event persistence', () => {
     );
 
     const result = await summarizer.runBatch('discord', 'alerts', Date.now() - 3600000, Date.now());
-    assert.equal(result.summaryCount, 1);
+    assert.equal(result.summaryCount, 0);
+    assert.ok(!pool.calls.some((call) => call.text.includes('INSERT INTO summaries')));
     assert.ok(!pool.calls.some((call) => call.text.includes('INSERT INTO events')));
   });
 });

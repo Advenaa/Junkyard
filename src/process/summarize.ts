@@ -197,6 +197,21 @@ export function stripCodeFences(text: string): string {
   return s;
 }
 
+export function normalizeChunkSummaryCandidate(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return raw;
+  }
+
+  const candidate = raw as Record<string, unknown>;
+  return {
+    ...candidate,
+    entities: candidate.entities ?? [],
+    events: candidate.events ?? [],
+    relationships: candidate.relationships ?? [],
+    authorClaims: candidate.authorClaims ?? [],
+  };
+}
+
 function buildUserContent(chunk: ClaimedItem[]): string {
   return chunk.map((item) => `[${item.author}] (engagement: ${item.engagement}) ${item.content}`).join('\n');
 }
@@ -515,7 +530,7 @@ export function createSummarizer(
       return null;
     }
 
-    const result = ChunkSummaryLLMSchema.safeParse(raw);
+    const result = ChunkSummaryLLMSchema.safeParse(normalizeChunkSummaryCandidate(raw));
     if (result.success) {
       return result.data;
     }
@@ -539,7 +554,7 @@ export function createSummarizer(
 
     try {
       const retryRaw: unknown = JSON.parse(retryJson);
-      const retryParsed = ChunkSummaryLLMSchema.safeParse(retryRaw);
+      const retryParsed = ChunkSummaryLLMSchema.safeParse(normalizeChunkSummaryCandidate(retryRaw));
       if (retryParsed.success) {
         return retryParsed.data;
       }

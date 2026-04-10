@@ -22,6 +22,8 @@ describe('ChunkSummaryLLMSchema', () => {
     ],
     keyEvents: ['Price surged past $100k'],
     events: [{ entityName: 'Bitcoin', eventType: 'launch' as const, description: 'Bitcoin product launch discussed.' }],
+    relationships: [],
+    authorClaims: [],
   };
 
   it('accepts valid input', () => {
@@ -56,6 +58,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const input = {
       ...validChunk,
       entities: [{ name: 'X', sentiment: -1 }],
+      events: [],
     };
     const result = ChunkSummaryLLMSchema.parse(input);
     assert.equal(result.entities[0].sentiment, -1);
@@ -65,6 +68,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const input = {
       ...validChunk,
       entities: [{ name: 'X', sentiment: 1 }],
+      events: [],
     };
     const result = ChunkSummaryLLMSchema.parse(input);
     assert.equal(result.entities[0].sentiment, 1);
@@ -75,6 +79,7 @@ describe('ChunkSummaryLLMSchema', () => {
       ChunkSummaryLLMSchema.parse({
         ...validChunk,
         entities: [{ name: 'X', sentiment: -1.001 }],
+        events: [],
       }),
     );
   });
@@ -84,6 +89,7 @@ describe('ChunkSummaryLLMSchema', () => {
       ChunkSummaryLLMSchema.parse({
         ...validChunk,
         entities: [{ name: 'X', sentiment: 1.001 }],
+        events: [],
       }),
     );
   });
@@ -123,6 +129,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const result = ChunkSummaryLLMSchema.parse({
       ...validChunk,
       entities,
+      events: [],
     });
     assert.equal(result.entities.length, 20);
   });
@@ -131,7 +138,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const entities = Array.from({ length: 21 }, (_, i) => ({
       name: `Entity${i}`,
     }));
-    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, entities }));
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, entities, events: [] }));
   });
 
   /* -- keyEvents max (5 for chunk) -- */
@@ -151,6 +158,9 @@ describe('ChunkSummaryLLMSchema', () => {
   });
 
   it('5 events pass', () => {
+    const entities = Array.from({ length: 5 }, (_, i) => ({
+      name: `Entity${i}`,
+    }));
     const events = Array.from({ length: 5 }, (_, i) => ({
       entityName: `Entity${i}`,
       eventType: 'launch' as const,
@@ -158,26 +168,29 @@ describe('ChunkSummaryLLMSchema', () => {
     }));
     const result = ChunkSummaryLLMSchema.parse({
       ...validChunk,
+      entities,
       events,
     });
     assert.equal(result.events.length, 5);
   });
 
   it('6 events fail', () => {
+    const entities = Array.from({ length: 6 }, (_, i) => ({
+      name: `Entity${i}`,
+    }));
     const events = Array.from({ length: 6 }, (_, i) => ({
       entityName: `Entity${i}`,
       eventType: 'launch' as const,
       description: `Launch event ${i}`,
     }));
-    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, events }));
+    assert.throws(() => ChunkSummaryLLMSchema.parse({ ...validChunk, entities, events }));
   });
 
   /* -- Default values -- */
 
-  it('defaults entities to [] when omitted', () => {
+  it('fails when entities are omitted', () => {
     const { entities, ...rest } = validChunk;
-    const result = ChunkSummaryLLMSchema.parse(rest);
-    assert.deepStrictEqual(result.entities, []);
+    assert.throws(() => ChunkSummaryLLMSchema.parse(rest));
   });
 
   it('defaults keyEvents to [] when omitted', () => {
@@ -186,16 +199,26 @@ describe('ChunkSummaryLLMSchema', () => {
     assert.deepStrictEqual(result.keyEvents, []);
   });
 
-  it('defaults events to [] when omitted', () => {
+  it('fails when events are omitted', () => {
     const { events, ...rest } = validChunk;
-    const result = ChunkSummaryLLMSchema.parse(rest);
-    assert.deepStrictEqual(result.events, []);
+    assert.throws(() => ChunkSummaryLLMSchema.parse(rest));
+  });
+
+  it('fails when relationships are omitted', () => {
+    const { relationships, ...rest } = validChunk;
+    assert.throws(() => ChunkSummaryLLMSchema.parse(rest));
+  });
+
+  it('fails when authorClaims are omitted', () => {
+    const { authorClaims, ...rest } = validChunk;
+    assert.throws(() => ChunkSummaryLLMSchema.parse(rest));
   });
 
   it('defaults entity type to "project" when omitted', () => {
     const input = {
       ...validChunk,
       entities: [{ name: 'SomeProject', sentiment: 0.2 }],
+      events: [],
     };
     const result = ChunkSummaryLLMSchema.parse(input);
     assert.equal(result.entities[0].type, 'project');
@@ -205,6 +228,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const input = {
       ...validChunk,
       entities: [{ name: 'X' }],
+      events: [],
     };
     const result = ChunkSummaryLLMSchema.parse(input);
     assert.deepStrictEqual(result.entities[0].aliases, []);
@@ -214,6 +238,7 @@ describe('ChunkSummaryLLMSchema', () => {
     const input = {
       ...validChunk,
       entities: [{ name: 'X' }],
+      events: [],
     };
     const result = ChunkSummaryLLMSchema.parse(input);
     assert.equal(result.entities[0].mentionCount, 1);
@@ -223,9 +248,59 @@ describe('ChunkSummaryLLMSchema', () => {
     const input = {
       ...validChunk,
       entities: [{ name: 'X' }],
+      events: [],
     };
     const result = ChunkSummaryLLMSchema.parse(input);
     assert.equal(result.entities[0].sentiment, 0);
+  });
+
+  it('fails when an event entity is not declared in entities', () => {
+    assert.throws(() =>
+      ChunkSummaryLLMSchema.parse({
+        ...validChunk,
+        events: [{ entityName: 'Ethereum', eventType: 'launch', description: 'Ethereum launch event discussed.' }],
+      }),
+    );
+  });
+
+  it('accepts events that reference a declared entity alias', () => {
+    const result = ChunkSummaryLLMSchema.parse({
+      ...validChunk,
+      entities: [{ name: 'Ethereum', aliases: ['ETH'] }],
+      events: [{ entityName: 'ETH', eventType: 'launch', description: 'Ethereum launch event discussed.' }],
+    });
+    assert.equal(result.events[0].entityName, 'ETH');
+  });
+
+  it('fails when an author claim entity is not declared in entities', () => {
+    assert.throws(() =>
+      ChunkSummaryLLMSchema.parse({
+        ...validChunk,
+        authorClaims: [
+          {
+            authorHandle: 'traderx',
+            entityName: 'Solana',
+            claimType: 'bullish',
+            claimText: 'traderx said Solana looked strong.',
+          },
+        ],
+      }),
+    );
+  });
+
+  it('fails when a relationship references the same entity twice', () => {
+    assert.throws(() =>
+      ChunkSummaryLLMSchema.parse({
+        ...validChunk,
+        relationships: [
+          {
+            entityNameA: 'Bitcoin',
+            entityNameB: 'Bitcoin',
+            relationshipType: 'competes_with',
+          },
+        ],
+      }),
+    );
   });
 });
 
