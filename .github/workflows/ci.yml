@@ -48,7 +48,6 @@ jobs:
 
       - name: Lint
         run: npm run lint
-        continue-on-error: true # Non-blocking until codebase passes lint clean
 
       - name: Format check
         run: npm run format:check

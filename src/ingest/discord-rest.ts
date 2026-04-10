@@ -254,7 +254,7 @@ export async function pollDiscordChannel(
     let usedTokenConfig: DiscordRuntimeToken | null = null;
 
     // Test with initial fetch
-    let currentAfter = lastId;
+    const currentAfter = lastId;
     let path = `/channels/${channelId}/messages?limit=${PAGE_SIZE}`;
     if (currentAfter) {
       path += `&after=${currentAfter}`;

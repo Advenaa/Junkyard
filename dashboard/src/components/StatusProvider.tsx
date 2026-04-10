@@ -41,6 +41,7 @@ export function StatusProvider({ children }: { children: ReactNode }) {
     if (authLoading || !user) return;
 
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on user change so stale status from previous user isn't shown
     setReady(false);
     apiFetch<StatusSnapshot>('/status')
       .then((snapshot) => {
