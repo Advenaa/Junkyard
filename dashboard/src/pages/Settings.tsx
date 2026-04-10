@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
-import { apiFetch } from '../lib/api';
+import { apiFetch, isFeatureDisabledError } from '../lib/api';
 import { useAuth } from '../components/AuthProvider';
+import { useStatus } from '../components/StatusProvider';
+import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
@@ -2794,6 +2796,11 @@ function ApiAccessSection({ apiKey }: { apiKey: string | null }) {
 function PipelineTab() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const { ready: statusReady, isFeatureDisabled, getDisabledFeature, registerDisabledFeature } = useStatus();
+  const macroDisabled = isFeatureDisabled('macro');
+  const embeddingsDisabled = isFeatureDisabled('embeddings');
+  const disabledMacro = getDisabledFeature('macro');
+  const disabledEmbeddings = getDisabledFeature('embeddings');
   const [status, setStatus] = useState<PipelineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2845,6 +2852,13 @@ function PipelineTab() {
   }, []);
 
   useEffect(() => {
+    if (!statusReady) return;
+    if (macroDisabled) {
+      setMacroOverview(null);
+      setMacroError(null);
+      setMacroLoading(false);
+      return;
+    }
     let cancelled = false;
     fetchMacroOverviewData()
       .then((overview) => {
@@ -2852,8 +2866,15 @@ function PipelineTab() {
         setMacroOverview(overview);
         setMacroError(null);
       })
-      .catch(() => {
-        if (!cancelled) setMacroError('Failed to load macro backdrop.');
+      .catch((err) => {
+        if (cancelled) return;
+        if (isFeatureDisabledError(err)) {
+          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          setMacroOverview(null);
+          setMacroError(null);
+        } else {
+          setMacroError('Failed to load macro backdrop.');
+        }
       })
       .finally(() => {
         if (!cancelled) setMacroLoading(false);
@@ -2862,7 +2883,7 @@ function PipelineTab() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusReady, macroDisabled, registerDisabledFeature]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2885,6 +2906,13 @@ function PipelineTab() {
   }, []);
 
   useEffect(() => {
+    if (!statusReady) return;
+    if (embeddingsDisabled) {
+      setNarrativeWatchlist(null);
+      setNarrativeError(null);
+      setNarrativeLoading(false);
+      return;
+    }
     let cancelled = false;
     fetchNarrativeWatchlistData()
       .then((overview) => {
@@ -2892,8 +2920,15 @@ function PipelineTab() {
         setNarrativeWatchlist(overview);
         setNarrativeError(null);
       })
-      .catch(() => {
-        if (!cancelled) setNarrativeError('Failed to load narrative watchlist.');
+      .catch((err) => {
+        if (cancelled) return;
+        if (isFeatureDisabledError(err)) {
+          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          setNarrativeWatchlist(null);
+          setNarrativeError(null);
+        } else {
+          setNarrativeError('Failed to load narrative watchlist.');
+        }
       })
       .finally(() => {
         if (!cancelled) setNarrativeLoading(false);
@@ -2902,7 +2937,7 @@ function PipelineTab() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusReady, embeddingsDisabled, registerDisabledFeature]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2937,11 +2972,13 @@ function PipelineTab() {
         ...current,
         [narrativeId]: narrative,
       }));
-    } catch {
-      setNarrativeDetailErrors((current) => ({
-        ...current,
-        [narrativeId]: 'Failed to load clustered summaries.',
-      }));
+    } catch (err) {
+      if (!isFeatureDisabledError(err)) {
+        setNarrativeDetailErrors((current) => ({
+          ...current,
+          [narrativeId]: 'Failed to load clustered summaries.',
+        }));
+      }
     } finally {
       setNarrativeDetailLoadingId((current) => (current === narrativeId ? null : current));
     }
@@ -3153,81 +3190,89 @@ function PipelineTab() {
         </p>
       </div>
 
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
-          <div>
-            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Macro Backdrop</h3>
-            <p className="text-text-secondary/70 text-sm font-body mt-1">
-              Latest FRED snapshots feed cross-market correlation context into daily and pulse synthesis.
-            </p>
-          </div>
-          {macroOverview && macroOverview.entries.length > 0 && (
-            <span
-              aria-label={`Overall macro bias ${macroOverview.overallBias}`}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${macroToneClasses(macroOverview.overallBias)}`}
-            >
-              {macroOverview.overallBias}
-            </span>
-          )}
-        </div>
-
-        {macroLoading ? (
-          <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
-        ) : macroError ? (
-          <p className="px-4 py-6 text-red-400 text-sm font-body">{macroError}</p>
-        ) : !macroOverview || macroOverview.entries.length === 0 ? (
-          <EmptyState
-            title="No macro snapshots yet"
-            description="Macro indicators appear here after the daily FRED refresh runs with FRED_API_KEY configured."
-          />
-        ) : (
-          <div className="p-4 space-y-4">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-text-primary text-sm font-body">Latest snapshot date</p>
-                <p className="text-text-secondary text-xs font-mono mt-1">{macroOverview.latestDate ?? 'Unknown'}</p>
-              </div>
-              <p className="max-w-xl text-text-secondary/70 text-sm font-body">
-                Rising VIX, dollar strength, and higher yields usually lean risk-off, while a firmer S&amp;P 500 leans
-                risk-on. Podders uses this backdrop to frame when crypto sentiment is aligned or stretched.
+      {macroDisabled && disabledMacro ? (
+        <FeatureDisabledCard
+          feature={disabledMacro}
+          title="Macro Backdrop"
+          description="Macro snapshots are currently disabled — cross-market correlation and regime detection are not available."
+        />
+      ) : (
+        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
+            <div>
+              <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Macro Backdrop</h3>
+              <p className="text-text-secondary/70 text-sm font-body mt-1">
+                Latest FRED snapshots feed cross-market correlation context into daily and pulse synthesis.
               </p>
             </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {macroOverview.entries.map((entry) => (
-                <div key={entry.indicator} className="rounded-lg border border-border bg-background p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h4 className="text-text-primary text-sm font-body">{entry.label}</h4>
-                      <p className="text-text-secondary/70 text-xs font-body mt-1">{entry.narrative}</p>
-                    </div>
-                    <span
-                      aria-label={`${entry.label} macro signal ${entry.signal}`}
-                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${macroToneClasses(entry.signal)}`}
-                    >
-                      {entry.signal}
-                    </span>
-                  </div>
-
-                  <p className="text-text-primary text-xl font-mono">{formatMacroValue(entry)}</p>
-
-                  <div className="flex flex-wrap gap-2 text-xs font-mono">
-                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                      1d change {formatMacroChange(entry.change1d, entry.indicator)}
-                    </span>
-                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                      7d change {formatMacroChange(entry.change7d, entry.indicator)}
-                    </span>
-                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                      snapshot {entry.date}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {macroOverview && macroOverview.entries.length > 0 && (
+              <span
+                aria-label={`Overall macro bias ${macroOverview.overallBias}`}
+                className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${macroToneClasses(macroOverview.overallBias)}`}
+              >
+                {macroOverview.overallBias}
+              </span>
+            )}
           </div>
-        )}
-      </div>
+
+          {macroLoading ? (
+            <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
+          ) : macroError ? (
+            <p className="px-4 py-6 text-red-400 text-sm font-body">{macroError}</p>
+          ) : !macroOverview || macroOverview.entries.length === 0 ? (
+            <EmptyState
+              title="No macro snapshots yet"
+              description="Macro indicators appear here after the daily FRED refresh runs with FRED_API_KEY configured."
+            />
+          ) : (
+            <div className="p-4 space-y-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-text-primary text-sm font-body">Latest snapshot date</p>
+                  <p className="text-text-secondary text-xs font-mono mt-1">{macroOverview.latestDate ?? 'Unknown'}</p>
+                </div>
+                <p className="max-w-xl text-text-secondary/70 text-sm font-body">
+                  Rising VIX, dollar strength, and higher yields usually lean risk-off, while a firmer S&amp;P 500 leans
+                  risk-on. Podders uses this backdrop to frame when crypto sentiment is aligned or stretched.
+                </p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {macroOverview.entries.map((entry) => (
+                  <div key={entry.indicator} className="rounded-lg border border-border bg-background p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="text-text-primary text-sm font-body">{entry.label}</h4>
+                        <p className="text-text-secondary/70 text-xs font-body mt-1">{entry.narrative}</p>
+                      </div>
+                      <span
+                        aria-label={`${entry.label} macro signal ${entry.signal}`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${macroToneClasses(entry.signal)}`}
+                      >
+                        {entry.signal}
+                      </span>
+                    </div>
+
+                    <p className="text-text-primary text-xl font-mono">{formatMacroValue(entry)}</p>
+
+                    <div className="flex flex-wrap gap-2 text-xs font-mono">
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        1d change {formatMacroChange(entry.change1d, entry.indicator)}
+                      </span>
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        7d change {formatMacroChange(entry.change7d, entry.indicator)}
+                      </span>
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        snapshot {entry.date}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
@@ -3335,177 +3380,185 @@ function PipelineTab() {
         )}
       </div>
 
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
-          <div>
-            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Narrative Watchlist</h3>
-            <p className="text-text-secondary/70 text-sm font-body mt-1">
-              Latest narrative clusters from the daily embedding pass. These labels describe current trajectory; they
-              are not forward predictions.
-            </p>
-          </div>
-          {narrativeWatchlist && narrativeWatchlist.entries.length > 0 && (
-            <span className="px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide bg-accent/10 text-accent border border-accent/20">
-              {narrativeWatchlist.entries.length} tracked
-            </span>
-          )}
-        </div>
-
-        {narrativeLoading ? (
-          <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
-        ) : narrativeError ? (
-          <p className="px-4 py-6 text-red-400 text-sm font-body">{narrativeError}</p>
-        ) : !narrativeWatchlist || narrativeWatchlist.entries.length === 0 ? (
-          <EmptyState
-            title="No narrative clusters yet"
-            description="Narratives appear here after the daily clustering pass has enough summary embeddings to form stable groups."
-          />
-        ) : (
-          <div className="p-4 space-y-4">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-text-primary text-sm font-body">Latest cluster date</p>
-                <p className="text-text-secondary text-xs font-mono mt-1">
-                  {narrativeWatchlist.latestDate ?? 'Unknown'}
-                </p>
-              </div>
-              <p className="max-w-xl text-text-secondary/70 text-sm font-body">
-                Podders groups recent summaries by embedding similarity, names each cluster, and compares it with prior
-                daily clusters to decide whether the theme looks new, accelerating, stable, or fading.
+      {embeddingsDisabled && disabledEmbeddings ? (
+        <FeatureDisabledCard
+          feature={disabledEmbeddings}
+          title="Narrative Watchlist"
+          description="Narrative clustering is currently disabled — embeddings are required to group related summaries into themes."
+        />
+      ) : (
+        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
+            <div>
+              <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Narrative Watchlist</h3>
+              <p className="text-text-secondary/70 text-sm font-body mt-1">
+                Latest narrative clusters from the daily embedding pass. These labels describe current trajectory; they
+                are not forward predictions.
               </p>
             </div>
-
-            <div className="space-y-3" aria-label="Narrative watchlist">
-              {narrativeWatchlist.entries.map((entry) => (
-                <div key={entry.id} className="rounded-lg border border-border bg-background p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h4 className="text-text-primary text-sm font-body">{entry.name}</h4>
-                      <p className="text-text-secondary/70 text-sm font-body mt-1">
-                        {formatNarrativeLifecycleCopy(entry)}
-                      </p>
-                    </div>
-                    <span
-                      aria-label={`${entry.name} narrative strength ${entry.signalStrength}`}
-                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${narrativeSignalClasses(entry.signalStrength)}`}
-                    >
-                      {formatNarrativeSignalLabel(entry.signalStrength)}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 text-xs font-mono">
-                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                      {entry.memberCount} summaries clustered
-                    </span>
-                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                      {formatNarrativeSentiment(entry.avgSentiment)}
-                    </span>
-                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                      snapshot {entry.date}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <p className="text-text-secondary/70 text-xs font-body">
-                      Open the clustered summaries inline to inspect the evidence behind this theme.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => toggleNarrativeDrilldown(entry.id)}
-                      aria-expanded={expandedNarrativeId === entry.id}
-                      aria-label={`${expandedNarrativeId === entry.id ? 'Hide' : 'Show'} summaries for ${entry.name}`}
-                      className="px-3 py-1.5 rounded border border-border bg-surface text-text-secondary text-xs font-mono uppercase tracking-wide hover:text-text-primary transition-colors"
-                    >
-                      {expandedNarrativeId === entry.id ? 'Hide summaries' : 'Show summaries'}
-                    </button>
-                  </div>
-
-                  {expandedNarrativeId === entry.id && (
-                    <div className="rounded-lg border border-border/70 bg-surface/60 p-4 space-y-3">
-                      {narrativeDetailLoadingId === entry.id ? (
-                        <p className="text-text-secondary text-sm font-body">Loading clustered summaries...</p>
-                      ) : narrativeDetailErrors[entry.id] ? (
-                        <div className="space-y-3">
-                          <p className="text-red-400 text-sm font-body">{narrativeDetailErrors[entry.id]}</p>
-                          <button
-                            type="button"
-                            onClick={() => void loadNarrativeDrilldown(entry.id)}
-                            className="px-3 py-1.5 rounded border border-border bg-background text-text-secondary text-xs font-mono uppercase tracking-wide hover:text-text-primary transition-colors"
-                          >
-                            Retry summaries
-                          </button>
-                        </div>
-                      ) : narrativeDetails[entry.id] == null || narrativeDetails[entry.id].summaries.length === 0 ? (
-                        <p className="text-text-secondary text-sm font-body">
-                          No retained summaries are available for this cluster yet.
-                        </p>
-                      ) : (
-                        <>
-                          <div className="flex items-start justify-between gap-3 flex-wrap">
-                            <div>
-                              <p className="text-text-primary text-sm font-body">Most recent clustered summaries</p>
-                              <p className="text-text-secondary/70 text-xs font-body mt-1">
-                                Showing {narrativeDetails[entry.id].summaries.length} of {entry.memberCount} summaries
-                                linked to this narrative.
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            {narrativeDetails[entry.id].summaries.map((summary) => (
-                              <div
-                                key={summary.id}
-                                className="rounded-lg border border-border bg-background px-3 py-3 space-y-2"
-                              >
-                                <div className="flex items-start justify-between gap-3 flex-wrap">
-                                  <div className="space-y-1">
-                                    <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
-                                      {summary.source} | {formatRelativeTime(summary.createdAt)}
-                                    </div>
-                                    <div className="text-text-primary text-sm font-body leading-relaxed">
-                                      {summary.text}
-                                    </div>
-                                  </div>
-                                  <Link
-                                    to={`/summaries/${summary.id}`}
-                                    className="text-xs font-mono uppercase tracking-wider text-accent hover:underline shrink-0"
-                                  >
-                                    Open summary
-                                  </Link>
-                                </div>
-
-                                <div className="flex flex-wrap gap-2 text-xs font-mono">
-                                  <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                                    {summary.itemCount} item{summary.itemCount === 1 ? '' : 's'}
-                                  </span>
-                                  {summary.urgency && (
-                                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                                      urgency {summary.urgency}
-                                    </span>
-                                  )}
-                                  {summary.sentiment != null && (
-                                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                                      sentiment {summary.sentiment > 0 ? '+' : ''}
-                                      {summary.sentiment.toFixed(2)}
-                                    </span>
-                                  )}
-                                  <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                                    {summary.sourceId}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
+            {narrativeWatchlist && narrativeWatchlist.entries.length > 0 && (
+              <span className="px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide bg-accent/10 text-accent border border-accent/20">
+                {narrativeWatchlist.entries.length} tracked
+              </span>
+            )}
           </div>
-        )}
-      </div>
+
+          {narrativeLoading ? (
+            <div className="px-4 py-6 text-text-secondary text-sm font-body">Loading...</div>
+          ) : narrativeError ? (
+            <p className="px-4 py-6 text-red-400 text-sm font-body">{narrativeError}</p>
+          ) : !narrativeWatchlist || narrativeWatchlist.entries.length === 0 ? (
+            <EmptyState
+              title="No narrative clusters yet"
+              description="Narratives appear here after the daily clustering pass has enough summary embeddings to form stable groups."
+            />
+          ) : (
+            <div className="p-4 space-y-4">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <p className="text-text-primary text-sm font-body">Latest cluster date</p>
+                  <p className="text-text-secondary text-xs font-mono mt-1">
+                    {narrativeWatchlist.latestDate ?? 'Unknown'}
+                  </p>
+                </div>
+                <p className="max-w-xl text-text-secondary/70 text-sm font-body">
+                  Podders groups recent summaries by embedding similarity, names each cluster, and compares it with
+                  prior daily clusters to decide whether the theme looks new, accelerating, stable, or fading.
+                </p>
+              </div>
+
+              <div className="space-y-3" aria-label="Narrative watchlist">
+                {narrativeWatchlist.entries.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-border bg-background p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h4 className="text-text-primary text-sm font-body">{entry.name}</h4>
+                        <p className="text-text-secondary/70 text-sm font-body mt-1">
+                          {formatNarrativeLifecycleCopy(entry)}
+                        </p>
+                      </div>
+                      <span
+                        aria-label={`${entry.name} narrative strength ${entry.signalStrength}`}
+                        className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${narrativeSignalClasses(entry.signalStrength)}`}
+                      >
+                        {formatNarrativeSignalLabel(entry.signalStrength)}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 text-xs font-mono">
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        {entry.memberCount} summaries clustered
+                      </span>
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        {formatNarrativeSentiment(entry.avgSentiment)}
+                      </span>
+                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                        snapshot {entry.date}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-text-secondary/70 text-xs font-body">
+                        Open the clustered summaries inline to inspect the evidence behind this theme.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => toggleNarrativeDrilldown(entry.id)}
+                        aria-expanded={expandedNarrativeId === entry.id}
+                        aria-label={`${expandedNarrativeId === entry.id ? 'Hide' : 'Show'} summaries for ${entry.name}`}
+                        className="px-3 py-1.5 rounded border border-border bg-surface text-text-secondary text-xs font-mono uppercase tracking-wide hover:text-text-primary transition-colors"
+                      >
+                        {expandedNarrativeId === entry.id ? 'Hide summaries' : 'Show summaries'}
+                      </button>
+                    </div>
+
+                    {expandedNarrativeId === entry.id && (
+                      <div className="rounded-lg border border-border/70 bg-surface/60 p-4 space-y-3">
+                        {narrativeDetailLoadingId === entry.id ? (
+                          <p className="text-text-secondary text-sm font-body">Loading clustered summaries...</p>
+                        ) : narrativeDetailErrors[entry.id] ? (
+                          <div className="space-y-3">
+                            <p className="text-red-400 text-sm font-body">{narrativeDetailErrors[entry.id]}</p>
+                            <button
+                              type="button"
+                              onClick={() => void loadNarrativeDrilldown(entry.id)}
+                              className="px-3 py-1.5 rounded border border-border bg-background text-text-secondary text-xs font-mono uppercase tracking-wide hover:text-text-primary transition-colors"
+                            >
+                              Retry summaries
+                            </button>
+                          </div>
+                        ) : narrativeDetails[entry.id] == null || narrativeDetails[entry.id].summaries.length === 0 ? (
+                          <p className="text-text-secondary text-sm font-body">
+                            No retained summaries are available for this cluster yet.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="flex items-start justify-between gap-3 flex-wrap">
+                              <div>
+                                <p className="text-text-primary text-sm font-body">Most recent clustered summaries</p>
+                                <p className="text-text-secondary/70 text-xs font-body mt-1">
+                                  Showing {narrativeDetails[entry.id].summaries.length} of {entry.memberCount} summaries
+                                  linked to this narrative.
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-3">
+                              {narrativeDetails[entry.id].summaries.map((summary) => (
+                                <div
+                                  key={summary.id}
+                                  className="rounded-lg border border-border bg-background px-3 py-3 space-y-2"
+                                >
+                                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                                    <div className="space-y-1">
+                                      <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+                                        {summary.source} | {formatRelativeTime(summary.createdAt)}
+                                      </div>
+                                      <div className="text-text-primary text-sm font-body leading-relaxed">
+                                        {summary.text}
+                                      </div>
+                                    </div>
+                                    <Link
+                                      to={`/summaries/${summary.id}`}
+                                      className="text-xs font-mono uppercase tracking-wider text-accent hover:underline shrink-0"
+                                    >
+                                      Open summary
+                                    </Link>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-2 text-xs font-mono">
+                                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                      {summary.itemCount} item{summary.itemCount === 1 ? '' : 's'}
+                                    </span>
+                                    {summary.urgency && (
+                                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                        urgency {summary.urgency}
+                                      </span>
+                                    )}
+                                    {summary.sentiment != null && (
+                                      <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                        sentiment {summary.sentiment > 0 ? '+' : ''}
+                                        {summary.sentiment.toFixed(2)}
+                                      </span>
+                                    )}
+                                    <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
+                                      {summary.sourceId}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border gap-3">
@@ -3732,6 +3785,9 @@ function PipelineTab() {
 
 function EntitiesTab() {
   const { user } = useAuth();
+  const { ready: statusReady, getDisabledFeature, isFeatureDisabled, registerDisabledFeature } = useStatus();
+  const pricesDisabled = isFeatureDisabled('prices');
+  const disabledPrices = getDisabledFeature('prices');
   const isAdmin = user?.role === 'admin';
   const [entityQuery, setEntityQuery] = useState('');
   const [entitySuggestions, setEntitySuggestions] = useState<EntitySuggestion[]>([]);
@@ -3843,16 +3899,27 @@ function EntitiesTab() {
       setDetailsLoading(false);
       return;
     }
+    if (!statusReady) return;
 
     let cancelled = false;
     setDetailsLoading(true);
     setDetailsError(null);
 
+    const pricePromise: Promise<EntityPriceData | null> = pricesDisabled
+      ? Promise.resolve(null)
+      : fetchEntityPriceData(selectedEntity.id, 7).catch((err) => {
+          if (isFeatureDisabledError(err)) {
+            registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+            return null;
+          }
+          throw err;
+        });
+
     Promise.all([
       fetchEntityRelationshipsData(selectedEntity.id),
       fetchEntityCompetitorsData(selectedEntity.id),
       fetchEntityRelationshipGraphData(selectedEntity.id),
-      fetchEntityPriceData(selectedEntity.id, 7),
+      pricePromise,
       fetchAlphaPropagation(selectedEntity.id, 7),
     ])
       .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextPriceData, nextAlphaPropagation]) => {
@@ -3879,7 +3946,7 @@ function EntitiesTab() {
     return () => {
       cancelled = true;
     };
-  }, [selectedEntity]);
+  }, [selectedEntity, statusReady, pricesDisabled, registerDisabledFeature]);
 
   useEffect(() => {
     if (!selectedEntity) {
@@ -4046,7 +4113,19 @@ function EntitiesTab() {
         fetchEntityCompetitorsData(selectedEntity.id),
         fetchEntityRelationshipGraphData(selectedEntity.id),
         fetchEntityDivergenceData(selectedEntity.id, divergenceDays).catch(() => null),
-        fetchEntityPriceData(selectedEntity.id, 7),
+        pricesDisabled
+          ? Promise.resolve(null)
+          : fetchEntityPriceData(selectedEntity.id, 7).catch((err) => {
+              if (isFeatureDisabledError(err)) {
+                registerDisabledFeature({
+                  feature: err.feature,
+                  missingEnv: err.missingEnv,
+                  disables: err.disables,
+                });
+                return null;
+              }
+              throw err;
+            }),
         fetchAlphaPropagation(selectedEntity.id, 7),
       ]);
       setRelationships(nextRelationships);
@@ -4453,7 +4532,14 @@ function EntitiesTab() {
               </div>
 
               {/* Price Data Card */}
-              {priceData?.latest && (
+              {pricesDisabled && disabledPrices ? (
+                <FeatureDisabledCard
+                  feature={disabledPrices}
+                  title="Price Data"
+                  description="CoinGecko price snapshots are currently disabled."
+                />
+              ) : null}
+              {!pricesDisabled && priceData?.latest && (
                 <div className="bg-surface border border-border rounded-lg overflow-hidden">
                   <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                     <div>

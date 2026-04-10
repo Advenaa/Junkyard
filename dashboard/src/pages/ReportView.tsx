@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { apiFetch } from '../lib/api';
+import { apiFetch, isFeatureDisabledError } from '../lib/api';
 import type { MacroRegime, MacroRegimeHistory, Report, ReportChainDrilldown } from '../lib/types';
 import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegime';
 import { buildFocusedReportHref, buildSummaryChainHref } from '../lib/reportChains';
 import { TypeBadge } from '../components/TypeBadge';
 import { EmptyState } from '../components/EmptyState';
+import { useStatus } from '../components/StatusProvider';
+import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 
 interface EntitySentiment {
   name: string;
@@ -636,6 +638,13 @@ export function ReportView() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const requestKey = id ?? '__latest__';
+  const { ready: statusReady, isFeatureDisabled, getDisabledFeature, registerDisabledFeature } = useStatus();
+  const macroDisabled = isFeatureDisabled('macro');
+  const pricesDisabled = isFeatureDisabled('prices');
+  const embeddingsDisabled = isFeatureDisabled('embeddings');
+  const disabledMacro = getDisabledFeature('macro');
+  const disabledPrices = getDisabledFeature('prices');
+  const disabledEmbeddings = getDisabledFeature('embeddings');
   const [report, setReport] = useState<FullReport | null>(null);
   const [macroOverview, setMacroOverview] = useState<MacroOverview | null>(null);
   const [priceWatch, setPriceWatch] = useState<PriceWatchOverview | null>(null);
@@ -681,6 +690,11 @@ export function ReportView() {
   }, [id, requestKey]);
 
   useEffect(() => {
+    if (!statusReady) return;
+    if (macroDisabled) {
+      setMacroOverview(null);
+      return;
+    }
     let cancelled = false;
 
     apiFetch<MacroOverview>('/macro')
@@ -689,8 +703,11 @@ export function ReportView() {
           setMacroOverview(overview);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch((err) => {
+        if (cancelled) return;
+        if (isFeatureDisabledError(err)) {
+          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+        } else {
           setMacroOverview(null);
         }
       });
@@ -698,9 +715,14 @@ export function ReportView() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusReady, macroDisabled, registerDisabledFeature]);
 
   useEffect(() => {
+    if (!statusReady) return;
+    if (pricesDisabled) {
+      setPriceWatch(null);
+      return;
+    }
     let cancelled = false;
 
     apiFetch<PriceWatchOverview>('/price-watch')
@@ -709,8 +731,11 @@ export function ReportView() {
           setPriceWatch(overview);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch((err) => {
+        if (cancelled) return;
+        if (isFeatureDisabledError(err)) {
+          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+        } else {
           setPriceWatch(null);
         }
       });
@@ -718,7 +743,7 @@ export function ReportView() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusReady, pricesDisabled, registerDisabledFeature]);
 
   useEffect(() => {
     let cancelled = false;
@@ -743,6 +768,11 @@ export function ReportView() {
   }, []);
 
   useEffect(() => {
+    if (!statusReady) return;
+    if (embeddingsDisabled) {
+      setNarratives(null);
+      return;
+    }
     let cancelled = false;
 
     apiFetch<NarrativeWatchlistOverview>('/narratives')
@@ -751,8 +781,11 @@ export function ReportView() {
           setNarratives(overview);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch((err) => {
+        if (cancelled) return;
+        if (isFeatureDisabledError(err)) {
+          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+        } else {
           setNarratives(null);
         }
       });
@@ -760,7 +793,7 @@ export function ReportView() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusReady, embeddingsDisabled, registerDisabledFeature]);
 
   useEffect(() => {
     let cancelled = false;
@@ -900,7 +933,15 @@ export function ReportView() {
         {report.tldr}
       </blockquote>
 
-      {macroEntries.length > 0 && (
+      {macroDisabled && disabledMacro ? (
+        <FeatureDisabledCard
+          feature={disabledMacro}
+          title="Macro Backdrop"
+          description="Macro snapshots are currently disabled — the risk-on/risk-off backdrop surface is not available."
+        />
+      ) : null}
+
+      {!macroDisabled && macroEntries.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
             <div>
@@ -955,7 +996,15 @@ export function ReportView() {
         </div>
       )}
 
-      {priceEntries.length > 0 && (
+      {pricesDisabled && disabledPrices ? (
+        <FeatureDisabledCard
+          feature={disabledPrices}
+          title="Price Watch"
+          description="Price feeds are currently disabled — token moves and contrarian signals are not available."
+        />
+      ) : null}
+
+      {!pricesDisabled && priceEntries.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
             <div>
@@ -1028,7 +1077,15 @@ export function ReportView() {
         </div>
       )}
 
-      {narrativeEntries.length > 0 && (
+      {embeddingsDisabled && disabledEmbeddings ? (
+        <FeatureDisabledCard
+          feature={disabledEmbeddings}
+          title="Narrative Snapshot"
+          description="Narrative clustering is currently disabled — embeddings are required to group related summaries."
+        />
+      ) : null}
+
+      {!embeddingsDisabled && narrativeEntries.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
             <div>

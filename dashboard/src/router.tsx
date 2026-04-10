@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Outlet } from 'react-router';
 import { AuthProvider } from './components/AuthProvider';
+import { StatusProvider } from './components/StatusProvider';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Header } from './components/Header';
@@ -17,44 +18,46 @@ export function AppRouter() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ErrorBoundary>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route element={<ProtectedRoute />}>
-              <Route
-                element={
-                  <>
-                    <Header />
-                    <main className="max-w-5xl mx-auto">
-                      <Outlet />
-                    </main>
-                  </>
-                }
-              >
-                <Route path="/" element={<ReportView />} />
-                <Route path="/reports" element={<ReportList />} />
-                <Route path="/reports/:id" element={<ReportView />} />
-                <Route path="/summaries/:id" element={<SummaryView />} />
-                <Route path="/items/:id" element={<ItemView />} />
-                <Route path="/feed" element={<Feed />} />
-                <Route path="/chat" element={<Chat />} />
-                <Route path="/search" element={<Search />} />
-                <Route path="/settings" element={<Settings />} />
+        <StatusProvider>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route element={<ProtectedRoute />}>
                 <Route
-                  path="*"
                   element={
-                    <div className="flex flex-col items-center justify-center py-20 text-text-secondary">
-                      <h1 className="text-2xl font-bold mb-2">Page not found</h1>
-                      <a href="/" className="text-accent hover:underline">
-                        Go to dashboard
-                      </a>
-                    </div>
+                    <>
+                      <Header />
+                      <main className="max-w-5xl mx-auto">
+                        <Outlet />
+                      </main>
+                    </>
                   }
-                />
+                >
+                  <Route path="/" element={<ReportView />} />
+                  <Route path="/reports" element={<ReportList />} />
+                  <Route path="/reports/:id" element={<ReportView />} />
+                  <Route path="/summaries/:id" element={<SummaryView />} />
+                  <Route path="/items/:id" element={<ItemView />} />
+                  <Route path="/feed" element={<Feed />} />
+                  <Route path="/chat" element={<Chat />} />
+                  <Route path="/search" element={<Search />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route
+                    path="*"
+                    element={
+                      <div className="flex flex-col items-center justify-center py-20 text-text-secondary">
+                        <h1 className="text-2xl font-bold mb-2">Page not found</h1>
+                        <a href="/" className="text-accent hover:underline">
+                          Go to dashboard
+                        </a>
+                      </div>
+                    }
+                  />
+                </Route>
               </Route>
-            </Route>
-          </Routes>
-        </ErrorBoundary>
+            </Routes>
+          </ErrorBoundary>
+        </StatusProvider>
       </AuthProvider>
     </BrowserRouter>
   );

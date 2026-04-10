@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router';
-import { apiFetch } from '../lib/api';
+import { apiFetch, isFeatureDisabledError } from '../lib/api';
 import type { Report } from '../lib/types';
+import { useStatus } from '../components/StatusProvider';
 import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
 import { getReportSecondaryPreview } from '../lib/reportPreview';
 import {
@@ -20,6 +21,7 @@ import { ReportChainPreviewSection } from '../components/ReportChainPreviewSecti
 import { TypeBadge } from '../components/TypeBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
+import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 
 type FilterType = 'all' | 'daily' | 'flash' | 'pulse';
 const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse'];
@@ -88,6 +90,9 @@ function formatNarrativeSentiment(sentiment: number | null): string {
 }
 
 export function ReportList() {
+  const { ready: statusReady, isFeatureDisabled, getDisabledFeature, registerDisabledFeature } = useStatus();
+  const embeddingsDisabled = isFeatureDisabled('embeddings');
+  const disabledEmbeddings = getDisabledFeature('embeddings');
   const [filter, setFilter] = useState<FilterType>('all');
   const [reports, setReports] = useState<Report[]>([]);
   const [narratives, setNarratives] = useState<NarrativeWatchlistOverview | null>(null);
@@ -130,6 +135,11 @@ export function ReportList() {
   }, [fetchReports]);
 
   useEffect(() => {
+    if (!statusReady) return;
+    if (embeddingsDisabled) {
+      setNarratives(null);
+      return;
+    }
     let cancelled = false;
 
     apiFetch<NarrativeWatchlistOverview>('/narratives')
@@ -138,8 +148,11 @@ export function ReportList() {
           setNarratives(overview);
         }
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch((err) => {
+        if (cancelled) return;
+        if (isFeatureDisabledError(err)) {
+          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+        } else {
           setNarratives(null);
         }
       });
@@ -147,7 +160,7 @@ export function ReportList() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [statusReady, embeddingsDisabled, registerDisabledFeature]);
 
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
 
@@ -310,7 +323,15 @@ export function ReportList() {
         ))}
       </div>
 
-      {narrativeEntries.length > 0 && (
+      {embeddingsDisabled && disabledEmbeddings ? (
+        <FeatureDisabledCard
+          feature={disabledEmbeddings}
+          title="Narrative Snapshot"
+          description="Narrative clustering is currently disabled — embeddings are required to group related summaries."
+        />
+      ) : null}
+
+      {!embeddingsDisabled && narrativeEntries.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
             <div>

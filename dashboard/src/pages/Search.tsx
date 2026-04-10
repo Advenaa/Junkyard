@@ -4,6 +4,8 @@ import { apiFetch } from '../lib/api';
 import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
 import { getReportSecondaryPreview } from '../lib/reportPreview';
 import type { MacroRegime, MacroRegimeHistory, ReportChainDrilldown } from '../lib/types';
+import { useStatus } from '../components/StatusProvider';
+import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 import {
   areReportChainRefreshActionsEqual,
   areReportChainToggleActionsEqual,
@@ -101,6 +103,8 @@ function getResultHref(result: SearchResult): string {
 }
 
 export function Search() {
+  const { getDisabledFeature } = useStatus();
+  const disabledEmbeddings = getDisabledFeature('embeddings');
   const [query, setQuery] = useState('');
   const [days, setDays] = useState(30);
   const [scope, setScope] = useState<SearchScope>('all');
@@ -270,6 +274,14 @@ export function Search() {
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <h1 className="font-heading text-2xl text-text-primary">Search</h1>
+
+      {disabledEmbeddings && (
+        <FeatureDisabledCard
+          feature={disabledEmbeddings}
+          variant="inline"
+          title="Semantic search is disabled — results come from keyword matching only."
+        />
+      )}
 
       {/* Search form */}
       <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">

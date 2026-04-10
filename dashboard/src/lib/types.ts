@@ -5,6 +5,29 @@ export interface User {
   role: 'admin' | 'viewer' | 'blocked';
 }
 
+export type FeatureKey = 'embeddings' | 'prices' | 'macro';
+
+export interface DisabledFeatureSummary {
+  feature: FeatureKey;
+  missingEnv: string;
+  disables: string[];
+}
+
+export interface StatusSnapshot {
+  itemsReady: number;
+  itemsProcessing: number;
+  summariesToday: number;
+  costToday: number;
+  disabledFeatures: DisabledFeatureSummary[];
+}
+
+export interface FeatureDisabledBody {
+  error: 'feature_disabled';
+  feature: FeatureKey;
+  missingEnv: string;
+  disables: string[];
+}
+
 export interface MacroRegime {
   classification: 'risk-on' | 'risk-off' | 'transition' | 'unclear';
   confidence: number;

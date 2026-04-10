@@ -3,6 +3,8 @@ import { apiFetch } from '../lib/api';
 import { ChatPanel } from '../components/ChatPanel';
 import { ChatMessage } from '../components/ChatMessage';
 import type { ChatSource } from '../components/ChatSources';
+import { useStatus } from '../components/StatusProvider';
+import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 
 interface Message {
   id: string;
@@ -39,6 +41,8 @@ function parseErrorMessage(err: unknown): string {
 }
 
 export function Chat() {
+  const { getDisabledFeature } = useStatus();
+  const disabledEmbeddings = getDisabledFeature('embeddings');
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       return JSON.parse(sessionStorage.getItem('podders-chat-messages') ?? '[]');
@@ -172,6 +176,16 @@ export function Chat() {
           New Chat
         </button>
       </div>
+
+      {disabledEmbeddings && (
+        <div className="px-4 pt-3">
+          <FeatureDisabledCard
+            feature={disabledEmbeddings}
+            variant="inline"
+            title="Semantic search is disabled — keyword lookups and raw-message retrieval still work."
+          />
+        </div>
+      )}
 
       {/* Messages */}
       <ChatPanel>
