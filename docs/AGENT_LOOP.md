@@ -33,10 +33,13 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 3. Inspect the real code before changing anything.
 4. Make the smallest diff that fully solves the slice. Avoid drive-by refactors.
 5. Verify with `npm run build` and the narrowest relevant tests. If the change touches shared infrastructure or a bug fix with existing unit coverage, also run `npm test` when practical.
-6. If the task comes from a GitHub issue, update its labels after the fix and verification:
-   - flip `state:ready` → `state:in-progress` when you claim it (open the branch)
-   - close the issue when the PR that resolves it merges
-   - flip to `state:blocked` if a real blocker prevents completion, with a comment explaining the block
+6. If the task comes from a GitHub issue, follow the Clankerism consumer flow (full procedure in `AGENTS.md` / `CLAUDE.md` → "Clankerism Workflow"):
+   - Claim atomically by pushing `build/issue-<N>` to origin *before* starting work; if the push is rejected, another agent won the race — exit, don't retry under a different name.
+   - Flip `state:ready` → `state:in-progress` once the branch is on origin.
+   - Open the PR with a `Fixes #<N>` footer so GitHub auto-closes on merge.
+   - Watch CI synchronously with `gh run watch <run-id> --exit-status`, not `gh pr merge --auto` (auto-merge is unreliable without branch protection on this free-plan repo).
+   - On green: `gh pr merge --squash --delete-branch`, then `gh issue edit <N> --remove-label state:in-progress` to clear the stale label (GitHub does not strip it on auto-close).
+   - On a real blocker or red CI: flip to `state:blocked`, comment, exit. Do NOT push a "fix" commit onto the same branch.
 7. Leave a clean handoff in the final report:
    - what changed
    - files touched
