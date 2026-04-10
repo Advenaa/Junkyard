@@ -17,6 +17,12 @@ them to the board. Doesn't cook — just audits and reports.
 - `/scout code` — force a code-level sweep of a specific subsystem
 - `/scout diff` — audit just the last N commits (fastest, highest-yield)
 
+There is no first-class `/scout prod` subcommand in this repository. If a
+human asks for a production diag check, treat it as an operator task outside
+the normal scout rotation and authenticate with the server's existing
+`API_KEY`. `PODDERS_API_KEY` is only an external runtime convention for that
+shell workflow; do not add a second app-side credential path.
+
 `$ARGUMENTS` may contain the audit type. If empty, read the next scheduled
 type from `.clankerism/scout-state.md`.
 
