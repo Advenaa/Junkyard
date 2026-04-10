@@ -3,6 +3,18 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ReportView } from '../ReportView';
 
+vi.mock('../../components/StatusProvider', () => {
+  const statusValue = {
+    ready: true,
+    status: null,
+    disabledFeatures: [],
+    isFeatureDisabled: () => false,
+    getDisabledFeature: () => null,
+    registerDisabledFeature: vi.fn(),
+  };
+  return { useStatus: () => statusValue };
+});
+
 // ── Shared helpers ─────────────────────────────────────────────────────
 
 function makeFullReport(overrides?: Record<string, unknown>) {

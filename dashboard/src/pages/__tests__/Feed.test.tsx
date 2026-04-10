@@ -18,7 +18,7 @@ describe('Feed', () => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
 
-        if (parsed.pathname === '/api/v1/sources') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/sources') {
           return new Response(
             JSON.stringify({
               sources: [
@@ -33,7 +33,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/feed/guild:beta') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/feed/guild:beta') {
           expect(parsed.searchParams.get('limit')).toBe('50');
           expect(parsed.searchParams.get('offset')).toBe('0');
           return new Response(
@@ -70,7 +70,7 @@ describe('Feed', () => {
     );
 
     await screen.findByText('Governance follow-up landed in the beta room first.');
-    expect(screen.getByRole('combobox')).toHaveValue('guild:beta');
+    expect(screen.getByRole('combobox')).toHaveValue('discord::guild:beta');
     expect(screen.getByText('Focused item')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open item' })).toHaveAttribute('href', '/items/item-2');
   });
@@ -84,7 +84,7 @@ describe('Feed', () => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
 
-        if (parsed.pathname === '/api/v1/sources') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/sources') {
           return new Response(
             JSON.stringify({
               sources: [{ source: 'discord', sourceId: 'guild:beta', label: 'Beta Room' }],
@@ -96,7 +96,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/feed/guild:beta') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/feed/guild:beta') {
           return new Response(
             JSON.stringify({
               items: [
@@ -118,7 +118,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/items/item-focus') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/items/item-focus') {
           const contextSize = parsed.searchParams.get('context');
           expect(['2', '5']).toContain(contextSize);
           return new Response(
@@ -228,7 +228,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/items/item-before') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/items/item-before') {
           expect(parsed.searchParams.get('context')).toBe('5');
           return new Response(
             JSON.stringify({
@@ -368,7 +368,7 @@ describe('Feed', () => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
 
-        if (parsed.pathname === '/api/v1/sources') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/sources') {
           return new Response(
             JSON.stringify({
               sources: [{ source: 'discord', sourceId: 'guild:beta', label: 'Beta Room' }],
@@ -380,7 +380,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/feed/guild:beta') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/feed/guild:beta') {
           return new Response(
             JSON.stringify({
               items: [
@@ -402,7 +402,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/items/item-focus') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/items/item-focus') {
           const contextSize = parsed.searchParams.get('context');
           expect(['2', '5']).toContain(contextSize);
 
@@ -551,7 +551,7 @@ describe('Feed', () => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
 
-        if (parsed.pathname === '/api/v1/sources') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/sources') {
           return new Response(
             JSON.stringify({
               sources: [{ source: 'discord', sourceId: 'guild:beta', label: 'Beta Room' }],
@@ -563,7 +563,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/feed/guild:beta') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/feed/guild:beta') {
           return new Response(
             JSON.stringify({
               items: [
@@ -585,7 +585,7 @@ describe('Feed', () => {
           );
         }
 
-        if (parsed.pathname === '/api/v1/items/item-focus') {
+        if (decodeURIComponent(parsed.pathname) === '/api/v1/items/item-focus') {
           const contextSize = parsed.searchParams.get('context');
 
           if (contextSize === '2') {

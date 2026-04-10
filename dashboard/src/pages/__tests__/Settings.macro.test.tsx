@@ -15,6 +15,17 @@ vi.mock('../../components/AuthProvider', () => ({
     logout: vi.fn(),
   }),
 }));
+vi.mock('../../components/StatusProvider', () => {
+  const statusValue = {
+    ready: true,
+    status: null,
+    disabledFeatures: [],
+    isFeatureDisabled: () => false,
+    getDisabledFeature: () => null,
+    registerDisabledFeature: vi.fn(),
+  };
+  return { useStatus: () => statusValue };
+});
 
 interface MacroOverviewEntry {
   indicator: 'vix' | 'dxy' | 'us10y' | 'spx' | 'gold';

@@ -19,7 +19,7 @@ describe('ItemView', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
-        const path = parsed.pathname;
+        const path = decodeURIComponent(parsed.pathname);
 
         if (path === '/api/v1/items/item-1') {
           const contextSize = parsed.searchParams.get('context');
@@ -205,7 +205,7 @@ describe('ItemView', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
-        const path = parsed.pathname;
+        const path = decodeURIComponent(parsed.pathname);
 
         if (path === '/api/v1/items/item-1') {
           const contextSize = parsed.searchParams.get('context');
@@ -362,7 +362,7 @@ describe('ItemView', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
-        const path = parsed.pathname;
+        const path = decodeURIComponent(parsed.pathname);
 
         if (path === '/api/v1/items/item-1') {
           const contextSize = parsed.searchParams.get('context');
@@ -535,7 +535,7 @@ describe('ItemView', () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         const parsed = new URL(url, 'http://localhost');
-        const path = parsed.pathname;
+        const path = decodeURIComponent(parsed.pathname);
 
         if (path === '/api/v1/sources') {
           return new Response(
@@ -685,7 +685,7 @@ describe('ItemView', () => {
     await user.click(screen.getByRole('link', { name: 'Focused timeline' }));
 
     await screen.findByText('The most recent feed page is already discussing something else.');
-    expect(screen.getByText('Up to 5 before and after')).toBeInTheDocument();
+    await screen.findByText('Up to 5 before and after');
     expect(screen.queryByRole('button', { name: 'Show more context' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open raw item' })).toHaveAttribute('href', '/items/item-1?context=5');
   });
