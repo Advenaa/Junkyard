@@ -17,7 +17,8 @@
     "lint": "eslint src/ dashboard/src/ test/",
     "lint:fix": "eslint --fix src/ dashboard/src/ test/",
     "format": "prettier --write src/ dashboard/src/ test/",
-    "format:check": "prettier --check src/ dashboard/src/ test/"
+    "format:check": "prettier --check src/ dashboard/src/ test/",
+    "postinstall": "bash scripts/install-hooks.sh || true"
   },
   "private": true,
   "devDependencies": {

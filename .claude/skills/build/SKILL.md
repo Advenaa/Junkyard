@@ -180,10 +180,16 @@ Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
 
 `git push` to the already-upstream branch.
 
-## Step 9: Open the PR
+## Step 9: Open the PR and watch CI
+
+Because this repo is on the free GitHub plan (no branch protection /
+rulesets), `gh pr merge --auto` is unreliable — it may either merge
+immediately or refuse to arm. Instead, the clanker watches the CI run
+synchronously and merges manually on green.
 
 ```bash
-gh pr create \
+# 1. Open the PR
+PR_URL=$(gh pr create \
   --base main \
   --head "$BRANCH" \
   --title "<same as commit title>" \
@@ -204,14 +210,35 @@ gh pr create \
 
 Fixes #$N
 EOF
-)"
+)")
+
+PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+
+# 2. Find the CI run for this push
+sleep 5  # give GitHub a moment to register the run
+RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')
+if [ -z "$RUN_ID" ]; then
+  echo "no CI run found for $BRANCH — human triage required"
+  gh issue comment "$N" --body "/build: no CI run detected after push. Human triage needed."
+  gh issue edit "$N" --remove-label state:in-progress --add-label state:blocked
+  exit 1
+fi
+
+# 3. Block until CI finishes. Exit code reflects CI result.
+if ! gh run watch "$RUN_ID" --exit-status; then
+  echo "CI red — NOT merging. PR stays open for human review."
+  gh issue comment "$N" --body "/build: CI failed on run $RUN_ID. PR #$PR_NUMBER stays open for triage."
+  gh issue edit "$N" --remove-label state:in-progress --add-label state:blocked
+  exit 1
+fi
+
+# 4. CI green — merge. Squash so main history stays clean.
+gh pr merge "$PR_NUMBER" --squash --delete-branch
 ```
 
-Then enable auto-merge so CI green → auto-merges to main → deploy fires:
-
-```bash
-gh pr merge --auto --squash
-```
+If the merge succeeds, GitHub's "Fixes #N" in the commit message closes
+the issue automatically and the deploy job fires. The clanker's work is
+done.
 
 ## Step 10: Exit cleanly
 
