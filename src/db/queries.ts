@@ -451,28 +451,35 @@ export async function insertEvents(
     createdAt: number;
   }>,
 ): Promise<void> {
-  for (const event of events) {
-    await pool.query(
-      `INSERT INTO events (
-        id, entity_id, entity_name, event_type, description, event_time,
-        source, source_id, summary_id, chain_id, created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      ON CONFLICT (id) DO NOTHING`,
-      [
-        event.id,
-        event.entityId,
-        event.entityName,
-        event.eventType,
-        event.description,
-        event.eventTime,
-        event.source,
-        event.sourceId,
-        event.summaryId,
-        event.chainId ?? null,
-        event.createdAt,
-      ],
+  if (events.length === 0) return;
+
+  const values: unknown[] = [];
+  const rows = events.map((event, index) => {
+    const offset = index * 11;
+    values.push(
+      event.id,
+      event.entityId,
+      event.entityName,
+      event.eventType,
+      event.description,
+      event.eventTime,
+      event.source,
+      event.sourceId,
+      event.summaryId,
+      event.chainId ?? null,
+      event.createdAt,
     );
-  }
+    return `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11})`;
+  });
+
+  await pool.query(
+    `INSERT INTO events (
+      id, entity_id, entity_name, event_type, description, event_time,
+      source, source_id, summary_id, chain_id, created_at
+    ) VALUES ${rows.join(', ')}
+    ON CONFLICT (id) DO NOTHING`,
+    values,
+  );
 }
 
 export async function getMostRecentEventForEntity(
