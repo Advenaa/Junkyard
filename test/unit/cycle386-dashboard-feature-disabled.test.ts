@@ -18,6 +18,9 @@ const typesSrc = read('lib/types.ts');
 const statusProviderSrc = read('components/StatusProvider.tsx');
 const featureDisabledCardSrc = read('components/FeatureDisabledCard.tsx');
 const reportViewSrc = read('pages/ReportView.tsx');
+const macroSectionSrc = read('pages/ReportView/sections/MacroSection.tsx');
+const priceWatchSectionSrc = read('pages/ReportView/sections/PriceWatchSection.tsx');
+const narrativeSectionSrc = read('pages/ReportView/sections/NarrativeSection.tsx');
 const reportListSrc = read('pages/ReportList.tsx');
 const chatSrc = read('pages/Chat.tsx');
 const searchSrc = read('pages/Search.tsx');
@@ -64,21 +67,36 @@ describe('FG-001 — wiring scaffolding exists', () => {
 });
 
 describe('FG-001 — ReportView surfaces guarded', () => {
-  it('imports useStatus, FeatureDisabledCard, and isFeatureDisabledError', () => {
+  it('ReportView imports useStatus and isFeatureDisabledError', () => {
     assert.match(reportViewSrc, /import\s*\{[^}]*useStatus[^}]*\}\s*from\s*['"][^'"]*StatusProvider/);
-    assert.match(reportViewSrc, /import\s*\{[^}]*FeatureDisabledCard[^}]*\}\s*from\s*['"][^'"]*FeatureDisabledCard/);
     assert.match(reportViewSrc, /isFeatureDisabledError/);
   });
 
-  it('renders FeatureDisabledCard surfaces for macro, prices, and embeddings', () => {
-    const cardMatches = reportViewSrc.match(/<FeatureDisabledCard/g);
-    assert.ok(
-      cardMatches && cardMatches.length >= 3,
-      `expected >=3 FeatureDisabledCard renders, found ${cardMatches?.length ?? 0}`,
+  it('Macro, PriceWatch, and Narrative section components import FeatureDisabledCard', () => {
+    assert.match(macroSectionSrc, /import\s*\{[^}]*FeatureDisabledCard[^}]*\}\s*from\s*['"][^'"]*FeatureDisabledCard/);
+    assert.match(
+      priceWatchSectionSrc,
+      /import\s*\{[^}]*FeatureDisabledCard[^}]*\}\s*from\s*['"][^'"]*FeatureDisabledCard/,
+    );
+    assert.match(
+      narrativeSectionSrc,
+      /import\s*\{[^}]*FeatureDisabledCard[^}]*\}\s*from\s*['"][^'"]*FeatureDisabledCard/,
     );
   });
 
-  it('calls useStatus.getDisabledFeature for all three feature keys', () => {
+  it('Macro, PriceWatch, and Narrative sections each render a FeatureDisabledCard surface', () => {
+    assert.match(macroSectionSrc, /<FeatureDisabledCard/);
+    assert.match(priceWatchSectionSrc, /<FeatureDisabledCard/);
+    assert.match(narrativeSectionSrc, /<FeatureDisabledCard/);
+  });
+
+  it('ReportView renders MacroSection, PriceWatchSection, and NarrativeSection', () => {
+    assert.match(reportViewSrc, /<MacroSection/);
+    assert.match(reportViewSrc, /<PriceWatchSection/);
+    assert.match(reportViewSrc, /<NarrativeSection/);
+  });
+
+  it('ReportView calls useStatus.getDisabledFeature for all three feature keys', () => {
     assert.match(reportViewSrc, /getDisabledFeature\(['"]macro['"]\)/);
     assert.match(reportViewSrc, /getDisabledFeature\(['"]prices['"]\)/);
     assert.match(reportViewSrc, /getDisabledFeature\(['"]embeddings['"]\)/);

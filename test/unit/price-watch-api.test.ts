@@ -51,21 +51,32 @@ describe('Price watch API route (insight route module)', () => {
   });
 });
 
-describe('Price watch dashboard surface (dashboard/src/pages/ReportView.tsx)', () => {
-  const src = readSrc('dashboard/src/pages/ReportView.tsx');
+describe('Price watch dashboard surface', () => {
+  const reportViewSrc = readSrc('dashboard/src/pages/ReportView.tsx');
+  const sectionSrc = readSrc('dashboard/src/pages/ReportView/sections/PriceWatchSection.tsx');
+  const formattersSrc = readSrc('dashboard/src/pages/ReportView/formatters.tsx');
 
-  it('fetches the price watch overview from /price-watch', () => {
-    assert.match(src, /apiFetch<PriceWatchOverview>\(\s*['"]\/price-watch['"]\s*\)/);
+  it('ReportView fetches the price watch overview from /price-watch', () => {
+    assert.match(reportViewSrc, /apiFetch<PriceWatchOverview>\(\s*['"]\/price-watch['"]\s*\)/);
   });
 
-  it('renders the Price Watch card and Settings handoff copy', () => {
-    assert.ok(src.includes('Price Watch'));
-    assert.match(src, /Detailed per-entity history remains in Settings[\s\S]*&gt;[\s\S]*Entities\./);
+  it('ReportView renders PriceWatchSection', () => {
+    assert.match(reportViewSrc, /<PriceWatchSection[\s\S]*?priceEntries/);
   });
 
-  it('renders the contrarian badge and price-format helpers', () => {
-    assert.ok(src.includes('Contrarian'));
-    assert.ok(src.includes('formatPriceValue'));
-    assert.ok(src.includes('formatPriceContrarianNarrative'));
+  it('PriceWatchSection renders the Price Watch card and Settings handoff copy', () => {
+    assert.ok(sectionSrc.includes('Price Watch'));
+    assert.match(sectionSrc, /Detailed per-entity history remains in Settings[\s\S]*&gt;[\s\S]*Entities\./);
+  });
+
+  it('PriceWatchSection renders the contrarian badge using formatter helpers', () => {
+    assert.ok(sectionSrc.includes('Contrarian'));
+    assert.ok(sectionSrc.includes('formatPriceValue'));
+    assert.ok(sectionSrc.includes('formatPriceContrarianNarrative'));
+  });
+
+  it('formatters.tsx exports the price-format helpers', () => {
+    assert.match(formattersSrc, /export\s+function\s+formatPriceValue/);
+    assert.match(formattersSrc, /export\s+function\s+formatPriceContrarianNarrative/);
   });
 });

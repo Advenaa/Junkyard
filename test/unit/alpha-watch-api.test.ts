@@ -50,20 +50,25 @@ describe('Alpha watch API route (insight route module)', () => {
   });
 });
 
-describe('Alpha watch dashboard surface (dashboard/src/pages/ReportView.tsx)', () => {
-  const src = readSrc('dashboard/src/pages/ReportView.tsx');
+describe('Alpha watch dashboard surface', () => {
+  const reportViewSrc = readSrc('dashboard/src/pages/ReportView.tsx');
+  const sectionSrc = readSrc('dashboard/src/pages/ReportView/sections/AlphaWatchSection.tsx');
 
-  it('fetches the alpha watch overview from /alpha-watch', () => {
-    assert.ok(src.includes("apiFetch<AlphaWatchOverview>('/alpha-watch')"));
+  it('ReportView fetches the alpha watch overview from /alpha-watch', () => {
+    assert.ok(reportViewSrc.includes("apiFetch<AlphaWatchOverview>('/alpha-watch')"));
   });
 
-  it('renders the Alpha Watch card and Settings handoff copy', () => {
-    assert.ok(src.includes('Alpha Watch'));
-    assert.match(src, /Detailed per-entity tier timelines remain in[\s\S]*Settings[\s\S]*&gt;[\s\S]*Entities\./);
+  it('ReportView renders AlphaWatchSection', () => {
+    assert.match(reportViewSrc, /<AlphaWatchSection[\s\S]*?alphaWatchEntries/);
   });
 
-  it('renders tier badges and propagation-speed copy for alpha-watch entries', () => {
-    assert.ok(src.includes('first {formatSourceTierLabel(entry.firstSignalTier)}'));
-    assert.ok(src.includes('spread {formatCompactDuration(entry.propagationLagMs)}'));
+  it('AlphaWatchSection renders the Alpha Watch card and Settings handoff copy', () => {
+    assert.ok(sectionSrc.includes('Alpha Watch'));
+    assert.match(sectionSrc, /Detailed per-entity tier timelines remain in[\s\S]*Settings[\s\S]*&gt;[\s\S]*Entities\./);
+  });
+
+  it('AlphaWatchSection renders tier badges and propagation-speed copy for alpha-watch entries', () => {
+    assert.ok(sectionSrc.includes('first {formatSourceTierLabel(entry.firstSignalTier)}'));
+    assert.ok(sectionSrc.includes('spread {formatCompactDuration(entry.propagationLagMs)}'));
   });
 });
