@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 import dotenv from 'dotenv';
 import { ulid } from 'ulid';
 
+import { computeDisabledFeatures, formatStartupWarning, type DisabledFeatures } from './features.js';
+
 export interface Config {
   anthropicApiKey: string | null;
   openaiApiKey: string | null;
@@ -30,6 +32,7 @@ export interface Config {
     chunkFallback?: string | null;
     thinkalotFallback?: string | null;
   };
+  disabledFeatures: DisabledFeatures;
   secrets: string[];
 }
 
@@ -72,10 +75,6 @@ export function loadConfig(): Config {
     throw new Error(
       'At least one LLM provider is required: ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or .oauth-codex.json',
     );
-  }
-
-  if (!geminiApiKey && !googleApiKey) {
-    console.warn('WARNING: Neither GEMINI_API_KEY nor GOOGLE_API_KEY set — embeddings will be disabled');
   }
 
   if (!/^postgres(ql)?:\/\//.test(databaseUrl)) {
@@ -181,7 +180,7 @@ export function loadConfig(): Config {
     ...discordTokens,
   ].filter((v): v is string => v !== null);
 
-  return Object.freeze({
+  const partial: Omit<Config, 'disabledFeatures'> = {
     anthropicApiKey,
     openaiApiKey,
     googleApiKey,
@@ -202,5 +201,16 @@ export function loadConfig(): Config {
     alertWebhookUrl,
     models,
     secrets,
+  };
+
+  const disabledFeatures = computeDisabledFeatures(partial as Config);
+  const startupWarning = formatStartupWarning(disabledFeatures);
+  if (startupWarning) {
+    console.warn(startupWarning);
+  }
+
+  return Object.freeze({
+    ...partial,
+    disabledFeatures,
   });
 }

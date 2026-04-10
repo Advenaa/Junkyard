@@ -471,10 +471,12 @@ program
       }
 
       // Embed new summaries immediately so chat semantic search stays fresh
-      try {
-        await embedPipeline.run();
-      } catch (err: unknown) {
-        log.error({ err }, 'embed pipeline (post-poll) failed');
+      if (!config.disabledFeatures.embeddings.disabled) {
+        try {
+          await embedPipeline.run();
+        } catch (err: unknown) {
+          log.error({ err }, 'embed pipeline (post-poll) failed');
+        }
       }
     }
 
@@ -497,26 +499,32 @@ program
 
     async function onDaily(): Promise<void> {
       let reportRow = null;
-      try {
-        await embedPipeline.run();
-      } catch (err: unknown) {
-        log.error({ err }, 'embed pipeline failed');
-      }
-      try {
-        await narrativeDetector.detectNarratives();
-      } catch (err: unknown) {
-        log.error({ err }, 'narrative detection failed');
+      if (!config.disabledFeatures.embeddings.disabled) {
+        try {
+          await embedPipeline.run();
+        } catch (err: unknown) {
+          log.error({ err }, 'embed pipeline failed');
+        }
+        try {
+          await narrativeDetector.detectNarratives();
+        } catch (err: unknown) {
+          log.error({ err }, 'narrative detection failed');
+        }
       }
       // Price snapshot: fetch latest prices for all active token entities
-      try {
-        await priceTracker.fetchAndStore();
-      } catch (err: unknown) {
-        log.error({ err }, 'price fetch failed');
+      if (!config.disabledFeatures.prices.disabled) {
+        try {
+          await priceTracker.fetchAndStore();
+        } catch (err: unknown) {
+          log.error({ err }, 'price fetch failed');
+        }
       }
-      try {
-        await macroTracker.fetchAndStore();
-      } catch (err: unknown) {
-        log.error({ err }, 'macro fetch failed');
+      if (!config.disabledFeatures.macro.disabled) {
+        try {
+          await macroTracker.fetchAndStore();
+        } catch (err: unknown) {
+          log.error({ err }, 'macro fetch failed');
+        }
       }
       // Sentiment rollup: compute daily momentum before synthesis uses it
       try {

@@ -1,0 +1,58 @@
+import type { Config } from './config.js';
+
+export type FeatureKey = 'embeddings' | 'prices' | 'macro';
+
+export interface FeatureFlag {
+  disabled: boolean;
+  missingEnv: string;
+  disables: readonly string[];
+}
+
+export type DisabledFeatures = Readonly<Record<FeatureKey, FeatureFlag>>;
+
+const EMBEDDINGS_DISABLES = Object.freeze(['embeddings', 'RAG chat', 'semantic search', 'narrative clustering']);
+
+const PRICES_DISABLES = Object.freeze(['price feeds', 'contrarian signals', 'entity price API']);
+
+const MACRO_DISABLES = Object.freeze(['macro snapshots', 'cross-market correlation', 'macro regime detection']);
+
+export function computeDisabledFeatures(config: Config): DisabledFeatures {
+  const hasGemini = Boolean(config.geminiApiKey || config.googleApiKey);
+  const hasCoinGecko = Boolean(config.coingeckoApiKey);
+  const hasFred = Boolean(config.fredApiKey);
+
+  return Object.freeze({
+    embeddings: Object.freeze({
+      disabled: !hasGemini,
+      missingEnv: 'GEMINI_API_KEY',
+      disables: EMBEDDINGS_DISABLES,
+    }),
+    prices: Object.freeze({
+      disabled: !hasCoinGecko,
+      missingEnv: 'COINGECKO_API_KEY',
+      disables: PRICES_DISABLES,
+    }),
+    macro: Object.freeze({
+      disabled: !hasFred,
+      missingEnv: 'FRED_API_KEY',
+      disables: MACRO_DISABLES,
+    }),
+  });
+}
+
+export function isFeatureDisabled(flags: DisabledFeatures, key: FeatureKey): boolean {
+  return flags[key].disabled;
+}
+
+export function formatStartupWarning(flags: DisabledFeatures): string | null {
+  const disabled = (Object.keys(flags) as FeatureKey[]).filter((key) => flags[key].disabled);
+  if (disabled.length === 0) return null;
+
+  const lines: string[] = ['WARNING: Optional API keys missing — the following features are disabled:'];
+  for (const key of disabled) {
+    const flag = flags[key];
+    lines.push(`  • ${flag.missingEnv} → ${flag.disables.join(', ')}`);
+  }
+  lines.push('Set the missing env vars on the server to enable these features.');
+  return lines.join('\n');
+}

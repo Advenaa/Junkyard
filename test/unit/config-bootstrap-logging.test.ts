@@ -37,6 +37,8 @@ describe('config bootstrap logging', () => {
       process.env['DATABASE_URL'] = 'postgresql://podders:test@localhost:5432/podders';
       process.env['OPENAI_API_KEY'] = 'openai-test-key';
       process.env['GEMINI_API_KEY'] = 'gemini-test-key';
+      process.env['COINGECKO_API_KEY'] = 'coingecko-test-key';
+      process.env['FRED_API_KEY'] = 'fred-test-key';
       process.env['DISCORD_CLIENT_ID'] = 'discord-client-id';
       process.env['DISCORD_CLIENT_SECRET'] = 'discord-client-secret';
       process.env['SESSION_SECRET'] = 'session-secret-for-test';
@@ -61,6 +63,47 @@ describe('config bootstrap logging', () => {
     }
   });
 
+  it('prints a single consolidated warning block when optional API keys are missing', () => {
+    const envSnapshot = { ...process.env };
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+
+    try {
+      process.env['DATABASE_URL'] = 'postgresql://podders:test@localhost:5432/podders';
+      process.env['OPENAI_API_KEY'] = 'openai-test-key';
+      process.env['DISCORD_CLIENT_ID'] = 'discord-client-id';
+      process.env['DISCORD_CLIENT_SECRET'] = 'discord-client-secret';
+      process.env['SESSION_SECRET'] = 'session-secret-for-test';
+      process.env['API_KEY'] = 'configured-api-key';
+      delete process.env['GEMINI_API_KEY'];
+      delete process.env['GOOGLE_API_KEY'];
+      delete process.env['COINGECKO_API_KEY'];
+      delete process.env['FRED_API_KEY'];
+      delete process.env['ALERT_WEBHOOK_URL'];
+
+      const config = loadConfig();
+      const warningOutput = warnings.join('\n');
+
+      assert.equal(config.disabledFeatures.embeddings.disabled, true);
+      assert.equal(config.disabledFeatures.prices.disabled, true);
+      assert.equal(config.disabledFeatures.macro.disabled, true);
+      assert.match(warningOutput, /Optional API keys missing/);
+      assert.match(warningOutput, /GEMINI_API_KEY/);
+      assert.match(warningOutput, /COINGECKO_API_KEY/);
+      assert.match(warningOutput, /FRED_API_KEY/);
+      assert.match(warningOutput, /RAG chat/);
+      assert.match(warningOutput, /price feeds/);
+      assert.match(warningOutput, /macro snapshots/);
+    } finally {
+      console.warn = originalWarn;
+      restoreEnv(envSnapshot);
+    }
+  });
+
   it('does not echo invalid ALERT_WEBHOOK_URL values in warnings', () => {
     const envSnapshot = { ...process.env };
     const originalWarn = console.warn;
@@ -75,6 +118,8 @@ describe('config bootstrap logging', () => {
       process.env['DATABASE_URL'] = 'postgresql://podders:test@localhost:5432/podders';
       process.env['OPENAI_API_KEY'] = 'openai-test-key';
       process.env['GEMINI_API_KEY'] = 'gemini-test-key';
+      process.env['COINGECKO_API_KEY'] = 'coingecko-test-key';
+      process.env['FRED_API_KEY'] = 'fred-test-key';
       process.env['DISCORD_CLIENT_ID'] = 'discord-client-id';
       process.env['DISCORD_CLIENT_SECRET'] = 'discord-client-secret';
       process.env['SESSION_SECRET'] = 'session-secret-for-test';

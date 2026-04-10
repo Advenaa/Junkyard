@@ -129,7 +129,7 @@ export function createFredMacroFetcher(log: Logger, apiKey?: string): MacroFetch
 
   async function fetchLatest(): Promise<MacroObservationData[]> {
     if (!apiKey) {
-      log.info('FRED_API_KEY not set — skipping macro fetch');
+      // Caller is expected to guard on disabledFeatures.macro; this is a defensive no-op.
       return [];
     }
 
