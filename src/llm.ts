@@ -394,11 +394,14 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
       }
 
       try {
+        // openai-codex-responses rejects the `temperature` parameter for the gpt-5.4 family
+        // with {"detail":"Unsupported parameter: temperature"}. Omit it for that provider.
+        const isCodexProvider = provider === 'openai-codex';
         const effectiveTemperature = params.temperature ?? STAGE_TEMPERATURES[params.stage] ?? 0.5;
-        const codexKey = provider === 'openai-codex' ? await getCodexApiKey(log) : undefined;
+        const codexKey = isCodexProvider ? await getCodexApiKey(log) : undefined;
         const response = await (_complete as typeof complete)(model, context, {
           maxTokens: params.maxTokens,
-          temperature: effectiveTemperature,
+          ...(isCodexProvider ? {} : { temperature: effectiveTemperature }),
           ...(codexKey ? { apiKey: codexKey } : {}),
         });
 

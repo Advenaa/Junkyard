@@ -385,6 +385,60 @@ describe('call — happy path', () => {
   });
 });
 
+// Regression test for C-020: openai-codex-responses rejects `temperature` with
+// {"detail":"Unsupported parameter: temperature"} for the gpt-5.4 family. The
+// llm wrapper must omit that key when the resolved provider is openai-codex,
+// otherwise every LLM call on the VPS comes back as stopReason="error".
+describe('call — C-020: omit temperature for openai-codex provider', () => {
+  it('does not include a temperature key in opts when the provider is openai-codex', async () => {
+    let capturedOpts: Record<string, unknown> | undefined;
+    const llm = makeLLM(async (_model, _context, opts) => {
+      capturedOpts = opts as Record<string, unknown>;
+      return makeResponse('ok');
+    });
+
+    await llm.call(defaultParams({ model: 'openai-codex:gpt-5.4-mini', temperature: 0.42 }));
+
+    assert.ok(capturedOpts, 'completeFn should have been called');
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(capturedOpts, 'temperature'),
+      false,
+      'opts.temperature must be absent for openai-codex (API rejects it — C-020)',
+    );
+    assert.equal((capturedOpts as { maxTokens?: number }).maxTokens, 1024);
+  });
+
+  it('still passes temperature for non-codex providers (anthropic)', async () => {
+    let capturedOpts: Record<string, unknown> | undefined;
+    const llm = makeLLM(async (_model, _context, opts) => {
+      capturedOpts = opts as Record<string, unknown>;
+      return makeResponse('ok');
+    });
+
+    await llm.call(defaultParams({ model: 'anthropic:claude-haiku-4-5-20251001', temperature: 0.33 }));
+
+    assert.ok(capturedOpts, 'completeFn should have been called');
+    assert.equal((capturedOpts as { temperature?: number }).temperature, 0.33);
+  });
+
+  it('omits temperature for openai-codex even when the caller did not set one', async () => {
+    let capturedOpts: Record<string, unknown> | undefined;
+    const llm = makeLLM(async (_model, _context, opts) => {
+      capturedOpts = opts as Record<string, unknown>;
+      return makeResponse('ok');
+    });
+
+    await llm.call(defaultParams({ model: 'openai-codex:gpt-5.4-mini' }));
+
+    assert.ok(capturedOpts, 'completeFn should have been called');
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(capturedOpts, 'temperature'),
+      false,
+      'the stage-default temperature must also be suppressed for openai-codex',
+    );
+  });
+});
+
 describe('call — L1: context length exceeded', () => {
   it('throws ContextLengthExceededError without retrying', async () => {
     let callCount = 0;
