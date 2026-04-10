@@ -2,38 +2,52 @@ import type { RawFeedSource } from '../lib/useRawFeedStream';
 
 interface RawFeedHeaderProps {
   sources: RawFeedSource[];
-  selectedSource: string;
-  onSelectSource: (sourceId: string) => void;
+  selectedFeedSource: RawFeedSource | null;
+  onSelectSource: (source: RawFeedSource) => void;
   live: boolean;
   onSetLive: (live: boolean) => void;
   error?: string | null;
   onRetry: () => void | Promise<void>;
 }
 
+// Composite identity key — bare sourceId can collide across source kinds
+// (e.g. discord+twitter sharing the same handle), so we encode both fields
+// into the dropdown's option value.
+function composeSourceKey(source: RawFeedSource): string {
+  return `${source.source}::${source.sourceId}`;
+}
+
 export function RawFeedHeader({
   sources,
-  selectedSource,
+  selectedFeedSource,
   onSelectSource,
   live,
   onSetLive,
   error = null,
   onRetry,
 }: RawFeedHeaderProps) {
+  const selectedKey = selectedFeedSource ? composeSourceKey(selectedFeedSource) : '';
   return (
     <>
       <div className="flex items-center justify-between flex-wrap gap-4">
         <h1 className="font-heading text-2xl text-text-primary">Raw Feed</h1>
         <div className="flex items-center gap-4">
           <select
-            value={selectedSource}
-            onChange={(event) => onSelectSource(event.target.value)}
+            value={selectedKey}
+            onChange={(event) => {
+              const next = sources.find((source) => composeSourceKey(source) === event.target.value);
+              if (next) onSelectSource(next);
+            }}
             className="bg-background border border-border rounded-lg px-3 py-2 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
           >
-            {sources.map((source) => (
-              <option key={source.sourceId} value={source.sourceId}>
-                {source.label}
-              </option>
-            ))}
+            {sources.map((source) => {
+              const key = composeSourceKey(source);
+              return (
+                <option key={key} value={key}>
+                  {source.label}
+                </option>
+              );
+            })}
           </select>
 
           <div className="flex bg-surface border border-border rounded-lg overflow-hidden">

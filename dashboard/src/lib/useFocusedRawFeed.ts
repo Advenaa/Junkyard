@@ -10,8 +10,10 @@ interface FocusedRawFeedListItem {
 
 interface UseFocusedRawFeedOptions {
   focusedItemId: string;
+  requestedSource?: string;
   requestedSourceId: string;
   selectedSource: string;
+  selectedSourceKind?: string;
   items: FocusedRawFeedListItem[];
   loading: boolean;
   contextSize?: number;
@@ -54,8 +56,10 @@ function normalizeFocusedRawFeedContext(response: RawSourceItemContextResponse):
 
 export function useFocusedRawFeed({
   focusedItemId,
+  requestedSource,
   requestedSourceId,
   selectedSource,
+  selectedSourceKind,
   items,
   loading,
   contextSize = DEFAULT_FOCUSED_RAW_FEED_CONTEXT_SIZE,
@@ -98,7 +102,10 @@ export function useFocusedRawFeed({
         if (cancelled) return;
 
         const normalizedContext = normalizeFocusedRawFeedContext(response);
-        if (normalizedContext.item.sourceId !== selectedSource) {
+        if (
+          normalizedContext.item.sourceId !== selectedSource ||
+          (selectedSourceKind && normalizedContext.item.source !== selectedSourceKind)
+        ) {
           setFocusedContext(null);
           setFocusedContextLoading(false);
           setLoadedContextSize(null);
@@ -130,8 +137,10 @@ export function useFocusedRawFeed({
     focusedRawFeedActive,
     loadedContextSize,
     loading,
+    requestedSource,
     retryNonce,
     selectedSource,
+    selectedSourceKind,
   ]);
 
   const activeFocusedContext = focusedRawFeedActive ? focusedContext : null;

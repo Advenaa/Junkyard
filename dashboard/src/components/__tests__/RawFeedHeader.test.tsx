@@ -8,14 +8,13 @@ describe('RawFeedHeader', () => {
     const user = userEvent.setup();
     const onSelectSource = vi.fn();
     const onSetLive = vi.fn();
+    const alpha = { source: 'discord', sourceId: 'guild:alpha', label: 'Alpha Room' };
+    const beta = { source: 'discord', sourceId: 'guild:beta', label: 'Beta Room' };
 
     render(
       <RawFeedHeader
-        sources={[
-          { source: 'discord', sourceId: 'guild:alpha', label: 'Alpha Room' },
-          { source: 'discord', sourceId: 'guild:beta', label: 'Beta Room' },
-        ]}
-        selectedSource="guild:alpha"
+        sources={[alpha, beta]}
+        selectedFeedSource={alpha}
         onSelectSource={onSelectSource}
         live
         onSetLive={onSetLive}
@@ -24,15 +23,38 @@ describe('RawFeedHeader', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'Raw Feed' })).toBeInTheDocument();
-    expect(screen.getByRole('combobox')).toHaveValue('guild:alpha');
+    expect(screen.getByRole('combobox')).toHaveValue('discord::guild:alpha');
 
-    await user.selectOptions(screen.getByRole('combobox'), 'guild:beta');
-    expect(onSelectSource).toHaveBeenCalledWith('guild:beta');
+    await user.selectOptions(screen.getByRole('combobox'), 'discord::guild:beta');
+    expect(onSelectSource).toHaveBeenCalledWith(beta);
 
     await user.click(screen.getByRole('button', { name: 'Paused' }));
     await user.click(screen.getByRole('button', { name: 'Live' }));
     expect(onSetLive).toHaveBeenNthCalledWith(1, false);
     expect(onSetLive).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it('lets the user disambiguate two sources that share the same sourceId across kinds', async () => {
+    const user = userEvent.setup();
+    const onSelectSource = vi.fn();
+    const discordCollision = { source: 'discord', sourceId: 'collision', label: 'Discord Collision' };
+    const twitterCollision = { source: 'twitter', sourceId: 'collision', label: 'Twitter Collision' };
+
+    render(
+      <RawFeedHeader
+        sources={[discordCollision, twitterCollision]}
+        selectedFeedSource={discordCollision}
+        onSelectSource={onSelectSource}
+        live
+        onSetLive={() => {}}
+        onRetry={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('combobox')).toHaveValue('discord::collision');
+
+    await user.selectOptions(screen.getByRole('combobox'), 'twitter::collision');
+    expect(onSelectSource).toHaveBeenCalledWith(twitterCollision);
   });
 
   it('renders a retryable error banner when the feed load fails', async () => {
@@ -42,7 +64,7 @@ describe('RawFeedHeader', () => {
     render(
       <RawFeedHeader
         sources={[{ source: 'discord', sourceId: 'guild:alpha', label: 'Alpha Room' }]}
-        selectedSource="guild:alpha"
+        selectedFeedSource={{ source: 'discord', sourceId: 'guild:alpha', label: 'Alpha Room' }}
         onSelectSource={() => {}}
         live={false}
         onSetLive={() => {}}

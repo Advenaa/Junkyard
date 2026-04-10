@@ -18,12 +18,12 @@ describe('rawMessageActions', () => {
       }),
     ).toEqual([
       {
-        href: '/feed?sourceId=guild%3Aalpha&itemId=item-1',
+        href: '/feed?source=discord&sourceId=guild%3Aalpha&itemId=item-1',
         label: 'View in focused feed',
         tone: 'accent',
       },
       {
-        href: '/feed?sourceId=guild%3Aalpha',
+        href: '/feed?source=discord&sourceId=guild%3Aalpha',
         label: 'Resume live feed',
         tone: 'muted',
       },
@@ -52,7 +52,7 @@ describe('rawMessageActions', () => {
       ),
     ).toEqual([
       {
-        href: '/feed?sourceId=guild%3Aalpha&itemId=item-1&context=5',
+        href: '/feed?source=discord&sourceId=guild%3Aalpha&itemId=item-1&context=5',
         label: 'View in feed',
         tone: 'accent',
         ariaLabel: 'View raw feed around item-1',
@@ -123,6 +123,7 @@ describe('rawMessageActions', () => {
   it('builds focused-feed actions for context cards and the primary pinned citation', () => {
     expect(
       buildFocusedRawFeedContextActions(
+        'discord',
         'guild:alpha',
         {
           id: 'item-2',
@@ -146,7 +147,7 @@ describe('rawMessageActions', () => {
         external: true,
       },
       {
-        href: '/feed?sourceId=guild%3Aalpha&itemId=item-2&context=5',
+        href: '/feed?source=discord&sourceId=guild%3Aalpha&itemId=item-2&context=5',
         label: 'Focus here',
         tone: 'accent',
       },
@@ -170,6 +171,23 @@ describe('rawMessageActions', () => {
         external: true,
       },
     ]);
+  });
+
+  it('distinguishes focused-feed context actions for colliding source ids across source kinds', () => {
+    const discordActions = buildFocusedRawFeedContextActions('discord', 'collision', { id: 'item-1' });
+    const twitterActions = buildFocusedRawFeedContextActions('twitter', 'collision', { id: 'item-1' });
+
+    expect(discordActions[1]).toEqual({
+      href: '/feed?source=discord&sourceId=collision&itemId=item-1',
+      label: 'Focus here',
+      tone: 'accent',
+    });
+    expect(twitterActions[1]).toEqual({
+      href: '/feed?source=twitter&sourceId=collision&itemId=item-1',
+      label: 'Focus here',
+      tone: 'accent',
+    });
+    expect(discordActions[1]?.href).not.toBe(twitterActions[1]?.href);
   });
 
   it('builds the live-feed item drilldown action', () => {

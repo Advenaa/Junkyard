@@ -1195,6 +1195,7 @@ export async function createServer(
         querystring: {
           type: 'object',
           properties: {
+            source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
             limit: { type: 'integer', minimum: 1, maximum: 200 },
             offset: { type: 'integer', minimum: 0 },
             after: { type: 'integer', minimum: 0 },
@@ -1206,18 +1207,22 @@ export async function createServer(
     async (request) => {
       const { sourceId } = request.params as { sourceId: string };
       const {
+        source,
         limit: rawLimit,
         offset,
         after,
       } = request.query as {
+        source?: string;
         limit?: number;
         offset?: number;
         after?: number;
       };
       const limit = Math.min(Math.max(rawLimit ?? 50, 1), 200);
 
-      let sql = `SELECT * FROM items WHERE source_id = $1`;
-      const params: (string | number)[] = [sourceId];
+      let sql = source
+        ? `SELECT * FROM items WHERE source = $1 AND source_id = $2`
+        : `SELECT * FROM items WHERE source_id = $1`;
+      const params: (string | number)[] = source ? [source, sourceId] : [sourceId];
 
       if (after != null) {
         params.push(after);

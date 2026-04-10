@@ -145,9 +145,12 @@ describe('ItemView', () => {
     expect(screen.getByText(/This raw source message is opened directly/i)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Focused timeline' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234&itemId=item-1&context=3',
+      '/feed?source=discord&sourceId=guild%3A1234&itemId=item-1&context=3',
     );
-    expect(screen.getByRole('link', { name: 'Live feed' })).toHaveAttribute('href', '/feed?sourceId=guild%3A1234');
+    expect(screen.getByRole('link', { name: 'Live feed' })).toHaveAttribute(
+      'href',
+      '/feed?source=discord&sourceId=guild%3A1234',
+    );
     expect(screen.getByText('Raw Item')).toBeInTheDocument();
     expect(screen.getByText('@alice')).toBeInTheDocument();
     expect(screen.getAllByText('guild:1234')).toHaveLength(2);
@@ -162,19 +165,19 @@ describe('ItemView', () => {
     expect(screen.getByText('Up to 3 before and after')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View in focused feed' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234&itemId=item-1&context=3',
+      '/feed?source=discord&sourceId=guild%3A1234&itemId=item-1&context=3',
     );
     expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234',
+      '/feed?source=discord&sourceId=guild%3A1234',
     );
     expect(screen.getByLabelText('View raw feed around item-older')).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234&itemId=item-older&context=3',
+      '/feed?source=discord&sourceId=guild%3A1234&itemId=item-older&context=3',
     );
     expect(screen.getByLabelText('View raw feed around item-newer')).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234&itemId=item-newer&context=3',
+      '/feed?source=discord&sourceId=guild%3A1234&itemId=item-newer&context=3',
     );
     expect(screen.getByLabelText('Open raw item item-older')).toHaveAttribute('href', '/items/item-older');
     expect(screen.getByLabelText('Open raw item item-newer')).toHaveAttribute('href', '/items/item-newer');
@@ -676,7 +679,7 @@ describe('ItemView', () => {
     await screen.findByText('The first alert landed before the patch thread started.');
     expect(screen.getByRole('link', { name: 'Focused timeline' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234&itemId=item-1&context=5',
+      '/feed?source=discord&sourceId=guild%3A1234&itemId=item-1&context=5',
     );
 
     await user.click(screen.getByRole('link', { name: 'Focused timeline' }));

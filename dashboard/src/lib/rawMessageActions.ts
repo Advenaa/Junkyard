@@ -40,13 +40,14 @@ function buildOpenRawItemAction(
 }
 
 function buildRawFeedFocusAction(
+  source: string,
   sourceId: string,
   itemId: string,
   { label = 'Focus here', tone = 'accent', ariaLabel }: RawMessageActionOptions = {},
   { feedContextSize }: RawMessageRouteOptions = {},
 ): RawMessageCardAction {
   return {
-    href: buildRawFeedFocusHref(sourceId, itemId, { contextSize: feedContextSize }),
+    href: buildRawFeedFocusHref(source, sourceId, itemId, { contextSize: feedContextSize }),
     label,
     tone,
     ...(ariaLabel ? { ariaLabel } : {}),
@@ -98,6 +99,7 @@ function buildOpenSourceLinkAction(url: string): RawMessageCardAction {
 }
 
 export function buildRawFeedSequenceActions(
+  source: string,
   sourceId: string,
   { previousItemId, nextItemId }: { previousItemId?: string; nextItemId?: string },
   routeOptions: RawMessageRouteOptions = {},
@@ -106,6 +108,7 @@ export function buildRawFeedSequenceActions(
     ...(previousItemId
       ? [
           buildRawFeedFocusAction(
+            source,
             sourceId,
             previousItemId,
             {
@@ -118,6 +121,7 @@ export function buildRawFeedSequenceActions(
     ...(nextItemId
       ? [
           buildRawFeedFocusAction(
+            source,
             sourceId,
             nextItemId,
             {
@@ -138,6 +142,7 @@ export function buildRawFeedMessageActions(
 }
 
 export function buildFocusedRawFeedContextActions(
+  source: string,
   sourceId: string,
   item: Pick<RawItemTarget, 'id' | 'url'>,
   routeOptions: RawMessageRouteOptions = {},
@@ -145,7 +150,7 @@ export function buildFocusedRawFeedContextActions(
   return [
     buildOpenRawItemAction(item.id, { tone: 'muted' }, routeOptions),
     ...(item.url ? [buildOpenSourceLinkAction(item.url)] : []),
-    buildRawFeedFocusAction(sourceId, item.id, {}, routeOptions),
+    buildRawFeedFocusAction(source, sourceId, item.id, {}, routeOptions),
   ];
 }
 

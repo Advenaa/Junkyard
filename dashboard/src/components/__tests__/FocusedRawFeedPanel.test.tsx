@@ -66,8 +66,10 @@ describe('FocusedRawFeedPanel', () => {
           focusedContextLoading={false}
           focusedGapLabel="Live feed resumes about 9 minutes later"
           contextSize={2}
+          requestedSource="discord"
           requestedSourceId="guild:beta"
           selectedSource="guild:beta"
+          selectedSourceKind="discord"
           showTimelineGap
           formatTimestamp={(timestamp) => `${timestamp}ms`}
         />
@@ -78,7 +80,7 @@ describe('FocusedRawFeedPanel', () => {
     expect(screen.getByRole('link', { name: 'Open raw item' })).toHaveAttribute('href', '/items/item-focus');
     expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta',
+      '/feed?source=discord&sourceId=guild%3Abeta',
     );
     expect(screen.getByText('Earlier neighbor')).toBeInTheDocument();
     expect(screen.getByText('Focused citation body')).toBeInTheDocument();
@@ -96,16 +98,16 @@ describe('FocusedRawFeedPanel', () => {
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/later-neighbor')).toBe(true);
     expect(screen.getByRole('link', { name: 'Previous in source' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta&itemId=item-before',
+      '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-before',
     );
     expect(screen.getByRole('link', { name: 'Next in source' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta&itemId=item-after',
+      '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-after',
     );
 
     const focusLinks = screen.getAllByRole('link', { name: 'Focus here' });
-    expect(focusLinks[0]).toHaveAttribute('href', '/feed?sourceId=guild%3Abeta&itemId=item-before');
-    expect(focusLinks[1]).toHaveAttribute('href', '/feed?sourceId=guild%3Abeta&itemId=item-after');
+    expect(focusLinks[0]).toHaveAttribute('href', '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-before');
+    expect(focusLinks[1]).toHaveAttribute('href', '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-after');
 
     const openLinks = screen.getAllByRole('link', { name: 'Open item' });
     expect(openLinks[0]).toHaveAttribute('href', '/items/item-before');
@@ -143,8 +145,10 @@ describe('FocusedRawFeedPanel', () => {
           focusedContextLoading={false}
           focusedGapLabel="Live feed resumes below"
           contextSize={2}
+          requestedSource="discord"
           requestedSourceId="guild:beta"
           selectedSource="guild:beta"
+          selectedSourceKind="discord"
           canExpandContext
           onExpandContext={onExpandContext}
           formatTimestamp={(timestamp) => `${timestamp}ms`}
@@ -187,8 +191,10 @@ describe('FocusedRawFeedPanel', () => {
           focusedContextLoading={false}
           focusedGapLabel="Live feed resumes below"
           contextSize={5}
+          requestedSource="discord"
           requestedSourceId="guild:beta"
           selectedSource="guild:beta"
+          selectedSourceKind="discord"
           onRetryContext={onRetryContext}
           formatTimestamp={(timestamp) => `${timestamp}ms`}
         />
@@ -230,8 +236,10 @@ describe('FocusedRawFeedPanel', () => {
           focusedContextLoading
           focusedGapLabel="Live feed resumes below"
           contextSize={5}
+          requestedSource="discord"
           requestedSourceId="guild:beta"
           selectedSource="guild:beta"
+          selectedSourceKind="discord"
           formatTimestamp={(timestamp) => `${timestamp}ms`}
         />
       </MemoryRouter>,
@@ -251,8 +259,10 @@ describe('FocusedRawFeedPanel', () => {
           focusedContextLoading
           focusedGapLabel="Live feed resumes below"
           contextSize={2}
+          requestedSource=""
           requestedSourceId=""
           selectedSource="guild:beta"
+          selectedSourceKind=""
           formatTimestamp={(timestamp) => `${timestamp}ms`}
         />
       </MemoryRouter>,
@@ -275,8 +285,10 @@ describe('FocusedRawFeedPanel', () => {
           focusedContextLoading={false}
           focusedGapLabel="Live feed resumes below"
           contextSize={2}
+          requestedSource="discord"
           requestedSourceId="guild:beta"
           selectedSource="guild:beta"
+          selectedSourceKind="discord"
           onRetryContext={onRetryContext}
           formatTimestamp={(timestamp) => `${timestamp}ms`}
         />

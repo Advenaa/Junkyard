@@ -20,8 +20,10 @@ interface FocusedRawFeedPanelProps {
   contextSize: number;
   feedContextSize?: number;
   itemContextSize?: number;
+  requestedSource: string;
   requestedSourceId: string;
   selectedSource: string;
+  selectedSourceKind: string;
   showTimelineGap?: boolean;
   canExpandContext?: boolean;
   onExpandContext?: () => void;
@@ -37,8 +39,10 @@ export function FocusedRawFeedPanel({
   contextSize,
   feedContextSize,
   itemContextSize,
+  requestedSource,
   requestedSourceId,
   selectedSource,
+  selectedSourceKind,
   showTimelineGap = false,
   canExpandContext = false,
   onExpandContext,
@@ -66,7 +70,7 @@ export function FocusedRawFeedPanel({
                     ]
                   : []),
                 ...(requestedSourceId
-                  ? [{ href: buildRawFeedSourceHref(requestedSourceId), label: 'Resume live feed' }]
+                  ? [{ href: buildRawFeedSourceHref(requestedSource, requestedSourceId), label: 'Resume live feed' }]
                   : []),
               ]}
               metaLabel={focusedContext?.item.sourceId || requestedSourceId || undefined}
@@ -110,12 +114,16 @@ export function FocusedRawFeedPanel({
               timestampLabel={formatTimestamp(focusedContext.item.timestamp)}
               previousHref={
                 previousItem
-                  ? buildRawFeedFocusHref(selectedSource, previousItem.id, { contextSize: feedContextSize })
+                  ? buildRawFeedFocusHref(selectedSourceKind, selectedSource, previousItem.id, {
+                      contextSize: feedContextSize,
+                    })
                   : undefined
               }
               nextHref={
                 nextItem
-                  ? buildRawFeedFocusHref(selectedSource, nextItem.id, { contextSize: feedContextSize })
+                  ? buildRawFeedFocusHref(selectedSourceKind, selectedSource, nextItem.id, {
+                      contextSize: feedContextSize,
+                    })
                   : undefined
               }
             />
@@ -126,7 +134,7 @@ export function FocusedRawFeedPanel({
               getBadges={(item) => [{ label: item.status }]}
               getFooterMeta={(item) => buildRawMessageFooterMeta({ attachments: item.attachments })}
               getActions={(item) =>
-                buildFocusedRawFeedContextActions(selectedSource, item, {
+                buildFocusedRawFeedContextActions(selectedSourceKind, selectedSource, item, {
                   feedContextSize,
                   itemContextSize,
                 })
@@ -152,7 +160,7 @@ export function FocusedRawFeedPanel({
               getBadges={(item) => [{ label: item.status }]}
               getFooterMeta={(item) => buildRawMessageFooterMeta({ attachments: item.attachments })}
               getActions={(item) =>
-                buildFocusedRawFeedContextActions(selectedSource, item, {
+                buildFocusedRawFeedContextActions(selectedSourceKind, selectedSource, item, {
                   feedContextSize,
                   itemContextSize,
                 })

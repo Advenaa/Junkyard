@@ -42,6 +42,7 @@ describe('useRawFeedStream', () => {
         if (decodedPath(parsed) === '/api/v1/feed/guild:beta') {
           expect(parsed.searchParams.get('limit')).toBe('2');
           expect(parsed.searchParams.get('offset')).toBe('0');
+          expect(parsed.searchParams.get('source')).toBe('discord');
           return jsonResponse({
             items: [
               {
@@ -61,7 +62,9 @@ describe('useRawFeedStream', () => {
       }),
     );
 
-    const { result } = renderHook(() => useRawFeedStream({ requestedSourceId: 'guild:beta', pageSize: 2 }));
+    const { result } = renderHook(() =>
+      useRawFeedStream({ requestedSource: 'discord', requestedSourceId: 'guild:beta', pageSize: 2 }),
+    );
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -76,6 +79,104 @@ describe('useRawFeedStream', () => {
     expect(result.current.sourcesLoaded).toBe(true);
     expect(result.current.selectedSource).toBe('guild:beta');
     expect(result.current.items.map((item) => item.id)).toEqual(['item-beta']);
+  });
+
+  it('leaves the selection null when an explicit source/sourceId deep link is no longer in the catalog', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const parsed = new URL(url, 'http://localhost');
+
+      if (parsed.pathname === '/api/v1/sources') {
+        return jsonResponse({
+          sources: [{ source: 'discord', sourceId: 'collision', label: 'Disco' }],
+        });
+      }
+
+      throw new Error(`Unhandled fetch ${parsed.pathname}${parsed.search}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result } = renderHook(() =>
+      useRawFeedStream({ requestedSource: 'twitter', requestedSourceId: 'collision', pageSize: 2 }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.sourcesLoaded).toBe(true);
+    });
+
+    // The catalog only contains discord/collision, but the user explicitly
+    // asked for twitter/collision. Falling back to discord would silently
+    // serve the wrong source kind, so the hook must leave the selection null
+    // and let the page render an empty state.
+    expect(result.current.selectedFeedSource).toBeNull();
+    expect(result.current.selectedSource).toBe('');
+    // Crucially: no /feed fetch was issued at all.
+    expect(
+      fetchMock.mock.calls.some(([input]) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        return new URL(url, 'http://localhost').pathname.startsWith('/api/v1/feed/');
+      }),
+    ).toBe(false);
+  });
+
+  it('prefers the requested source kind when source IDs collide across feed types', async () => {
+    let requestedFeedKind: string | null = null;
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const parsed = new URL(url, 'http://localhost');
+
+        if (parsed.pathname === '/api/v1/sources') {
+          return jsonResponse({
+            sources: [
+              { source: 'discord', sourceId: 'collision', label: 'Disco' },
+              { source: 'twitter', sourceId: 'collision', label: 'Tweet' },
+            ],
+          });
+        }
+
+        if (decodedPath(parsed) === '/api/v1/feed/collision') {
+          requestedFeedKind = parsed.searchParams.get('source');
+          expect(parsed.searchParams.get('limit')).toBe('2');
+          expect(parsed.searchParams.get('offset')).toBe('0');
+          expect(requestedFeedKind).toBe('twitter');
+          return jsonResponse({
+            items: [
+              {
+                id: 'tweet-1',
+                source: 'twitter',
+                author: 'tweet-user',
+                content: 'Collision test item',
+                timestamp: 4_000,
+                attachments: null,
+                engagement: null,
+              },
+            ],
+          });
+        }
+
+        throw new Error(`Unhandled fetch ${parsed.pathname}${parsed.search}`);
+      }),
+    );
+
+    const { result } = renderHook(() =>
+      useRawFeedStream({ requestedSource: 'twitter', requestedSourceId: 'collision', pageSize: 2 }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedFeedSource?.source).toBe('twitter');
+    });
+
+    await waitFor(() => {
+      expect(result.current.items.map((item) => item.id)).toEqual(['tweet-1']);
+    });
+
+    expect(result.current.selectedSource).toBe('collision');
+    expect(requestedFeedKind).toBe('twitter');
   });
 
   it('selects the first feed-eligible source when none is requested, even if it is twitter', async () => {
@@ -96,6 +197,9 @@ describe('useRawFeedStream', () => {
         }
 
         if (decodedPath(parsed) === '/api/v1/feed/list:cabal') {
+          expect(parsed.searchParams.get('limit')).toBe('2');
+          expect(parsed.searchParams.get('offset')).toBe('0');
+          expect(parsed.searchParams.get('source')).toBe('twitter');
           return jsonResponse({
             items: [
               {
@@ -115,7 +219,7 @@ describe('useRawFeedStream', () => {
       }),
     );
 
-    const { result } = renderHook(() => useRawFeedStream({ requestedSourceId: '', pageSize: 2 }));
+    const { result } = renderHook(() => useRawFeedStream({ requestedSource: '', requestedSourceId: '', pageSize: 2 }));
 
     await waitFor(() => {
       expect(result.current.selectedSource).toBe('list:cabal');
@@ -143,6 +247,9 @@ describe('useRawFeedStream', () => {
         }
 
         if (decodedPath(parsed) === '/api/v1/feed/guild:alpha') {
+          expect(parsed.searchParams.get('limit')).toBe('2');
+          expect(parsed.searchParams.get('offset')).toBe('0');
+          expect(parsed.searchParams.get('source')).toBe('discord');
           return jsonResponse({
             items: [
               {
@@ -162,7 +269,7 @@ describe('useRawFeedStream', () => {
       }),
     );
 
-    const { result } = renderHook(() => useRawFeedStream({ requestedSourceId: '', pageSize: 2 }));
+    const { result } = renderHook(() => useRawFeedStream({ requestedSource: '', requestedSourceId: '', pageSize: 2 }));
 
     await waitFor(() => {
       expect(result.current.selectedSource).toBe('guild:alpha');
@@ -175,6 +282,7 @@ describe('useRawFeedStream', () => {
 
   it('URL-encodes twitter source IDs that contain reserved path characters', async () => {
     const requestedPaths: string[] = [];
+    const requestedSourceKinds: string[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -189,6 +297,7 @@ describe('useRawFeedStream', () => {
 
         if (parsed.pathname.startsWith('/api/v1/feed/')) {
           requestedPaths.push(parsed.pathname);
+          requestedSourceKinds.push(parsed.searchParams.get('source') ?? '');
           return jsonResponse({ items: [] });
         }
 
@@ -196,7 +305,7 @@ describe('useRawFeedStream', () => {
       }),
     );
 
-    const { result } = renderHook(() => useRawFeedStream({ requestedSourceId: '', pageSize: 2 }));
+    const { result } = renderHook(() => useRawFeedStream({ requestedSource: '', requestedSourceId: '', pageSize: 2 }));
 
     await waitFor(() => {
       expect(result.current.selectedSource).toBe('#cabal OR ETH');
@@ -210,6 +319,7 @@ describe('useRawFeedStream', () => {
     expect(requestedPaths[0]).toBe(`/api/v1/feed/${encodeURIComponent('#cabal OR ETH')}`);
     // Round-trip back to the original via decoding.
     expect(decodeURIComponent(requestedPaths[0])).toBe('/api/v1/feed/#cabal OR ETH');
+    expect(requestedSourceKinds[0]).toBe('twitter');
   });
 
   it('appends only new items when loading more pages', async () => {
@@ -226,6 +336,7 @@ describe('useRawFeedStream', () => {
         }
 
         if (decodedPath(parsed) === '/api/v1/feed/guild:beta' && parsed.searchParams.get('offset') === '0') {
+          expect(parsed.searchParams.get('source')).toBe('discord');
           return jsonResponse({
             items: [
               {
@@ -251,6 +362,7 @@ describe('useRawFeedStream', () => {
         }
 
         if (decodedPath(parsed) === '/api/v1/feed/guild:beta' && parsed.searchParams.get('offset') === '2') {
+          expect(parsed.searchParams.get('source')).toBe('discord');
           return jsonResponse({
             items: [
               {
@@ -279,7 +391,9 @@ describe('useRawFeedStream', () => {
       }),
     );
 
-    const { result } = renderHook(() => useRawFeedStream({ requestedSourceId: 'guild:beta', pageSize: 2 }));
+    const { result } = renderHook(() =>
+      useRawFeedStream({ requestedSource: 'discord', requestedSourceId: 'guild:beta', pageSize: 2 }),
+    );
 
     await waitFor(() => {
       expect(result.current.items.map((item) => item.id)).toEqual(['item-1', 'item-2']);
@@ -306,6 +420,7 @@ describe('useRawFeedStream', () => {
       }
 
       if (decodedPath(parsed) === '/api/v1/feed/guild:beta' && !parsed.searchParams.has('after')) {
+        expect(parsed.searchParams.get('source')).toBe('discord');
         return jsonResponse({
           items: [
             {
@@ -322,6 +437,7 @@ describe('useRawFeedStream', () => {
       }
 
       if (decodedPath(parsed) === '/api/v1/feed/guild:beta' && parsed.searchParams.get('after') === '1000') {
+        expect(parsed.searchParams.get('source')).toBe('discord');
         return jsonResponse({
           items: [
             {
@@ -344,6 +460,7 @@ describe('useRawFeedStream', () => {
 
     const { result } = renderHook(() =>
       useRawFeedStream({
+        requestedSource: 'discord',
         requestedSourceId: 'guild:beta',
         pageSize: 2,
         pollIntervalMs: 1_000,

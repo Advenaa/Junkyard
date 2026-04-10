@@ -29,6 +29,7 @@ export interface RawFeedItem {
 }
 
 interface UseRawFeedStreamOptions {
+  requestedSource?: string;
   requestedSourceId: string;
   pageSize?: number;
   maxItems?: number;
@@ -41,11 +42,52 @@ const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_MAX_ITEMS = 500;
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
+function isFeedEligibleSource(source: RawFeedSource): boolean {
+  return source.source === 'discord' || source.source === 'twitter';
+}
+
+function resolveRequestedFeedSource(
+  sources: RawFeedSource[],
+  requestedSource: string,
+  requestedSourceId: string,
+): RawFeedSource | null {
+  // When the caller pins a source kind, treat (source, sourceId) as a hard
+  // identity. Falling back across kinds would let `?source=twitter&sourceId=X`
+  // resolve to a discord row whenever the twitter source temporarily drops out
+  // of the catalog, breaking the collision-safety contract M-014 enforces.
+  if (requestedSource.length > 0) {
+    if (requestedSourceId.length === 0) {
+      return sources.find((source) => source.source === requestedSource) ?? null;
+    }
+    return sources.find((source) => source.source === requestedSource && source.sourceId === requestedSourceId) ?? null;
+  }
+
+  if (requestedSourceId.length > 0) {
+    return sources.find((source) => source.sourceId === requestedSourceId) ?? null;
+  }
+
+  return null;
+}
+
+function buildFeedUrl(selectedFeedSource: RawFeedSource, pageSize: number, offset: number, after?: number): string {
+  const encodedSourceId = encodeURIComponent(selectedFeedSource.sourceId);
+  const searchParams = new URLSearchParams({
+    limit: String(pageSize),
+    offset: String(offset),
+    source: selectedFeedSource.source,
+  });
+  if (after !== undefined) {
+    searchParams.set('after', String(after));
+  }
+  return `/feed/${encodedSourceId}?${searchParams.toString()}`;
+}
+
 export function normalizeFeedItem(raw: RawFeedItemRaw): RawFeedItem {
   return { ...raw, attachments: normalizeRawMessageAttachments(raw.attachments) };
 }
 
 export function useRawFeedStream({
+  requestedSource = '',
   requestedSourceId,
   pageSize = DEFAULT_PAGE_SIZE,
   maxItems = DEFAULT_MAX_ITEMS,
@@ -53,7 +95,8 @@ export function useRawFeedStream({
 }: UseRawFeedStreamOptions) {
   const [sources, setSources] = useState<RawFeedSource[]>([]);
   const [sourcesLoaded, setSourcesLoaded] = useState(false);
-  const [selectedSource, setSelectedSource] = useState<string>(requestedSourceId);
+  const [selectedSource, setSelectedSourceId] = useState<string>(requestedSourceId);
+  const [selectedFeedSource, setSelectedFeedSourceState] = useState<RawFeedSource | null>(null);
   const [items, setItems] = useState<RawFeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,45 +105,91 @@ export function useRawFeedStream({
   const [live, setLive] = useState(true);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const itemsRef = useRef<RawFeedItem[]>([]);
+  const selectedFeedSourceRef = useRef<RawFeedSource | null>(null);
 
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
 
   useEffect(() => {
+    selectedFeedSourceRef.current = selectedFeedSource;
+  }, [selectedFeedSource]);
+
+  const applySelectedFeedSource = useCallback((source: RawFeedSource | null) => {
+    setSelectedFeedSourceState(source);
+    setSelectedSourceId(source?.sourceId ?? '');
+  }, []);
+
+  useEffect(() => {
     apiFetch<{ sources: RawFeedSource[] }>('/sources')
       .then((response) => {
-        const feedSources = response.sources.filter(
-          (source) => source.source === 'discord' || source.source === 'twitter',
-        );
+        const feedSources = response.sources.filter(isFeedEligibleSource);
         setSources(feedSources);
         setSourcesLoaded(true);
-        setSelectedSource((current) => {
-          const hasCurrent = current && feedSources.some((source) => source.sourceId === current);
-          if (hasCurrent) return current;
-          const requestedExists =
-            requestedSourceId.length > 0 && feedSources.some((source) => source.sourceId === requestedSourceId);
-          return requestedExists ? requestedSourceId : (feedSources[0]?.sourceId ?? '');
-        });
+        const requestedSelection = resolveRequestedFeedSource(feedSources, requestedSource, requestedSourceId);
+        if (requestedSelection) {
+          applySelectedFeedSource(requestedSelection);
+          return;
+        }
+
+        // Stale deep link: caller explicitly asked for a source/sourceId that
+        // is no longer in the catalog. Leave the selection null so the UI can
+        // surface an empty state instead of silently redirecting to a
+        // different source kind.
+        if (requestedSource.length > 0 || requestedSourceId.length > 0) {
+          applySelectedFeedSource(null);
+          return;
+        }
+
+        const currentSelection = selectedFeedSourceRef.current
+          ? (feedSources.find(
+              (source) =>
+                source.source === selectedFeedSourceRef.current?.source &&
+                source.sourceId === selectedFeedSourceRef.current?.sourceId,
+            ) ?? null)
+          : null;
+        applySelectedFeedSource(currentSelection ?? feedSources[0] ?? null);
       })
       .catch(() => {
         setSourcesLoaded(true);
         setError('Failed to load sources.');
       });
-  }, [requestedSourceId]);
+  }, [applySelectedFeedSource, requestedSource, requestedSourceId]);
+
+  const setSelectedSource = useCallback(
+    (source: string | RawFeedSource) => {
+      if (typeof source !== 'string') {
+        // Caller passed a full identity — use it directly without re-running
+        // the resolver (which would re-impose the requestedSource constraint
+        // from the URL and reject manual cross-kind switches).
+        const exactCatalogMatch = sources.find(
+          (candidate) => candidate.source === source.source && candidate.sourceId === source.sourceId,
+        );
+        applySelectedFeedSource(exactCatalogMatch ?? source);
+        return;
+      }
+
+      // Legacy string overload: manual pick by sourceId only (no source kind
+      // hint). Pick the first catalog row whose sourceId matches; if multiple
+      // sources collide on this sourceId, callers must use the object form
+      // above to disambiguate.
+      const sourceIdMatch = sources.find((candidate) => candidate.sourceId === source);
+      applySelectedFeedSource(sourceIdMatch ?? null);
+    },
+    [applySelectedFeedSource, sources],
+  );
 
   const fetchItems = useCallback(
     async (offset: number, mode: FeedFetchMode) => {
-      if (!selectedSource) return;
+      if (!selectedFeedSource) return;
 
       try {
         setError(null);
-        const encodedSource = encodeURIComponent(selectedSource);
-        let url = `/feed/${encodedSource}?limit=${pageSize}&offset=${offset}`;
+        let url = buildFeedUrl(selectedFeedSource, pageSize, offset);
         if (mode === 'prepend') {
           const newestTimestamp = itemsRef.current[0]?.timestamp ?? null;
           if (newestTimestamp) {
-            url = `/feed/${encodedSource}?limit=${pageSize}&offset=0&after=${encodeURIComponent(newestTimestamp)}`;
+            url = buildFeedUrl(selectedFeedSource, pageSize, 0, newestTimestamp);
           }
 
           const response = await apiFetch<{ items: RawFeedItemRaw[] }>(url);
@@ -134,14 +223,14 @@ export function useRawFeedStream({
         setError('Failed to load feed. Please try again.');
       }
     },
-    [maxItems, pageSize, selectedSource],
+    [maxItems, pageSize, selectedFeedSource],
   );
 
   useEffect(() => {
-    if (!selectedSource) return;
+    if (!selectedFeedSource) return;
     setLoading(true);
     fetchItems(0, 'replace').finally(() => setLoading(false));
-  }, [fetchItems, selectedSource]);
+  }, [fetchItems, selectedFeedSource]);
 
   useEffect(() => {
     if (intervalRef.current) {
@@ -149,7 +238,7 @@ export function useRawFeedStream({
       intervalRef.current = null;
     }
 
-    if (live && selectedSource) {
+    if (live && selectedFeedSource) {
       intervalRef.current = setInterval(() => {
         void fetchItems(0, 'prepend');
       }, pollIntervalMs);
@@ -158,7 +247,7 @@ export function useRawFeedStream({
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [fetchItems, live, pollIntervalMs, selectedSource]);
+  }, [fetchItems, live, pollIntervalMs, selectedFeedSource]);
 
   const loadMore = useCallback(async () => {
     setLoadingMore(true);
@@ -179,6 +268,7 @@ export function useRawFeedStream({
     sources,
     sourcesLoaded,
     selectedSource,
+    selectedFeedSource,
     setSelectedSource,
     items,
     loading,

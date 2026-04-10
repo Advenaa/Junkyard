@@ -53,20 +53,23 @@ export function buildRawItemHref(itemId: string, { contextSize }: RawRouteContex
 }
 
 export function buildRawFeedFocusHref(
+  source: string,
   sourceId: string,
   itemId: string,
   { contextSize }: RawRouteContextOptions = {},
 ): string {
-  const params = new URLSearchParams({
-    sourceId,
-    itemId,
-  });
+  const params = new URLSearchParams();
+  params.set('source', source);
+  params.set('sourceId', sourceId);
+  params.set('itemId', itemId);
   appendRawRouteContextSize(params, contextSize);
   return `/feed?${params.toString()}`;
 }
 
-export function buildRawFeedSourceHref(sourceId: string): string {
-  const params = new URLSearchParams({ sourceId });
+export function buildRawFeedSourceHref(source: string, sourceId: string): string {
+  const params = new URLSearchParams();
+  params.set('source', source);
+  params.set('sourceId', sourceId);
   return `/feed?${params.toString()}`;
 }
 
@@ -75,12 +78,12 @@ export function buildRawFeedFocusHrefForItem(
   options: RawRouteContextOptions = {},
 ): string | null {
   if (!supportsRawFeedNavigation(item.source)) return null;
-  return buildRawFeedFocusHref(item.sourceId, item.id, options);
+  return buildRawFeedFocusHref(item.source, item.sourceId, item.id, options);
 }
 
 export function buildRawFeedSourceHrefForItem(item: Pick<RawFeedItemTarget, 'source' | 'sourceId'>): string | null {
   if (!supportsRawFeedNavigation(item.source)) return null;
-  return buildRawFeedSourceHref(item.sourceId);
+  return buildRawFeedSourceHref(item.source, item.sourceId);
 }
 
 export function isFocusedRawFeedActive(state: RawFeedFocusState): boolean {

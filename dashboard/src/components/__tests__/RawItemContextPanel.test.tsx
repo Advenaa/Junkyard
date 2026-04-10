@@ -63,7 +63,7 @@ describe('RawItemContextPanel', () => {
     expect(screen.getByText('A later follow-up said traders were waiting on the audit notes.')).toBeInTheDocument();
     expect(screen.getByLabelText('View raw feed around item-older')).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3A1234&itemId=item-older&context=3',
+      '/feed?source=discord&sourceId=guild%3A1234&itemId=item-older&context=3',
     );
     const sourceLinks = screen.getAllByRole('link', { name: 'Open source link' });
     expect(sourceLinks[0]).toHaveAttribute('href', 'https://example.com/item-older');

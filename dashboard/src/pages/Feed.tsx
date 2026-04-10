@@ -21,6 +21,7 @@ export function formatTime(ts: number): string {
 
 export function Feed() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSource = searchParams.get('source') ?? '';
   const requestedSourceId = searchParams.get('sourceId') ?? '';
   const focusedItemId = searchParams.get('itemId') ?? '';
   const focusedContextSize = readRawRouteContextSize(
@@ -42,6 +43,7 @@ export function Feed() {
     sources,
     sourcesLoaded,
     selectedSource,
+    selectedFeedSource,
     setSelectedSource,
     items,
     loading,
@@ -52,7 +54,7 @@ export function Feed() {
     setLive,
     loadMore,
     reload,
-  } = useRawFeedStream({ requestedSourceId });
+  } = useRawFeedStream({ requestedSource, requestedSourceId });
 
   const {
     focusedContext,
@@ -65,6 +67,8 @@ export function Feed() {
     focusedItemId,
     requestedSourceId,
     selectedSource,
+    requestedSource,
+    selectedSourceKind: selectedFeedSource?.source ?? '',
     items,
     loading,
     contextSize: focusedContextSize,
@@ -84,7 +88,7 @@ export function Feed() {
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <RawFeedHeader
         sources={sources}
-        selectedSource={selectedSource}
+        selectedFeedSource={selectedFeedSource}
         onSelectSource={setSelectedSource}
         live={live}
         onSetLive={setLive}
@@ -101,8 +105,10 @@ export function Feed() {
           contextSize={focusedContextSize}
           feedContextSize={focusedFeedContextSize}
           itemContextSize={rawItemContextSize}
+          requestedSource={requestedSource}
           requestedSourceId={requestedSourceId}
           selectedSource={selectedSource}
+          selectedSourceKind={selectedFeedSource?.source ?? ''}
           showTimelineGap={items.length > 0}
           canExpandContext={focusedContextSize < MAX_FOCUSED_RAW_FEED_CONTEXT_SIZE}
           onExpandContext={expandFocusedContext}

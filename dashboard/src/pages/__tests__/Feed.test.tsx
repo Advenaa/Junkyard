@@ -62,7 +62,7 @@ describe('Feed', () => {
     );
 
     render(
-      <MemoryRouter initialEntries={['/feed?sourceId=guild%3Abeta&itemId=item-2']}>
+      <MemoryRouter initialEntries={['/feed?source=discord&sourceId=guild%3Abeta&itemId=item-2']}>
         <Routes>
           <Route path="/feed" element={<Feed />} />
         </Routes>
@@ -299,7 +299,7 @@ describe('Feed', () => {
     );
 
     render(
-      <MemoryRouter initialEntries={['/feed?sourceId=guild%3Abeta&itemId=item-focus']}>
+      <MemoryRouter initialEntries={['/feed?source=discord&sourceId=guild%3Abeta&itemId=item-focus']}>
         <Routes>
           <Route path="/feed" element={<Feed />} />
         </Routes>
@@ -316,15 +316,15 @@ describe('Feed', () => {
     expect(sourceLinks.some((link) => link.getAttribute('href') === 'https://example.com/item-after')).toBe(true);
     expect(screen.getByRole('link', { name: 'Resume live feed' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta',
+      '/feed?source=discord&sourceId=guild%3Abeta',
     );
     expect(screen.getByRole('link', { name: 'Previous in source' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta&itemId=item-before',
+      '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-before',
     );
     expect(screen.getByRole('link', { name: 'Next in source' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta&itemId=item-after',
+      '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-after',
     );
     expect(screen.getByRole('button', { name: 'Show more context' })).toBeInTheDocument();
     expect(screen.getByText('Up to 2 before and after')).toBeInTheDocument();
@@ -515,7 +515,7 @@ describe('Feed', () => {
     );
 
     render(
-      <MemoryRouter initialEntries={['/feed?sourceId=guild%3Abeta&itemId=item-focus']}>
+      <MemoryRouter initialEntries={['/feed?source=discord&sourceId=guild%3Abeta&itemId=item-focus']}>
         <Routes>
           <Route path="/feed" element={<Feed />} />
           <Route path="/items/:id" element={<ItemView />} />
@@ -536,7 +536,7 @@ describe('Feed', () => {
     expect(screen.getByText('Up to 5 before and after')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Focused timeline' })).toHaveAttribute(
       'href',
-      '/feed?sourceId=guild%3Abeta&itemId=item-focus&context=5',
+      '/feed?source=discord&sourceId=guild%3Abeta&itemId=item-focus&context=5',
     );
     expect(screen.getByRole('button', { name: 'Show more context' })).toBeInTheDocument();
   });
@@ -679,7 +679,7 @@ describe('Feed', () => {
     );
 
     render(
-      <MemoryRouter initialEntries={['/feed?sourceId=guild%3Abeta&itemId=item-focus']}>
+      <MemoryRouter initialEntries={['/feed?source=discord&sourceId=guild%3Abeta&itemId=item-focus']}>
         <Routes>
           <Route path="/feed" element={<Feed />} />
         </Routes>
