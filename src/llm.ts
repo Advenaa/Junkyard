@@ -133,6 +133,12 @@ export function parseModel(model: string): { provider: string; modelId: string }
   return { provider: 'anthropic', modelId: model };
 }
 
+export function getModelContextWindow(model: string): number | null {
+  const { provider, modelId } = parseModel(model);
+  const resolvedModel = getModel(provider as KnownProvider, modelId as never);
+  return resolvedModel?.contextWindow ?? null;
+}
+
 function suggestClosestModelId(modelId: string, candidates: string[]): string | null {
   if (candidates.length === 0) return null;
 

@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSynthesizer } from '../../src/process/synthesize.js';
 import type { Config } from '../../src/config.js';
@@ -30,6 +30,43 @@ const silentLog = {
   debug: () => {},
   child: () => silentLog,
 } as never;
+
+function captureLog() {
+  const entries: Array<{ level: string; message: string; meta?: unknown }> = [];
+  const logger = {
+    entries,
+    info(metaOrMessage?: unknown, maybeMessage?: string) {
+      entries.push({
+        level: 'info',
+        message: typeof metaOrMessage === 'string' ? metaOrMessage : (maybeMessage ?? ''),
+        meta: typeof metaOrMessage === 'string' ? undefined : metaOrMessage,
+      });
+    },
+    warn(metaOrMessage?: unknown, maybeMessage?: string) {
+      entries.push({
+        level: 'warn',
+        message: typeof metaOrMessage === 'string' ? metaOrMessage : (maybeMessage ?? ''),
+        meta: typeof metaOrMessage === 'string' ? undefined : metaOrMessage,
+      });
+    },
+    error(metaOrMessage?: unknown, maybeMessage?: string) {
+      entries.push({
+        level: 'error',
+        message: typeof metaOrMessage === 'string' ? metaOrMessage : (maybeMessage ?? ''),
+        meta: typeof metaOrMessage === 'string' ? undefined : metaOrMessage,
+      });
+    },
+    debug(metaOrMessage?: unknown, maybeMessage?: string) {
+      entries.push({
+        level: 'debug',
+        message: typeof metaOrMessage === 'string' ? metaOrMessage : (maybeMessage ?? ''),
+        meta: typeof metaOrMessage === 'string' ? undefined : metaOrMessage,
+      });
+    },
+    child: () => logger,
+  };
+  return logger;
+}
 
 /** Partial Config for synthesizer tests. */
 function fakeConfig(overrides: Partial<Config> = {}): Config {
@@ -530,6 +567,46 @@ describe('synthesize: runDaily', () => {
     assert.strictEqual(llmCall.stage, 'synthesize');
   });
 
+  it('trims oversized daily prompts before the synthesize LLM call', async () => {
+    const hugeSummaries = Array.from({ length: 10 }, (_, index) =>
+      makeSummaryRow({
+        id: `summary-${index + 1}`,
+        item_count: index + 1,
+        body: makeSummaryBody({
+          summary: `Summary ${index + 1} ${'A'.repeat(60_000)}`,
+          keyEvents: [`Event ${index + 1}`],
+        }),
+      }),
+    );
+    const pool = mockPool(dailyPoolResponses(hugeSummaries));
+    const llm = mockLlm();
+    const log = captureLog();
+    const synth = createSynthesizer(
+      pool as never,
+      log as never,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    const result = await synth.runDaily();
+
+    assert.notStrictEqual(result, null);
+    assert.strictEqual(llm.calls.length, 1);
+    const call = llm.calls[0] as { messages: Array<{ content: string }> };
+    const includedSummaries = call.messages[0]!.content.match(/\[discord]/g)?.length ?? 0;
+    assert.ok(includedSummaries < hugeSummaries.length, 'Expected the prompt to drop some summaries');
+    assert.ok(
+      log.entries.some(
+        (entry) =>
+          entry.level === 'warn' && /Daily synthesis prompt exceeded estimated token budget/i.test(entry.message),
+      ),
+      'Expected a trim decision to be logged',
+    );
+  });
+
   it('retries malformed daily JSON without changing the original prompt payload', async () => {
     const llmCalls: Array<{ system: string; messages: Array<{ content: string }> }> = [];
     let callCount = 0;
@@ -824,6 +901,45 @@ describe('synthesize: runFlash', () => {
     assert.notStrictEqual(result, null);
     assert.ok(typeof result!.tldr === 'string');
     assert.strictEqual(result!.type, 'flash');
+  });
+
+  it('aborts flash synthesis before the API call when the prompt still exceeds budget after trimming', async () => {
+    const entity = {
+      entityName: 'Bitcoin',
+      sources: [{ source: 'discord', sourceId: 'src-1', trustWeight: 1 }],
+      weightedSum: 6.0,
+      urgency: 'breaking',
+    };
+    const row = makeSummaryRow({
+      body: makeSummaryBody({
+        summary: `Bitcoin breaking ${'A'.repeat(600_000)}`,
+      }),
+    });
+    const pool = mockPool([{ rows: [row] }, { rows: [] }]);
+    const llm = mockLlm();
+    const log = captureLog();
+    const synth = createSynthesizer(
+      pool as never,
+      log as never,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    const result = await synth.runFlash([entity]);
+
+    assert.strictEqual(result, null);
+    assert.strictEqual(llm.calls.length, 0, 'Expected the synthesize LLM call to be skipped');
+    assert.ok(
+      log.entries.some(
+        (entry) =>
+          entry.level === 'warn' &&
+          /Flash synthesis prompt still exceeds estimated token budget after trimming/i.test(entry.message),
+      ),
+      'Expected an abort decision to be logged',
+    );
   });
 
   it('matches entity names case-insensitively', async () => {
