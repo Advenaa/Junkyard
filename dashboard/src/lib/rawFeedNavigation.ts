@@ -16,7 +16,7 @@ interface RawFeedFocusState {
 }
 
 export function supportsRawFeedNavigation(source: string): boolean {
-  return source === 'discord';
+  return source === 'discord' || source === 'twitter';
 }
 
 function normalizeRawRouteContextSize(contextSize?: number): number | null {

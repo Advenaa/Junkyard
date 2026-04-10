@@ -70,15 +70,17 @@ export function useRawFeedStream({
   useEffect(() => {
     apiFetch<{ sources: RawFeedSource[] }>('/sources')
       .then((response) => {
-        const discordSources = response.sources.filter((source) => source.source === 'discord');
-        setSources(discordSources);
+        const feedSources = response.sources.filter(
+          (source) => source.source === 'discord' || source.source === 'twitter',
+        );
+        setSources(feedSources);
         setSourcesLoaded(true);
         setSelectedSource((current) => {
-          const hasCurrent = current && discordSources.some((source) => source.sourceId === current);
+          const hasCurrent = current && feedSources.some((source) => source.sourceId === current);
           if (hasCurrent) return current;
           const requestedExists =
-            requestedSourceId.length > 0 && discordSources.some((source) => source.sourceId === requestedSourceId);
-          return requestedExists ? requestedSourceId : (discordSources[0]?.sourceId ?? '');
+            requestedSourceId.length > 0 && feedSources.some((source) => source.sourceId === requestedSourceId);
+          return requestedExists ? requestedSourceId : (feedSources[0]?.sourceId ?? '');
         });
       })
       .catch(() => {
@@ -93,11 +95,12 @@ export function useRawFeedStream({
 
       try {
         setError(null);
-        let url = `/feed/${selectedSource}?limit=${pageSize}&offset=${offset}`;
+        const encodedSource = encodeURIComponent(selectedSource);
+        let url = `/feed/${encodedSource}?limit=${pageSize}&offset=${offset}`;
         if (mode === 'prepend') {
           const newestTimestamp = itemsRef.current[0]?.timestamp ?? null;
           if (newestTimestamp) {
-            url = `/feed/${selectedSource}?limit=${pageSize}&offset=0&after=${encodeURIComponent(newestTimestamp)}`;
+            url = `/feed/${encodedSource}?limit=${pageSize}&offset=0&after=${encodeURIComponent(newestTimestamp)}`;
           }
 
           const response = await apiFetch<{ items: RawFeedItemRaw[] }>(url);

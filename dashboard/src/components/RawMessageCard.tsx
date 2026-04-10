@@ -1,4 +1,5 @@
 import { Link } from 'react-router';
+import { unescapeMarkdownPunctuation } from '../lib/rawMessages';
 import { isSafeUrl } from '../lib/url';
 
 export interface RawMessageCardBadge {
@@ -69,7 +70,9 @@ export function RawMessageCard({
         <span className="text-text-secondary text-xs font-mono">{timestampLabel}</span>
       </div>
 
-      <p className="text-text-primary text-sm font-body leading-relaxed whitespace-pre-wrap">{content}</p>
+      <p className="text-text-primary text-sm font-body leading-relaxed whitespace-pre-wrap">
+        {unescapeMarkdownPunctuation(content)}
+      </p>
 
       {attachments.length > 0 && (
         <div className="flex gap-2 flex-wrap pt-1">

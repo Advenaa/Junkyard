@@ -1,3 +1,15 @@
+// Discord forwarder bots and Twitter mirrors often re-emit content with markdown
+// punctuation backslash-escaped (e.g. `0\.5`, `\#cabal`). The raw feed renders
+// content verbatim, not as markdown, so the escapes leak into the UI as
+// stray backslashes. Strip them at render time only — the DB keeps the raw
+// payload exactly as ingested so future markdown-aware consumers stay correct.
+const MARKDOWN_ESCAPE_RE = /\\([.()[\]*_~`>#!+={}|-])/g;
+
+export function unescapeMarkdownPunctuation(content: string): string {
+  if (!content || content.indexOf('\\') === -1) return content;
+  return content.replace(MARKDOWN_ESCAPE_RE, '$1');
+}
+
 export function normalizeRawMessageAttachments(raw: string | string[] | null): string[] {
   if (Array.isArray(raw)) {
     return raw;
