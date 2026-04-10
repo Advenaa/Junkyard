@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Clankerism pre-push hook — the local enforcement layer that replaces
+# GitHub branch protection (which requires Pro on private repos).
+#
+# Rejects:
+#   - any push to `main` that isn't a fast-forward merge from a branch
+#   - any force-push anywhere near main
+#   - any push attempted with --no-verify intent sneaking through
+
+set -euo pipefail
+
+PROTECTED_BRANCH="main"
+REMOTE="$1"
+URL="$2"
+
+# git sends refspec info on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Skip deletions
+  if [[ "$local_sha" == "0000000000000000000000000000000000000000" ]]; then
+    continue
+  fi
+
+  remote_branch="${remote_ref#refs/heads/}"
+
+  # Rule 1: nothing is ever allowed to push directly to main.
+  # The only way code lands on main is a PR merge, which happens on
+  # GitHub's side — your local `git push` should never target main.
+  if [[ "$remote_branch" == "$PROTECTED_BRANCH" ]]; then
+    # Allow a no-op push (already up to date)
+    if [[ "$local_sha" == "$remote_sha" ]]; then
+      continue
+    fi
+
+    echo ""
+    echo "╔════════════════════════════════════════════════════════════════╗"
+    echo "║  CLANKERISM PRE-PUSH HOOK — PUSH REJECTED                      ║"
+    echo "╠════════════════════════════════════════════════════════════════╣"
+    echo "║                                                                ║"
+    echo "║  You tried to push directly to '$PROTECTED_BRANCH'.                          ║"
+    echo "║                                                                ║"
+    echo "║  Code lands on main only via a PR merged through GitHub,      ║"
+    echo "║  never via a direct local push. This includes fast-forwards.  ║"
+    echo "║                                                                ║"
+    echo "║  What to do:                                                   ║"
+    echo "║    1. Create a branch:  git checkout -b my-fix                ║"
+    echo "║    2. Push the branch:  git push -u origin my-fix             ║"
+    echo "║    3. Open a PR:        gh pr create                          ║"
+    echo "║    4. Merge after CI:   gh pr merge --squash                  ║"
+    echo "║                                                                ║"
+    echo "║  Emergency override (human only, documented in .clankerism):  ║"
+    echo "║    CLANKERISM_ALLOW_MAIN=1 git push origin main               ║"
+    echo "║                                                                ║"
+    echo "╚════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    if [[ "${CLANKERISM_ALLOW_MAIN:-}" == "1" ]]; then
+      echo "CLANKERISM_ALLOW_MAIN=1 set — allowing push to main."
+      echo "Recording the override in .clankerism/override-log.txt"
+      mkdir -p .clankerism
+      printf '%s  %s  %s -> %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(whoami)" \
+        "$remote_sha" \
+        "$local_sha" \
+        >> .clankerism/override-log.txt
+      continue
+    fi
+
+    exit 1
+  fi
+
+  # Rule 2: force-pushes are rejected everywhere.
+  # A force-push is any push where the remote_sha is not an ancestor of local_sha.
+  if [[ "$remote_sha" != "0000000000000000000000000000000000000000" ]]; then
+    if ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+      echo ""
+      echo "╔════════════════════════════════════════════════════════════════╗"
+      echo "║  CLANKERISM PRE-PUSH HOOK — FORCE-PUSH REJECTED                ║"
+      echo "╠════════════════════════════════════════════════════════════════╣"
+      echo "║                                                                ║"
+      echo "║  Branch: $(printf '%-52s' "$remote_branch")║"
+      echo "║                                                                ║"
+      echo "║  A force-push would rewrite history on the remote. This is    ║"
+      echo "║  never allowed from this hook — not even on feature branches. ║"
+      echo "║                                                                ║"
+      echo "║  If you really need to force a feature branch (human only):   ║"
+      echo "║    CLANKERISM_ALLOW_FORCE=1 git push --force origin $remote_branch"
+      echo "║                                                                ║"
+      echo "╚════════════════════════════════════════════════════════════════╝"
+      echo ""
+
+      if [[ "${CLANKERISM_ALLOW_FORCE:-}" == "1" && "$remote_branch" != "$PROTECTED_BRANCH" ]]; then
+        echo "CLANKERISM_ALLOW_FORCE=1 set — allowing force-push to $remote_branch."
+        continue
+      fi
+
+      exit 1
+    fi
+  fi
+done
+
+exit 0
