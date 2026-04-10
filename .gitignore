@@ -6,3 +6,6 @@ data/
 *.log
 dashboard/dist/
 dashboard/node_modules/
+.clankerism/PAUSED
+.clankerism/verify-runs/
+.clankerism/verify-session.json
