@@ -234,11 +234,17 @@ fi
 
 # 4. CI green — merge. Squash so main history stays clean.
 gh pr merge "$PR_NUMBER" --squash --delete-branch
+
+# 5. GitHub auto-closes the issue via "Fixes #N", but the state label
+#    does NOT clear on its own. Remove state:in-progress explicitly so
+#    the closed issue doesn't show a misleading WIP label in queries.
+gh issue edit "$N" --remove-label state:in-progress
 ```
 
 If the merge succeeds, GitHub's "Fixes #N" in the commit message closes
-the issue automatically and the deploy job fires. The clanker's work is
-done.
+the issue automatically and the deploy job fires. The clanker then
+strips the stale `state:in-progress` label (closed issues accept label
+edits). The clanker's work is done.
 
 ## Step 10: Exit cleanly
 
