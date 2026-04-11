@@ -102,6 +102,8 @@ function fakeRequest(
 function fakeReply() {
   let statusCode: number | undefined;
   let body: unknown;
+  const setCookieCalls: Array<{ name: string; value: string; options: unknown }> = [];
+  const clearCookieCalls: Array<{ name: string; options: unknown }> = [];
   const reply = {
     status(code: number) {
       statusCode = code;
@@ -115,11 +117,25 @@ function fakeReply() {
       body = payload;
       return reply;
     },
+    setCookie(name: string, value: string, options: unknown) {
+      setCookieCalls.push({ name, value, options });
+      return reply;
+    },
+    clearCookie(name: string, options: unknown) {
+      clearCookieCalls.push({ name, options });
+      return reply;
+    },
     get statusCode() {
       return statusCode;
     },
     get body() {
       return body;
+    },
+    get setCookieCalls() {
+      return setCookieCalls;
+    },
+    get clearCookieCalls() {
+      return clearCookieCalls;
     },
   };
   return reply;
@@ -306,7 +322,7 @@ describe('createSessionManager', () => {
       const mgr = createSessionManager(pool as never, silentLog);
       const result = await mgr.validate('good-session', '127.0.0.1', 'TestAgent');
 
-      assert.deepStrictEqual(result, { discordId: 'user-1', role: 'viewer' });
+      assert.deepStrictEqual(result, { discordId: 'user-1', role: 'viewer', refreshed: false });
     });
 
     it('triggers sliding refresh when stale (>24h)', async () => {
@@ -328,13 +344,15 @@ describe('createSessionManager', () => {
         {}, // AU-022: opportunistic cleanup (fire-and-forget)
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
-      await mgr.validate('stale-session', '127.0.0.1', 'TestAgent');
+      const result = await mgr.validate('stale-session', '127.0.0.1', 'TestAgent');
 
       // At least 2 calls: SELECT + UPDATE. May also have cleanup query.
       assert.ok(pool.calls.length >= 2);
       const updateCall = pool.calls.find((c: any) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
       assert.ok(updateCall, 'should trigger sliding refresh UPDATE');
       assert.ok(updateCall.text.includes('expires_at'), 'AU-026: sliding refresh should also extend expires_at');
+      assert.ok(result, 'validate should return a session');
+      assert.strictEqual(result.refreshed, true, 'refreshed flag should be true on stale path');
     });
 
     it('does NOT trigger sliding refresh when fresh (<24h)', async () => {
@@ -355,11 +373,13 @@ describe('createSessionManager', () => {
         {}, // AU-022: opportunistic cleanup may fire
       ]);
       const mgr = createSessionManager(pool as never, silentLog);
-      await mgr.validate('fresh-session', '127.0.0.1', 'TestAgent');
+      const result = await mgr.validate('fresh-session', '127.0.0.1', 'TestAgent');
 
       // No UPDATE for refresh — only SELECT (and possibly cleanup)
       const hasRefresh = pool.calls.some((c: any) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
       assert.ok(!hasRefresh, 'should NOT trigger sliding refresh when fresh');
+      assert.ok(result, 'validate should return a session');
+      assert.strictEqual(result.refreshed, false, 'refreshed flag should be false on fresh path');
     });
 
     it('invalidates session on User-Agent mismatch', async () => {
@@ -405,7 +425,7 @@ describe('createSessionManager', () => {
       const mgr = createSessionManager(pool as never, silentLog);
       const result = await mgr.validate('mobile-session', '10.0.0.1', 'TestAgent');
 
-      assert.deepStrictEqual(result, { discordId: 'user-1', role: 'viewer' });
+      assert.deepStrictEqual(result, { discordId: 'user-1', role: 'viewer', refreshed: false });
     });
   });
 
@@ -810,7 +830,7 @@ describe('registerOAuthRoutes', () => {
 describe('requireAuth', () => {
   it('authenticates via valid session cookie', async () => {
     const sessionManager = {
-      validate: async () => ({ discordId: 'user-42', role: 'viewer' }),
+      validate: async () => ({ discordId: 'user-42', role: 'viewer', refreshed: false }),
     };
     const pool = mockPool([{ rows: [{ username: 'alice' }] }]);
     const config = fakeConfig();
@@ -830,9 +850,40 @@ describe('requireAuth', () => {
     });
   });
 
+  it('renews the session cookie when sliding refresh updated the session', async () => {
+    const sessionManager = {
+      validate: async () => ({ discordId: 'user-42', role: 'viewer', refreshed: true }),
+    };
+    const pool = mockPool([{ rows: [{ username: 'alice' }] }]);
+    const config = fakeConfig({ publicUrl: 'https://podders.test' });
+    const handler = requireAuth(pool as never, config, sessionManager as never);
+
+    const req = fakeRequest({
+      cookies: { podders_session: 'signed-cookie' },
+      unsignResult: { valid: true, value: 'session-id-abc' },
+    });
+    const reply = fakeReply();
+    await handler(req, reply as never);
+
+    assert.deepStrictEqual(reply.setCookieCalls, [
+      {
+        name: 'podders_session',
+        value: 'session-id-abc',
+        options: {
+          httpOnly: true,
+          signed: true,
+          secure: true,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: 30 * 24 * 60 * 60,
+        },
+      },
+    ]);
+  });
+
   it('promotes to admin when discordId is in ADMIN_USER_IDS', async () => {
     const sessionManager = {
-      validate: async () => ({ discordId: 'admin-id-1', role: 'viewer' }),
+      validate: async () => ({ discordId: 'admin-id-1', role: 'viewer', refreshed: false }),
     };
     const pool = mockPool([{ rows: [{ username: 'bob' }] }]);
     const config = fakeConfig({ adminUserIds: ['admin-id-1', 'admin-id-2'] });
@@ -852,7 +903,7 @@ describe('requireAuth', () => {
 
   it('revokes admin role when discordId is NOT in ADMIN_USER_IDS', async () => {
     const sessionManager = {
-      validate: async () => ({ discordId: 'former-admin', role: 'admin' }),
+      validate: async () => ({ discordId: 'former-admin', role: 'admin', refreshed: false }),
     };
     const pool = mockPool([{ rows: [{ username: 'charlie' }] }]);
     const config = fakeConfig({ adminUserIds: ['other-admin'] }); // former-admin NOT in list
@@ -872,7 +923,7 @@ describe('requireAuth', () => {
 
   it('falls back to "unknown" username when DB has no user row', async () => {
     const sessionManager = {
-      validate: async () => ({ discordId: 'user-99', role: 'viewer' }),
+      validate: async () => ({ discordId: 'user-99', role: 'viewer', refreshed: false }),
     };
     const pool = mockPool([{ rows: [] }]); // no user row
     const config = fakeConfig();

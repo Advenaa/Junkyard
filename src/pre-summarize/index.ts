@@ -195,7 +195,7 @@ export function createPreSummarizer(pool: Pool, log: Logger, config: Config, llm
         // PS-021: Increment retry_count for failed parses and set back to 'ready'
         if (failedIds.length > 0) {
           await pool.query(
-            `UPDATE items SET retry_count = retry_count + 1, status = 'ready' WHERE id = ANY($1::text[])`,
+            `UPDATE items SET retry_count = retry_count + 1, status = 'ready', batch_id = NULL WHERE id = ANY($1::text[])`,
             [failedIds],
           );
         }
@@ -206,7 +206,7 @@ export function createPreSummarizer(pool: Pool, log: Logger, config: Config, llm
         // IP-004: Increment retry_count to prevent indefinite retries (livelock)
         const batchIds = batch.map((item) => item.id);
         await pool.query(
-          `UPDATE items SET retry_count = retry_count + 1, status = 'ready' WHERE id = ANY($1::text[])`,
+          `UPDATE items SET retry_count = retry_count + 1, status = 'ready', batch_id = NULL WHERE id = ANY($1::text[])`,
           [batchIds],
         );
       }

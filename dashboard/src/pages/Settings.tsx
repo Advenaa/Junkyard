@@ -9,6 +9,7 @@ import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
 
 type Tab = 'sources' | 'delivery' | 'pipeline' | 'entities' | 'users';
+type IsoDateTimeString = string;
 
 interface Source {
   source: string;
@@ -123,6 +124,55 @@ interface HealthCheck {
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
   checks: HealthCheck[];
+}
+
+interface DiagBackpressure {
+  readyCount: number;
+  processingCount: number;
+  oldestReadyAgeMs: number;
+}
+
+interface DiagStuckItemSample {
+  id: string;
+  source: string;
+  sourceId: string;
+  createdAt: IsoDateTimeString;
+}
+
+interface DiagStuckItems {
+  thresholdMs: number;
+  stuckCount: number;
+  oldestAgeMs: number;
+  sample: DiagStuckItemSample[];
+}
+
+interface DiagHaltedSource {
+  source: string;
+  sourceId: string;
+  status: string;
+  errorCount: number | null;
+  lastError: string | null;
+  lastFetchedAt: IsoDateTimeString | null;
+}
+
+interface DiagHaltedSources {
+  haltedSources: DiagHaltedSource[];
+}
+
+interface DiagHealthEvent {
+  id: string;
+  category: string;
+  severity: string;
+  message: string;
+  metadata: unknown;
+  acknowledged: boolean;
+  createdAt: IsoDateTimeString;
+}
+
+interface DiagHealthEvents {
+  sinceMs: number;
+  limit: number;
+  events: DiagHealthEvent[];
 }
 
 interface Config {
@@ -401,6 +451,22 @@ async function fetchMacroOverviewData(): Promise<MacroOverview | null> {
     }
     throw err;
   }
+}
+
+async function fetchDiagBackpressure(): Promise<DiagBackpressure> {
+  return apiFetch<DiagBackpressure>('/diag/backpressure');
+}
+
+async function fetchDiagStuckItems(): Promise<DiagStuckItems> {
+  return apiFetch<DiagStuckItems>('/diag/stuck-items');
+}
+
+async function fetchDiagHaltedSources(): Promise<DiagHaltedSources> {
+  return apiFetch<DiagHaltedSources>('/diag/halted-sources');
+}
+
+async function fetchDiagHealthEvents(limit = 10): Promise<DiagHealthEvents> {
+  return apiFetch<DiagHealthEvents>(`/diag/health-events?limit=${limit}`);
 }
 
 async function fetchUnusualActivityOverviewData(): Promise<UnusualActivityOverview> {
@@ -978,6 +1044,31 @@ function formatCompactDuration(durationMs: number): string {
   const days = safeDurationMs / 86_400_000;
   const roundedDays = Math.round(days * 10) / 10;
   return `${Number.isInteger(roundedDays) ? roundedDays.toFixed(0) : roundedDays.toFixed(1)}d`;
+}
+
+function formatIsoDateTime(dateValue: string | null): string {
+  if (!dateValue) return 'Never';
+  const timestamp = Date.parse(dateValue);
+  if (!Number.isFinite(timestamp)) return dateValue;
+  return formatRelationshipBoundary(timestamp);
+}
+
+function formatIsoAge(dateValue: string): string {
+  const timestamp = Date.parse(dateValue);
+  if (!Number.isFinite(timestamp)) return 'Unknown';
+  return formatCompactDuration(Date.now() - timestamp);
+}
+
+function truncateDiagnosticText(value: string | null, maxLength = 100): string {
+  if (!value) return 'None';
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function getDiagSeverityClasses(severity: string): string {
+  if (severity === 'critical') return 'bg-accent-red/20 text-accent-red';
+  if (severity === 'error') return 'bg-yellow-500/20 text-yellow-400';
+  return 'bg-background border border-border text-text-secondary';
 }
 
 function formatAuthorTiming(
@@ -2831,6 +2922,12 @@ function PipelineTab() {
   const disabledMacro = getDisabledFeature('macro');
   const disabledEmbeddings = getDisabledFeature('embeddings');
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [diagBackpressure, setDiagBackpressure] = useState<DiagBackpressure | null>(null);
+  const [diagStuckItems, setDiagStuckItems] = useState<DiagStuckItems | null>(null);
+  const [diagHaltedSources, setDiagHaltedSources] = useState<DiagHaltedSources | null>(null);
+  const [diagHealthEvents, setDiagHealthEvents] = useState<DiagHealthEvents | null>(null);
+  const [diagError, setDiagError] = useState<string | null>(null);
+  const [diagExpanded, setDiagExpanded] = useState(false);
   const [macroOverview, setMacroOverview] = useState<MacroOverview | null>(null);
   const [macroLoading, setMacroLoading] = useState(true);
   const [macroError, setMacroError] = useState<string | null>(null);
@@ -2869,6 +2966,39 @@ function PipelineTab() {
         /* health is best-effort */
       });
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    let cancelled = false;
+    setDiagError(null);
+    Promise.allSettled([
+      fetchDiagBackpressure(),
+      fetchDiagStuckItems(),
+      fetchDiagHaltedSources(),
+      fetchDiagHealthEvents(),
+    ]).then(([backpressureResult, stuckItemsResult, haltedSourcesResult, healthEventsResult]) => {
+      if (cancelled) return;
+
+      setDiagBackpressure(backpressureResult.status === 'fulfilled' ? backpressureResult.value : null);
+      setDiagStuckItems(stuckItemsResult.status === 'fulfilled' ? stuckItemsResult.value : null);
+      setDiagHaltedSources(haltedSourcesResult.status === 'fulfilled' ? haltedSourcesResult.value : null);
+      setDiagHealthEvents(healthEventsResult.status === 'fulfilled' ? healthEventsResult.value : null);
+
+      if (
+        backpressureResult.status === 'rejected' ||
+        stuckItemsResult.status === 'rejected' ||
+        haltedSourcesResult.status === 'rejected' ||
+        healthEventsResult.status === 'rejected'
+      ) {
+        setDiagError('Some diagnostic endpoints could not be loaded.');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
 
   useEffect(() => {
     if (!statusReady) return;
@@ -3176,6 +3306,172 @@ function PipelineTab() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="bg-surface border border-border rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setDiagExpanded((current) => !current)}
+            aria-expanded={diagExpanded}
+            className="w-full flex items-center justify-between px-4 py-3 border-b border-border text-left hover:text-text-primary transition-colors"
+          >
+            <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Diagnostics</h3>
+            <span className="text-text-secondary text-sm font-mono">{diagExpanded ? '▾' : '▸'}</span>
+          </button>
+
+          {diagExpanded && (
+            <div className="p-4 space-y-4">
+              {diagError && <p className="text-red-400 text-sm font-body">{diagError}</p>}
+
+              <div className="space-y-3">
+                <h4 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Backpressure</h4>
+                {diagBackpressure ? (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-lg border border-border bg-background px-3 py-3">
+                      <p className="text-text-secondary text-xs font-mono uppercase tracking-wide">Ready</p>
+                      <p className="text-text-primary text-lg font-mono mt-2">{diagBackpressure.readyCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-background px-3 py-3">
+                      <p className="text-text-secondary text-xs font-mono uppercase tracking-wide">Processing</p>
+                      <p className="text-text-primary text-lg font-mono mt-2">{diagBackpressure.processingCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-border bg-background px-3 py-3">
+                      <p className="text-text-secondary text-xs font-mono uppercase tracking-wide">Oldest Ready</p>
+                      <p className="text-text-primary text-lg font-mono mt-2">
+                        {formatCompactDuration(diagBackpressure.oldestReadyAgeMs)}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-text-secondary text-sm font-body">Backpressure diagnostics unavailable.</p>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <h4 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Stuck Items</h4>
+                  {diagStuckItems && (
+                    <div className="flex flex-wrap gap-2 text-xs font-mono">
+                      <span className="px-2 py-1 rounded bg-background border border-border text-text-secondary">
+                        {diagStuckItems.stuckCount} stuck
+                      </span>
+                      <span className="px-2 py-1 rounded bg-background border border-border text-text-secondary">
+                        threshold {formatCompactDuration(diagStuckItems.thresholdMs)}
+                      </span>
+                      <span className="px-2 py-1 rounded bg-background border border-border text-text-secondary">
+                        oldest {formatCompactDuration(diagStuckItems.oldestAgeMs)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {!diagStuckItems ? (
+                  <p className="text-text-secondary text-sm font-body">Stuck item diagnostics unavailable.</p>
+                ) : diagStuckItems.stuckCount > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
+                          <th className="text-left px-3 py-2">Source</th>
+                          <th className="text-left px-3 py-2">Source ID</th>
+                          <th className="text-left px-3 py-2">Age</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {diagStuckItems.sample.slice(0, 10).map((item) => (
+                          <tr key={item.id} className="border-b border-border/70 last:border-b-0">
+                            <td className="px-3 py-2 text-text-primary font-body">{item.source}</td>
+                            <td className="px-3 py-2 text-text-secondary font-mono text-xs">{item.sourceId}</td>
+                            <td className="px-3 py-2 text-text-secondary font-mono text-xs">
+                              {formatIsoAge(item.createdAt)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-text-secondary text-sm font-body">No stuck items above the current threshold.</p>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Halted Sources</h4>
+                {!diagHaltedSources ? (
+                  <p className="text-text-secondary text-sm font-body">Halted source diagnostics unavailable.</p>
+                ) : diagHaltedSources.haltedSources.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
+                          <th className="text-left px-3 py-2">Source</th>
+                          <th className="text-left px-3 py-2">Source ID</th>
+                          <th className="text-left px-3 py-2">Errors</th>
+                          <th className="text-left px-3 py-2">Last Error</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {diagHaltedSources.haltedSources.map((haltedSource) => (
+                          <tr
+                            key={`${haltedSource.source}:${haltedSource.sourceId}`}
+                            className="border-b border-border/70 last:border-b-0"
+                          >
+                            <td className="px-3 py-2 text-text-primary font-body">{haltedSource.source}</td>
+                            <td className="px-3 py-2 text-text-secondary font-mono text-xs">{haltedSource.sourceId}</td>
+                            <td className="px-3 py-2 text-text-secondary font-mono text-xs">
+                              {haltedSource.errorCount ?? 'n/a'}
+                            </td>
+                            <td className="px-3 py-2 text-text-secondary text-sm font-body">
+                              {truncateDiagnosticText(haltedSource.lastError)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-text-secondary text-sm font-body">No halted sources</p>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Recent Health Events</h4>
+                {!diagHealthEvents ? (
+                  <p className="text-text-secondary text-sm font-body">Health event diagnostics unavailable.</p>
+                ) : diagHealthEvents.events.length > 0 ? (
+                  <div className="space-y-2">
+                    {diagHealthEvents.events.slice(0, 10).map((event) => (
+                      <div
+                        key={event.id}
+                        className="rounded-lg border border-border bg-background px-3 py-3 flex items-start justify-between gap-3 flex-wrap"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span
+                              className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${getDiagSeverityClasses(event.severity)}`}
+                            >
+                              {event.severity}
+                            </span>
+                            <span className="text-text-secondary text-xs font-mono uppercase tracking-wide">
+                              {event.category}
+                            </span>
+                          </div>
+                          <p className="text-text-primary text-sm font-body">{event.message}</p>
+                        </div>
+                        <span className="text-text-secondary text-xs font-mono">
+                          {formatIsoDateTime(event.createdAt)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-text-secondary text-sm font-body">No recent critical/error events</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
