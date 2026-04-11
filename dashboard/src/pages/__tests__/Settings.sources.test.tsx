@@ -15,6 +15,17 @@ vi.mock('../../components/AuthProvider', () => ({
     logout: vi.fn(),
   }),
 }));
+vi.mock('../../components/StatusProvider', () => {
+  const statusValue = {
+    ready: true,
+    status: { itemsReady: 0, itemsProcessing: 0, summariesToday: 0, costToday: 0, disabledFeatures: [] },
+    disabledFeatures: [],
+    isFeatureDisabled: () => false,
+    getDisabledFeature: () => null,
+    registerDisabledFeature: vi.fn(),
+  };
+  return { useStatus: () => statusValue };
+});
 
 describe('Settings source management', () => {
   afterEach(() => {
