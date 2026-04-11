@@ -1,13 +1,9 @@
 import { kmeans } from 'ml-kmeans';
 import { ulid } from 'ulid';
 import type { Pool } from '../db/connection.js';
+import { bytesToVector } from '../embed.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
-
-function bytesToVector(bytes: Buffer): Float32Array {
-  const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  return new Float32Array(ab);
-}
 
 export interface Narrative {
   id: string;
@@ -224,13 +220,22 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
     }
 
     // Step c: Convert vectors
-    const vectors: number[][] = rows.map((r) => {
-      const f32 = bytesToVector(r.vector);
-      return Array.from(f32);
-    });
+    const validRows: SummaryRow[] = [];
+    const vectors: number[][] = [];
+    for (const row of rows) {
+      const f32 = bytesToVector(row.vector);
+      if (!f32) continue;
+      validRows.push(row);
+      vectors.push(Array.from(f32));
+    }
+
+    if (validRows.length < 9) {
+      log.info({ count: validRows.length }, 'Too few summaries for narrative detection (need 9+)');
+      return [];
+    }
 
     // Step d: K-means with silhouette auto-tuning
-    const maxK = Math.min(10, Math.floor(rows.length / 3));
+    const maxK = Math.min(10, Math.floor(validRows.length / 3));
     let bestK = 3;
     let bestScore = -1;
     let bestAssignments: number[] = [];
@@ -246,7 +251,7 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
       }
     }
 
-    log.info({ bestK, silhouette: bestScore, points: rows.length }, 'Selected k for narrative clustering');
+    log.info({ bestK, silhouette: bestScore, points: validRows.length }, 'Selected k for narrative clustering');
 
     // Step f: Group by cluster and filter 3+ members
     const clusterMap = new Map<number, number[]>();
@@ -289,8 +294,13 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
         [pn.summary_ids],
       );
       if (priorEmbRows.length > 0) {
-        const priorVecs = priorEmbRows.map((r) => Array.from(bytesToVector(r.vector)));
-        priorCentroids.push({ narrative: pn, centroid: computeCentroid(priorVecs) });
+        const priorVecs = priorEmbRows
+          .map((r) => bytesToVector(r.vector))
+          .filter((vec): vec is Float32Array => vec !== null)
+          .map((vec) => Array.from(vec));
+        if (priorVecs.length > 0) {
+          priorCentroids.push({ narrative: pn, centroid: computeCentroid(priorVecs) });
+        }
       }
     }
 
@@ -305,14 +315,14 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
       const centroid = computeCentroid(clusterVectors);
 
       // Compute avg sentiment
-      const sentiments = indices.map((i) => rows[i].sentiment).filter((s): s is number => s !== null);
+      const sentiments = indices.map((i) => validRows[i].sentiment).filter((s): s is number => s !== null);
       const avgSentiment = sentiments.length > 0 ? sentiments.reduce((sum, s) => sum + s, 0) / sentiments.length : null;
 
       // Summary IDs
-      const summaryIds = indices.map((i) => rows[i].summary_id);
+      const summaryIds = indices.map((i) => validRows[i].summary_id);
 
       // Name via Haiku (with fallback on failure)
-      const snippets = indices.map((i) => rows[i].body.slice(0, 200)).join('\n---\n');
+      const snippets = indices.map((i) => validRows[i].body.slice(0, 200)).join('\n---\n');
       let name: string;
       try {
         const nameResult = await llm.call({
@@ -329,7 +339,7 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
       }
       if (!name) {
         // Fallback: first 5 words from the longest summary body
-        const longestBody = indices.map((i) => rows[i].body).sort((a, b) => b.length - a.length)[0] ?? '';
+        const longestBody = indices.map((i) => validRows[i].body).sort((a, b) => b.length - a.length)[0] ?? '';
         name = longestBody.split(/\s+/).slice(0, 5).join(' ') || `Cluster ${dateStr}`;
       }
 

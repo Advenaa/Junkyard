@@ -41,6 +41,14 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+export function bytesToVector(buf: Buffer): Float32Array | null {
+  if (buf.byteLength === 0 || buf.byteLength % 4 !== 0) {
+    return null;
+  }
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+  return new Float32Array(ab);
+}
+
 // ── Discord text preparation ───────────────────────────────────────────
 
 function stripDiscordFormatting(text: string): string {
@@ -299,18 +307,12 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     return Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
   }
 
-  function bytesToVector(bytes: Buffer): Float32Array {
-    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    return new Float32Array(ab);
-  }
-
   return {
     isAvailable,
     embed,
     embedBatch,
     prepareText,
     vectorToBytes,
-    bytesToVector,
     /** @internal — exposed for unit tests */
     getQuotaState,
   };
