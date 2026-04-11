@@ -70,6 +70,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
       const resolvedIds: string[] = [];
       const unresolvedEntities: ExtractedEntity[] = [];
       const entityIdMap = new Map<ExtractedEntity, string>();
+      const reactivatedEntities = new Set<ExtractedEntity>();
 
       // ── Tier 1: Alias lookup ────────────────────────────────────────────
       for (const entity of entities) {
@@ -97,8 +98,9 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             await client.query(
               `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at, language)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-              [ulid(), row.entity_id, source, summaryId, null, 1, now, language ?? null],
+              [ulid(), row.entity_id, source, summaryId, entity.sentiment, entity.mentionCount, now, language ?? null],
             );
+            reactivatedEntities.add(entity);
             log.info({ entityId: row.entity_id, alias: canonical }, 'reactivated archived entity via alias match');
           }
           resolvedIds.push(row.entity_id);
@@ -149,8 +151,18 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
               await client.query(
                 `INSERT INTO entity_mentions (id, entity_id, source, summary_id, sentiment, mention_count, created_at, language)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [ulid(), match.entityId, source, summaryId, null, 1, now, language ?? null],
+                [
+                  ulid(),
+                  match.entityId,
+                  source,
+                  summaryId,
+                  entity.sentiment,
+                  entity.mentionCount,
+                  now,
+                  language ?? null,
+                ],
               );
+              reactivatedEntities.add(entity);
               log.info(
                 { entityId: match.entityId, alias: canonical },
                 'reactivated archived entity via Tier 2 co-occurrence',
@@ -333,6 +345,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
         updateIds.push(entityId);
         updateWeights.push(Math.log(1 + entity.mentionCount) * sourceWeight);
+
+        if (reactivatedEntities.has(entity)) {
+          continue;
+        }
 
         mentionRows.push({
           id: ulid(),
