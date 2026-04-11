@@ -4,6 +4,7 @@ import type { Pool } from '../db/connection.js';
 import { bytesToVector } from '../embed.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import { parseSummaryBody } from './synthesis-shared.js';
 
 export interface Narrative {
   id: string;
@@ -321,8 +322,15 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
       // Summary IDs
       const summaryIds = indices.map((i) => validRows[i].summary_id);
 
+      // Extract the human-readable `.summary` field from each Stage 1 JSON body
+      // so the narrative-naming LLM (and its fallback) never sees raw JSON.
+      const summaries = indices.map((i) => {
+        const parsedBody = parseSummaryBody(validRows[i].body);
+        return parsedBody?.summary ?? validRows[i].body;
+      });
+
       // Name via Haiku (with fallback on failure)
-      const snippets = indices.map((i) => validRows[i].body.slice(0, 200)).join('\n---\n');
+      const snippets = summaries.map((s) => s.slice(0, 200)).join('\n---\n');
       let name: string;
       try {
         const nameResult = await llm.call({
@@ -338,9 +346,9 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
         name = '';
       }
       if (!name) {
-        // Fallback: first 5 words from the longest summary body
-        const longestBody = indices.map((i) => validRows[i].body).sort((a, b) => b.length - a.length)[0] ?? '';
-        name = longestBody.split(/\s+/).slice(0, 5).join(' ') || `Cluster ${dateStr}`;
+        // Fallback: first 5 words from the longest parsed summary
+        const longest = [...summaries].sort((a, b) => b.length - a.length)[0] ?? '';
+        name = longest.split(/\s+/).slice(0, 5).join(' ') || `Cluster ${dateStr}`;
       }
 
       // Signal strength
