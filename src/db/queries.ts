@@ -2703,13 +2703,13 @@ export async function insertAlphaPropagation(
     firstMentionTime: number;
     itemId?: string | null;
   },
-): Promise<AlphaPropagationRow> {
+): Promise<number> {
   const id = ulid();
   const now = Date.now();
-  const { rows } = await pool.query(
+  const result = await pool.query(
     `INSERT INTO alpha_propagation (id, entity_id, event_id, tier, source, source_id, first_mention_time, item_id, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     RETURNING *`,
+     ON CONFLICT (entity_id, tier, first_mention_day) DO NOTHING`,
     [
       id,
       record.entityId,
@@ -2722,7 +2722,7 @@ export async function insertAlphaPropagation(
       now,
     ],
   );
-  return toAlphaPropagationRow(rows[0]);
+  return result.rowCount ?? 0;
 }
 
 export async function getAlphaPropagationByEntity(
