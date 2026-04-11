@@ -9,7 +9,7 @@ Visual navigation doc. ASCII diagrams showing every data flow in the system.
 ```
  SOURCES                 INGEST              NORMALIZE (Stage 0, Haiku for Ind→EN only)
 +----------+          +----------+          +-------------------+
-| Discord  |--ws----->|          |          |                   |
+| Discord  |--poll--->|          |          |                   |
 | Twitter  |--poll--->| RawItem  |--------->| Truncate (20K ch) |
 | RSS      |--poll--->| { id,    |          | Unicode NFC       |
 | News     |--manual->|   source,|          | InstructDetector  |
@@ -115,7 +115,7 @@ Visual navigation doc. ASCII diagrams showing every data flow in the system.
 
 ```
 Source event     RawItem          items row        ChunkSummary       CorrelatedEntity    MarketReport
-(ws/http)    --> (in-memory)  --> (Postgres)   --> (summaries.body)-> (in-memory)     --> (reports.body)
+(rest/http)  --> (in-memory)  --> (Postgres)   --> (summaries.body)-> (in-memory)     --> (reports.body)
                  id: ulid         status: ready    summary: text      name: string        tldr: string
                  source: enum     content_hash     urgency: enum      sources: string[]   keyEvents[]
                  content: text    engagement: int  confidence: 1-10   avg_sentiment       sections[]
@@ -185,7 +185,7 @@ Each source type has a default poll interval. Sources are processed in parallel 
 
 ```
                INGESTION METHOD         sourceId           POLL INTERVAL    CONTENT SIZE
-Discord  ---- Gateway WebSocket ------> channel_id         30min (default)  short (msgs)
+Discord  ---- REST poll -------------> channel_id         30min (default)  short (msgs)
 Twitter  ---- REST poll -------------> @handle / query     2h (default)     short (tweets)
 RSS      ---- rss-parser ------------> feed_url            15min (default)  long (articles)
 News     ---- manual URL submit ------> article_url        on-demand        long (articles)

@@ -551,7 +551,7 @@ test('uses BIGINT parser for count queries', () => {
 ### When to use structural tests
 
 - **Pool/connection wiring** (`connection.test.ts`): verify error handlers are attached, connect/query methods exist
-- **Adapter compliance** (`discord-structural.test.ts`): verify Discord adapter exports required methods, handles gateway opcodes
+- **Discord REST polling** (`discord-rest-poll.test.ts`): verify channel polling, pagination, attachment filtering, and token fallback behavior
 - **Health endpoints** (`health-structural.test.ts`): verify health check route registration, response shape patterns
 - **Enum/type correctness** (`cycle85-structural.test.ts`): verify TaskType enum values, sanitization function signatures
 - **Regression guards** (`regression.test.ts`): verify specific bug fixes remain in place (AU-021 auth fix, TW-006 Twitter pagination, FE-012 filter edge case)

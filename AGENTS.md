@@ -93,7 +93,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 - **Migration 8** — adds `'failed'` to `items.status` CHECK constraint (`ready | filtered | processing | processed | failed`).
 - **Migration 12** — adds indexes: `summaries.created_at DESC`, `llm_usage.created_at`, `reports(type, created_at)`, rebuilt `idx_items_claim` with `source_id`.
 - **Migration 13** — widens all epoch-ms INTEGER columns to BIGINT across 11 tables (sources, source_state, source_rate_history, items, summaries, entities, entity_mentions, reports, users, sessions, llm_usage, health_events, narratives, embeddings).
-- **Discord adapter guardrails** — CDN URL validation on attachments (allowlist: `cdn.discordapp.com`, `media.discordapp.net`). Circuit breaker disables token after 20 consecutive errors. NaN timestamp fallback to `Date.now()`. Concurrency queue drains pending waiters on disconnect to unblock shutdown.
+- **Discord REST guardrails** — Discord message polling uses REST, not a Gateway WebSocket. Attachment URLs are validated against `cdn.discordapp.com` / `media.discordapp.net`, invalid timestamps fall back to `Date.now()`, and the poller rotates across configured tokens until one can fetch the channel.
 - **RSS guardrails** — 5MB body cap (`MAX_FEED_BYTES`), 50-item cap per poll (`MAX_ITEMS_PER_POLL`), URL validation via `validateUrl()` at source creation.
 - **Source toggle** — `PATCH /api/v1/sources/:source/:sourceId` with `{ enabled: bool }`. Uses `source_state.status` (active/disabled/halted). Halted sources return 409 — must fix underlying issue before re-enabling.
 - **User role management** — `PATCH /api/v1/users/:discordId` with `{ role: 'admin'|'viewer'|'blocked' }`. Admin-only. Validates discordId pattern `^\d{17,20}$`.
@@ -176,7 +176,7 @@ New to the repo? Start with [PRODUCT.md](./PRODUCT.md) to understand why this ex
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — full schema, API contract, deployment, build order, cost model
 - [docs/AGENT_LOOP.md](./docs/AGENT_LOOP.md) — shared Claude/Codex task loop, handoff rules, and canonical artifacts
 - [PIPELINE.md](./PIPELINE.md) — LLM prompts, chunking code, output validation, scheduling details
-- [docs/DISCORD.md](./docs/DISCORD.md) — Gateway lifecycle, multi-token management, opcodes, close codes
+- [docs/DISCORD.md](./docs/DISCORD.md) — Discord REST polling, token rotation, CDN guardrails, discovery helpers
 - [docs/DASHBOARD.md](./docs/DASHBOARD.md) — wireframes, component inventory, dark theme spec
 - [docs/ERRORS.md](./docs/ERRORS.md) — error taxonomy, circuit breakers, logging levels, recovery
 - [docs/SCHEDULER.md](./docs/SCHEDULER.md) — startup sequence, job table, mutex, call chain, shutdown

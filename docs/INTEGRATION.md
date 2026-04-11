@@ -18,13 +18,13 @@ News article → Ingest → Normalize* → Pre-summarize → Wait → ─── 
 
 ## Step by Step
 
-### 1. A Discord message arrives
+### 1. A Discord poll cycle fetches new messages
 
-A WebSocket connection receives a `MESSAGE_CREATE` event. The handler in `discord.ts`:
+The scheduler calls `pollDiscordChannel()` in `discord-rest.ts`, which fetches `GET /channels/{channelId}/messages` and maps each new REST payload into the shared `RawItem` shape:
 
 ```typescript
 // Pseudocode
-function onMessageCreate(event: GatewayEvent) {
+function mapDiscordMessage(event: DiscordRestMessage) {
   const item: RawItem = {
     id: ulid(),
     source: 'discord',
@@ -32,7 +32,7 @@ function onMessageCreate(event: GatewayEvent) {
     author: event.author.username,
     content: event.content,
     timestamp: new Date(event.timestamp),
-    engagement: event.reactions?.length ?? 0,  // Discord: reaction count. RSS: always 0. Twitter: log10 formula.
+    engagement: 0,  // Discord REST path does not fetch reaction counts.
     url: undefined,
     metadata: {
       guildId: event.guild_id,

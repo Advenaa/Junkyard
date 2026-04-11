@@ -4,7 +4,7 @@
 
 A 24/7 market intelligence engine. Scrapes social and news sources, builds knowledge over time, surfaces readable market conditions for crypto/DeFi and tradfi. Ships as a single process, single port, backed by Postgres.
 
-**Known trade-off**: Discord ingestion uses user tokens via Gateway WebSocket, which violates Discord TOS ("self-botting"). Risk: token ban, account termination. Mitigate by using disposable accounts. Consider migrating to bot tokens with guild invites for production.
+**Known trade-off**: Discord ingestion uses user tokens via Discord's REST API, which still violates Discord TOS ("self-botting"). Risk: token ban, account termination. Mitigate by using disposable accounts. Consider migrating to bot tokens with guild invites for production.
 
 ## Core Loop
 
@@ -16,7 +16,7 @@ Sources → Ingest → Normalize → Pre-summarize → Process → Knowledge →
 
 | Source    | Method              | Priority | Notes                              |
 |-----------|--------------------|---------|------------------------------------|
-| Discord   | Gateway WebSocket  | P0      | One connection per token, 5s IDENTIFY gap, MESSAGE_CREATE only |
+| Discord   | REST polling       | P0      | Poll `/channels/{id}/messages` with user tokens, rotate across tokens on access/rate-limit failures |
 | Twitter/X | twitterapi.io       | P0      | REST API, $0.15/1K tweets, per-source poll interval (default 2h). WebSocket available for v2.1 |
 | News      | Article extraction | P1      | Readability-style content extraction from URLs |
 | RSS       | Feed polling       | P1      | `rss-parser` npm, 15min poll, auto-extract full article via Readability |
@@ -42,21 +42,16 @@ CREATE TABLE sources (
 
 `.env` holds secrets only: `ANTHROPIC_API_KEY` (required if using Claude models, other provider keys as needed), `DATABASE_URL` (Postgres connection string, required), `DISCORD_TOKENS` (optional — needed for Discord sources), `DISCORD_CLIENT_ID` + `DISCORD_CLIENT_SECRET` (optional — needed for Discord OAuth2 auth), `TWITTERAPI_KEY` (optional — needed for Twitter sources), `API_KEY` (auto-generated if missing), `ADMIN_USER_IDS` (optional — bootstrap admin Discord IDs).
 
-### Discord Gateway
+### Discord REST Polling
 
-- One WebSocket connection per token. Tokens from `DISCORD_TOKENS` env var (comma-separated).
-- On startup: connect each token sequentially with 5s gap (IDENTIFY rate limit).
-- Partition channels across tokens round-robin from `sources` table.
-- Listen to `MESSAGE_CREATE` only. Ignore presence, typing, reactions. Capture attachment URLs from `message.attachments` array (Discord CDN URLs) into `items.attachments` as JSON array.
-- **CDN URL validation**: attachment URLs are validated against an allowlist of Discord CDN hosts (`cdn.discordapp.com`, `media.discordapp.net`) with HTTPS enforcement. Malformed or non-CDN URLs are silently dropped.
-- **NaN timestamp fallback**: if `new Date(d.timestamp).getTime()` produces NaN, falls back to `Date.now()` rather than inserting invalid data.
-- **Circuit breaker**: after 20 consecutive WebSocket errors on a single connection, the token is disabled and `onDeath` fires (halts all channels on that token). Error count resets on successful message receipt.
-- On fatal close codes (4004, 4010-4014): disable that token's channels, log CRITICAL.
-- On resumable codes (4000-4003, 4009): resume with stored session.
-- On 4007 (invalid seq): fresh IDENTIFY (do not resume).
-- On 4008 (rate limited): backoff 60s, then fresh IDENTIFY.
-- On network drop: reconnect with exponential backoff capped at 60s.
-- See [docs/DISCORD.md](./docs/DISCORD.md) for full close code reference.
+- Discord sources are polled through `pollDiscordChannel()` in `src/ingest/discord-rest.ts`.
+- Tokens come from `DISCORD_TOKENS` plus optional DB-managed tokens. The poller tries each configured token until one can access the channel.
+- Poll path: `GET /channels/{channelId}/messages?limit=50`, with `after={lastId}` for incremental fetches and up to 5 pages (250 messages) per cycle.
+- Only default and reply messages are mapped. Bot-authored messages are skipped.
+- Attachment URLs are filtered through a strict Discord CDN allowlist (`cdn.discordapp.com`, `media.discordapp.net`) with HTTPS enforcement before they reach `items.attachments`.
+- Invalid timestamps fall back to `Date.now()` with a warning rather than writing `NaN`.
+- If every token fails, the poller reports `fetchFailed` so the caller does not advance `last_fetched_at`; health monitoring then surfaces the stall.
+- See [docs/DISCORD.md](./docs/DISCORD.md) for the live REST polling model and discovery helpers.
 
 ### twitterapi.io Integration
 
@@ -895,7 +890,7 @@ Trap SIGTERM/SIGINT:
 | API validation | Fastify JSON Schema | Route-level input validation    |
 | Twitter   | twitterapi.io          | Pay-per-use, $0.15/1K tweets     |
 | Auth      | argon2 + @fastify/cookie | API key hashing + session cookies |
-| Discord   | ws                    | Gateway WebSocket connections    |
+| Discord   | Discord REST API      | Channel polling + guild/channel discovery |
 | RSS       | rss-parser              | RSS/Atom feed parsing              |
 | News      | @mozilla/readability + linkedom | Article content extraction |
 | Language  | franc                 | Language detection               |
@@ -925,7 +920,7 @@ podders/
 │   │   └── middleware.ts      # requireAuth + requireAdmin onRequest hooks
 │   ├── ingest/
 │   │   ├── types.ts          # RawItem, SourceAdapter interface
-│   │   ├── discord.ts        # Discord Gateway (multi-token, per-connection)
+│   │   ├── discord-rest.ts   # Discord REST polling + guild/channel discovery
 │   │   ├── twitter.ts        # twitterapi.io REST polling
 │   │   ├── news.ts           # Article extractor (readability)
 │   │   └── rss.ts            # RSS/Atom poller
@@ -976,7 +971,7 @@ podders/
     ├── DASHBOARD.md          # Wireframes, components, dark theme
     ├── DATAFLOW.md           # ASCII data flow diagrams
     ├── DEPLOYMENT.md         # Hosting, TLS, monitoring, backups, ops
-    ├── DISCORD.md            # Gateway spec, multi-token, close codes
+    ├── DISCORD.md            # Discord REST polling, token rotation, discovery helpers
     ├── EMBEDDINGS.md         # Vector embeddings: model, storage, pipeline, cost
     ├── ENTITIES.md           # Resolution, CoinGecko seeding, decay, pruning
     ├── ERRORS.md             # Error taxonomy, circuit breakers, recovery

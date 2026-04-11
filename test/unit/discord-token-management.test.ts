@@ -220,34 +220,13 @@ describe('Behavioral: encryption roundtrip', () => {
 });
 
 // ==========================================================================
-// Section 3: Structural tests — Cycle 143 integration wiring
+// Section 3: Structural tests — Discord REST wiring
 // ==========================================================================
 
 /** Read a source file relative to the project root. */
 function readSrc(relPath: string): string {
   return readFileSync(resolve(ROOT, relPath), 'utf-8');
 }
-
-describe('Discord adapter reconnect (discord.ts)', () => {
-  const src = readSrc('src/ingest/discord.ts');
-
-  it('exports reconnect in return type', () => {
-    assert.ok(src.includes('reconnect'), 'adapter must include reconnect method');
-  });
-
-  it('reconnect disconnects before rebuilding connections', () => {
-    // reconnect should call disconnect() then rebuild
-    const reconnectBlock = src.match(/async function reconnect[\s\S]*?log\.info/);
-    assert.ok(reconnectBlock, 'reconnect function must exist');
-    const block = reconnectBlock[0];
-    assert.ok(block.includes('disconnect()'), 'reconnect must call disconnect');
-    assert.ok(
-      block.includes('connections.length = 0') || block.includes('connections.splice'),
-      'reconnect must clear connections',
-    );
-    assert.ok(block.includes('connect()'), 'reconnect must call connect');
-  });
-});
 
 describe('Discord REST updateTokens (discord-rest.ts)', () => {
   const src = readSrc('src/ingest/discord-rest.ts');

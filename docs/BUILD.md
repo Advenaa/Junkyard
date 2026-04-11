@@ -558,7 +558,7 @@ Pass all gates → INSERT as `ready`.
 
 Dedup: skip if same category+message unacknowledged within 30min. Critical → POST to `ALERT_WEBHOOK_URL`.
 
-**Graceful shutdown**: `shuttingDown = true` → stop crons → wait for in-flight LLM → close Discord WS → close Fastify → close pool → exit. Hard kill 30s.
+**Graceful shutdown**: `shuttingDown = true` → stop crons → wait for in-flight LLM → close Fastify → close pool → exit. Hard kill 30s.
 
 **Verify**: Crash recovery resets orphaned items. Mutex prevents overlap. Health alerts fire on critical. Graceful shutdown waits for in-flight calls.
 
@@ -566,29 +566,27 @@ Dedup: skip if same category+message unacknowledged within 30min. Critical → P
 
 ---
 
-### Step 2.10: Discord Adapter
+### Step 2.10: Discord REST Polling
 
-**Files**: `src/ingest/discord.ts`
+**Files**: `src/ingest/discord-rest.ts`
 
-**npm packages**: `ws`, `@types/ws` (dev)
+**Production path**: Discord uses REST polling, not a Gateway WebSocket.
 
-**This is the most complex adapter:**
+**Polling model**:
+- `GET /channels/{channelId}/messages?limit=50`
+- Add `after={lastId}` for incremental fetches
+- Continue pagination while Discord returns full pages, capped at 5 pages (250 messages) per cycle
+- Try configured tokens in order until one can access the channel; keep the successful token for the rest of that poll
 
-**Gateway lifecycle**: Connect → opcode 10 HELLO → opcode 2 IDENTIFY (browser-mimicking properties) → READY (cache session_id, resume_gateway_url) → heartbeat loop → MESSAGE_CREATE handler
+**Mapping rules**:
+- Skip bot-authored messages
+- Keep only default and reply messages
+- Content = reply context (max 200 chars) + main content + embed descriptions
+- Images from the Discord CDN go into `metadata.imageUrls`
+- Attachment URLs must be HTTPS on `cdn.discordapp.com` or `media.discordapp.net`
+- Invalid timestamps fall back to `Date.now()` with a warning
 
-**Multi-token management**:
-- Sequential IDENTIFY with **5s gap** between tokens (rate limit: 1/5s/IP)
-- Channel partitioning: round-robin across active tokens
-- Token death on fatal close codes (4004, 4010-4014): disable permanently, reassign channels
-
-**Reconnect**:
-- Resumable (4000-4003, 4009, 1001, network drop): RESUME on resume_gateway_url
-- Non-resumable (4007, 4008, 1000): fresh IDENTIFY with backoff `min(2^attempt * 2s, 60s)`
-- INVALID SESSION (opcode 9, `d: false`): wait 1-5s random, fresh IDENTIFY
-
-**MESSAGE_CREATE**: filter assigned channels + skip bots + skip non-DEFAULT/REPLY. Content = text + reply context (200 chars) + embed descriptions. Images from Discord CDN in `metadata.imageUrls`. Engagement hardcoded to 0.
-
-**Verify**: Connect, receive READY, receive MESSAGE_CREATE. Resume works after close 4000. Token death reassigns channels. Bot messages filtered.
+**Verify**: Poll a real channel, advance `lastId`, cap pagination at 250 messages, fall back across tokens when one cannot access the channel, and filter bot messages.
 
 **Depends on**: 2.2 (normalize), 2.9 (scheduler for Poisson).
 
@@ -667,7 +665,7 @@ Steps 2.10, 2.11, 2.12 are parallelizable. 2.13 can start after 2.4.
 
 ### Phase 2 npm Dependencies
 
-`rss-parser`, `@mozilla/readability`, `linkedom`, `franc`, `fastest-levenshtein`, `ws`, `@types/ws` (dev), `ml-kmeans`, `node-cron`
+`rss-parser`, `@mozilla/readability`, `linkedom`, `franc`, `fastest-levenshtein`, `undici`, `ml-kmeans`, `node-cron`
 
 ---
 
@@ -928,7 +926,7 @@ src/db/queries.ts               # Typed SQL functions
 ### Phase 2 (src/)
 ```
 src/ingest/rss.ts               # RSS feed polling
-src/ingest/discord.ts           # Discord Gateway WebSocket
+src/ingest/discord-rest.ts      # Discord REST polling + discovery helpers
 src/ingest/twitter.ts           # twitterapi.io REST
 src/ingest/news.ts              # Readability extraction
 src/normalize/index.ts          # 6-gate normalize pipeline

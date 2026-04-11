@@ -14,7 +14,7 @@ On `node dist/index.js run`:
 3. migrations.run()                      # Check migration version, run pending
                                          # On failure: pool.end() before process.exit (CF-009)
 4. crashRecovery()                       # See below
-5. discord.connect()                     # Sequential per token, 5s IDENTIFY gap
+5. load Discord REST tokens              # Build initial token set for discovery + polling
 6. registerCronJobs()                    # Order matters — see Job Table
 7. server.listen(PORT)                   # Fastify starts accepting requests
 ```
@@ -84,37 +84,24 @@ Event-driven jobs (Stage 2, flash, delivery) do not need a mutex. They execute i
 
 ---
 
-## 3.5. Poisson-Based Claim Gate (Discord)
+## 3.5. Discord Polling Notes
 
-Discord messages arrive via WebSocket and sit as `ready`. Instead of a fixed `poll_interval` timer, the scheduler checks every 60 seconds:
+Discord sources run inside the normal source poll tick. They do not maintain a
+Gateway connection and they do not use a separate claim heuristic.
 
-1. Count accumulated `ready` items for each Discord source.
-2. Compare against expected rate (lambda) for that source at this hour-of-day and day-of-week, learned from last 7 days via `source_rate_history`.
-3. Two thresholds:
-   - **Process threshold**: actual > expected x 1.5 OR actual > 10 items — trigger processing.
-   - **Alert threshold**: actual > expected x 3 OR Poisson survival probability < 0.01 — process immediately, flag as potential breaking event.
+Per due Discord source, `onSourcePollTick()`:
 
-### Poisson survival function
+1. Refreshes the current token set when at least one Discord source exists.
+2. Loads `source_state.last_fetched_at`, `source_state.last_id`, and status.
+3. Skips disabled or halted sources.
+4. Skips polls where `now - last_fetched_at < poll_interval`.
+5. Calls `pollDiscordChannel(sourceId, lastId, currentDiscordTokens, log)`.
+6. On success, normalizes returned items and advances `source_state`.
+7. On all-token failure, increments `error_count` and leaves
+   `last_fetched_at` untouched so the stall stays visible.
 
-```javascript
-function poissonSurvival(k, lambda) {
-  let sum = 0;
-  for (let i = 0; i < k; i++) {
-    sum += Math.exp(-lambda) * Math.pow(lambda, i) / factorial(i);
-  }
-  return 1 - sum; // P(X >= k)
-}
-```
-
-### Baseline tracking
-
-Lambda is stored in `source_rate_history`, keyed by `(source, source_id, hour_of_day, day_of_week)`. Updated after each processing cycle with a rolling average over the last 7 days.
-
-### What this changes
-
-- **Discord sources**: Poisson-triggered claim (check every 60s), NOT fixed `poll_interval`. The claim gate is a decision point, not just a timer.
-- **Twitter/RSS/News**: unchanged, still fixed `poll_interval`.
-- Catches breaking events ~12 minutes faster than fixed 15-min intervals.
+Discord polling shares the same scheduler concurrency limit as the other source
+types: batches of up to 5 sources run in parallel.
 
 ---
 
@@ -335,13 +322,10 @@ async function shutdown(signal: string): Promise<void> {
     await Promise.allSettled([...inflightLLM]);
   }
 
-  // 3. Close Discord gateway connections
-  discord.closeAll();
-
-  // 4. Close Fastify server (stop accepting HTTP)
+  // 3. Close Fastify server (stop accepting HTTP)
   await server.close();
 
-  // 5. Close DB connection pool last (in-flight jobs may still write)
+  // 4. Close DB connection pool last (in-flight jobs may still write)
   await pool.end();
 
   process.exit(0);
