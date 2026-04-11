@@ -262,6 +262,233 @@ Otherwise, remember `resumable_issues[]` for Step 5 — the claim step
 picks a resumable issue **before** walking the `state:ready` priority
 list. **Resume trumps claim.**
 
+### Step 3b — Blocked-repair sweep
+
+Before walking fresh state:ready work, scan for PRs that `/queue` has
+flipped to `queue:blocked` whose linked issue sits at `state:blocked`.
+Without this sweep, once an issue rots into `state:blocked` nothing in
+the normal claim path (which only reads `state:ready`) will ever pick
+it back up. This sweep handles two repairable failure modes inline:
+
+1. **Missing metadata** — PR body lacks `## Lock group` / `## Write
+   set`. Fix: derive from `git diff --name-only origin/main...HEAD`,
+   rewrite the PR body, relabel `queue:blocked → queue:ready`. No
+   worktree, no Codex, no local gate — this is a 5-second fix.
+2. **Merge conflict** — PR is mergeable=`CONFLICTING` or
+   mergeStateStatus=`DIRTY`. Fix: take a repair lock, worktree the
+   branch, `git rebase origin/main`, hand conflict markers to Codex
+   for resolution if the rebase didn't apply cleanly, run the local
+   gate, `git push --force-with-lease`, relabel.
+
+Eligibility for either mode:
+
+- PR is open with `queue:blocked` label
+- Linked issue has `state:blocked` label
+- CI `build-and-test` conclusion is `SUCCESS` or pending (NOT `FAILURE`
+  — red CI is a different class of break; `/fix` handles that)
+- Repair attempts budget `.clankerism/attempts/repair-pr-<PR>.ndjson`
+  has `< 3` prior `gate_failed`/`hard_error` entries
+- A `repair/pr-<PR>` branch does NOT already exist on origin (another
+  tick owns the repair — race loss)
+
+```bash
+MAIN="/Users/advena/project/poddershub"
+repair_metadata_done=()
+repair_rebase_prs=()
+
+while read -r PR_N; do
+  [ -z "$PR_N" ] && continue
+
+  # Linked issue number (prefer `Fixes #N` in body, fall back to branch name)
+  PR_JSON=$(gh pr view "$PR_N" --json body,headRefName,mergeable,mergeStateStatus,statusCheckRollup,labels)
+  BODY=$(printf '%s' "$PR_JSON" | jq -r '.body')
+  ISSUE_N=$(printf '%s' "$BODY" | grep -oiE 'Fixes #[0-9]+' | head -1 | grep -oE '[0-9]+')
+  if [ -z "$ISSUE_N" ]; then
+    HEAD_REF=$(printf '%s' "$PR_JSON" | jq -r '.headRefName')
+    ISSUE_N=$(printf '%s' "$HEAD_REF" | grep -oE 'issue-[0-9]+' | grep -oE '[0-9]+')
+  fi
+  [ -z "$ISSUE_N" ] && continue
+
+  ISSUE_LABELS=$(gh issue view "$ISSUE_N" --json labels --jq '.labels[].name' | tr '\n' ' ')
+  echo "$ISSUE_LABELS" | grep -q 'state:blocked' || continue
+
+  CI_CONCLUSION=$(printf '%s' "$PR_JSON" | jq -r '[.statusCheckRollup[] | select(.name=="build-and-test") | .conclusion] | .[0] // "PENDING"')
+  [ "$CI_CONCLUSION" = "FAILURE" ] && continue
+
+  REPAIR_ATTEMPTS_FILE="$MAIN/.clankerism/attempts/repair-pr-$PR_N.ndjson"
+  if [ -f "$REPAIR_ATTEMPTS_FILE" ]; then
+    REPAIR_FAILS=$(grep -c '"outcome":"gate_failed"\|"outcome":"hard_error"' "$REPAIR_ATTEMPTS_FILE" 2>/dev/null || echo 0)
+  else
+    REPAIR_FAILS=0
+  fi
+  [ "$REPAIR_FAILS" -ge 3 ] && continue
+
+  # Repair-lock collision check
+  git ls-remote --exit-code --heads origin "repair/pr-$PR_N" >/dev/null 2>&1 && continue
+
+  # Classify failure mode
+  HAS_LG=$(printf '%s' "$BODY" | grep -cE '^## Lock group' || true)
+  HAS_WS=$(printf '%s' "$BODY" | grep -cE '^## Write set' || true)
+  MERGEABLE=$(printf '%s' "$PR_JSON" | jq -r '.mergeable')
+
+  if [ "$HAS_LG" = "0" ] || [ "$HAS_WS" = "0" ]; then
+    REASON=metadata
+  elif [ "$MERGEABLE" = "CONFLICTING" ]; then
+    REASON=rebase
+  else
+    # Unknown block reason — skip, let a human triage
+    continue
+  fi
+
+  if [ "$REASON" = "metadata" ]; then
+    # --- Metadata fast path (inline, no worktree) ---
+    HEAD_REF=$(printf '%s' "$PR_JSON" | jq -r '.headRefName')
+    WRITE_SET=$(gh pr view "$PR_N" --json files --jq '.files[].path' | sort -u)
+    LOCK_GROUP=$(printf '%s\n' "$WRITE_SET" | awk -F/ '
+      NF >= 3 && ($1 == "src" || $1 == "dashboard") { print $2 "/" $3; next }
+      NF >= 2 { print $1 "/" $2; next }
+      { print $1 }
+    ' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')
+    LOCK_GROUP=${LOCK_GROUP:-misc}
+
+    NEW_BODY_FILE=$(mktemp)
+    {
+      printf '%s\n\n' "$BODY"
+      printf '## Lock group\n\n%s\n\n' "$LOCK_GROUP"
+      printf '## Write set\n\n%s\n' "$WRITE_SET"
+    } > "$NEW_BODY_FILE"
+
+    if gh pr edit "$PR_N" --body-file "$NEW_BODY_FILE" \
+       && gh pr edit "$PR_N" --remove-label queue:blocked --add-label queue:ready \
+       && gh issue edit "$ISSUE_N" --remove-label state:blocked --add-label state:in-progress; then
+      mkdir -p "$MAIN/.clankerism/attempts"
+      printf '{"ts":"%s","outcome":"metadata_repaired","pr":%s}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_N" >> "$REPAIR_ATTEMPTS_FILE"
+      repair_metadata_done+=("$PR_N")
+    else
+      printf '{"ts":"%s","outcome":"gate_failed","pr":%s,"stage":"metadata"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_N" >> "$REPAIR_ATTEMPTS_FILE"
+    fi
+    rm -f "$NEW_BODY_FILE"
+    continue
+  fi
+
+  # REASON = rebase — queue for the heavy path below
+  repair_rebase_prs+=("$PR_N:$ISSUE_N")
+done < <(gh pr list --state open --label queue:blocked --json number --jq '.[].number')
+```
+
+If `repair_metadata_done` is non-empty, the queue now has new
+`queue:ready` PRs and `/queue` will pick them up on its own cadence.
+This tick continues to the rebase-repair path below if any candidates
+exist.
+
+#### Rebase repair path
+
+For each entry in `repair_rebase_prs`, take a repair lock and try to
+rebase the branch onto current `origin/main`. If the rebase is clean,
+run the local gate and force-with-lease push. If the rebase left
+conflict markers, hand them to Codex via the same retry loop Step 7
+uses for fresh implementations, then gate + push.
+
+```bash
+for entry in "${repair_rebase_prs[@]}"; do
+  IFS=':' read -r PR_N ISSUE_N <<< "$entry"
+  REPAIR_BRANCH="repair/pr-$PR_N"
+  BUILD_BRANCH="build/issue-$ISSUE_N"
+  REPAIR_ATTEMPTS_FILE="$MAIN/.clankerism/attempts/repair-pr-$PR_N.ndjson"
+
+  cd "$MAIN"
+  git fetch origin "$BUILD_BRANCH" main
+
+  # Take the repair lock — push failure means another tick owns it
+  git branch -f "$REPAIR_BRANCH" "origin/$BUILD_BRANCH"
+  if ! git push -u origin "$REPAIR_BRANCH" 2>&1; then
+    git branch -D "$REPAIR_BRANCH" 2>/dev/null || true
+    printf '{"ts":"%s","outcome":"repair_race_lost","pr":%s}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_N" >> "$REPAIR_ATTEMPTS_FILE"
+    continue
+  fi
+
+  # Flip issue state so the normal sweep treats this as live work next tick
+  gh issue edit "$ISSUE_N" --remove-label state:blocked --add-label state:in-progress
+
+  # Create a repair worktree on $BUILD_BRANCH (reuse if already present)
+  WT=$(node "$MAIN/scripts/worktree.mjs" claim "issue-$ISSUE_N" 2>/dev/null \
+       || node "$MAIN/scripts/worktree.mjs" resume "issue-$ISSUE_N")
+  cd "$WT"
+
+  # Attempt the rebase
+  git fetch origin main
+  if git rebase origin/main; then
+    REPAIR_HAD_CONFLICTS=0
+  else
+    REPAIR_HAD_CONFLICTS=1
+    # Leave conflict markers in the worktree — Codex will resolve them.
+    # Do NOT `git rebase --abort`; Codex needs to see the in-progress state.
+  fi
+
+  # If conflicts, delegate to Codex with a conflict-resolution prompt
+  # (see Step 7 — reuse the retry loop with prompt variant
+  # `repair-rebase-conflicts.md`). The prompt instructs Codex to:
+  #   - read `git status` for conflicted files
+  #   - resolve each conflict preserving the intent of BOTH branches
+  #   - `git add` resolved files and `git rebase --continue`
+  #   - run the local gate (build/lint/format/test/test:dashboard)
+  #
+  # On rebase success (clean OR Codex-resolved), run the local gate
+  # from the worktree cwd. On failure, append gate_failed and continue
+  # to the next repair entry — the repair lock gets released at the
+  # end of this iteration regardless.
+
+  if [ "$REPAIR_HAD_CONFLICTS" = "1" ]; then
+    # Hand off to Step 7's retry loop in conflict-resolution mode.
+    # Set IS_REPAIR=1 and REPAIR_PR=$PR_N so Step 7.5 knows to skip
+    # `gh pr create` and take the republish path instead.
+    IS_REPAIR=1
+    REPAIR_PR=$PR_N
+    N=$ISSUE_N
+    # Fall through to Step 7 in repair mode — DO NOT continue the loop.
+    # This tick spends its remaining budget on this one repair.
+    break
+  fi
+
+  # Clean rebase — run the local gate directly
+  if corepack pnpm install --frozen-lockfile \
+     && corepack pnpm run build \
+     && corepack pnpm run lint \
+     && corepack pnpm run format:check \
+     && corepack pnpm test \
+     && corepack pnpm run test:dashboard; then
+    # Republish: force-with-lease push, relabel, release lock
+    git push --force-with-lease "origin" "HEAD:$BUILD_BRANCH"
+    gh pr edit "$PR_N" --remove-label queue:blocked --add-label queue:ready
+    git push origin --delete "$REPAIR_BRANCH" 2>/dev/null || true
+    cd "$MAIN"
+    printf '{"ts":"%s","outcome":"rebase_repaired","pr":%s}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_N" >> "$REPAIR_ATTEMPTS_FILE"
+  else
+    printf '{"ts":"%s","outcome":"gate_failed","pr":%s,"stage":"rebase_gate"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$PR_N" >> "$REPAIR_ATTEMPTS_FILE"
+    git push origin --delete "$REPAIR_BRANCH" 2>/dev/null || true
+    cd "$MAIN"
+  fi
+done
+```
+
+**Repair-mode fall-through.** When `IS_REPAIR=1` after the rebase
+sweep, the tick skips the normal "Step 5 — Pick the next issue" logic
+entirely and flows directly into Step 7 with `$N` set to the linked
+issue and `$WT` already in place. Step 7 uses the
+`repair-rebase-conflicts.md` prompt template instead of the normal
+implementation prompt. Step 7.5 detects `IS_REPAIR=1` and takes the
+republish path (force-with-lease + relabel + lock release) instead of
+`gh pr create`.
+
+If `IS_REPAIR=0` after this sweep (no rebase candidates or all were
+cleanly rebased inline), the tick falls through to Step 4 normally and
+claims fresh work.
+
 ### Step 4 — Preflight
 
 The main checkout is a launchpad — we don't reset it. We only need a
@@ -624,6 +851,84 @@ Full conventions in CLAUDE.md. Reference skill:
 (commit/push/watch/exit) — those belong to Claude.
 ```
 
+#### Repair-conflict prompt variant (`IS_REPAIR=1` only)
+
+When Step 3b handed a rebase-repair to Step 7 with conflicts in
+flight, use this prompt instead. `<WT_PATH>` is the same worktree
+Step 3b left mid-rebase. The expected local gate sequence is
+identical, but the first job is resolving conflict markers, not
+implementing from an issue body.
+
+```
+You are working in a git worktree at <WT_PATH> on branch <BRANCH>.
+A git rebase is currently IN PROGRESS — running `git status` will
+show files with conflict markers. The worktree is sandboxed — you
+can edit source files, `git add`, and `git rebase --continue`, but
+you CANNOT run `git push`, `git commit --amend`, `git reset --hard`,
+`gh pr create`, `gh pr merge`, or `gh issue edit`. Those are Claude's
+job. Stay out of `.git/`, and do NOT modify anything under
+`.clankerism/`.
+
+Your job for this attempt:
+
+1. Run `git status` to see the conflicted files.
+2. For each conflicted file:
+   - Read the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
+   - Resolve by preserving the intent of BOTH sides. Our branch adds
+     new behavior (read GitHub issue #<N> "<TITLE>" for intent);
+     main may have refactored the surrounding code. Keep the new
+     behavior working on top of the refactor.
+   - Do NOT wholesale discard either side. If you truly cannot
+     reconcile, return `STATUS=hard_error`.
+3. `git add` every resolved file.
+4. `git rebase --continue`. If more conflicts appear, loop back to
+   step 2. If the rebase finishes cleanly, continue.
+5. **Pre-flight hygiene.** Run Prettier in --write mode on every
+   file you touched:
+     corepack pnpm exec prettier --write <path1> <path2> ...
+6. Run the local CI gate in order:
+     corepack pnpm run build
+     corepack pnpm run lint
+     corepack pnpm run format:check
+     corepack pnpm test
+     corepack pnpm run test:dashboard
+7. On the FIRST failure, stop, capture the last 40 lines of output
+   to <WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log, and return the
+   structured status below.
+
+Linked issue context (original intent of the branch you're rebasing):
+<ACCEPTANCE>
+
+Hard rules:
+- Do NOT run git push, git commit --amend, git reset --hard, gh pr
+  create, gh pr merge, gh pr edit, gh issue edit, or any label-
+  mutating gh command. Claude will handle all of that.
+- Do NOT touch .clankerism/, .git/, .github/, scripts/hooks/, or the
+  pre-push hook.
+- Do NOT use --no-verify, --no-gpg-sign, force operations, or
+  CLANKERISM_ALLOW_* environment overrides.
+- Fix the ROOT CAUSE of the PRIOR ATTEMPT FAILURE CONTEXT below (if
+  any). Do not resubmit the same resolution hoping for a different
+  result.
+
+<!-- Only present if PRIOR_FAILURE_LOG is non-empty -->
+PRIOR ATTEMPT FAILURE CONTEXT:
+<PRIOR_FAILURE_LOG>
+<!-- end prior attempt section -->
+
+Final message contract — same as the fresh-implementation prompt:
+  STATUS=passing / gate_failed / hard_error
+  GATE_STEP=<build|lint|format:check|test|test:dashboard|rebase>
+  EXCERPT_PATH=<WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log or `none`
+```
+
+On `passing`, Step 7.5 takes the repair-republish fork. On
+`gate_failed` or `hard_error` exhausting the repair budget, Step 8
+records the failure to
+`.clankerism/attempts/repair-pr-<PR>.ndjson`, deletes the
+`repair/pr-<PR>` lock branch, flips the linked issue back to
+`state:blocked`, and schedules the next tick.
+
 Three invariants the retry loop depends on:
 
 - **No codex-companion `--background` flag.** Never pass `--background`
@@ -655,6 +960,33 @@ Three invariants the retry loop depends on:
 Claude commits, pushes, opens the PR, watches CI, optionally pushes one
 fix commit, and merges. **Codex never touches git here.**
 
+#### Repair-republish fork (`IS_REPAIR=1`)
+
+If this tick came from the blocked-repair path in Step 3b, the PR
+already exists — Step 7.5 does **not** open a new PR. Instead:
+
+1. `git add -A && git rebase --continue` to finish any in-flight
+   rebase Codex resolved. If there's no in-flight rebase (clean
+   rebase case already handled in Step 3b), the commits are already
+   on `HEAD`.
+2. `git push --force-with-lease origin HEAD:build/issue-$N` — the
+   force push is the whole point of the repair; refuse to force if
+   upstream moved under us (that's what `--force-with-lease` enforces).
+3. `gh pr edit "$REPAIR_PR" --remove-label queue:blocked --add-label queue:ready`
+4. `git push origin --delete repair/pr-$REPAIR_PR` — release the
+   repair lock so a future tick can re-enter if needed.
+5. Append `{"outcome":"rebase_repaired","pr":$REPAIR_PR}` to
+   `.clankerism/attempts/repair-pr-$REPAIR_PR.ndjson`.
+6. **Do NOT** `rm $ATTEMPTS_FILE` or release the worktree. The issue
+   is still `state:in-progress` and the normal zombie sweep on the
+   next tick will reconcile it if `/queue` merges the PR.
+7. Classify this tick as `clean_win_repair` for Step 8 (treat like
+   `clean_win` for cadence purposes — schedule a fast next tick).
+
+The normal fresh-claim path below runs only when `IS_REPAIR=0`.
+
+#### Fresh-claim publish path (`IS_REPAIR=0`)
+
 ```bash
 # --- Commit + push (Claude's cwd is still inside $WT) ---
 git add -A
@@ -673,11 +1005,43 @@ EOF
 git push -u origin "$BRANCH"
 
 # --- Open PR ---
+# Derive `## Lock group` and `## Write set` from git state so the
+# serialized queue's metadata gate passes without a human touching the
+# PR body. Scout-style issues don't carry those sections explicitly, so
+# we compute them here:
+#
+#   * WRITE_SET = files the PR actually changed (git diff against main)
+#   * LOCK_GROUP = the most common 2-segment module prefix of those
+#     files (e.g. `src/process/summarize.ts` → `process/summarize`,
+#     `dashboard/src/routes/Chat.tsx` → `src/routes`). Fallback `misc`
+#     when nothing resolves (zero-file PRs never reach this block).
+WRITE_SET=$(git diff --name-only origin/main...HEAD | sort -u)
+LOCK_GROUP=$(printf '%s\n' "$WRITE_SET" | awk -F/ '
+  NF >= 3 && ($1 == "src" || $1 == "dashboard") { print $2 "/" $3; next }
+  NF >= 2 { print $1 "/" $2; next }
+  { print $1 }
+' | sort | uniq -c | sort -rn | awk 'NR==1 {print $2}')
+LOCK_GROUP=${LOCK_GROUP:-misc}
+
 PR_URL=$(gh pr create --base main --head "$BRANCH" \
   --title "$TITLE" \
-  --body "Fixes #$N
+  --body "$(cat <<EOF
+## Summary
 
-<short summary from Codex's last passing attempt>")
+$COMMIT_BODY
+
+## Linked issue
+Fixes #$N
+
+## Lock group
+
+$LOCK_GROUP
+
+## Write set
+
+$WRITE_SET
+EOF
+)")
 PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
 
 # --- Parallel-mode fork: hand off to /queue instead of watching CI here ---
