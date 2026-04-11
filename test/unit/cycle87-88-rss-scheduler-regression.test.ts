@@ -36,27 +36,25 @@ describe('RS-010: RSS feed body capped at 5 MB', () => {
     );
   });
 
-  it('checks Content-Length header before reading body', () => {
+  it('checks Content-Length header before streaming body', () => {
     const pollFnStart = src.indexOf('async function pollFeed');
     assert.ok(pollFnStart !== -1, 'pollFeed must exist');
     const pollFnBody = src.slice(pollFnStart);
 
-    // Content-Length check must appear before .text()
     const contentLengthCheck = pollFnBody.indexOf('contentLength > MAX_FEED_BYTES');
-    const textCall = pollFnBody.indexOf('feedResponse.text()');
+    const streamCall = pollFnBody.indexOf('readBodyLimited(feedResponse');
     assert.ok(contentLengthCheck !== -1, 'Must check contentLength against MAX_FEED_BYTES');
-    assert.ok(textCall !== -1, 'Must call feedResponse.text()');
-    assert.ok(contentLengthCheck < textCall, 'Content-Length check must happen before reading body with .text()');
+    assert.ok(streamCall !== -1, 'Must call readBodyLimited for streaming body read');
+    assert.ok(contentLengthCheck < streamCall, 'Content-Length check must happen before streaming body read');
   });
 
-  it('checks body length after reading text', () => {
-    const pollFnStart = src.indexOf('async function pollFeed');
-    const pollFnBody = src.slice(pollFnStart);
-
-    const textCall = pollFnBody.indexOf('feedResponse.text()');
-    const bodyLengthCheck = pollFnBody.indexOf('feedXml.length > MAX_FEED_BYTES');
-    assert.ok(bodyLengthCheck !== -1, 'Must check feedXml.length against MAX_FEED_BYTES');
-    assert.ok(bodyLengthCheck > textCall, 'Body length check must happen after .text() call');
+  it('uses streaming reader to enforce size limit mid-stream', () => {
+    assert.ok(src.includes('readBodyLimited'), 'Must use readBodyLimited helper for streaming size enforcement');
+    const helperStart = src.indexOf('async function readBodyLimited');
+    assert.ok(helperStart !== -1, 'readBodyLimited helper must be defined');
+    const helperBody = src.slice(helperStart, helperStart + 600);
+    assert.ok(helperBody.includes('reader.cancel()'), 'Must cancel reader when limit is exceeded');
+    assert.ok(helperBody.includes('total > maxBytes'), 'Must check accumulated bytes against limit');
   });
 
   it('returns early with empty items when feed is too large', () => {
