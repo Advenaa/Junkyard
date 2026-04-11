@@ -50,6 +50,12 @@ function createMockPool(
     if (_text.includes('SELECT 1')) {
       return { rows: [{ '?column?': 1 }] };
     }
+    if (_text.includes('FROM entity_aliases')) {
+      return { rows: [{ alias_count: 1000 }] };
+    }
+    if (_text.includes('FROM entities') && _text.includes('WHERE last_seen')) {
+      return { rows: [{ entity_count: 1000 }] };
+    }
     // missed_pulse and missed_daily need count > 0 to pass
     if (_text.includes("type = 'pulse'") || _text.includes("type = 'daily'")) {
       return { rows: [{ count: '1' }] };
@@ -427,6 +433,187 @@ describe('health monitor', () => {
       fetchMock.mock.restore();
       resolve4Mock.mock.restore();
       resolve6Mock.mock.restore();
+    });
+  });
+
+  describe('checkEntityAliases', () => {
+    it('returns ok on fresh install when there are no active entities', async () => {
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 0 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 0 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const { checks } = await monitor.getStatus();
+      const aliasCheck = checks.find((c) => c.name === 'entity_aliases');
+
+      assert.ok(aliasCheck, 'entity_aliases check should exist');
+      assert.equal(aliasCheck.status, 'ok');
+      assert.equal(aliasCheck.message, 'No active entities yet — skipping alias health check');
+    });
+
+    it('returns warn when seeding likely failed', async () => {
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 10 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 500 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const { checks } = await monitor.getStatus();
+      const aliasCheck = checks.find((c) => c.name === 'entity_aliases');
+
+      assert.ok(aliasCheck, 'entity_aliases check should exist');
+      assert.equal(aliasCheck.status, 'warn');
+      assert.ok(aliasCheck.message?.includes('10'));
+      assert.ok(aliasCheck.message?.includes('500'));
+    });
+
+    it('returns ok when well seeded', async () => {
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 3000 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 500 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const { checks } = await monitor.getStatus();
+      const aliasCheck = checks.find((c) => c.name === 'entity_aliases');
+
+      assert.ok(aliasCheck, 'entity_aliases check should exist');
+      assert.equal(aliasCheck.status, 'ok');
+      assert.ok(aliasCheck.message?.includes('3000'));
+      assert.ok(aliasCheck.message?.includes('500'));
+    });
+
+    it('returns critical on query error', async () => {
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            throw new Error('alias query failed');
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const { checks } = await monitor.getStatus();
+      const aliasCheck = checks.find((c) => c.name === 'entity_aliases');
+
+      assert.ok(aliasCheck, 'entity_aliases check should exist');
+      assert.equal(aliasCheck.status, 'critical');
+      assert.ok(aliasCheck.message?.includes('alias query failed'));
+    });
+
+    it('recordEvent inserts a health event via the existing dedup path', async () => {
+      const insertedEvents: unknown[][] = [];
+      const pool = createMockPool({
+        queryFn: async (text: string, params?: unknown[]) => {
+          if (text.includes('INSERT INTO health_events')) {
+            insertedEvents.push([...(params ?? [])]);
+            return { rows: [], rowCount: 1 };
+          }
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 1000 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 1000 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      await monitor.recordEvent({
+        category: 'seed_failure',
+        severity: 'warn',
+        message: 'test',
+        metadata: {},
+      });
+
+      assert.equal(insertedEvents.length, 1, 'recordEvent should insert one health event');
+      assert.equal(insertedEvents[0]?.[1], 'seed_failure');
+      assert.equal(insertedEvents[0]?.[2], 'warn');
+      assert.equal(insertedEvents[0]?.[3], 'test');
     });
   });
 

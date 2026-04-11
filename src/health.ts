@@ -11,7 +11,7 @@ export interface HealthCheckResult {
   message?: string;
 }
 
-interface HealthEvent {
+export interface HealthEvent {
   category: string;
   severity: 'warn' | 'critical';
   message: string;
@@ -21,6 +21,7 @@ interface HealthEvent {
 export interface HealthMonitor {
   check(): Promise<void>;
   getStatus(): Promise<{ checks: HealthCheckResult[]; healthy: boolean }>;
+  recordEvent(event: HealthEvent): Promise<void>;
 }
 
 export function createHealthMonitor(pool: Pool, log: Logger, config: Config): HealthMonitor {
@@ -271,6 +272,59 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     return { name: 'cost_spike', status: 'ok' };
   }
 
+  async function checkEntityAliases(): Promise<HealthCheckResult> {
+    try {
+      const activeSince = Date.now() - 24 * 60 * 60 * 1000;
+
+      const { rows: aliasRows } = await pool.query<{ alias_count?: number | string; count?: number | string }>(
+        `
+        SELECT COUNT(*)::int AS alias_count
+        FROM entity_aliases
+      `,
+      );
+      const { rows: entityRows } = await pool.query<{ entity_count?: number | string; count?: number | string }>(
+        `
+        SELECT COUNT(*)::int AS entity_count
+        FROM entities
+        WHERE last_seen > $1
+      `,
+        [activeSince],
+      );
+
+      const aliasCount = Number(aliasRows[0]?.alias_count ?? aliasRows[0]?.count ?? 0);
+      const entityCount = Number(entityRows[0]?.entity_count ?? entityRows[0]?.count ?? 0);
+
+      if (entityCount === 0) {
+        return {
+          name: 'entity_aliases',
+          status: 'ok',
+          message: 'No active entities yet — skipping alias health check',
+        };
+      }
+
+      if (aliasCount < 100) {
+        return {
+          name: 'entity_aliases',
+          status: 'warn',
+          message: `Only ${aliasCount} entity aliases present but ${entityCount} active entities — seeding may have failed`,
+        };
+      }
+
+      return {
+        name: 'entity_aliases',
+        status: 'ok',
+        message: `Entity alias table healthy: ${aliasCount} aliases for ${entityCount} active entities`,
+      };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        name: 'entity_aliases',
+        status: 'critical',
+        message: `Entity alias health check failed: ${msg}`,
+      };
+    }
+  }
+
   async function insertEvent(event: HealthEvent): Promise<void> {
     const id = ulid();
     const now = Date.now();
@@ -374,6 +428,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       checkMissedPulse(),
       checkMissedDaily(),
       checkCostSpike(),
+      checkEntityAliases(),
     ];
 
     const settled = await Promise.allSettled(dbDependentChecks);
@@ -385,6 +440,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       'missed_pulse',
       'missed_daily',
       'cost_spike',
+      'entity_aliases',
     ];
 
     const results: HealthCheckResult[] = [dbResult, checkDbPoolExhaustion()];
@@ -443,5 +499,5 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     return { checks, healthy };
   }
 
-  return { check, getStatus };
+  return { check, getStatus, recordEvent: insertEvent };
 }

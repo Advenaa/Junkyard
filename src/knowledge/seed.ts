@@ -153,7 +153,7 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
             { err, attempts: MAX_RETRIES },
             'CoinGecko seeding failed after all retries — entity resolution for crypto tokens will fall back to LLM disambiguation',
           );
-          return 0;
+          throw err instanceof Error ? err : new Error(String(err));
         }
         const delayMs = BASE_DELAY_MS * 2 ** (attempt - 1);
         log.info(
@@ -164,7 +164,9 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
       }
     }
 
-    if (!coins) return 0;
+    if (!coins) {
+      throw new Error('CoinGecko seeding failed: no coin list returned');
+    }
     const now = Date.now();
     let seeded = 0;
 
