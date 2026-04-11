@@ -117,6 +117,186 @@ describe('health monitor', () => {
     });
   });
 
+  describe('checkReadyBacklog', () => {
+    function createReadyBacklogPool(getBacklogCount: () => string) {
+      return createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM llm_usage')) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (
+            text.includes('FROM items') &&
+            text.includes("WHERE status = 'ready'") &&
+            !text.includes('created_at <')
+          ) {
+            return { rows: [{ count: getBacklogCount() }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 1000 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 1000 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+    }
+
+    it('returns ok when ready backlog is below threshold', async () => {
+      const pool = createReadyBacklogPool(() => '100');
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const { checks } = await monitor.getStatus();
+      const backlog = checks.find((check) => check.name === 'ready_backlog');
+
+      assert.ok(backlog, 'ready_backlog check should exist');
+      assert.equal(backlog.status, 'ok');
+    });
+
+    it('returns warn on first tick above threshold, critical on second consecutive tick', async () => {
+      const pool = createReadyBacklogPool(() => '6000');
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const firstStatus = await monitor.getStatus();
+      const firstBacklog = firstStatus.checks.find((check) => check.name === 'ready_backlog');
+      assert.ok(firstBacklog, 'ready_backlog check should exist on first tick');
+      assert.equal(firstBacklog.status, 'warn');
+      assert.ok(firstBacklog.message?.includes('first tick'));
+
+      const secondStatus = await monitor.getStatus();
+      const secondBacklog = secondStatus.checks.find((check) => check.name === 'ready_backlog');
+      assert.ok(secondBacklog, 'ready_backlog check should exist on second tick');
+      assert.equal(secondBacklog.status, 'critical');
+      assert.ok(secondBacklog.message?.includes('2 consecutive'));
+    });
+
+    it('resets the rising-edge counter when backlog drops back under threshold', async () => {
+      const backlogCounts = ['6000', '6000', '100', '6000'];
+      let backlogIndex = 0;
+      const pool = createReadyBacklogPool(() => backlogCounts[backlogIndex++] ?? '0');
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const firstStatus = await monitor.getStatus();
+      const firstBacklog = firstStatus.checks.find((check) => check.name === 'ready_backlog');
+      assert.ok(firstBacklog, 'ready_backlog check should exist on first tick');
+      assert.equal(firstBacklog.status, 'warn');
+
+      const secondStatus = await monitor.getStatus();
+      const secondBacklog = secondStatus.checks.find((check) => check.name === 'ready_backlog');
+      assert.ok(secondBacklog, 'ready_backlog check should exist on second tick');
+      assert.equal(secondBacklog.status, 'critical');
+
+      const thirdStatus = await monitor.getStatus();
+      const thirdBacklog = thirdStatus.checks.find((check) => check.name === 'ready_backlog');
+      assert.ok(thirdBacklog, 'ready_backlog check should exist after backlog recovery');
+      assert.equal(thirdBacklog.status, 'ok');
+
+      const fourthStatus = await monitor.getStatus();
+      const fourthBacklog = fourthStatus.checks.find((check) => check.name === 'ready_backlog');
+      assert.ok(fourthBacklog, 'ready_backlog check should exist after the counter resets');
+      assert.equal(fourthBacklog.status, 'warn');
+    });
+
+    it('alerts on the second consecutive high tick after recording a first-tick warn', async (t) => {
+      const insertedEvents: Array<{ category: string; severity: string; createdAt: number }> = [];
+      const backlogCounts = ['6000', '6000'];
+      let backlogIndex = 0;
+      const pool = createMockPool({
+        queryFn: async (text: string, params?: unknown[]) => {
+          if (text.includes('INSERT INTO health_events')) {
+            const [, category, severity, , , createdAt, cutoff] = params as [
+              string,
+              string,
+              string,
+              string,
+              string,
+              number,
+              number,
+            ];
+            const isDuplicate = insertedEvents.some(
+              (event) =>
+                event.category === category &&
+                event.createdAt > cutoff &&
+                (event.severity === severity || severity === 'warn'),
+            );
+            if (isDuplicate) {
+              return { rows: [], rowCount: 0 };
+            }
+            insertedEvents.push({ category, severity, createdAt });
+            return { rows: [], rowCount: 1 };
+          }
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM llm_usage')) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (
+            text.includes('FROM items') &&
+            text.includes("WHERE status = 'ready'") &&
+            !text.includes('created_at <')
+          ) {
+            return { rows: [{ count: backlogCounts[backlogIndex++] ?? '0' }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 1000 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 1000 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+
+      const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+      const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+        throw new Error('no AAAA record');
+      });
+      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+      const monitor = createHealthMonitor(
+        pool,
+        silentLog,
+        fakeConfig({ alertWebhookUrl: 'https://alerts.example.com/hook' }),
+      );
+
+      await monitor.check();
+      assert.equal(insertedEvents.length, 1, 'first high backlog tick should record a warn event');
+      assert.equal(insertedEvents[0]?.severity, 'warn');
+      assert.strictEqual(fetchMock.mock.callCount(), 0, 'first high backlog tick should not alert yet');
+
+      await monitor.check();
+      assert.equal(insertedEvents.length, 2, 'second high backlog tick should record a critical event');
+      assert.equal(insertedEvents[1]?.severity, 'critical');
+      assert.strictEqual(fetchMock.mock.callCount(), 1, 'second high backlog tick should trigger one alert');
+
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
+      fetchMock.mock.restore();
+    });
+  });
+
   describe('getStatus aggregation', () => {
     it('returns healthy=true when all checks pass', async () => {
       const pool = createMockPool();
