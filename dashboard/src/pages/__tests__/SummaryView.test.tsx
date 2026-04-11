@@ -3,6 +3,16 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { SummaryView } from '../SummaryView';
 
+function renderSummaryView(initialEntry: string) {
+  render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route path="/summaries/:id" element={<SummaryView />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
 describe('SummaryView', () => {
   afterEach(() => {
     cleanup();
@@ -82,13 +92,7 @@ describe('SummaryView', () => {
       }),
     );
 
-    render(
-      <MemoryRouter initialEntries={['/summaries/summary-1?chain=event-root-1']}>
-        <Routes>
-          <Route path="/summaries/:id" element={<SummaryView />} />
-        </Routes>
-      </MemoryRouter>,
-    );
+    renderSummaryView('/summaries/summary-1?chain=event-root-1');
 
     await screen.findByText('The exploit response stayed active as governance discussion picked up.');
     expect(screen.getByText('Key Events')).toBeInTheDocument();
@@ -109,5 +113,56 @@ describe('SummaryView', () => {
       'href',
       '/summaries/summary-newer?chain=event-root-1',
     );
+  });
+
+  it('renders the empty state when the requested summary returns 404', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const path = new URL(url, 'http://localhost').pathname;
+
+        if (path === '/api/v1/summaries/summary-404') {
+          return new Response(JSON.stringify({ error: 'Not Found' }), {
+            status: 404,
+            statusText: 'Not Found',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unhandled fetch ${path}`);
+      }),
+    );
+
+    renderSummaryView('/summaries/summary-404');
+
+    await screen.findByText('Summary not found');
+    expect(screen.getByText('This summary is no longer available.')).toBeInTheDocument();
+    expect(screen.queryByText(/Error: API 404: Not Found/)).not.toBeInTheDocument();
+  });
+
+  it('renders the error block when the requested summary returns 500', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const path = new URL(url, 'http://localhost').pathname;
+
+        if (path === '/api/v1/summaries/summary-500') {
+          return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+            status: 500,
+            statusText: 'Internal Server Error',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        throw new Error(`Unhandled fetch ${path}`);
+      }),
+    );
+
+    renderSummaryView('/summaries/summary-500');
+
+    await screen.findByText('Error: API 500: Internal Server Error — Internal Server Error');
+    expect(screen.queryByText('Summary not found')).not.toBeInTheDocument();
   });
 });

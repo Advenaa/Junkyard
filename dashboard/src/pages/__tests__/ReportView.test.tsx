@@ -3,6 +3,76 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ReportView } from '../ReportView';
 
+function createReportViewFetchStub(reportResponse: Response) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const { pathname, searchParams } = new URL(url, 'http://localhost');
+    const path = searchParams.size > 0 ? `${pathname}?${searchParams.toString()}` : pathname;
+
+    if (path === '/api/v1/narratives') {
+      return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/macro') {
+      return new Response(JSON.stringify({ error: 'No macro data available yet' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/price-watch') {
+      return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/unusual-activity') {
+      return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/divergence?days=30&limit=4') {
+      return new Response(JSON.stringify({ divergences: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/first-movers') {
+      return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/alpha-watch') {
+      return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/calendar-events') {
+      return new Response(JSON.stringify({ events: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (path === '/api/v1/reports/report-404') {
+      return reportResponse;
+    }
+
+    throw new Error(`Unhandled fetch ${path}`);
+  });
+}
+
 describe('ReportView', () => {
   afterEach(() => {
     cleanup();
@@ -139,6 +209,55 @@ describe('ReportView', () => {
       'href',
       '/summaries/summary-9?chain=chain-root-1',
     );
+  });
+
+  it('renders the empty state when the requested report returns 404', async () => {
+    vi.stubGlobal(
+      'fetch',
+      createReportViewFetchStub(
+        new Response(JSON.stringify({ error: 'Not Found' }), {
+          status: 404,
+          statusText: 'Not Found',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/reports/report-404']}>
+        <Routes>
+          <Route path="/reports/:id" element={<ReportView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Report not found');
+    expect(screen.getByText('This report may have been removed or the link is stale.')).toBeInTheDocument();
+    expect(screen.queryByText(/Error: API 404: Not Found/)).not.toBeInTheDocument();
+  });
+
+  it('renders the error block when the requested report returns 500', async () => {
+    vi.stubGlobal(
+      'fetch',
+      createReportViewFetchStub(
+        new Response(JSON.stringify({ error: 'Internal Server Error' }), {
+          status: 500,
+          statusText: 'Internal Server Error',
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/reports/report-404']}>
+        <Routes>
+          <Route path="/reports/:id" element={<ReportView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Error: API 500: Internal Server Error — Internal Server Error');
+    expect(screen.queryByText('Report not found')).not.toBeInTheDocument();
   });
 
   it('focuses a requested chain on the report route and keeps other chains switchable', async () => {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { apiFetch, isFeatureDisabledError } from '../lib/api';
+import { apiFetch, isApiError, isFeatureDisabledError } from '../lib/api';
 import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegime';
 import { buildFocusedReportHref, buildSummaryChainHref } from '../lib/reportChains';
 import { TypeBadge } from '../components/TypeBadge';
@@ -82,11 +82,14 @@ export function ReportView() {
         }
       })
       .catch((err) => {
-        if (!cancelled) {
-          setReport(null);
-          setError(err.message);
-          setLoadedKey(requestKey);
+        if (cancelled) return;
+        setReport(null);
+        if (isApiError(err) && err.status === 404) {
+          setError(null);
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
         }
+        setLoadedKey(requestKey);
       });
 
     return () => {
@@ -284,10 +287,7 @@ export function ReportView() {
   if (!report) {
     return (
       <div className="p-6">
-        <EmptyState
-          title="No reports yet"
-          description="Add your first source in Settings to start generating market reports."
-        />
+        <EmptyState title="Report not found" description="This report may have been removed or the link is stale." />
       </div>
     );
   }
