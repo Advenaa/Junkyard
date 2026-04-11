@@ -176,7 +176,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     if (parseInt(rows[0].count, 10) === 0) {
       return {
         name: 'missed_pulse',
-        status: 'warn',
+        status: 'critical',
         message: 'No pulse report in last 4 hours',
       };
     }
