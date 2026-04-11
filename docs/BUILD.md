@@ -449,7 +449,7 @@ Pass all gates → INSERT as `ready`.
 
 ### Step 2.6: Stage 3 — Synthesize
 
-**Files**: `src/process/synthesize.ts`, `src/process/exemplars.ts`, `src/process/dedup-events.ts`
+**Files**: `src/process/synthesize.ts`, `src/process/dedup-events.ts`
 
 **npm packages**: `fastest-levenshtein`
 
@@ -939,7 +939,6 @@ src/process/schemas.ts          # Zod schemas
 src/process/chunk.ts            # Token-budgeted chunking
 src/process/correlate.ts        # Stage 2: cross-source correlation
 src/process/synthesize.ts       # Stage 3: daily + flash reports
-src/process/exemplars.ts        # Exemplar selection (7+3)
 src/process/dedup-events.ts     # keyEvent dedup (Levenshtein)
 src/process/pulse.ts            # 3h market pulse
 src/process/narratives.ts       # k-means narrative clustering
