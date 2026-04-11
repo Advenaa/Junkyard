@@ -6,6 +6,7 @@ import type { Logger } from './logger.js';
 import {
   deleteDiscordToken,
   getAppConfig,
+  getLlmCostByModel,
   insertDiscordToken,
   setAppConfig,
   updateDiscordTokenLabel,
@@ -736,6 +737,17 @@ export function registerAdminRoutes({
       twitterApiKeyConfigured: !!config.twitterApiKey,
       disabledFeatures,
     };
+  });
+
+  app.get('/api/v1/llm/cost-by-model', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const startOfDayResult = await pool.query<{ start_of_day: string }>(
+      `SELECT EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000 AS start_of_day`,
+      [timezone],
+    );
+    const startOfDayMs = parseInt(startOfDayResult.rows[0]?.start_of_day ?? '0', 10);
+    const entries = await getLlmCostByModel(pool, startOfDayMs);
+    return { timezone, sinceMs: startOfDayMs, entries };
   });
 
   app.get('/api/v1/diag/stuck-items', { preHandler: [authPreHandler, requireAdmin] }, async () => {
