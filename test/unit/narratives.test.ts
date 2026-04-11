@@ -14,6 +14,21 @@ function vectorToBuffer(values: number[]): Buffer {
   return Buffer.from(f32.buffer);
 }
 
+/**
+ * Build a production-shape Stage 1 summary body. In production, summaries.body
+ * holds a JSON-stringified ChunkSummary, not raw text — narrative naming must
+ * parse this and extract `.summary`, never feed the whole JSON to the LLM.
+ */
+function summaryBody(summary: string): string {
+  return JSON.stringify({
+    summary,
+    urgency: 'normal',
+    entities: [],
+    keyEvents: [],
+    confidence: 0.8,
+  });
+}
+
 /** Local copy of cosineSimilarity for test assertions. */
 function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0,
@@ -343,7 +358,7 @@ describe('createNarrativeDetector', () => {
       return {
         summary_id: `s${i}`,
         vector: vectorToBuffer(v),
-        body: `Summary ${i} content here`,
+        body: summaryBody(`Summary ${i} content here`),
         sentiment: 0.5,
       };
     });
@@ -361,7 +376,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}: topic about cluster ${Math.floor(i / 4)}`,
+      body: summaryBody(`Summary ${i}: topic about cluster ${Math.floor(i / 4)}`),
       sentiment: i % 2 === 0 ? 0.8 : -0.2,
     }));
 
@@ -396,7 +411,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}: topic about cluster ${Math.floor(i / 4)}`,
+      body: summaryBody(`Summary ${i}: topic about cluster ${Math.floor(i / 4)}`),
       sentiment: 0.5,
     }));
 
@@ -418,7 +433,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: null,
     }));
 
@@ -456,7 +471,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: 0.5,
     }));
 
@@ -531,7 +546,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: 0.3,
     }));
 
@@ -571,7 +586,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: i % 3 === 2 ? null : i % 3 === 0 ? 0.8 : -0.2,
     }));
 
@@ -596,7 +611,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: null,
     }));
 
@@ -617,7 +632,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: 0.5,
     }));
 
@@ -641,7 +656,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: 0.5,
     }));
 
@@ -657,6 +672,69 @@ describe('createNarrativeDetector', () => {
     }
   });
 
+  it('LLM naming prompt receives parsed summary text, not raw JSON', async () => {
+    const dim = 10;
+    const { vectors, buffers } = makeClusteredVectors([9], dim);
+    const rows = vectors.map((v, i) => ({
+      summary_id: `s${i}`,
+      vector: buffers[i],
+      body: summaryBody(`Human readable summary ${i}`),
+      sentiment: 0.5,
+    }));
+
+    const { pool } = mockPool({ summaryRows: rows });
+    const llm = mockLlm('Cluster Name');
+    const detector = createNarrativeDetector(pool, noopLog, defaultConfig, llm, enabledEmbedder);
+    await detector.detectNarratives();
+
+    assert.ok(llm.calls.length >= 1, 'LLM should have been called');
+    for (const call of llm.calls) {
+      const prompt = call.messages[0].content as string;
+      assert.ok(
+        prompt.includes('Human readable summary'),
+        `Prompt should contain parsed summary text, got: ${prompt.slice(0, 200)}`,
+      );
+      assert.ok(!prompt.includes('"summary"'), `Prompt must not contain JSON syntax, got: ${prompt.slice(0, 200)}`);
+      assert.ok(!prompt.includes('"urgency"'), `Prompt must not contain JSON metadata, got: ${prompt.slice(0, 200)}`);
+    }
+  });
+
+  it('fallback path (LLM throws) does not leak JSON syntax into stored name', async () => {
+    const dim = 10;
+    const { vectors, buffers } = makeClusteredVectors([9], dim);
+    const rows = vectors.map((v, i) => ({
+      summary_id: `s${i}`,
+      vector: buffers[i],
+      body: summaryBody(`Fallback worthy human summary number ${i}`),
+      sentiment: 0.5,
+    }));
+
+    const { pool, inserts } = mockPool({ summaryRows: rows });
+    // LLM always throws — forces the fallback path
+    const throwingLlm = {
+      calls: [] as any[],
+      async call(params: any) {
+        (this as any).calls.push(params);
+        throw new Error('simulated LLM outage');
+      },
+    };
+    const detector = createNarrativeDetector(pool, noopLog, defaultConfig, throwingLlm, enabledEmbedder);
+    const narratives = await detector.detectNarratives();
+
+    assert.ok(narratives.length >= 1, 'Expected at least one narrative via fallback');
+    for (const n of narratives) {
+      assert.ok(!n.name.includes('{"summary"'), `Name leaks JSON: ${n.name}`);
+      assert.ok(!n.name.includes('"urgency"'), `Name leaks JSON metadata: ${n.name}`);
+      assert.ok(!n.name.startsWith('{'), `Name starts with JSON brace: ${n.name}`);
+      assert.ok(n.name.toLowerCase().includes('fallback') || n.name.length > 0, `Name looks empty: ${n.name}`);
+    }
+    // The DB insert (param index 1 = name) must also be clean
+    for (const params of inserts) {
+      const storedName = params[1] as string;
+      assert.ok(!storedName.includes('{"summary"'), `Stored name leaks JSON: ${storedName}`);
+    }
+  });
+
   it('filters out clusters with fewer than 3 members', async () => {
     const dim = 10;
     // 3 clusters: sizes 5, 5, 2 — the size-2 cluster should be filtered
@@ -664,7 +742,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: 0.5,
     }));
 
@@ -685,7 +763,7 @@ describe('createNarrativeDetector', () => {
     const rows = vectors.map((v, i) => ({
       summary_id: `s${i}`,
       vector: buffers[i],
-      body: `Summary ${i}`,
+      body: summaryBody(`Summary ${i}`),
       sentiment: 0.5,
     }));
 
@@ -738,7 +816,7 @@ describe('validateTimezone (via detectNarratives)', () => {
       return {
         summary_id: `s${i}`,
         vector: vectorToBuffer(v),
-        body: `Summary ${i}`,
+        body: summaryBody(`Summary ${i}`),
         sentiment: 0.5,
       };
     });
