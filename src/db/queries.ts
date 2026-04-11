@@ -4,6 +4,10 @@ import { distance } from 'fastest-levenshtein';
 
 type Pool = pg.Pool;
 
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { code: unknown }).code === '23505';
+}
+
 // ── Row types ───────────────────────────────────────────────────────────
 
 export interface ItemRow {
@@ -244,36 +248,43 @@ export async function insertItem(
     createdAt: number;
   },
 ): Promise<{ inserted: boolean }> {
-  const result = await pool.query(
-    `INSERT INTO items (
-      id, source, source_id, author, content, timestamp, url, engagement,
-      content_hash, status, original_language, translated, attachments,
-      filter_reason, content_anchor, created_at
-    ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8,
-      $9, $10, $11, $12, $13,
-      $14, $15, $16
-    ) ON CONFLICT (content_hash) WHERE content_hash IS NOT NULL DO NOTHING`,
-    [
-      item.id,
-      item.source,
-      item.sourceId,
-      item.author,
-      item.content,
-      item.timestamp,
-      item.url ?? null,
-      item.engagement,
-      item.contentHash,
-      item.status,
-      item.originalLanguage ?? null,
-      item.translated ?? false,
-      item.attachments ?? null,
-      item.filterReason ?? null,
-      item.contentAnchor ?? null,
-      item.createdAt,
-    ],
-  );
-  return { inserted: (result.rowCount ?? 0) > 0 };
+  try {
+    const result = await pool.query(
+      `INSERT INTO items (
+        id, source, source_id, author, content, timestamp, url, engagement,
+        content_hash, status, original_language, translated, attachments,
+        filter_reason, content_anchor, created_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13,
+        $14, $15, $16
+      ) ON CONFLICT (content_hash) WHERE content_hash IS NOT NULL DO NOTHING`,
+      [
+        item.id,
+        item.source,
+        item.sourceId,
+        item.author,
+        item.content,
+        item.timestamp,
+        item.url ?? null,
+        item.engagement,
+        item.contentHash,
+        item.status,
+        item.originalLanguage ?? null,
+        item.translated ?? false,
+        item.attachments ?? null,
+        item.filterReason ?? null,
+        item.contentAnchor ?? null,
+        item.createdAt,
+      ],
+    );
+    return { inserted: (result.rowCount ?? 0) > 0 };
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      return { inserted: false };
+    }
+    throw err;
+  }
 }
 
 export async function claimBatch(
