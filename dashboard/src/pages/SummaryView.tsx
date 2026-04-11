@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch, isApiError } from '../lib/api';
+import { formatDateTime, formatDateTimeRange, sentimentTextColor } from '../lib/formatting';
 import { EmptyState } from '../components/EmptyState';
 
 interface SummaryEntity {
@@ -77,26 +78,6 @@ function UrgencyBadge({ urgency }: { urgency: string | null }) {
   const value = urgency ?? 'unknown';
   const color = URGENCY_COLORS[value] ?? 'bg-border text-text-secondary';
   return <span className={`px-2 py-0.5 rounded text-xs font-mono uppercase ${color}`}>{value}</span>;
-}
-
-function formatDateTime(epochMs: number): string {
-  return new Date(epochMs).toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatRange(start: number, end: number): string {
-  return `${formatDateTime(start)} - ${formatDateTime(end)}`;
-}
-
-function sentimentClass(sentiment: number): string {
-  if (sentiment >= 0.3) return 'text-accent-green';
-  if (sentiment <= -0.3) return 'text-accent-red';
-  return 'text-text-secondary';
 }
 
 function formatLinkedChainLabel(position: number, eventCount: number): string {
@@ -220,7 +201,7 @@ export function SummaryView() {
         <div className="bg-surface border border-border rounded-lg p-4">
           <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary mb-2">Window</div>
           <div className="text-sm text-text-primary font-body leading-relaxed">
-            {formatRange(summary.windowStart, summary.windowEnd)}
+            {formatDateTimeRange(summary.windowStart, summary.windowEnd)}
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-4">
@@ -232,7 +213,7 @@ export function SummaryView() {
               <>
                 {' '}
                 | sentiment{' '}
-                <span className={sentimentClass(summary.sentiment)}>
+                <span className={sentimentTextColor(summary.sentiment)}>
                   {summary.sentiment > 0 ? '+' : ''}
                   {summary.sentiment.toFixed(2)}
                 </span>
@@ -273,7 +254,7 @@ export function SummaryView() {
                     {entity.aliases.length > 0 && ` | aliases: ${entity.aliases.join(', ')}`}
                   </div>
                 </div>
-                <div className={`text-xs font-mono ${sentimentClass(entity.sentiment)}`}>
+                <div className={`text-xs font-mono ${sentimentTextColor(entity.sentiment)}`}>
                   {entity.sentiment > 0 ? '+' : ''}
                   {entity.sentiment.toFixed(2)}
                 </div>
@@ -327,7 +308,7 @@ export function SummaryView() {
                         {' | '}
                         {event.chain.eventTypes.join(' -> ')}
                         {' | '}
-                        {formatRange(event.chain.firstEventTime, event.chain.latestEventTime)}
+                        {formatDateTimeRange(event.chain.firstEventTime, event.chain.latestEventTime)}
                       </div>
                       {(event.chain.previousSummary || event.chain.nextSummary) && (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
