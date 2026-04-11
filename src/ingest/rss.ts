@@ -29,6 +29,40 @@ function safeParseDate(isoDate: string | undefined | null): number {
 const MAX_FEED_BYTES = 5 * 1024 * 1024; // 5 MB
 const MAX_ITEMS_PER_POLL = 50;
 
+async function readBodyLimited(response: Response, maxBytes: number): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let exceeded = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        exceeded = true;
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+    // Trigger dispatcher cleanup (url-validator patches body.cancel)
+    if (!exceeded) {
+      await response.body?.cancel().catch(() => {});
+    }
+  }
+  const combined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8').decode(combined);
+}
+
 function syntheticGuid(pubDate: string | undefined, title: string | undefined): string {
   const input = `${pubDate ?? ''}${title ?? ''}`;
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -44,9 +78,9 @@ async function extractArticle(link: string, originalContent: string, log: Logger
       return originalContent;
     }
 
-    const html = await response.text();
-    if (html.length > MAX_FEED_BYTES) {
-      log.warn({ link, size: html.length }, 'Article body exceeded size limit');
+    const html = await readBodyLimited(response, MAX_FEED_BYTES);
+    if (html === null) {
+      log.warn({ link }, 'Article body exceeded size limit mid-stream');
       return originalContent;
     }
     const { document } = parseHTML(html);
@@ -87,9 +121,9 @@ export async function pollFeed(
       log.warn({ feedUrl, contentLength }, 'Feed too large, skipping');
       return { items: [], lastId, fetchFailed: false };
     }
-    const feedXml = await feedResponse.text();
-    if (feedXml.length > MAX_FEED_BYTES) {
-      log.warn({ feedUrl, size: feedXml.length }, 'Feed body exceeded size limit');
+    const feedXml = await readBodyLimited(feedResponse, MAX_FEED_BYTES);
+    if (feedXml === null) {
+      log.warn({ feedUrl }, 'Feed body exceeded size limit mid-stream');
       return { items: [], lastId, fetchFailed: false };
     }
     const feed = await parser.parseString(feedXml);

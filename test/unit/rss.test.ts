@@ -99,12 +99,7 @@ describe('pollFeed', () => {
       resolve6Mock.mock.restore();
     };
     // Mock fetch for fetchValidated — return valid RSS XML response
-    globalThis.fetch = (async () => ({
-      ok: true,
-      status: 200,
-      text: async () => '<rss></rss>',
-      headers: new Headers(),
-    })) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = (async () => new Response('<rss></rss>', { status: 200 })) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
