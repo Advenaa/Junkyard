@@ -108,7 +108,7 @@ describe('FE-012: 401 handler redirects and throws after notifying auth expiry',
     assert.match(src, /window\.dispatchEvent\(new PopStateEvent\('popstate'\)\)/);
     assert.match(src, /window\.dispatchEvent\(new CustomEvent\(AUTH_EXPIRED_EVENT\)\)/);
     assert.match(src, /authRedirect\.toLogin\(\)/);
-    assert.match(src, /throw\s+new\s+Error/);
+    assert.match(src, /throw\s+new\s+(?:ApiError|Error)/);
   });
 
   it('redirects to /login on 401', () => {
@@ -117,6 +117,10 @@ describe('FE-012: 401 handler redirects and throws after notifying auth expiry',
   });
 
   it('non-401 errors still throw', () => {
-    assert.match(src, /if\s*\(\s*!res\.ok\s*\)\s*throw\s+new\s+Error/, 'non-401 errors must still throw');
+    assert.match(
+      src,
+      /if\s*\(\s*!res\.ok\s*\)\s*\{?\s*(?:const\s+detail[\s\S]*?)?throw\s+new\s+(?:ApiError|Error)/,
+      'non-401 errors must still throw',
+    );
   });
 });
