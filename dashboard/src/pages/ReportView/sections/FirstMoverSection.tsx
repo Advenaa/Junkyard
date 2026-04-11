@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { FirstMoverWatchlistEntry, FirstMoverWatchlistOverview } from '../types';
+import { FIRST_MOVER_PREVIEW_LIMIT } from '../types';
 import {
   formatDateTime,
   formatFirstMoverAuthor,
@@ -13,9 +15,15 @@ interface FirstMoverSectionProps {
 }
 
 export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: FirstMoverSectionProps) {
+  const [expanded, setExpanded] = useState(false);
+
   if (firstMoverEntries.length === 0) {
     return null;
   }
+
+  const hasOverflow = firstMoverEntries.length > FIRST_MOVER_PREVIEW_LIMIT;
+  const visibleEntries = expanded ? firstMoverEntries : firstMoverEntries.slice(0, FIRST_MOVER_PREVIEW_LIMIT);
+  const hiddenCount = firstMoverEntries.length - FIRST_MOVER_PREVIEW_LIMIT;
 
   return (
     <div className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -38,7 +46,7 @@ export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: Fi
       </div>
 
       <div className="p-4 grid gap-3 md:grid-cols-3">
-        {firstMoverEntries.map((entry) => (
+        {visibleEntries.map((entry) => (
           <div
             key={`${entry.entityId}:${entry.authorId}:${entry.timestamp}`}
             className="rounded-lg border border-border bg-background p-3 space-y-3"
@@ -76,6 +84,17 @@ export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: Fi
           </div>
         ))}
       </div>
+      {hasOverflow && (
+        <div className="px-4 pb-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="font-mono text-[11px] uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
+          >
+            {expanded ? 'Show fewer' : `+${hiddenCount} more`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

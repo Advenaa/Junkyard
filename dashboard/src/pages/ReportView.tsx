@@ -18,9 +18,7 @@ import type {
   UnusualActivityOverview,
 } from './ReportView/types';
 import {
-  ALPHA_WATCH_PREVIEW_LIMIT,
   CALENDAR_PREVIEW_LIMIT,
-  FIRST_MOVER_PREVIEW_LIMIT,
   MACRO_PREVIEW_LIMIT,
   NARRATIVE_PREVIEW_LIMIT,
   PRICE_WATCH_PREVIEW_LIMIT,
@@ -311,8 +309,8 @@ export function ReportView() {
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
   const unusualEntries = unusualActivity?.entries.slice(0, UNUSUAL_ACTIVITY_PREVIEW_LIMIT) ?? [];
   const regionalDivergenceEntries = regionalDivergences?.slice(0, REGIONAL_DIVERGENCE_PREVIEW_LIMIT) ?? [];
-  const firstMoverEntries = firstMoverWatchlist?.entries.slice(0, FIRST_MOVER_PREVIEW_LIMIT) ?? [];
-  const alphaWatchEntries = alphaWatch?.entries.slice(0, ALPHA_WATCH_PREVIEW_LIMIT) ?? [];
+  const firstMoverEntries = firstMoverWatchlist?.entries ?? [];
+  const alphaWatchEntries = alphaWatch?.entries ?? [];
   const calendarEntries = calendarEvents?.slice(0, CALENDAR_PREVIEW_LIMIT) ?? [];
 
   return (

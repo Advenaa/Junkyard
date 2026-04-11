@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ReportView } from '../ReportView';
 
@@ -224,6 +225,56 @@ describe('ReportView alpha watch', () => {
     expect(
       screen.getByText('Ethereum stayed firm even as the first signal came from higher-tier chatter.'),
     ).toBeInTheDocument();
+  });
+
+  it('shows overflow control when more than 3 alpha watch entries exist', async () => {
+    const report = makeFullReport();
+    const entries = Array.from({ length: 5 }, (_, i) => ({
+      entityId: `entity-${i}`,
+      entityName: `Token ${i}`,
+      firstSignalTier: 'alpha',
+      firstSignalTime: Date.UTC(2026, 3, 8, 6, 0, 0) - i * 3600000,
+      latestTier: 'mainstream',
+      latestMentionTime: Date.UTC(2026, 3, 8, 10, 30, 0) - i * 3600000,
+      propagationLagMs: 4.5 * 60 * 60 * 1000,
+      tierCount: 3,
+      sourceCount: 4,
+    }));
+    const alphaWatch = { latestTimestamp: entries[0].latestMentionTime, entries };
+
+    vi.stubGlobal('fetch', buildReportFetchMock(report, alphaWatch));
+
+    render(
+      <MemoryRouter initialEntries={[`/reports/${report.id}`]}>
+        <Routes>
+          <Route path="/reports/:id" element={<ReportView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+
+    await screen.findByText('Alpha Watch');
+    expect(screen.getByText('5 tracked')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 0' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 1' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 2' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Token 3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Token 4' })).not.toBeInTheDocument();
+
+    const moreButton = screen.getByRole('button', { name: '+2 more' });
+    expect(moreButton).toBeInTheDocument();
+
+    await user.click(moreButton);
+
+    expect(screen.getByRole('heading', { name: 'Token 3' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 4' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show fewer' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Show fewer' }));
+
+    expect(screen.queryByRole('heading', { name: 'Token 3' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '+2 more' })).toBeInTheDocument();
   });
 
   it('does not show Alpha Watch when the watchlist is empty', async () => {
