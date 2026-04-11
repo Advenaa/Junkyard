@@ -158,6 +158,7 @@ export function Chat() {
     setConversationId(generateId());
     setInput('');
     setRetryQuery(null);
+    setLoading(false);
     sessionStorage.removeItem('podders-chat-messages');
     sessionStorage.removeItem('podders-chat-conversation-id');
     textareaRef.current?.focus();
