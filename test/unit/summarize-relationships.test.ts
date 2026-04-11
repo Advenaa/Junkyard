@@ -45,43 +45,49 @@ function makeItem(content: string) {
 
 function makePool(items: Array<ReturnType<typeof makeItem>>) {
   const calls: Array<{ text: string; values: unknown[] }> = [];
+  const query = async (text: string, values?: unknown[]) => {
+    calls.push({ text, values: values ?? [] });
+
+    if (text.includes("SET batch_id = $1, status = 'processing'")) {
+      return { rows: [], rowCount: items.length };
+    }
+    if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
+      return { rows: items, rowCount: items.length };
+    }
+    if (text.includes('INSERT INTO summaries')) {
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes('SELECT id, LOWER(name) AS lookup_key')) {
+      return {
+        rows: [
+          { id: 'ent-aave', lookup_key: 'aave' },
+          { id: 'ent-compound', lookup_key: 'compound' },
+        ],
+        rowCount: 2,
+      };
+    }
+    if (text.includes('SELECT DISTINCT ON (ea.alias)')) {
+      return { rows: [], rowCount: 0 };
+    }
+    if (text.includes('INSERT INTO entity_relationships')) {
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes("UPDATE items SET status = 'processed'")) {
+      return { rows: [], rowCount: items.length };
+    }
+    if (text.includes('UPDATE items')) {
+      return { rows: [], rowCount: items.length };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+
   return {
     calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-
-      if (text.includes("SET batch_id = $1, status = 'processing'")) {
-        return { rows: [], rowCount: items.length };
-      }
-      if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
-        return { rows: items, rowCount: items.length };
-      }
-      if (text.includes('INSERT INTO summaries')) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (text.includes('SELECT id, LOWER(name) AS lookup_key')) {
-        return {
-          rows: [
-            { id: 'ent-aave', lookup_key: 'aave' },
-            { id: 'ent-compound', lookup_key: 'compound' },
-          ],
-          rowCount: 2,
-        };
-      }
-      if (text.includes('SELECT DISTINCT ON (ea.alias)')) {
-        return { rows: [], rowCount: 0 };
-      }
-      if (text.includes('INSERT INTO entity_relationships')) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (text.includes("UPDATE items SET status = 'processed'")) {
-        return { rows: [], rowCount: items.length };
-      }
-      if (text.includes('UPDATE items')) {
-        return { rows: [], rowCount: items.length };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    query,
+    connect: async () => ({
+      query,
+      release: () => {},
+    }),
   };
 }
 
@@ -93,7 +99,7 @@ function makeLlmResponse(body: Record<string, unknown>) {
 }
 
 const noopEntityManager = {
-  resolveEntities: async () => {},
+  resolveEntities: async () => [],
 };
 
 describe('summarize: inferred relationship persistence', () => {
@@ -165,6 +171,10 @@ describe('summarize: inferred relationship persistence', () => {
         }
         return { rows: [], rowCount: 0 };
       },
+      connect: async () => ({
+        query: pool.query,
+        release: () => {},
+      }),
     };
 
     const llm = makeLlmResponse({

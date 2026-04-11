@@ -398,7 +398,7 @@ export async function recoverStaleProcessing(pool: Pool, staleMinutes = 30, maxR
 // ── Summaries ───────────────────────────────────────────────────────────
 
 export async function insertSummary(
-  pool: Pool,
+  db: Pick<Pool, 'query'>,
   s: {
     id: string;
     source: string;
@@ -412,7 +412,7 @@ export async function insertSummary(
     createdAt: number;
   },
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `INSERT INTO summaries (
       id, source, source_id, window_start, window_end,
       body, sentiment, urgency, item_count, created_at

@@ -66,35 +66,41 @@ function fakeItem(id: string) {
  */
 function mockPool(items: ReturnType<typeof fakeItem>[]) {
   const calls: Array<{ text: string; values: unknown[] }> = [];
+  const query = async (text: string, values?: unknown[]) => {
+    calls.push({ text, values: values ?? [] });
+
+    // claimBatch: UPDATE ... SET batch_id
+    if (text.includes('batch_id') && text.includes('UPDATE') && text.includes('SET')) {
+      return { rows: [], rowCount: items.length };
+    }
+    // Load claimed items: SELECT ... FROM items WHERE batch_id
+    if (text.includes('SELECT') && text.includes('batch_id')) {
+      return { rows: items, rowCount: items.length };
+    }
+    // INSERT INTO summaries
+    if (text.includes('INSERT INTO summaries')) {
+      return { rows: [], rowCount: 1 };
+    }
+    // UPDATE items SET status
+    if (text.includes('UPDATE items')) {
+      return { rows: [], rowCount: items.length };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+
   return {
     calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-
-      // claimBatch: UPDATE ... SET batch_id
-      if (text.includes('batch_id') && text.includes('UPDATE') && text.includes('SET')) {
-        return { rows: [], rowCount: items.length };
-      }
-      // Load claimed items: SELECT ... FROM items WHERE batch_id
-      if (text.includes('SELECT') && text.includes('batch_id')) {
-        return { rows: items, rowCount: items.length };
-      }
-      // INSERT INTO summaries
-      if (text.includes('INSERT INTO summaries')) {
-        return { rows: [], rowCount: 1 };
-      }
-      // UPDATE items SET status
-      if (text.includes('UPDATE items')) {
-        return { rows: [], rowCount: items.length };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    query,
+    connect: async () => ({
+      query,
+      release: () => {},
+    }),
   };
 }
 
 /** No-op entity manager. */
 const noopEntityManager = {
-  resolveEntities: async () => {},
+  resolveEntities: async () => [],
 };
 
 // ===========================================================================
