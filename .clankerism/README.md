@@ -288,3 +288,57 @@ native merge queue or branch rulesets. Clankerism v2 uses five practical layers:
 - A stale `repair/pr-<N>` branch can strand a blocked PR until someone deletes
   the stale repair lock. `/build` is expected to release it on exit, but a hard
   crash can still leak one.
+
+## Attempt memory (`.clankerism/attempts/issue-<N>.ndjson`)
+
+`/build` and `/build-codex` write an NDJSON audit trail per issue so retries
+learn from prior failures. The file lives in the **main checkout** (not the
+worktree) so it survives `node scripts/worktree.mjs release`.
+
+Location: `.clankerism/attempts/issue-<N>.ndjson` (gitignored).
+
+One record per attempt, appended atomically by Claude. Schema:
+
+```json
+{
+  "ts": "2026-04-11T17:42:13Z",
+  "tick_id": "1744396933000",
+  "attempt": 2,
+  "run": "build-codex",
+  "outcome": "gate_failed",
+  "gate_step": "test",
+  "output_excerpt": "FAIL src/normalize/spam.test.ts ...",
+  "diff_summary": {
+    "files_changed": 3,
+    "lines_added": 47,
+    "lines_removed": 12,
+    "files": ["src/normalize/spam.ts", "src/normalize/spam.test.ts"]
+  },
+  "terminal": false
+}
+```
+
+- `outcome` ∈ `pass | gate_failed | hard_error`
+- `gate_step` ∈ `build | lint | format:check | test | test:dashboard | remote-ci | adversarial-review | none`
+- `output_excerpt` — first 40 lines of failure output, ANSI-stripped
+- `terminal: true` — marker on the final record when the issue is flipped to
+  `state:blocked` for good
+
+Budget math: **3 local attempts per run, 5 total failed attempts per issue
+across all runs.** "Failed" means `outcome != "pass"`. A `pass` record does
+not burn budget; a local-pass-then-remote-red still burns the remote-ci
+record. When the sixth failed attempt would be about to write, the run
+comments on the issue, writes a `terminal: true` marker, and flips to
+`state:blocked`.
+
+Lifecycle:
+
+- **Create**: on the first attempt for an issue. `mkdir -p .clankerism/attempts` first.
+- **Append**: every attempt, from main-checkout cwd.
+- **Delete**: on `clean_win` (PR merged), right before worktree release.
+- **Preserve**: on `state:blocked`, keep the file for human/repair inspection.
+- **GC**: `node scripts/worktree.mjs gc` removes NDJSON files for closed+merged issues.
+
+Parsing contract: any line that doesn't start with `{` is ignored (tolerates
+partial-write corruption). Any parseable line whose `outcome` is not
+literally `"pass"` counts against the 5-attempt ceiling.

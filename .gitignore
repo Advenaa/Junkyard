@@ -11,3 +11,4 @@ dashboard/node_modules/
 .clankerism/verify-session.json
 .clankerism/loop-state.json
 .clankerism/loop-log.ndjson
+.clankerism/attempts/

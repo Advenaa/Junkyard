@@ -154,12 +154,31 @@ Never bypass the hook with `--no-verify`. Never set both overrides at once.
 ### Hard rules
 
 - **One issue per session.** No "bundled" PRs combining multiple issues.
-- **Builders stop at `queue:ready`.** Only the queue session merges to `main`.
+- **Budgeted retries.** A single `/build` or `/build-codex` run may make up to
+  3 local attempts (implement + local CI gate) per tick. Across all runs on the
+  same issue, the ceiling is 5 total failed attempts — tracked in
+  `.clankerism/attempts/issue-<N>.ndjson` in the main checkout. Exceeding 5
+  flips the issue to `state:blocked` and waits for a human.
+- **At most one remote fix commit per PR, in the run that opened it.** If CI
+  goes red after the PR is pushed, the same run may diagnose, produce one
+  fix commit, and re-watch CI once. If that second run is also red, flip the
+  linked issue to `state:blocked`. Subsequent fixes happen via a
+  `repair/pr-<PR>` lock in a future run, not by piling more commits onto the
+  same branch.
+- **`/build` and `/build-codex` may merge their own PR directly** via
+  `gh pr merge --squash` after `gh run watch` goes green. This is an explicit
+  exception to "builders stop at `queue:ready`" — the retry loop owns the
+  end-to-end cleanup (worktree release, attempts-file delete) and needs to
+  observe the merge to finish it. The serialized `/queue` session remains the
+  path for human-authored PRs and repair sessions.
 - **Do not strip `queue:deferred` by hand.** Either wait for the older sibling PR to clear or close/re-scope one of the PRs.
 - **Release repair locks.** If you claimed `repair/pr-<PR>`, delete that remote lock branch before you exit.
 - **Never modify `.clankerism/scout-state.md`.** That file belongs to `/scout`.
 - **Never amend a published commit or force-push a branch with an open PR.**
 - **Never self-assign work.** Clankers consume what `/scout` or humans produce.
+- **Attempt records live in the main checkout, not the worktree.** Writing
+  `.clankerism/attempts/issue-<N>.ndjson` must happen with cwd at the main
+  clone's root, not the worktree. Records must survive `worktree.mjs release`.
 
 ## Environment Variables
 

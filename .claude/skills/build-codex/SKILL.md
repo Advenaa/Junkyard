@@ -24,39 +24,80 @@ is no fixed interval. Each tick decides when the next one fires by passing
 
 ## Ownership split
 
+The key inversion vs. earlier versions: **Codex only edits source files and
+runs the local CI gate. Claude does every git and gh operation.**
+
 | Layer | Owner |
 |-------|-------|
-| `cd` to repo, PAUSED brake check | Claude (this skill) |
-| Zombie sweep (state:in-progress with no merged PR) | Claude |
-| Preflight (clean tree, fetch, reset to origin/main) | Claude |
-| Queue scan + atomic branch claim + label flip | Claude |
-| Read issue, plan, implement, test, adversarial review | **Codex** |
-| Commit, push, open PR, watch CI, merge | **Codex** |
-| Clear `state:in-progress` label on success | **Codex** |
-| Verify Codex's outcome via `gh` | Claude |
+| `cd` to repo, PAUSED brake check | Claude |
+| Zombie sweep (state:in-progress reconciliation) | Claude |
+| Preflight (fetch origin/main) | Claude |
+| Queue scan + atomic branch claim OR resume | Claude |
+| Attempt-budget check against `.clankerism/attempts/issue-<N>.ndjson` | Claude |
+| Read issue, plan, implement source edits inside worktree | **Codex** |
+| Run local CI gate (`build`, `lint`, `format:check`, `test`, `test:dashboard`) | **Codex** |
+| Return structured status (`passing` / `gate_failed` / `hard_error`) | **Codex** |
+| Append NDJSON attempt record to `.clankerism/attempts/issue-<N>.ndjson` | Claude |
+| Local retry wrapper around the Codex Agent call (up to 3 attempts per tick) | Claude |
+| Stage, commit with `Fixes #N`, push branch | Claude |
+| Open PR via `gh pr create` | Claude |
+| Watch CI via `gh run watch` | Claude |
+| Push at most 1 remote fix commit on red CI (fix diff re-delegated to Codex) | Claude |
+| `gh pr merge --squash`, label cleanup, worktree release on win | Claude |
 | Failure counter + circuit breaker | Claude |
-| NDJSON log + Discord webhook | Claude |
+| NDJSON loop log + Discord webhook | Claude |
 | Schedule next tick | Claude |
 
-If Codex did not produce a merged PR, Claude flips the issue to
-`state:blocked` and increments the failure counter. Three consecutive
-failures trip the circuit breaker (touch `.clankerism/PAUSED`, exit).
+### Why Codex can't run git
+
+Git worktrees have their real `.git` directory at
+`<main>/.git/worktrees/issue-<N>/`, **outside** the worktree path. Codex
+CLI's `workspace-write` sandbox is rooted at the worktree, so Codex cannot
+acquire `.git/index.lock`, cannot write packed-refs, and cannot run
+`git commit` from inside the worktree. That's why Claude — which runs
+unsandboxed and can access the parent `.git/worktrees/` dir — owns every
+git-mutating operation. Codex owns every source-file-editing operation
+because it is the better coder.
+
+If the Codex attempt loop never produces a passing local gate, Claude
+flips the issue to `state:blocked` and increments the per-tick failure
+counter. Three consecutive tick failures trip the circuit breaker (touch
+`.clankerism/PAUSED`, exit).
+
+### Budgets at a glance
+
+- **3 local attempts per tick.** Claude wraps the Codex Agent call in a
+  retry loop of up to 3 iterations. Each iteration passes the prior
+  attempt's failure excerpt back to Codex as `PRIOR_FAILURE_LOG`.
+- **5 total failed attempts per issue across all runs/ticks.** Tracked in
+  `.clankerism/attempts/issue-<N>.ndjson` (main checkout, not the
+  worktree, so it survives `worktree.mjs release`). Exceed 5 → issue
+  flips to `state:blocked` and waits for a human.
+- **At most 1 remote fix commit per PR, in the run that opened it.** If CI
+  goes red after Claude's initial push, Claude may re-delegate a fix diff
+  to Codex once, local-verify it, push one follow-up commit, and re-watch
+  CI. If the second run is also red, flip to `state:blocked`.
 
 ## Working directory
 
-The main checkout at `/Users/advena/project/poddershub` is a launchpad
-only. The first action of every tick is
-`cd /Users/advena/project/poddershub` — this is the stable cwd where
-preflight, sweeps, and label reads happen.
+The main checkout at `/Users/advena/project/poddershub` is a launchpad.
+The first action of every tick is `cd /Users/advena/project/poddershub`
+— this is the stable cwd where the PAUSED brake check, zombie sweep,
+preflight, and all writes to `.clankerism/attempts/issue-<N>.ndjson`
+happen.
 
-Once the tick claims an issue, it creates a dedicated worktree at
-`/Users/advena/project/poddershub-worktrees/issue-<N>` and `cd`s into
-it. The codex:rescue subagent inherits Claude's cwd, so Codex runs in
-the worktree — not in main. Main checkout is never modified.
+Once the tick claims or resumes an issue, it creates (or reattaches) a
+dedicated worktree at `/Users/advena/project/poddershub-worktrees/issue-<N>`
+and `cd`s into it. The codex:codex-rescue subagent inherits Claude's
+cwd, so Codex runs in the worktree — not in main. The main checkout is
+never modified by Codex.
 
-After Codex returns, Claude verifies from the worktree cwd (Step 8).
-On the next tick, Step 1 `cd`s back to main so the loop is resilient
-to worktrees being released (by `/queue` on merge) between ticks.
+After each Codex attempt returns, Claude appends the NDJSON attempt
+record from the **main-checkout cwd** (absolute path
+`$MAIN/.clankerism/attempts/issue-<N>.ndjson`), then either loops, or
+publishes the commit/PR from inside the worktree cwd. On the next tick,
+Step 1 `cd`s back to main so the loop is resilient to worktrees being
+released between ticks.
 
 ---
 
@@ -95,35 +136,61 @@ If the file does NOT exist, set `paused_notified: false` in loop-state
 
 ### Step 3 — Zombie sweep
 
-The sweep cleans up `state:in-progress` issues left behind by a previous
-crashed tick. Always run before claiming new work.
+The sweep reconciles `state:in-progress` issues left behind by a previous
+crashed tick. Under the new retry model, a red CI does **not** always
+mean "block" — if the attempts budget still has room, the issue is
+eligible for **resume** on the current tick. Always run before claiming
+new work.
 
 ```bash
 gh issue list --state open --label state:in-progress \
   --json number,title --jq '.[].number'
 ```
 
-For each issue number `$N`:
+For each issue number `$N`, gather:
 
 ```bash
+# PR metadata
 gh pr list --head "build/issue-$N" --state all \
   --json number,state,mergedAt,statusCheckRollup --jq '.[0]'
+
+# Attempts budget (from MAIN checkout)
+ATTEMPTS_FILE=".clankerism/attempts/issue-$N.ndjson"
+if [ -f "$ATTEMPTS_FILE" ]; then
+  PRIOR_FAILS=$(grep -c '"outcome":"gate_failed"\|"outcome":"hard_error"' "$ATTEMPTS_FILE" 2>/dev/null || echo 0)
+else
+  PRIOR_FAILS=0
+fi
+
+# Is a fix commit already on the branch? (compare commit count vs main)
+FIX_COMMITS=$(git -C . rev-list --count "origin/main..origin/build/issue-$N" 2>/dev/null || echo 0)
+# First commit is the feature commit; any extra commit is a fix commit.
 ```
 
-Reconcile by case:
+Reconcile by case. **`wait_for_in_flight` pauses the tick**;
+**`resumable_issues[]` is handed to Step 5/6 which picks it before
+walking state:ready**.
 
-| PR state | Action |
-|----------|--------|
-| Merged (`mergedAt` non-null) | `gh issue edit $N --remove-label state:in-progress`. Issue is auto-closed; this clears the stale label. Also run `node scripts/worktree.mjs release "issue-$N"` in case `/queue` didn't reach the cleanup step. |
-| Open, all checks `SUCCESS` | Mark `wait_for_in_flight = true`. Don't touch — the previous tick's Codex is still finishing. Leave the worktree alone. |
-| Open, any check `FAILURE` or `CANCELLED` | `gh issue comment $N --body "Sweep: prior CI failed. Flipping to state:blocked."`, then `gh issue edit $N --remove-label state:in-progress --add-label state:blocked`. **Leave the worktree** — a future repair run needs it. |
-| No PR returned, branch exists on origin | `gh issue comment $N --body "Sweep: claimed but no PR opened. Re-queueing."`, `gh issue edit $N --remove-label state:in-progress --add-label state:ready`, `git push origin --delete build/issue-$N` (best-effort, ignore errors), `node scripts/worktree.mjs release "issue-$N"` to drop the orphan. |
-| No PR, no branch | `gh issue edit $N --remove-label state:in-progress --add-label state:ready`. Also run `node scripts/worktree.mjs release "issue-$N"` in case an orphan dir remains. |
+| PR state | Attempts state | Extra commits | Action |
+|----------|----------------|---------------|--------|
+| Merged (`mergedAt` non-null) | any | any | Release worktree, `rm -f $ATTEMPTS_FILE`, `gh issue edit --remove-label state:in-progress` (idempotent cleanup after a /queue merge) |
+| Open, all checks SUCCESS or pending | any | any | `wait_for_in_flight = true`. Leave worktree alone. A prior tick's watch is finishing. |
+| Open, any check FAILURE/CANCELLED | `PRIOR_FAILS >= 5` | any | Budget exhausted. Comment "Sweep: attempt budget (5/5) exhausted. state:blocked.", `gh issue edit --remove-label state:in-progress --add-label state:blocked`, leave worktree + NDJSON for `/fix`. |
+| Open, any check FAILURE/CANCELLED | `PRIOR_FAILS < 5` | `FIX_COMMITS >= 2` (1 fix commit already pushed) | Remote fix commit didn't save it. Comment "Sweep: remote fix commit exhausted. state:blocked.", flip to `state:blocked`, leave worktree + NDJSON. |
+| Open, any check FAILURE/CANCELLED | `PRIOR_FAILS < 5` | `FIX_COMMITS <= 1` | Add `$N` to `resumable_issues[]`. Do not flip labels. Do not release the worktree. The current tick will resume this issue. |
+| No PR returned, branch exists on origin | any | — | Claim was interrupted pre-PR-open. Comment "Sweep: claimed but no PR opened. Re-queueing.", `gh issue edit --remove-label state:in-progress --add-label state:ready`, `git push origin --delete build/issue-$N` (best-effort), `rm -f $ATTEMPTS_FILE`, release the worktree. |
+| No PR, no branch | any | — | `gh issue edit --remove-label state:in-progress --add-label state:ready`, `rm -f $ATTEMPTS_FILE`, release any orphan worktree dir. |
+| `state:in-progress` label already gone (user intervention) | any | — | Leave alone. Log a warning. Human owns it. |
 
 If `wait_for_in_flight` is true after the sweep:
+
 1. Append tick record `outcome: "wait_in_flight"`.
 2. `ScheduleWakeup(120, "in-flight PR from prior tick still running CI", "/loop /build-codex")`.
 3. Return — do not claim a new issue.
+
+Otherwise, remember `resumable_issues[]` for Step 5 — the claim step
+picks a resumable issue **before** walking the `state:ready` priority
+list. **Resume trumps claim.**
 
 ### Step 4 — Preflight
 
@@ -139,26 +206,41 @@ git fetch origin main
 If `git fetch` fails, append tick record `outcome: "preflight_dirty"`,
 send a Discord webhook, `ScheduleWakeup(600, "fetch failed, retrying", "/loop /build-codex")`.
 
-### Step 5 — Pick the next ready issue
+### Step 5 — Pick the next issue (resume trumps claim)
 
-Walk priorities `p0 → p1 → p2 → p3`:
+**Resume-first rule.** If Step 3 filled `resumable_issues[]`, the tick
+picks the first entry from that list — those issues already have
+`state:in-progress`, a worktree on disk, and attempt budget remaining.
+Resuming them clears blocked-but-repairable work before it rots.
 
 ```bash
-N=""
-for prio in p0 p1 p2 p3; do
-  N=$(gh issue list --state open --label state:ready --label "$prio" \
-        --limit 1 --json number --jq '.[0].number')
-  [ -n "$N" ] && break
-done
+if [ ${#resumable_issues[@]} -gt 0 ]; then
+  N="${resumable_issues[0]}"
+  IS_RESUME=1
+else
+  IS_RESUME=0
+  N=""
+  for prio in p0 p1 p2 p3; do
+    N=$(gh issue list --state open --label state:ready --label "$prio" \
+          --limit 1 --json number --jq '.[0].number')
+    [ -n "$N" ] && break
+  done
+fi
 ```
 
-If `$N` is empty (queue is empty across all priorities):
+If `$N` is empty (no resumable issues AND no `state:ready` work across
+all priorities):
+
 1. Increment `empty_streak` in loop-state.
 2. Append tick record `outcome: "queue_empty"`.
 3. If `empty_streak == 5` (or any multiple of 5), send Discord
    "💤 /build-codex idle: queue empty for 5 ticks straight. Next check in 20m."
 4. `ScheduleWakeup(1200, "queue empty, backing off 20m", "/loop /build-codex")`.
 5. Return.
+
+`empty_streak` increments **only** when BOTH the resume list is empty
+AND the priority walk finds nothing. A full queue of resumable in-progress
+issues does not count as "empty".
 
 If `$N` is non-empty, set `empty_streak: 0` in loop-state. Read the issue
 fully:
@@ -171,99 +253,412 @@ Extract the title, the acceptance criteria (`- [ ]` checkboxes from the
 body), and the priority label. You will substitute these into the Codex
 prompt template in Step 7.
 
-### Step 6 — Atomic branch claim
+### Step 6 — Claim OR resume (with cross-tick budget check)
 
-Create a dedicated worktree for this issue, then push the branch. The
-push is still the lock. On lose: release the worktree and back off.
+Two paths: **fresh claim** for new `state:ready` work, **resume** for
+`state:in-progress` work surfaced by the sweep. The branch-push-as-lock
+rule only applies to the fresh claim path — a resume reuses the existing
+branch and label.
 
 ```bash
+MAIN="/Users/advena/project/poddershub"
 BRANCH="build/issue-$N"
+ATTEMPTS_DIR="$MAIN/.clankerism/attempts"
+ATTEMPTS_FILE="$ATTEMPTS_DIR/issue-$N.ndjson"
+mkdir -p "$ATTEMPTS_DIR"
 
-# Create <main>-worktrees/issue-$N with build/issue-$N branched off
-# origin/main. Fails cleanly if the branch already exists (prior
-# session crashed, or the sweep missed it).
-WT=$(node scripts/worktree.mjs claim "issue-$N") || {
-  # Treat as branch_race_lost — another session probably holds it.
-  # Append tick record `outcome: "branch_race_lost"`.
-  # ScheduleWakeup(60, "branch race lost, retrying", "/loop /build-codex")
-  # Return.
-}
-cd "$WT"
-
-if ! git push -u origin "$BRANCH"; then
-  cd /Users/advena/project/poddershub
-  node scripts/worktree.mjs release "issue-$N"
-  # Append tick record `outcome: "branch_race_lost"`.
-  # ScheduleWakeup(60, "branch race lost, retrying", "/loop /build-codex")
-  # Return.
+# --- 6a. Cross-tick budget check (before touching any branch) ---
+if [ -f "$ATTEMPTS_FILE" ]; then
+  PRIOR_ATTEMPTS=$(grep -c '^{' "$ATTEMPTS_FILE" 2>/dev/null || echo 0)
+  PRIOR_FAILS=$(grep -c '"outcome":"gate_failed"\|"outcome":"hard_error"' "$ATTEMPTS_FILE" 2>/dev/null || echo 0)
+else
+  PRIOR_ATTEMPTS=0
+  PRIOR_FAILS=0
 fi
-gh issue edit $N --remove-label state:ready --add-label state:in-progress
+
+if [ "$PRIOR_FAILS" -ge 5 ]; then
+  # Budget already exhausted on a prior tick. Shouldn't normally reach
+  # here because the sweep catches this, but defensive.
+  gh issue comment $N --body "/build-codex: attempt budget exhausted (5/5). Flipping to state:blocked for human triage."
+  gh issue edit $N --remove-label state:in-progress --add-label state:blocked
+  # Record soft_failure in loop-state, log, ScheduleWakeup(120), return.
+fi
+
+# --- 6b. Decide claim vs resume ---
+WT_PATH="$(node "$MAIN/scripts/worktree.mjs" path "issue-$N")"
+
+if [ "$IS_RESUME" = "1" ] || [ -d "$WT_PATH" ]; then
+  # RESUME path: worktree exists (from a prior tick), branch is on
+  # origin, label is already state:in-progress. Do NOT re-push the
+  # branch and do NOT re-flip the label.
+  WT=$(node "$MAIN/scripts/worktree.mjs" resume "issue-$N")
+  cd "$WT"
+else
+  # FRESH CLAIM path: the push of build/issue-$N is the lock.
+  WT=$(node "$MAIN/scripts/worktree.mjs" claim "issue-$N") || {
+    # Worktree already existed or branch already existed — another
+    # session probably holds it. Append outcome: "branch_race_lost",
+    # ScheduleWakeup(60), return.
+    :
+  }
+  cd "$WT"
+  if ! git push -u origin "$BRANCH"; then
+    cd "$MAIN"
+    node scripts/worktree.mjs release "issue-$N"
+    # Append outcome: "branch_race_lost", ScheduleWakeup(60), return.
+    :
+  fi
+  gh issue edit $N --remove-label state:ready --add-label state:in-progress
+fi
 ```
 
-Claude's cwd is now inside the worktree, so the codex:rescue subagent
-spawned in Step 7 inherits it and runs Codex there.
+Claude's cwd is now inside the worktree, so the codex:codex-rescue
+subagent spawned in Step 7 inherits it and runs Codex there. Codex will
+edit files and run the local gate; all git/gh writes happen from Claude
+in Step 7.5.
+
+**Critical**: on the resume path, do not `git push origin "$BRANCH"` and
+do not `gh issue edit --remove-label state:ready`. Both are already
+done. Re-flipping labels triggers GitHub webhook churn and races with
+the sweep.
 
 Record the start timestamp now — Step 9 needs it for the duration field.
 
-### Step 7 — Delegate to Codex
+### Step 7 — Delegate to Codex (retry loop)
 
-Spawn the `codex:codex-rescue` subagent via the Agent tool. The prompt
-**must** start with `--wait` so the rescue subagent runs Codex in
-foreground. The subagent's default for long tasks is `--background`,
-which would return a job ID immediately and break Step 8 verification.
+Wrap the `codex:codex-rescue` Agent call in a 3-attempt retry loop.
+Each attempt reads the prior failure excerpt, re-delegates to Codex, and
+classifies Codex's structured status. Claude appends the NDJSON attempt
+record from the main checkout cwd after every attempt (pass or fail).
 
 ```
-Agent({
-  description: "Codex /build for issue #<N>",
-  subagent_type: "codex:codex-rescue",
-  prompt: <substituted template — see below>
-})
+TICK_MAX=3
+TICK_ATTEMPT=1
+REMAINING=$(( 5 - PRIOR_FAILS ))
+TICK_CAP=$(( REMAINING < TICK_MAX ? REMAINING : TICK_MAX ))
+
+# Seed cross-tick failure context if this is a resume.
+if [ "$PRIOR_FAILS" -gt 0 ]; then
+  # Last record from the NDJSON becomes the prior-failure log Codex sees
+  # on attempt 1 of this tick.
+  PRIOR_FAILURE_LOG=$(tail -n 1 "$ATTEMPTS_FILE" \
+    | jq -r '"Attempt \(.attempt) failed at \(.gate_step):\n\(.output_excerpt)"' 2>/dev/null)
+else
+  PRIOR_FAILURE_LOG=""
+fi
+
+START_TS=$(date +%s%3N)
+
+while [ "$TICK_ATTEMPT" -le "$TICK_CAP" ]; do
+  # --- Agent call: codex:codex-rescue with prompt below. Foreground. ---
+  AGENT_RESULT=<Agent tool call, see prompt template below>
+
+  # --- Parse Codex's structured status. Codex's LAST message must end
+  # with exactly three lines:
+  #   STATUS=passing            (or gate_failed or hard_error)
+  #   GATE_STEP=<step>          (build|lint|format:check|test|test:dashboard|adversarial-review|none)
+  #   EXCERPT_PATH=<path>       (relative or absolute; "none" if passing)
+  # If the contract is violated, treat as hard_error.
+  STATUS=<parsed>
+  GATE_STEP=<parsed>
+  EXCERPT_PATH=<parsed>
+
+  # --- Load the excerpt file Codex wrote (if any). ---
+  EXCERPT=""
+  if [ "$EXCERPT_PATH" != "none" ] && [ -f "$EXCERPT_PATH" ]; then
+    EXCERPT=$(sed -e 's/\x1b\[[0-9;]*m//g' "$EXCERPT_PATH" | head -n 40)
+  fi
+
+  # --- Compute diff summary from worktree against origin/main. ---
+  DIFF_NUMSTAT=$(git -C "$WT" diff --numstat origin/main 2>/dev/null)
+  FILES_CHANGED=$(echo "$DIFF_NUMSTAT" | wc -l | tr -d ' ')
+  LINES_ADDED=$(echo "$DIFF_NUMSTAT" | awk '{a+=$1} END {print a+0}')
+  LINES_REMOVED=$(echo "$DIFF_NUMSTAT" | awk '{r+=$2} END {print r+0}')
+
+  # --- Append NDJSON record (CLAUDE writes, from MAIN checkout path). ---
+  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  GLOBAL_ATTEMPT=$((PRIOR_ATTEMPTS + TICK_ATTEMPT))
+  jq -nc \
+    --arg ts "$TS" \
+    --arg tick_id "$TICK_ID" \
+    --argjson attempt "$GLOBAL_ATTEMPT" \
+    --arg run "build-codex" \
+    --arg outcome "$STATUS" \
+    --arg gate_step "$GATE_STEP" \
+    --arg excerpt "$EXCERPT" \
+    --argjson files_changed "$FILES_CHANGED" \
+    --argjson lines_added "$LINES_ADDED" \
+    --argjson lines_removed "$LINES_REMOVED" \
+    '{ts:$ts, tick_id:$tick_id, attempt:$attempt, run:$run, outcome:$outcome, gate_step:$gate_step, output_excerpt:$excerpt, diff_summary:{files_changed:$files_changed, lines_added:$lines_added, lines_removed:$lines_removed}, terminal:false}' \
+    >> "$ATTEMPTS_FILE"
+
+  if [ "$STATUS" = "passing" ]; then
+    break   # go to Step 7.5 (publish)
+  fi
+
+  if [ "$STATUS" = "hard_error" ]; then
+    # Codex has given up. Don't burn more tick budget on the same issue.
+    # Step 8 will classify this tick's outcome.
+    break
+  fi
+
+  # gate_failed — feed the excerpt back in for the next attempt.
+  PRIOR_FAILURE_LOG="Attempt $TICK_ATTEMPT of $TICK_CAP failed at step '$GATE_STEP':\n$EXCERPT"
+  TICK_ATTEMPT=$((TICK_ATTEMPT + 1))
+done
+
+END_TS=$(date +%s%3N)
+DURATION_MS=$((END_TS - START_TS))
 ```
 
-**Prompt template** — substitute `<N>`, `<BRANCH>`, `<TITLE>`, and
-`<ACCEPTANCE>` (the bulleted acceptance criteria from Step 5):
+If the loop exits with `STATUS != "passing"` (either exhausted `TICK_CAP`
+or a `hard_error`), **skip Step 7.5 entirely** and fall through to the
+verify + cleanup path. Step 8 will classify as `soft_failure` (budget
+or gate_failed) or `hard_failure` (hard_error / contract violation).
+
+#### Codex prompt template
+
+Substitute `<N>`, `<BRANCH>`, `<WT_PATH>`, `<TITLE>`, `<ACCEPTANCE>`,
+`<TICK_ATTEMPT>`, and `<PRIOR_FAILURE_LOG>` (empty string if this is the
+very first attempt for a fresh issue).
 
 ```
 --wait
 
-Branch `<BRANCH>` is checked out and pushed to origin. Issue #<N>
-("<TITLE>") is labeled state:in-progress in the Clankerism queue. Your
-job: ship this issue to merged-on-main with no human intervention.
+You are working in a git worktree at <WT_PATH> on branch <BRANCH>. The
+worktree is sandboxed — you can edit source files and run local commands,
+but you CANNOT run `git commit`, `git push`, `git stash`, `gh pr create`,
+`gh pr merge`, or `gh issue edit`. Those are Claude's job. Stay out of
+.git/, and do NOT modify anything under .clankerism/.
+
+Your job for this attempt:
+
+1. Read GitHub issue #<N> ("<TITLE>") and its acceptance criteria below.
+2. Produce the smallest diff that satisfies the acceptance criteria.
+3. Run the local CI gate in this exact order, short-circuiting on the
+   first failing step:
+     pnpm run build
+     pnpm run lint
+     pnpm run format:check
+     pnpm test
+     pnpm run test:dashboard
+4. On the FIRST failure, stop, capture the last 40 lines of output to
+   <WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log, and return the structured
+   status below.
 
 Acceptance criteria for issue #<N>:
 <ACCEPTANCE>
 
-Hard rules (non-negotiable):
-1. Use a `Fixes #<N>` line in the commit message footer for GitHub
-   auto-close.
-2. Use `gh run watch <run-id> --exit-status` to block on CI. Do NOT use
-   `gh pr merge --auto` — it is unreliable on this free-plan repo.
-3. On green CI: `gh pr merge <pr> --squash --delete-branch`, then
-   `gh issue edit <N> --remove-label state:in-progress` (GitHub
-   auto-closes the issue but does not clear the label).
-4. On red CI: do NOT push fix commits. Comment on the issue, flip it to
-   state:blocked, exit cleanly.
-5. Never use `--no-verify`, `--no-gpg-sign`, force-push to main, amend
-   published commits, or modify `.clankerism/scout-state.md`.
-6. One issue per session. No drive-by refactors. No bundled PRs.
-7. The pre-push hook will reject pushes to main. Don't try to override
-   it. Push only to `<BRANCH>`.
+Hard rules:
+- Do NOT run git commit, git push, git stash, gh pr create, gh pr merge,
+  gh pr edit, gh issue edit, gh issue comment, gh pr comment, or any
+  label-mutating gh command. Claude will handle all of that.
+- Do NOT touch .clankerism/, .git/, .github/, scripts/hooks/, or the
+  pre-push hook.
+- Do NOT use --no-verify, --no-gpg-sign, force operations, or CLANKERISM_ALLOW_*
+  environment overrides.
+- One issue per session. No drive-by refactors. No bundled PRs.
+- Fix the ROOT CAUSE of the PRIOR ATTEMPT FAILURE CONTEXT below (if any).
+  Do not resubmit the same diff hoping for a different result.
 
-Full flow: read `.claude/skills/build/SKILL.md` and execute Steps 3
-(Understand the problem) through Step 10 (Exit cleanly). Project
-conventions are in `CLAUDE.md`.
+<!-- Only present if PRIOR_FAILURE_LOG is non-empty -->
+PRIOR ATTEMPT FAILURE CONTEXT:
+<PRIOR_FAILURE_LOG>
+<!-- end prior attempt section -->
 
-Exit when: PR is merged AND label cleared, OR issue is flipped to
-state:blocked, OR you hit a hard error you cannot recover from.
+Final message contract — your LAST message MUST end with exactly three
+lines, one per line, no extra whitespace:
+  STATUS=passing
+  GATE_STEP=none
+  EXCERPT_PATH=none
+
+If a gate failed, the three lines are:
+  STATUS=gate_failed
+  GATE_STEP=<build|lint|format:check|test|test:dashboard|adversarial-review>
+  EXCERPT_PATH=<WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log
+
+If you hit an unrecoverable error (tooling, environment, acceptance
+criteria impossible):
+  STATUS=hard_error
+  GATE_STEP=none
+  EXCERPT_PATH=<WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log
+
+Full conventions in CLAUDE.md. Reference skill:
+`.claude/skills/build/SKILL.md` — execute Steps 3 (Understand), 4 (Plan),
+5 (Implement & verify), and 6 (Adversarial review). SKIP Steps 7–9
+(commit/push/watch/exit) — those belong to Claude.
 ```
 
-The Agent call blocks until Codex returns (foreground / `--wait`). When
-it returns, record the end timestamp — `end - start` is the
-`duration_ms` field for the log record.
+Three invariants the retry loop depends on:
 
-### Step 8 — Verify Codex's outcome
+- **`--wait` stays mandatory.** Background mode breaks structured-status
+  verification because the Agent call returns before Codex has run.
+- **The three-line final-message contract is the integration point.**
+  Claude parses the last 3 lines of Codex's last assistant message. If
+  Codex omits any line or uses a different format, Claude treats the
+  attempt as `hard_error` and does not retry within the tick.
+- **`PRIOR_FAILURE_LOG` is empty** for attempt 1 of a fresh issue. For
+  attempt 2+ of the same tick, it's the excerpt from attempt N-1. For
+  attempt 1 of a **resumed** issue (`PRIOR_FAILS > 0`), it's the last
+  record from the NDJSON file — so Codex sees failures from prior ticks.
+  Don't substitute an empty `PRIOR_FAILURE_LOG`; remove the whole
+  section from the prompt instead.
 
-Re-query the issue and any PR:
+### Step 7.5 — Claude publishes (only when Step 7 returned `passing`)
+
+Claude commits, pushes, opens the PR, watches CI, optionally pushes one
+fix commit, and merges. **Codex never touches git here.**
+
+```bash
+# --- Commit + push (Claude's cwd is still inside $WT) ---
+git add -A
+COMMIT_BODY="$(jq -r '.output_excerpt // ""' <(tail -n 1 "$ATTEMPTS_FILE"))"
+git commit -m "$(cat <<EOF
+$TITLE
+
+$COMMIT_BODY
+
+Fixes #$N
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Codex via codex:codex-rescue <noreply@anthropic.com>
+EOF
+)"
+git push -u origin "$BRANCH"
+
+# --- Open PR ---
+PR_URL=$(gh pr create --base main --head "$BRANCH" \
+  --title "$TITLE" \
+  --body "Fixes #$N
+
+<short summary from Codex's last passing attempt>")
+PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
+
+# --- Wait for the first run to register, then capture its ID ---
+sleep 5
+RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')
+
+REMOTE_FIX_USED=0
+while :; do
+  if gh run watch "$RUN_ID" --exit-status; then
+    # --- GREEN: merge, label cleanup, worktree release, exit clean_win ---
+    gh pr merge "$PR_NUMBER" --squash --delete-branch 2>/dev/null || true
+    gh issue edit $N --remove-label state:in-progress 2>/dev/null || true
+    cd "$MAIN"
+    rm -f "$ATTEMPTS_FILE"
+    node scripts/worktree.mjs release "issue-$N"
+    CLASSIFICATION=clean_win
+    break
+  fi
+
+  # --- RED: decide whether a fix commit is allowed ---
+  if [ "$REMOTE_FIX_USED" -eq 1 ]; then
+    # We already burned our one fix commit. Block.
+    CLASSIFICATION=hard_failure
+    break
+  fi
+
+  # Budget check (CI failure counts toward the 5-attempt ceiling).
+  CURRENT_FAILS=$(grep -c '"outcome":"gate_failed"\|"outcome":"hard_error"' "$ATTEMPTS_FILE" 2>/dev/null || echo 0)
+  if [ "$((CURRENT_FAILS + 1))" -ge 5 ]; then
+    CLASSIFICATION=soft_failure   # budget exhaustion, not a crash
+    break
+  fi
+
+  # --- Capture the failure log from the remote CI run ---
+  FAILURE_LOG=$(gh run view "$RUN_ID" --log-failed 2>/dev/null \
+    | sed -e 's/\x1b\[[0-9;]*m//g' | head -n 40)
+
+  # Append an NDJSON record for the remote-ci failure.
+  TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  GLOBAL_ATTEMPT=$((CURRENT_FAILS + 1))
+  jq -nc \
+    --arg ts "$TS" --arg tick_id "$TICK_ID" --argjson attempt "$GLOBAL_ATTEMPT" \
+    --arg run "build-codex" --arg outcome "gate_failed" --arg gate_step "remote-ci" \
+    --arg excerpt "$FAILURE_LOG" \
+    '{ts:$ts, tick_id:$tick_id, attempt:$attempt, run:$run, outcome:$outcome, gate_step:$gate_step, output_excerpt:$excerpt, diff_summary:null, terminal:false}' \
+    >> "$ATTEMPTS_FILE"
+
+  # --- Re-delegate a ONE-SHOT fix to Codex via the same prompt template.
+  # Use FAILURE_LOG as PRIOR_FAILURE_LOG, TICK_ATTEMPT = remote-fix,
+  # NO retry loop around this call. Codex writes its own excerpt to
+  # <WT>/codex-attempt-remote-fix.log and must end with the same 3-line
+  # contract. Local gate must pass before Claude pushes the fix.
+
+  FIX_RESULT=<Agent call to codex:codex-rescue with remote-fix prompt>
+  parse STATUS GATE_STEP EXCERPT_PATH as before
+  FIX_EXCERPT=$(sed -e 's/\x1b\[[0-9;]*m//g' "$EXCERPT_PATH" 2>/dev/null | head -n 40)
+
+  # Append the fix attempt record.
+  jq -nc ... >> "$ATTEMPTS_FILE"
+
+  if [ "$STATUS" != "passing" ]; then
+    # Local gate on the fix also failed — don't push a broken fix.
+    CLASSIFICATION=hard_failure
+    break
+  fi
+
+  # --- Push the fix commit ---
+  git add -A
+  git commit -m "fix(ci): address CI failure on #$N
+
+$FAILURE_LOG
+
+Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Codex via codex:codex-rescue <noreply@anthropic.com>"
+  git push
+
+  REMOTE_FIX_USED=1
+
+  # --- Poll for the new run ID (gh run watch watches a specific run ID,
+  # not the branch, so we must re-query) ---
+  sleep 5
+  NEW_RUN_ID="$RUN_ID"
+  POLL_DEADLINE=$(( $(date +%s) + 30 ))
+  while [ "$NEW_RUN_ID" = "$RUN_ID" ] && [ "$(date +%s)" -lt "$POLL_DEADLINE" ]; do
+    NEW_RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')
+    [ "$NEW_RUN_ID" = "$RUN_ID" ] && sleep 3
+  done
+  if [ "$NEW_RUN_ID" = "$RUN_ID" ]; then
+    # New run never materialized — likely a skipped workflow.
+    CLASSIFICATION=hard_failure
+    break
+  fi
+  RUN_ID="$NEW_RUN_ID"
+  # loop back to gh run watch
+done
+```
+
+**Race guard**: before any final `gh issue edit --add-label state:blocked`
+in the cleanup path, re-read the labels — if a human has already set
+`state:blocked`, skip the flip (human intervention wins).
+
+**Concurrency note**: running `/queue` in parallel is safe. The queue's
+`gh pr merge`, `gh issue edit`, and `worktree.mjs release` are all
+idempotent; if the queue reached the PR first, Claude's calls above
+fail harmlessly under `|| true`.
+
+### Step 8 — Verify outcome and finalize
+
+Step 7 already set `CLASSIFICATION` for the happy path. If Step 7
+returned `passing` and Step 7.5 ran to completion, `CLASSIFICATION` is
+already one of `clean_win`, `soft_failure`, or `hard_failure`. If Step 7
+exited early (Codex never reached `passing`), classify now:
+
+```bash
+if [ -z "$CLASSIFICATION" ]; then
+  if [ "$STATUS" = "hard_error" ]; then
+    CLASSIFICATION=hard_failure
+  else
+    # Exhausted TICK_CAP with gate_failed every attempt.
+    CLASSIFICATION=soft_failure
+  fi
+fi
+```
+
+Then reconcile with the current GitHub state (defense against missed
+state transitions — a concurrent `/queue` merge, a human flipping the
+label, a network blip mid-publish):
 
 ```bash
 gh issue view $N --json state,labels,closedAt
@@ -271,34 +666,44 @@ gh pr list --head "$BRANCH" --state all \
   --json number,state,mergedAt,statusCheckRollup --jq '.[0]'
 ```
 
-Classify the outcome:
+| CLASSIFICATION from Step 7/7.5 | Reconciliation with live state | Final outcome + cleanup |
+|---|---|---|
+| `clean_win` (merged in 7.5) | Issue closed, label cleared, worktree released, NDJSON deleted | nothing more to do |
+| `soft_failure` (budget/TICK_CAP) | Still `state:in-progress` | Comment "attempt budget exhausted after $TICK_ATTEMPT tick attempts, $PRIOR_FAILS prior runs", flip → `state:blocked` (but re-read labels first and skip if human already set `state:blocked`), append `terminal:true` marker to NDJSON, **leave** worktree + NDJSON for `/fix` |
+| `hard_failure` (hard_error, contract violation, fix-commit path failed) | Still `state:in-progress`, PR may or may not exist | Comment with Codex's last 200 chars of output, flip → `state:blocked` (race-guarded), append `terminal:true`, leave worktree + NDJSON |
+| PR open, all checks SUCCESS but not merged (anomaly) | Merge step never ran in 7.5 | `wait_in_flight` — log "anomaly: green CI but not merged", do not flip labels |
+| User already set `state:blocked` mid-run | any | Honor it — do not re-flip, classify as `soft_failure`, leave everything |
 
-| Issue state | PR state | Classification | Cleanup |
-|-------------|----------|----------------|---------|
-| `closed`, no `state:in-progress` label | merged | `clean_win` | none |
-| `closed`, still has `state:in-progress` label | merged | `clean_win` | `gh issue edit $N --remove-label state:in-progress` |
-| `open`, `state:blocked` label | any | `soft_failure` | none |
-| `open`, `state:in-progress` label | open, all checks SUCCESS | `wait_in_flight` | leave alone |
-| `open`, `state:in-progress` label | open, any check FAILURE | `hard_failure` | run cleanup below |
-| `open`, `state:in-progress` label | no PR | `hard_failure` | run cleanup below |
-
-For any `hard_failure`, Claude itself runs the cleanup:
+Cleanup for `soft_failure` and `hard_failure`:
 
 ```bash
-gh issue comment $N --body "Loop verification: Codex run did not complete cleanly. Flipping to state:blocked for human triage. Tick: <ts>, duration: <ms>."
-gh issue edit $N --remove-label state:in-progress --add-label state:blocked
-cd /Users/advena/project/poddershub
-git push origin --delete "$BRANCH" 2>/dev/null || true
-node scripts/worktree.mjs release "issue-$N"
+# Race-guard the label flip. If a human beat us to it, skip.
+CURRENT_LABELS=$(gh issue view $N --json labels --jq '.labels[].name' | tr '\n' ' ')
+if ! echo "$CURRENT_LABELS" | grep -q 'state:blocked'; then
+  gh issue comment $N --body "/build-codex tick end: $CLASSIFICATION after $TICK_ATTEMPT attempts (prior failed: $PRIOR_FAILS). Duration: ${DURATION_MS}ms."
+  gh issue edit $N --remove-label state:in-progress --add-label state:blocked
+fi
+
+# Append terminal marker to NDJSON (from MAIN, not worktree).
+TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+jq -nc --arg ts "$TS" --arg tick_id "$TICK_ID" \
+  '{ts:$ts, tick_id:$tick_id, attempt:null, run:"build-codex", outcome:"terminal", gate_step:null, output_excerpt:"flipped to state:blocked", diff_summary:null, terminal:true}' \
+  >> "$ATTEMPTS_FILE"
+
+# Leave the worktree + NDJSON for a future repair session. DO NOT release
+# them on soft_failure/hard_failure — /fix reads the NDJSON to see what
+# Codex tried.
+cd "$MAIN"
 ```
 
-The `cd` back to main is important — the worktree we're about to
-release is Claude's current cwd, and `release` will remove it.
+**Critical**: on `soft_failure`/`hard_failure`, do NOT `git push origin
+--delete "$BRANCH"` and do NOT `worktree.mjs release`. The worktree and
+the branch are the repair-session scaffolding. The only path that
+releases them is `clean_win` (handled in Step 7.5) and the sweep's
+closed-merged path on a future tick.
 
-For `wait_in_flight` from Step 8 (PR open, CI green, but not yet
-merged), do not flip labels. Append tick record `outcome:
-"wait_in_flight"`, then in Step 9 schedule a 120s wakeup so the next
-tick can re-verify.
+For `wait_in_flight`, do not flip labels and do not touch the NDJSON.
+Step 9 schedules a 120s wakeup so the next tick can re-verify.
 
 ### Step 9 — Update state, log, and decide next tick
 
@@ -446,13 +851,24 @@ not abort the tick.
 | Situation | What you do |
 |-----------|-------------|
 | `.clankerism/PAUSED` exists | Log, Discord (once via latch), exit. No ScheduleWakeup. |
-| Working tree dirty after `git reset --hard` | Should not happen; if it does, log + 600s backoff. |
-| All priorities empty (`state:ready` count = 0) | Log, increment empty_streak, 1200s backoff. |
-| Branch push race (origin already has the branch) | Cleanup local branch, log, 60s retry. |
-| `gh` auth expired | Codex detects it; surfaces as hard_failure. After 3 in a row, breaker stops the loop. |
+| All priorities empty AND no resumable issues | Log, increment empty_streak, 1200s backoff. |
+| Branch push race on fresh claim (origin already has the branch) | Release local worktree, log, 60s retry. |
+| `gh` auth expired | Codex surfaces it as `hard_error` → hard_failure. 3 consecutive ticks trip the breaker. |
 | Codex hangs / very long Codex session | The Agent call blocks for the full Codex session. The codex-companion runtime has its own timeouts; trust it. If Codex returns with an error, treat as hard_failure. |
 | `ALERT_WEBHOOK_URL` unset | Discord helper is a no-op. Loop continues silently. |
 | `jq` not installed | Fall back to a heredoc-built JSON string for the curl payload. |
+| Cross-tick attempt budget exhausted (`PRIOR_FAILS >= 5`) | Sweep catches it first, comments "budget exhausted", flips to `state:blocked`, records `soft_failure`. If the sweep misses it, Step 6's 6a check catches it. |
+| Local tick retries exhausted (`TICK_CAP` Codex attempts all `gate_failed`) | Record `soft_failure`, flip `state:blocked` (race-guarded), append `terminal:true` to NDJSON, leave worktree + NDJSON, 180s cooldown. |
+| Codex's final message doesn't end with the 3-line `STATUS=...` contract | Treat as `hard_error` → `hard_failure`. Log the last 200 chars of Codex's output as the NDJSON excerpt. Do not retry within the tick — contract violation usually means a bug in the prompt or the Codex CLI, not a flake. |
+| Remote CI goes red on first try, local fix gate passes, pushed fix also goes red | `hard_failure`. No second fix commit. `state:blocked`, leave worktree + NDJSON. |
+| Remote CI red, Codex's fix attempt fails its own local gate | `hard_failure`. Do not push a broken fix. `state:blocked`, leave worktree + NDJSON. |
+| `gh run list` after fix push returns the old run ID for 30+ seconds | `hard_failure`. Log "CI run never materialized for fix commit". The workflow may have been skipped (paths filter, etc.) — human triage. |
+| Attempts NDJSON file cannot be written (disk full, permission) | Append a one-line warning to `loop-log.ndjson`, send a Discord webhook, flip the issue to `state:blocked`, exit. Running without the audit trail would silently overflow the budget. |
+| Attempts NDJSON file has a malformed line (partial write from a crash) | Tolerate: count only lines matching `^{`. Counting ignores malformed lines; the audit trail keeps them for inspection. |
+| Stale NDJSON file exists but worktree was GC'd | `scripts/worktree.mjs gc` deletes the NDJSON as part of its sweep. Defensive: Step 6 treats a stale NDJSON + no worktree as "fresh claim" after the gc pass. |
+| Concurrent `/queue` session merges the PR mid-watch | Step 7.5's `gh pr merge`/`gh issue edit`/`worktree.mjs release` are all idempotent under `|| true`. Duplicate cleanup is harmless. |
+| User manually adds `state:blocked` mid-run | Race-guard in the cleanup path re-reads labels before the final `--add-label state:blocked` and skips the flip. Human wins the tie. |
+| User manually removes `state:in-progress` mid-run | Next tick's sweep logs a warning ("worktree exists, no in-progress label") and leaves it alone. Human owns it. |
 
 ## Hard rules
 
@@ -464,25 +880,74 @@ not abort the tick.
 - **Never delete `.clankerism/loop-log.ndjson` or
   `.clankerism/loop-state.json`.** They are the audit trail and the
   failure counter.
-- **Never call codex:rescue without `--wait` in the prompt.** The
-  default for long tasks is background, which breaks verification.
-- **Never push to main from this skill.** Codex never pushes to main
-  either. The pre-push hook will block it.
+- **Never call codex:codex-rescue without `--wait` in the prompt.** The
+  default for long tasks is background, which breaks verification —
+  Claude parses Codex's structured status from the Agent call return.
+- **Never push to main from this skill.** Codex never pushes anything.
+  The pre-push hook will block main pushes anyway.
 - **Never use `--no-verify`** anywhere, in this skill or the Codex prompt.
 - **Never run multiple ticks in parallel.** Dynamic pacing serializes
-  for a reason — branch claims and label flips need a single writer.
+  for a reason — branch claims, NDJSON appends, and label flips need a
+  single writer per issue.
+- **Never have Codex run git or gh.** Codex cannot acquire
+  `.git/index.lock` inside a worktree because the real `.git` dir lives
+  at `<main>/.git/worktrees/issue-<N>/`, outside Codex's sandbox. Claude
+  runs every `git commit`, `git push`, `gh pr create`, `gh pr merge`,
+  and `gh issue edit`. Codex only edits source files and runs the local
+  CI gate via `pnpm`.
+- **Never push more than one fix commit per PR per tick.** The budget is
+  exactly one remote fix commit. Second red run = `state:blocked`.
+  Subsequent fixes happen via a future `/build` repair session on a
+  fresh `repair/pr-<N>` lock — a different run entirely.
+- **Never write attempt records inside the worktree.**
+  `.clankerism/attempts/issue-<N>.ndjson` lives in the main checkout so
+  records survive `worktree.mjs release` between ticks. The absolute
+  path is `$MAIN/.clankerism/attempts/issue-<N>.ndjson`.
+- **Never substitute an empty `PRIOR_FAILURE_LOG`** into the Codex
+  prompt. On attempt 1 of a fresh issue, remove the whole "PRIOR
+  ATTEMPT FAILURE CONTEXT" section from the prompt template. Substitute
+  only when there is real failure context — from a prior tick
+  (`PRIOR_FAILS > 0`) or from a prior attempt in this tick
+  (`TICK_ATTEMPT > 1`).
+- **Never increment `consecutive_failures` more than once per tick.** A
+  single tick that burns all 3 local Codex attempts is still one tick
+  failure, not three. Increment only on `hard_failure` / `soft_failure`,
+  once per tick-level outcome.
 
 ## Things you'll be tempted to do and must not
 
-- **Push a "fix" commit when Codex's PR fails CI.** No. The /build flow
-  says `state:blocked` is the answer. Loop respects that.
-- **Use `--background` for "throughput".** No. You can't verify if you
-  don't wait. Verify is what makes the loop self-healing.
+- **Push a second fix commit to an already-failed fix.** No. One fix
+  commit per PR per run. Second failure = `state:blocked`. The retry
+  system is designed around this cap on purpose.
+- **Retry the same Codex prompt hoping CI is flaky.** No. Every retry
+  must feed `PRIOR_FAILURE_LOG` back to Codex. If Codex can't make
+  progress with failure context, more attempts with the same blind
+  prompt won't either.
+- **Use `--background` for "throughput".** No. Verification depends on
+  parsing Codex's structured status from the synchronous Agent return.
+  Background mode returns a job ID immediately and breaks everything.
 - **Skip the sweep on first tick.** No. The sweep is what cleans up
-  after a previous Claude session that crashed mid-loop.
+  after a previous Claude session that crashed mid-loop — and what
+  surfaces resumable issues for the new retry model.
+- **Let Codex commit, push, or merge "just this once".** No. The
+  sandbox rationale is architectural (worktree `.git` path is outside
+  Codex's writable root). "Just this once" turns into a mysterious
+  `index.lock` error and a paused brake.
+- **Write attempt records inside the worktree.** No.
+  `.clankerism/attempts/` lives in the main checkout. Writing from the
+  worktree cwd using a relative path would create ephemeral files that
+  vanish on `worktree.mjs release`.
+- **Skip writing the attempt record on a pass.** No. The schema counts
+  only `outcome != "pass"` toward the 5-attempt ceiling, but `pass`
+  records are still part of the audit trail and needed by `/fix` to
+  understand what worked before the remote CI failure.
 - **Decrement `consecutive_failures` for `wait_in_flight`.** No. It's
   unchanged, not reset. Resetting hides genuine flake patterns.
-- **Claim two issues "while you're here".** No. One tick, one claim.
-  The branch claim is the lock.
+- **Pick a new `state:ready` issue when a resumable one exists.** No.
+  Resume trumps claim. Starving blocked-but-repairable work to chase
+  shiny new issues is how the queue rots.
+- **Claim two issues "while you're here".** No. One tick, one issue.
+  The branch claim (or the resume) is the lock.
 - **Pretty-print the NDJSON log.** No. One record per line. Pretty
-  formatting breaks `grep` and `jq -s`.
+  formatting breaks `grep '^{'`, `jq -s`, and the malformed-line
+  tolerance rule.

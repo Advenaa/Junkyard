@@ -184,7 +184,11 @@ export async function gc({ dryRun = false } = {}) {
     }
     if (closed && merged) {
       actions.push({ slug: dir, kind: 'closed-merged', path: full });
-      if (!dryRun) await release(dir);
+      if (!dryRun) {
+        await release(dir);
+        const attemptsPath = path.join(main, '.clankerism', 'attempts', `${dir}.ndjson`);
+        await rm(attemptsPath, { force: true }).catch(() => {});
+      }
     }
   }
   return actions;
