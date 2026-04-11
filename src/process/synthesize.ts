@@ -1,8 +1,14 @@
 import { ulid } from 'ulid';
-import { z } from 'zod';
-import { MarketReportLLMSchema } from './schemas.js';
 import type { MarketReport } from './schemas.js';
 import { deduplicateEvents } from './dedup-events.js';
+import {
+  escapeXml,
+  formatCalendarEventTime,
+  formatEventChainLine,
+  parseSummaryBody,
+  safeParseReportResponse,
+  type ParsedSummaryBody,
+} from './synthesis-shared.js';
 import type { CorrelatedEntity } from './correlate.js';
 import {
   insertReport,
@@ -228,68 +234,11 @@ const FIRST_MOVER_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
 const SYNTHESIS_CONTEXT_WINDOW_FALLBACK = 128_000;
 const SYNTHESIS_TOKEN_SAFETY_BUFFER = 2_000;
 
-const ParsedSummaryBodySchema = z.object({
-  summary: z.string(),
-  urgency: z.string(),
-  entities: z.array(
-    z.object({
-      name: z.string(),
-      type: z.string(),
-      sentiment: z.number(),
-      mentionCount: z.number(),
-    }),
-  ),
-  keyEvents: z.array(z.string()),
-  confidence: z.number(),
-});
-
-type ParsedSummaryBody = z.infer<typeof ParsedSummaryBodySchema>;
-
-function parseSummaryBody(body: string): ParsedSummaryBody | null {
-  try {
-    const raw: unknown = JSON.parse(body);
-    const result = ParsedSummaryBodySchema.safeParse(raw);
-    return result.success ? result.data : null;
-  } catch {
-    return null;
-  }
-}
-
 function scoreSummary(row: SummaryRow, parsed: ParsedSummaryBody): number {
   const urgencyScore = URGENCY_SCORES[row.urgency ?? 'routine'] ?? 1;
   const entityCount = parsed.entities.length;
   const engagement = row.item_count; // proxy for engagement
   return urgencyScore * 3 + entityCount * 2 + Math.log(1 + engagement);
-}
-
-// ── XML escaping ─────────────────────────────────────────────────────
-
-function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function formatCalendarEventTime(timestamp: number, timezone: string): string {
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: timezone,
-  }).format(timestamp);
-  return `${formatted} ${timezone}`;
-}
-
-function formatEventChainLine(chain: EventChainRow, timezone: string): string {
-  const timeline = chain.event_types.map((eventType) => escapeXml(eventType)).join(' -> ');
-  const latestDescription = chain.descriptions[chain.descriptions.length - 1];
-  const latestText = latestDescription ? ` | latest=${escapeXml(latestDescription)}` : '';
-  return `${escapeXml(chain.entity_name)}: ${chain.event_count} linked events from ${formatCalendarEventTime(chain.first_event_time, timezone)} to ${formatCalendarEventTime(chain.latest_event_time, timezone)} | chain=${timeline}${latestText}`;
 }
 
 // ── Narrative context ─────────────────────────────────────────────────
@@ -700,41 +649,6 @@ function buildFlashUserMessage(summaries: ScoredSummary[], correlated: Correlate
   }
 
   return parts.join('\n\n');
-}
-
-// ── Parse LLM response ───────────────────────────────────────────────
-
-type ReportParseResult =
-  | { success: true; report: MarketReport }
-  | { success: false; kind: 'json' | 'schema'; errorPaths?: string };
-
-function safeParseReportResponse(raw: string): ReportParseResult {
-  // Strip markdown fences if present
-  let cleaned = raw.trim();
-  if (cleaned.startsWith('```')) {
-    const firstNewline = cleaned.indexOf('\n');
-    cleaned = cleaned.slice(firstNewline + 1);
-    const lastFence = cleaned.lastIndexOf('```');
-    if (lastFence !== -1) {
-      cleaned = cleaned.slice(0, lastFence);
-    }
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(cleaned);
-  } catch {
-    return { success: false, kind: 'json' };
-  }
-
-  const result = MarketReportLLMSchema.safeParse(parsed);
-  if (result.success) {
-    return { success: true, report: result.data };
-  }
-
-  const errorPaths = result.error.issues
-    .map((issue) => `${issue.path.length > 0 ? issue.path.join('.') : '(root)'}: ${issue.message}`)
-    .join('; ');
-  return { success: false, kind: 'schema', errorPaths };
 }
 
 function buildValidationRetrySystemPrompt(systemPrompt: string, errorPaths: string): string {
