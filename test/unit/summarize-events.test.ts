@@ -49,37 +49,43 @@ function makePool(
   recentEventRows: Array<Record<string, unknown>> = [],
 ) {
   const calls: Array<{ text: string; values: unknown[] }> = [];
+  const query = async (text: string, values?: unknown[]) => {
+    calls.push({ text, values: values ?? [] });
+
+    if (text.includes("SET batch_id = $1, status = 'processing'")) {
+      return { rows: [], rowCount: items.length };
+    }
+    if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
+      return { rows: items, rowCount: items.length };
+    }
+    if (text.includes('INSERT INTO summaries')) {
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes('FROM entities e') && text.includes('LEFT JOIN entity_aliases')) {
+      return { rows: entityLookupRows, rowCount: entityLookupRows.length };
+    }
+    if (text.includes('FROM events') && text.includes('ORDER BY event_time DESC')) {
+      return { rows: recentEventRows, rowCount: recentEventRows.length };
+    }
+    if (text.includes('INSERT INTO events')) {
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes("UPDATE items SET status = 'processed'")) {
+      return { rows: [], rowCount: items.length };
+    }
+    if (text.includes('UPDATE items')) {
+      return { rows: [], rowCount: items.length };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+
   return {
     calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-
-      if (text.includes("SET batch_id = $1, status = 'processing'")) {
-        return { rows: [], rowCount: items.length };
-      }
-      if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
-        return { rows: items, rowCount: items.length };
-      }
-      if (text.includes('INSERT INTO summaries')) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (text.includes('FROM entities e') && text.includes('LEFT JOIN entity_aliases')) {
-        return { rows: entityLookupRows, rowCount: entityLookupRows.length };
-      }
-      if (text.includes('FROM events') && text.includes('ORDER BY event_time DESC')) {
-        return { rows: recentEventRows, rowCount: recentEventRows.length };
-      }
-      if (text.includes('INSERT INTO events')) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (text.includes("UPDATE items SET status = 'processed'")) {
-        return { rows: [], rowCount: items.length };
-      }
-      if (text.includes('UPDATE items')) {
-        return { rows: [], rowCount: items.length };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    query,
+    connect: async () => ({
+      query,
+      release: () => {},
+    }),
   };
 }
 
@@ -96,7 +102,7 @@ function makeLlmResponse(body: Record<string, unknown>, followUp = false) {
 }
 
 const noopEntityManager = {
-  resolveEntities: async () => {},
+  resolveEntities: async () => [],
 };
 
 describe('summarize: structured event persistence', () => {

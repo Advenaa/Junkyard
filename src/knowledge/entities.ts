@@ -1,7 +1,7 @@
 import { ulid } from 'ulid';
 import { z } from 'zod';
 import type { Config } from '../config.js';
-import type { Pool } from '../db/connection.js';
+import type { Pool, PoolClient } from '../db/connection.js';
 import type { LLMCallParams, LLMCallResult } from '../llm.js';
 import type { Logger } from '../logger.js';
 
@@ -47,6 +47,7 @@ interface EntityManager {
     source: string,
     summaryId: string,
     language?: string | null,
+    client?: PoolClient,
   ): Promise<string[]>;
 }
 
@@ -56,10 +57,14 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
     source: string,
     summaryId: string,
     language?: string | null,
+    clientOverride?: PoolClient,
   ): Promise<string[]> {
-    const client = await pool.connect();
+    const client = clientOverride ?? (await pool.connect());
+    const ownsTransaction = clientOverride == null;
     try {
-      await client.query('BEGIN');
+      if (ownsTransaction) {
+        await client.query('BEGIN');
+      }
 
       const now = Date.now();
       const resolvedIds: string[] = [];
@@ -398,16 +403,22 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
       const resolvedEntityIds = [...new Set(entityIdMap.values())];
 
-      await client.query('COMMIT');
+      if (ownsTransaction) {
+        await client.query('COMMIT');
+      }
 
       log.info({ count: entities.length, source, summaryId }, `Resolved ${entities.length} entities from ${source}`);
 
       return resolvedEntityIds;
     } catch (err) {
-      await client.query('ROLLBACK');
+      if (ownsTransaction) {
+        await client.query('ROLLBACK').catch(() => {});
+      }
       throw err;
     } finally {
-      client.release();
+      if (ownsTransaction) {
+        client.release();
+      }
     }
   }
 

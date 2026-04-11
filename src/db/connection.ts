@@ -1,6 +1,7 @@
 import pg from 'pg';
 
 export type Pool = pg.Pool;
+export type PoolClient = pg.PoolClient;
 
 export function createPool(databaseUrl: string): pg.Pool {
   // OID 20 = INT8/BIGINT. node-postgres returns BIGINT as string by default.
