@@ -117,7 +117,6 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
 
   async function initQuota(): Promise<void> {
     if (initialized) return;
-    initialized = true;
     try {
       const today = new Date().toISOString().slice(0, 10);
       const { rows } = await pool.query<{ count: string }>(
@@ -125,11 +124,16 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         [new Date(today + 'T00:00:00Z').getTime()],
       );
       dailyCount = parseInt(rows[0]?.count ?? '0', 10);
+      initialized = true;
       if (dailyCount > 0) {
         log.info({ dailyCount }, 'Restored embedding quota from DB');
       }
-    } catch {
-      log.warn('Could not restore embedding quota from DB, starting at 0');
+    } catch (err) {
+      dailyCount = DAILY_QUOTA_LIMIT;
+      log.warn(
+        { err, dailyCount, limit: DAILY_QUOTA_LIMIT },
+        'Could not restore embedding quota from DB, locking quota until restore succeeds',
+      );
     }
   }
 
