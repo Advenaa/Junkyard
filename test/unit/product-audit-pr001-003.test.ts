@@ -97,13 +97,13 @@ describe('PR-003: Feed empty state for no Discord sources', () => {
     );
   });
 
-  it('shows guidance when no Discord sources exist', () => {
+  it('shows guidance when no Discord or Twitter sources exist', () => {
     assert.ok(src.includes('RawFeedNoSources'), 'Feed must render the extracted no-sources guidance component');
     assert.ok(
-      noSourcesSrc.includes('No Discord sources') ||
-        noSourcesSrc.includes('no Discord sources') ||
-        noSourcesSrc.includes('Add a Discord source'),
-      'Must show guidance message for empty Discord sources',
+      noSourcesSrc.includes('No Discord or Twitter sources') ||
+        noSourcesSrc.includes('no Discord or Twitter sources') ||
+        noSourcesSrc.includes('Add a Discord channel or Twitter source'),
+      'Must show guidance message for empty Discord or Twitter sources',
     );
   });
 });

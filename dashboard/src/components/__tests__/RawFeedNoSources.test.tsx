@@ -7,7 +7,9 @@ describe('RawFeedNoSources', () => {
     render(<RawFeedNoSources />);
 
     expect(screen.getByRole('heading', { name: 'Raw Feed' })).toBeInTheDocument();
-    expect(screen.getByText('No Discord sources configured')).toBeInTheDocument();
-    expect(screen.getByText('Add a Discord source in Settings to view raw messages here.')).toBeInTheDocument();
+    expect(screen.getByText('No Discord or Twitter sources configured')).toBeInTheDocument();
+    expect(
+      screen.getByText('Add a Discord channel or Twitter source in Settings to view raw messages here.'),
+    ).toBeInTheDocument();
   });
 });
