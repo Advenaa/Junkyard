@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createSentimentTracker } from '../../src/knowledge/sentiment.js';
+import { createSentimentTracker, getLastCompletedDayRollup } from '../../src/knowledge/sentiment.js';
 import type { Trend, MomentumEntry } from '../../src/knowledge/sentiment.js';
 import { computeDailySentiment } from '../../src/db/queries.js';
 
@@ -52,6 +52,16 @@ function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows:
 // ── 1. Momentum calculation ─────────────────────────────────────────────
 
 describe('Momentum calculation (runDaily)', () => {
+  it('targets the most recent fully completed local day at rollup time', () => {
+    const now = new Date('2025-04-11T02:00:00Z');
+    const rollup = getLastCompletedDayRollup(now, 'Asia/Jakarta');
+
+    assert.equal(rollup.dateString, '2025-04-10');
+    assert.equal(rollup.startMs, Date.parse('2025-04-09T17:00:00Z'));
+    assert.equal(rollup.endMs, Date.parse('2025-04-10T17:00:00Z'));
+    assert.ok(rollup.endMs <= now.getTime(), 'the rollup window must be fully in the past at digest time');
+  });
+
   it('computes negative momentum when recent sentiment < prior average', async () => {
     // Scenario: today's avg = 0.3, 2 prior recent days stored with sum=0.6 (avg 0.3 each)
     // recentAvg = (0.6 + 0.3) / (2 + 1) = 0.3

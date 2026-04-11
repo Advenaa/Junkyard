@@ -61,6 +61,16 @@ function dateToEpochMsBounds(dateString: string, timezone: string): { startMs: n
   return { startMs, endMs };
 }
 
+/** Resolve the most recent fully completed local day for daily rollups. */
+export function getLastCompletedDayRollup(
+  now: Date,
+  timezone: string,
+): { dateString: string; startMs: number; endMs: number } {
+  const todayStr = now.toLocaleDateString('en-CA', { timeZone: timezone });
+  const dateString = shiftDate(todayStr, -1);
+  return { dateString, ...dateToEpochMsBounds(dateString, timezone) };
+}
+
 /** Classify momentum + day-over-day change into a human-readable trend. */
 function classifyTrend(momentum: number | null, yesterdayMomentum: number | null): Trend {
   if (momentum === null) return 'stable';
@@ -228,7 +238,7 @@ export function createSentimentTracker(pool: Pool, log: Logger) {
 
   /**
    * Run daily after Stage 1 completes.
-   * Aggregates today's entity mentions into entity_sentiment_daily with momentum.
+   * Aggregates one fully completed local day's entity mentions into entity_sentiment_daily with momentum.
    * EN-001: Retries once after 2s on transient failure so synthesis gets fresh data.
    */
   async function runDaily(dateString: string, timezone: string): Promise<void> {
