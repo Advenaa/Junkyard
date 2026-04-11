@@ -35,30 +35,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
+
+      - name: Enable Corepack
+        run: corepack enable
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Install dashboard dependencies
-        run: cd dashboard && npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build (TypeScript + Vite dashboard)
-        run: npm run build
+        run: pnpm run build
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Format check
-        run: npm run format:check
+        run: pnpm run format:check
 
       - name: Run unit tests
-        run: npm test
+        run: pnpm test
         env:
           DATABASE_URL: postgresql://podders:podders@localhost:5432/podders_test
 
       - name: Run dashboard tests
-        run: npm run test:dashboard
+        run: pnpm run test:dashboard
 
   # Integration tests require real API keys configured as GitHub secrets:
   # ANTHROPIC_API_KEY, GEMINI_API_KEY, TWITTERAPI_KEY
@@ -89,16 +89,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: pnpm
+
+      - name: Enable Corepack
+        run: corepack enable
 
       - name: Install dependencies
-        run: npm ci && cd dashboard && npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
       - name: Run integration tests
-        run: npm run test:integration
+        run: pnpm run test:integration
         env:
           DATABASE_URL: postgresql://podders:podders@localhost:5432/podders_integration
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -130,24 +133,22 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
-            npm ci --production=false
-            cd dashboard && npm ci && cd ..
+            corepack enable
+            pnpm install --frozen-lockfile
 
-            if ! npm run build; then
+            if ! pnpm run build; then
               echo "BUILD FAILED — rolling back to $OLD_HASH"
               git checkout "$OLD_HASH"
-              npm ci --production=false
-              cd dashboard && npm ci && cd ..
-              npm run build
+              pnpm install --frozen-lockfile
+              pnpm run build
               exit 1
             fi
 
-            if ! node dist/index.js migrate; then
+            if ! pnpm run migrate; then
               echo "MIGRATION FAILED — rolling back to $OLD_HASH"
               git checkout "$OLD_HASH"
-              npm ci --production=false
-              cd dashboard && npm ci && cd ..
-              npm run build
+              pnpm install --frozen-lockfile
+              pnpm run build
               exit 1
             fi
 

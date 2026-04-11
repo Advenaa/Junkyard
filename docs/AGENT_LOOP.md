@@ -32,7 +32,7 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 2. Restate the task internally and choose exactly one slice to complete in this pass.
 3. Inspect the real code before changing anything.
 4. Make the smallest diff that fully solves the slice. Avoid drive-by refactors.
-5. Verify with `npm run build` and the narrowest relevant tests. If the change touches shared infrastructure or a bug fix with existing unit coverage, also run `npm test` when practical.
+5. Verify with `pnpm run build` and the narrowest relevant tests. If the change touches shared infrastructure or a bug fix with existing unit coverage, also run `pnpm test` when practical.
 6. If the task comes from a GitHub issue, follow the Clankerism consumer flow (full procedure in `AGENTS.md` / `CLAUDE.md` → "Clankerism Workflow"):
    - Claim atomically by pushing `build/issue-<N>` to origin *before* starting work; if the push is rejected, another agent won the race — exit, don't retry under a different name.
    - Flip `state:ready` → `state:in-progress` once the branch is on origin.

@@ -45,7 +45,7 @@ describe('config bootstrap logging', () => {
       delete process.env['API_KEY'];
       delete process.env['ALERT_WEBHOOK_URL'];
 
-      const config = loadConfig();
+      const config = loadConfig({ loadDotenv: false });
       const stderr = errors.join('\n');
 
       assert.ok(config.apiKey.startsWith('pk_'), 'loadConfig should still generate an API key');
@@ -85,7 +85,7 @@ describe('config bootstrap logging', () => {
       delete process.env['FRED_API_KEY'];
       delete process.env['ALERT_WEBHOOK_URL'];
 
-      const config = loadConfig();
+      const config = loadConfig({ loadDotenv: false });
       const warningOutput = warnings.join('\n');
 
       assert.equal(config.disabledFeatures.embeddings.disabled, true);
@@ -126,7 +126,7 @@ describe('config bootstrap logging', () => {
       process.env['API_KEY'] = 'configured-api-key';
       process.env['ALERT_WEBHOOK_URL'] = rawSecretLikeWebhook;
 
-      const config = loadConfig();
+      const config = loadConfig({ loadDotenv: false });
       const warningOutput = warnings.join('\n');
 
       assert.equal(config.alertWebhookUrl, null, 'invalid webhook URLs should be ignored');

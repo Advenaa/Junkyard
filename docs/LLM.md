@@ -80,7 +80,7 @@ Pi's `response.usage.cost.total` returns the USD cost for every call, regardless
 | Anthropic | Stage 1 (summarize, classify) | Claude Haiku |
 | Anthropic | Stage 3 (synthesis), pulse, chat | Claude Sonnet |
 
-Other Pi-supported providers (OpenAI, Google, Groq, Mistral) work but have not been regression-tested against the prompt suite. If switching, run `npm run test:prompts` to verify output quality.
+Other Pi-supported providers (OpenAI, Google, Groq, Mistral) work but have not been regression-tested against the prompt suite. If switching, run `pnpm run test:prompts` to verify output quality.
 
 ## Retry Decision Tree
 

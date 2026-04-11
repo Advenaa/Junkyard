@@ -36,6 +36,10 @@ export interface Config {
   secrets: string[];
 }
 
+export interface LoadConfigOptions {
+  loadDotenv?: boolean;
+}
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -60,8 +64,10 @@ function validateModelId(id: string, name: string): void {
   }
 }
 
-export function loadConfig(): Config {
-  dotenv.config();
+export function loadConfig(options: LoadConfigOptions = {}): Config {
+  if (options.loadDotenv !== false) {
+    dotenv.config();
+  }
 
   const anthropicApiKey = process.env['ANTHROPIC_API_KEY'] || null;
   const openaiApiKey = process.env['OPENAI_API_KEY'] || null;

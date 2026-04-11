@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install the Clankerism git hooks into this repo's .git/hooks directory.
-# Idempotent — safe to run as a postinstall step on every `npm ci`.
+# Idempotent — safe to run as a postinstall step on every `pnpm install`.
 set -euo pipefail
 
 # Find the repo root no matter where this script is invoked from

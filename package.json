@@ -3,16 +3,23 @@
   "version": "2.0.0",
   "description": "24/7 market intelligence engine for crypto/DeFi and tradfi",
   "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "protobufjs"
+    ]
+  },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc && cd dashboard && npm run build && cd ..",
+    "build": "tsc && corepack pnpm --dir dashboard build",
     "dev": "tsx watch src/index.ts -- run",
     "start": "node dist/index.js run",
     "test": "node --import tsx/esm --test test/unit/*.test.ts",
     "test:integration": "node scripts/run-integration-tests.mjs",
-    "test:dashboard": "cd dashboard && npx vitest run",
+    "test:dashboard": "corepack pnpm --dir dashboard test",
     "migrate": "node dist/index.js migrate",
     "lint": "eslint src/ dashboard/src/ test/",
     "lint:fix": "eslint --fix src/ dashboard/src/ test/",

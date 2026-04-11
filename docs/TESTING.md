@@ -513,10 +513,10 @@ describe('full pipeline integration', () => {
 
 ```bash
 # Unit tests (CI-safe, no API keys needed)
-npm test
+pnpm test
 
 # Integration (requires .env with ANTHROPIC_API_KEY)
-npm run test:integration
+pnpm run test:integration
 ```
 
 The integration test takes 30-60 seconds due to real LLM calls. It is designed to fail loudly if any pipeline stage produces invalid output, ensuring the full chain from raw item to delivered webhook embed works end to end.
@@ -579,7 +579,7 @@ Separate from golden file tests (which validate parsing of frozen LLM output). P
 - Fixtures in `test/prompts/fixtures/` — 8 frozen real inputs, each a JSON file with raw scraped content.
 - Golden files assert on **properties**: entity count range, urgency classification, presence of specific entity names, sentiment sign, fact anchors. Never exact text comparison.
 - Each fixture runs 3 times to account for non-determinism. A property must hold in all 3 runs to pass.
-- `npm run test:prompts` — manual, not CI. Costs ~$0.25 per run.
+- `pnpm run test:prompts` — manual, not CI. Costs ~$0.25 per run.
 
 ### Fixtures
 
@@ -638,6 +638,6 @@ A prompt change is a **regression** if entity recall drops below 80% or urgency 
 |-----------|------|-----------|
 | Unit tests (golden file, normalize, entity, API — 965 tests) | Every push | None |
 | Structural tests (source pattern verification, regression guards) | Every push | None |
-| Prompt regression tests (`npm run test:prompts`) | Manual, before merging prompt changes | Yes (~$0.25/run) |
+| Prompt regression tests (`pnpm run test:prompts`) | Manual, before merging prompt changes | Yes (~$0.25/run) |
 
 Prompt tests are never automated in CI — they cost money and are non-deterministic. Run them locally before any PR that touches system prompts or few-shot examples.

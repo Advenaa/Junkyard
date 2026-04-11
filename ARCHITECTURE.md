@@ -602,7 +602,7 @@ Discord webhook delivery. The habit trigger — proves the pipeline end-to-end b
 
 **Tailwind CSS 4** — use `@theme` in CSS (v4 pattern), not `tailwind.config.ts` (v3 pattern). Define colors as CSS custom properties: `--color-surface: #111118`, reference as `bg-surface`. Always dark, no `dark:` prefixes.
 
-**Separate package.json** — dashboard has its own `package.json` with react, react-dom, react-router, tailwindcss, vite, @vitejs/plugin-react. Root `postinstall` runs `cd dashboard && npm install`.
+**Workspace package split** — dashboard keeps its own `package.json` with react, react-dom, react-router, tailwindcss, vite, and `@vitejs/plugin-react`, but installs through the root `pnpm` workspace so one lockfile covers both packages.
 
 **MVP: 5 routes**
 

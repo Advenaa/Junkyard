@@ -184,7 +184,7 @@ const SPAM_RULES: SpamRule[] = [
 
 **Adding a new rule**: append to `SPAM_RULES` with a descriptive `name`. Optionally scope to specific sources. The `test` function receives the full `RawItem` and returns `true` to filter.
 
-**Testing rules**: unit tests in `test/unit/normalize.test.ts` use golden files. Add test cases as `{ input: RawItem, expected: 'ready' | 'filtered' }` objects. Run `npm test` to verify.
+**Testing rules**: unit tests in `test/unit/normalize.test.ts` use golden files. Add test cases as `{ input: RawItem, expected: 'ready' | 'filtered' }` objects. Run `pnpm test` to verify.
 
 Spam filtering kills 40-60% of Discord volume. RSS items rarely trigger spam rules but the `short-post` rule catches malformed feed entries.
 
@@ -224,4 +224,3 @@ if (source is 'rss' or 'news') AND content.length > 4000 AND NOT content_anchor:
 Because pre-summarize runs after language detection (which happens in normalize), the language check runs on the original content. Indonesian articles are correctly detected as `ind` and pass through. The pre-summary output (always English from Haiku) replaces the content afterward.
 
 Cost: ~$0.001 per article at Haiku rates.
-
