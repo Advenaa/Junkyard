@@ -175,6 +175,20 @@ interface DiagHealthEvents {
   events: DiagHealthEvent[];
 }
 
+interface LlmCostByModelEntry {
+  model: string;
+  totalCost: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  callCount: number;
+}
+
+interface LlmCostByModelResponse {
+  timezone: string;
+  sinceMs: number;
+  entries: LlmCostByModelEntry[];
+}
+
 interface Config {
   webhookUrl: string | null;
   digestTime: string | null;
@@ -455,6 +469,10 @@ async function fetchMacroOverviewData(): Promise<MacroOverview | null> {
 
 async function fetchDiagBackpressure(): Promise<DiagBackpressure> {
   return apiFetch<DiagBackpressure>('/diag/backpressure');
+}
+
+async function fetchLlmCostByModel(): Promise<LlmCostByModelResponse> {
+  return apiFetch<LlmCostByModelResponse>('/llm/cost-by-model');
 }
 
 async function fetchDiagStuckItems(): Promise<DiagStuckItems> {
@@ -2936,6 +2954,7 @@ function PipelineTab() {
   const [diagStuckItems, setDiagStuckItems] = useState<DiagStuckItems | null>(null);
   const [diagHaltedSources, setDiagHaltedSources] = useState<DiagHaltedSources | null>(null);
   const [diagHealthEvents, setDiagHealthEvents] = useState<DiagHealthEvents | null>(null);
+  const [llmCostByModel, setLlmCostByModel] = useState<LlmCostByModelResponse | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
   const [diagExpanded, setDiagExpanded] = useState(false);
   const [macroOverview, setMacroOverview] = useState<MacroOverview | null>(null);
@@ -3005,6 +3024,22 @@ function PipelineTab() {
       }
     });
 
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    fetchLlmCostByModel()
+      .then((data) => {
+        if (cancelled) return;
+        setLlmCostByModel(data);
+      })
+      .catch(() => {
+        /* best-effort — panel falls back to aggregate */
+      });
     return () => {
       cancelled = true;
     };
@@ -3512,6 +3547,33 @@ function PipelineTab() {
         <p className="text-text-primary text-lg font-mono">
           ${status.costToday.toFixed(2)} <span className="text-text-secondary text-xs">today</span>
         </p>
+
+        {llmCostByModel && llmCostByModel.entries.length > 0 && (
+          <div className="mt-3 border-t border-border pt-3">
+            <table className="w-full text-xs font-mono">
+              <thead className="text-text-secondary">
+                <tr>
+                  <th className="text-left pb-1 font-normal">Model</th>
+                  <th className="text-right pb-1 font-normal">Calls</th>
+                  <th className="text-right pb-1 font-normal">In/Out tokens</th>
+                  <th className="text-right pb-1 font-normal">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {llmCostByModel.entries.map((entry) => (
+                  <tr key={entry.model}>
+                    <td className="text-text-primary py-0.5 truncate max-w-[14ch]">{entry.model}</td>
+                    <td className="text-right text-text-secondary">{entry.callCount.toLocaleString()}</td>
+                    <td className="text-right text-text-secondary">
+                      {entry.totalInputTokens.toLocaleString()} / {entry.totalOutputTokens.toLocaleString()}
+                    </td>
+                    <td className="text-right text-text-primary">${entry.totalCost.toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {macroDisabled && disabledMacro ? (
