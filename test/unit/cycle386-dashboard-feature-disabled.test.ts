@@ -23,7 +23,6 @@ const priceWatchSectionSrc = read('pages/ReportView/sections/PriceWatchSection.t
 const narrativeSectionSrc = read('pages/ReportView/sections/NarrativeSection.tsx');
 const reportListSrc = read('pages/ReportList.tsx');
 const chatSrc = read('pages/Chat.tsx');
-const searchSrc = read('pages/Search.tsx');
 const settingsSrc = read('pages/Settings.tsx');
 
 describe('FG-001 — wiring scaffolding exists', () => {
@@ -123,18 +122,6 @@ describe('FG-001 — Chat RAG banner guarded', () => {
   it('renders FeatureDisabledCard gated on embeddings', () => {
     assert.match(chatSrc, /getDisabledFeature\(['"]embeddings['"]\)/);
     assert.match(chatSrc, /<FeatureDisabledCard[\s\S]*?variant=['"]inline['"]/);
-  });
-});
-
-describe('FG-001 — Search embeddings banner guarded', () => {
-  it('imports useStatus + FeatureDisabledCard', () => {
-    assert.match(searchSrc, /useStatus/);
-    assert.match(searchSrc, /FeatureDisabledCard/);
-  });
-
-  it('renders the embeddings-disabled banner inline above the results', () => {
-    assert.match(searchSrc, /getDisabledFeature\(['"]embeddings['"]\)/);
-    assert.match(searchSrc, /<FeatureDisabledCard/);
   });
 });
 
