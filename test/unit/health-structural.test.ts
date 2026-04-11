@@ -138,3 +138,21 @@ describe('HM-003: pool exhaustion hardcodes >= 10 (open issue)', () => {
     }
   });
 });
+
+describe('HM-004: missed pulse only alerts on closed activity window', () => {
+  it('checkMissedPulse excludes summaries from the most recent hour', () => {
+    const fnStart = source.indexOf('async function checkMissedPulse');
+    assert.ok(fnStart !== -1, 'checkMissedPulse function must exist');
+
+    const fnBody = source.slice(fnStart, source.indexOf('\n  async function', fnStart + 1));
+
+    assert.ok(
+      fnBody.includes('const oneHourAgo = Date.now() - 60 * 60 * 1000;'),
+      'checkMissedPulse must define oneHourAgo',
+    );
+    assert.ok(
+      fnBody.includes('AND created_at <= $2'),
+      'summary activity query must exclude the most recent hour so quiet skipped pulses do not false-alert',
+    );
+  });
+});

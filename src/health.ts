@@ -162,6 +162,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
 
   async function checkMissedPulse(): Promise<HealthCheckResult> {
     const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
 
     const { rows } = await pool.query<{ count: string }>(
       `
@@ -173,14 +174,29 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       [fourHoursAgo],
     );
 
-    if (parseInt(rows[0].count, 10) === 0) {
-      return {
-        name: 'missed_pulse',
-        status: 'critical',
-        message: 'No pulse report in last 4 hours',
-      };
+    if (parseInt(rows[0].count, 10) > 0) {
+      return { name: 'missed_pulse', status: 'ok' };
     }
-    return { name: 'missed_pulse', status: 'ok' };
+
+    const { rows: summaryRows } = await pool.query<{ count: string }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM summaries
+      WHERE created_at > $1
+        AND created_at <= $2
+    `,
+      [fourHoursAgo, oneHourAgo],
+    );
+
+    if (parseInt(summaryRows[0].count, 10) === 0) {
+      return { name: 'missed_pulse', status: 'ok' };
+    }
+
+    return {
+      name: 'missed_pulse',
+      status: 'critical',
+      message: 'No pulse report in last 4 hours',
+    };
   }
 
   async function checkMissedDaily(): Promise<HealthCheckResult> {
