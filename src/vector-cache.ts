@@ -1,4 +1,5 @@
 import type { Pool } from './db/connection.js';
+import { bytesToVector } from './embed.js';
 import type { Logger } from './logger.js';
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -30,14 +31,6 @@ export function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
   return denom === 0 ? 0 : dot / denom;
-}
-
-function bytesToVector(buf: Buffer): Float32Array | null {
-  if (buf.byteLength === 0 || buf.byteLength % 4 !== 0) {
-    return null;
-  }
-  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-  return new Float32Array(ab);
 }
 
 // ── Cache ──────────────────────────────────────────────────────────────
