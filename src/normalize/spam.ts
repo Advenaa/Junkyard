@@ -19,7 +19,11 @@ export const SPAM_RULES: SpamRule[] = [
   { name: 'id-gas', test: (i) => /^gas\s*!*$/i.test(i.content.trim()) },
   { name: 'id-mantap', test: (i) => /^mantap\s*[!.]*$/i.test(i.content.trim()) },
   { name: 'single-emoji', test: (i) => /^\p{Emoji}\s*$/u.test(i.content.trim()) },
-  { name: 'airdrop-copypasta', test: (i) => /airdrop/i.test(i.content) && i.content.includes('0x') },
+  {
+    name: 'airdrop-copypasta',
+    sources: ['discord'],
+    test: (i) => /airdrop/i.test(i.content) && i.content.includes('0x'),
+  },
 ];
 
 export function checkSpam(item: RawItem): { isSpam: boolean; rule?: string } {

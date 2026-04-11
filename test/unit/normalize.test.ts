@@ -191,6 +191,13 @@ describe('checkSpam', () => {
       assert.equal(result.rule, 'airdrop-copypasta');
     });
 
+    it('does not flag RSS airdrop coverage with a contract address', () => {
+      const content =
+        'The protocol confirmed its governance token airdrop today and published the token contract address 0x1234567890abcdef1234567890abcdef12345678 for market participants following the launch.';
+      const result = checkSpam(makeItem({ source: 'rss', content }));
+      assert.equal(result.isSpam, false);
+    });
+
     it('does not flag "airdrop" without a wallet address', () => {
       const content = 'The airdrop announcement was made today for all token holders worldwide';
       const rule = SPAM_RULES.find((r) => r.name === 'airdrop-copypasta')!;
@@ -207,8 +214,7 @@ describe('checkSpam', () => {
   // Source filtering
   describe('source filtering', () => {
     it('skips rules with non-matching source', () => {
-      // All current rules have no source restriction, so they apply to all sources.
-      // Verify checkSpam works across different source types.
+      // gm-gn remains global, so it should still match across source types.
       for (const source of ['discord', 'twitter', 'rss', 'news'] as const) {
         const result = checkSpam(makeItem({ source, content: 'gm' }));
         assert.equal(result.isSpam, true);
@@ -758,5 +764,25 @@ describe('normalize error handling', () => {
 
     const result = await normalize(item);
     assert.equal(result, 'error');
+  });
+});
+
+describe('RSS airdrop coverage regression', () => {
+  it('keeps RSS airdrop coverage with a contract address out of the spam bucket', async () => {
+    const pool = makeMockPool();
+    const log = makeMockLog();
+    const config = makeMockConfig();
+    const llm = makeMockLlm();
+    const { normalize } = createNormalizer(pool, log, config, llm);
+
+    const item = makeItem({
+      source: 'rss',
+      author: 'CoinDesk',
+      content:
+        'The protocol confirmed its governance token airdrop today and published the token contract address 0x1234567890abcdef1234567890abcdef12345678 while outlining launch details for readers tracking the release.',
+    });
+
+    const result = await normalize(item);
+    assert.equal(result, 'ready');
   });
 });
