@@ -137,6 +137,45 @@ describe('verifyEntities', () => {
     assert.equal(result.entities.length, 1);
   });
 
+  it('does not verify ETH from substring matches inside longer words', () => {
+    const parsed = makeSummary([
+      { name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 1, sentiment: 0.1 },
+    ]);
+    const result = verifyEntities(parsed, 'methodology looks bad', noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.entities, []);
+  });
+
+  it('verifies ETH when it appears as a standalone ticker', () => {
+    const parsed = makeSummary([
+      { name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 1, sentiment: 0.1 },
+    ]);
+    const result = verifyEntities(parsed, 'ETH is pumping', noopLog, 'discord', 'chan1');
+    assert.equal(result.entities.length, 1);
+    assert.equal(result.entities[0].name, 'Ethereum');
+  });
+
+  it('verifies canonical names case-insensitively at word boundaries', () => {
+    const parsed = makeSummary([
+      { name: 'Ethereum', aliases: ['ETH'], type: 'token', mentionCount: 1, sentiment: 0.1 },
+    ]);
+    const result = verifyEntities(parsed, 'ethereum', noopLog, 'discord', 'chan1');
+    assert.equal(result.entities.length, 1);
+    assert.equal(result.entities[0].name, 'Ethereum');
+  });
+
+  it('does not verify BTC from longer derived words', () => {
+    const parsed = makeSummary([{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 1, sentiment: 0.1 }]);
+    const result = verifyEntities(parsed, 'bitcoinized', noopLog, 'discord', 'chan1');
+    assert.deepStrictEqual(result.entities, []);
+  });
+
+  it('verifies BTC when it is prefixed by a ticker symbol', () => {
+    const parsed = makeSummary([{ name: 'Bitcoin', aliases: ['BTC'], type: 'token', mentionCount: 1, sentiment: 0.1 }]);
+    const result = verifyEntities(parsed, '$BTC', noopLog, 'discord', 'chan1');
+    assert.equal(result.entities.length, 1);
+    assert.equal(result.entities[0].name, 'Bitcoin');
+  });
+
   it('preserves non-entity fields of the summary', () => {
     const parsed = makeSummary([{ name: 'Ghost', aliases: [], type: 'project', mentionCount: 1, sentiment: 0 }]);
     parsed.urgency = 'breaking';

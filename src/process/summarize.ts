@@ -37,6 +37,18 @@ const EventFollowUpSchema = z.object({
   followUp: z.boolean(),
 });
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasBoundaryMatch(rawText: string, candidate: string): boolean {
+  const trimmed = candidate.trim();
+  if (trimmed === '') return false;
+
+  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_])${escapeRegExp(trimmed)}(?=$|[^A-Za-z0-9_])`, 'i');
+  return pattern.test(rawText);
+}
+
 interface EntityManager {
   resolveEntities(
     entities: ExtractedEntity[],
@@ -270,9 +282,8 @@ export function verifyEntities(
   source: string,
   sourceId: string,
 ): ChunkSummary {
-  const lower = rawText.toLowerCase();
   const verified = parsed.entities.filter((entity) => {
-    const found = [entity.name, ...entity.aliases].some((n) => lower.includes(n.toLowerCase()));
+    const found = [entity.name, ...entity.aliases].some((name) => hasBoundaryMatch(rawText, name));
     if (!found) {
       log.info({ entity: entity.name, source, sourceId }, 'Dropped entity not found in raw text');
     }
