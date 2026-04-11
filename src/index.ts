@@ -730,6 +730,7 @@ program
       onTokensChanged,
       getTokenHealth,
       initialDiscordTokens,
+      () => scheduler.getDiagnostics(),
     );
     await startServer(app, config.port, log);
 

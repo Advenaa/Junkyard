@@ -15,9 +15,35 @@ export interface SchedulerDeps {
   onCrashRecovery: () => Promise<number>;
 }
 
+export interface SchedulerJobDiagnostics {
+  job: string;
+  cron: string;
+  timezone: string | null;
+  status: string;
+  nextRun: string | null;
+}
+
+export interface SchedulerDiagnostics {
+  processTimezone: string | null;
+  jobs: SchedulerJobDiagnostics[];
+}
+
+type ScheduledTaskWithDiagnostics = cron.ScheduledTask & {
+  getNextRun?: () => Date | null;
+  getStatus?: () => string;
+};
+
 export function createScheduler(deps: SchedulerDeps) {
   const { pool, log } = deps;
   const tasks: cron.ScheduledTask[] = [];
+  const registeredJobs = new Map<
+    string,
+    {
+      expression: string;
+      timezone: string | null;
+      task: ScheduledTaskWithDiagnostics;
+    }
+  >();
   const mutexes: Record<string, boolean> = {};
   let shuttingDown = false;
   let dailyTask: cron.ScheduledTask | null = null;
@@ -50,14 +76,60 @@ export function createScheduler(deps: SchedulerDeps) {
         void withMutex(name, handler);
       },
       options,
-    );
+    ) as ScheduledTaskWithDiagnostics;
     tasks.push(task);
-    log.info({ job: name, cron: expression }, 'registered cron job');
+    registeredJobs.set(name, { expression, timezone: options?.timezone ?? null, task });
+    log.info(
+      { job: name, cron: expression, timezone: options?.timezone, nextRun: getTaskNextRun(task) },
+      'registered cron job',
+    );
+  }
+
+  function normalizeSchedulerTimezone(timezone: string | null | undefined): string {
+    const candidate = timezone?.trim() ? timezone.trim() : 'Asia/Jakarta';
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: candidate });
+      return candidate;
+    } catch {
+      log.warn({ timezone: candidate }, 'invalid scheduler timezone, using Asia/Jakarta');
+      return 'Asia/Jakarta';
+    }
+  }
+
+  async function getSchedulerTimezone(): Promise<string> {
+    return normalizeSchedulerTimezone((await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta');
+  }
+
+  function ensureUtcProcessTimezone(): void {
+    const currentTimezone = process.env.TZ;
+    if (currentTimezone === 'UTC') return;
+    process.env.TZ = 'UTC';
+    if (currentTimezone && currentTimezone.length > 0) {
+      log.warn(
+        { previousTimezone: currentTimezone, processTimezone: 'UTC' },
+        'timezone-aware cron jobs require UTC host timezone; forcing process.env.TZ to UTC',
+      );
+      return;
+    }
+    log.info({ processTimezone: 'UTC' }, 'timezone-aware cron jobs defaulted process.env.TZ to UTC');
+  }
+
+  function getTaskNextRun(task: ScheduledTaskWithDiagnostics): string | null {
+    const nextRun = typeof task.getNextRun === 'function' ? task.getNextRun() : null;
+    if (!(nextRun instanceof Date) || Number.isNaN(nextRun.getTime())) {
+      return null;
+    }
+    return nextRun.toISOString();
+  }
+
+  function getTaskStatus(task: ScheduledTaskWithDiagnostics): string {
+    const status = typeof task.getStatus === 'function' ? task.getStatus() : 'unknown';
+    return typeof status === 'string' && status.length > 0 ? status : 'unknown';
   }
 
   async function buildDailyCron(): Promise<{ expression: string; timezone: string }> {
     const digestTime = await getAppConfig(pool, 'digest_time');
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+    const timezone = await getSchedulerTimezone();
 
     let expression = '0 9 * * *';
     if (digestTime) {
@@ -82,8 +154,9 @@ export function createScheduler(deps: SchedulerDeps) {
     if (shuttingDown) return;
     const { expression, timezone } = await buildDailyCron();
     const previousDailyTask = dailyTask;
+    ensureUtcProcessTimezone();
 
-    let nextDailyTask: cron.ScheduledTask;
+    let nextDailyTask: ScheduledTaskWithDiagnostics;
     try {
       nextDailyTask = cron.schedule(
         expression,
@@ -91,7 +164,7 @@ export function createScheduler(deps: SchedulerDeps) {
           void withMutex('daily-synthesis', deps.onDaily);
         },
         { timezone },
-      );
+      ) as ScheduledTaskWithDiagnostics;
     } catch (err) {
       log.error({ err, cron: expression, timezone }, 'failed to rebuild daily cron');
       if (previousDailyTask) {
@@ -108,21 +181,27 @@ export function createScheduler(deps: SchedulerDeps) {
     }
     dailyTask = nextDailyTask;
     tasks.push(nextDailyTask);
-    log.info({ job: 'daily-synthesis', cron: expression, timezone }, 'daily cron rebuilt');
+    registeredJobs.set('daily-synthesis', { expression, timezone, task: nextDailyTask });
+    log.info(
+      { job: 'daily-synthesis', cron: expression, timezone, nextRun: getTaskNextRun(nextDailyTask) },
+      'daily cron rebuilt',
+    );
   }
 
   async function start(): Promise<void> {
     const recovered = await deps.onCrashRecovery();
     log.info({ recovered }, 'crash recovery complete');
+    const timezone = await getSchedulerTimezone();
+    ensureUtcProcessTimezone();
 
     register('source-poll-tick', '* * * * *', deps.onSourcePollTick);
     register('market-pulse', '0 */3 * * *', deps.onPulse, {
       scheduled: true,
-      timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta',
+      timezone,
     });
     register('health-monitor', '*/5 * * * *', deps.onHealthCheck, {
       scheduled: true,
-      timezone: (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta',
+      timezone,
     });
     await refreshDailyCron();
 
@@ -153,5 +232,18 @@ export function createScheduler(deps: SchedulerDeps) {
     log.info('scheduler stopped');
   }
 
-  return { start, stop, refreshDailyCron, /** @internal — exposed for unit tests */ withMutex };
+  function getDiagnostics(): SchedulerDiagnostics {
+    return {
+      processTimezone: process.env.TZ ?? null,
+      jobs: Array.from(registeredJobs.entries()).map(([job, meta]) => ({
+        job,
+        cron: meta.expression,
+        timezone: meta.timezone,
+        status: getTaskStatus(meta.task),
+        nextRun: getTaskNextRun(meta.task),
+      })),
+    };
+  }
+
+  return { start, stop, refreshDailyCron, getDiagnostics, /** @internal — exposed for unit tests */ withMutex };
 }
