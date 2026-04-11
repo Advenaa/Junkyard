@@ -250,17 +250,7 @@ program
       process.exit(1);
     }
 
-    // ── 0. Seed entity aliases ───────────────────────────────────────
-    const seeder = createSeeder(pool, log);
-    try {
-      await seeder.seedCoinGecko();
-      await seeder.seedIndonesian();
-      await seeder.seedCompetitorRelationships();
-    } catch (err) {
-      log.warn({ err }, 'Entity seeding failed, continuing without seeds');
-    }
-
-    // ── 1. Shared services ────────────────────────────────────────────
+    // ── 0. Shared services ────────────────────────────────────────────
     const llm = createLLM(pool, log, config);
     const embedder = createEmbedder(config, pool, log);
     const vectorCache = createVectorCache(pool, log);
@@ -291,6 +281,26 @@ program
     const decayManager = createDecayManager(pool, log);
     const delivery = createDelivery(pool, log, config);
     const healthMonitor = createHealthMonitor(pool, log, config);
+
+    const seeder = createSeeder(pool, log);
+    try {
+      const coingeckoCount = await seeder.seedCoinGecko();
+      const indonesianCount = await seeder.seedIndonesian();
+      const competitorCount = await seeder.seedCompetitorRelationships();
+      log.info({ coingeckoCount, indonesianCount, competitorCount }, 'Entity seeding complete');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn({ err }, 'Entity seeding failed, continuing without seeds');
+      await healthMonitor
+        .recordEvent({
+          category: 'seed_failure',
+          severity: 'warn',
+          message: `Entity seeding failed: ${msg}`,
+          metadata: { error: msg },
+        })
+        .catch((recordErr) => log.error({ err: recordErr }, 'Failed to record seed_failure health event'));
+    }
+
     const backup = createBackup(config, log);
     const retention = createRetention(pool, log);
     const initialDiscordTokens = await loadAllTokens(pool, config.discordTokens, log);
