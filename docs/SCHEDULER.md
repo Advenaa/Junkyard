@@ -46,7 +46,6 @@ Cron registration order matches this table top-to-bottom. Event-driven jobs (Sta
 | Stage 2 correlate | direct call | After each Stage 1 | `correlate.run()` | Stage 1 completion |
 | Stage 3 flash | direct call | When Stage 1 returns `urgency: 'breaking'` | `synthesize.runFlash()` | Breaking chunk from Stage 1 |
 | Delivery | direct call | After Stage 3 daily | `webhook.deliver(report)` | Stage 3 daily completion |
-| Trust weight adjust | direct call | 1 hour after flash delivery | `trust.adjustWeights(flashId)` | Flash delivery completion |
 
 Backup, retention, and entity decay are **not** separate cron jobs — they run sequentially inside `onDaily()` after synthesis and delivery complete.
 
@@ -127,19 +126,11 @@ cron('* * * * *', { timezone: 'UTC' })
        //   └─ SQL: entities appearing in 2+ sources within same window
 
        if (batches.some(b => b.urgency === 'breaking')) {
-         const flashReport = await synthesize.runFlash()
+         await synthesize.runFlash()
          //   ├─ reads summaries from last 4h
          //   ├─ calls Sonnet via llm.ts
          //   ├─ writes report with type='flash'
          //   └─ await webhook.deliver(report, { prefix: '[FLASH]' })
-
-         if (flashReport) {
-           // Schedule trust weight adjustment 1 hour after flash delivery
-           setTimeout(() => trust.adjustWeights(flashReport.id), 60 * 60 * 1000);
-           //   ├─ checks which sources confirmed within 1 hour
-           //   ├─ confirmed sources: trust_weight += 0.05 (capped at initial + 0.2)
-           //   └─ unconfirmed sources: trust_weight -= 0.03 (floored at initial - 0.2)
-         }
        }
 
        await embedPipeline.run()
@@ -239,9 +230,6 @@ export async function detect(): Promise<Narrative[]>
 
 // src/process/pulse.ts
 export async function run(): Promise<MarketReport | null>
-
-// src/knowledge/trust.ts
-export async function adjustWeights(flashReportId: string): Promise<void>
 
 // src/health.ts
 export async function check(): Promise<void>
