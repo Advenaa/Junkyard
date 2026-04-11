@@ -4,6 +4,12 @@ import dns from 'node:dns';
 import { Agent } from 'undici';
 import { fetchValidated, validateUrl } from '../../src/url-validator.js';
 
+function createErrorWithCode(message: string, code: string): Error & { code: string } {
+  const err = new Error(message) as Error & { code: string };
+  err.code = code;
+  return err;
+}
+
 describe('validateUrl', () => {
   it('should accept a valid HTTPS URL', async (t) => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
@@ -285,6 +291,41 @@ describe('validateUrl', () => {
     resolve6Mock.mock.restore();
   });
 
+  it('orders resolvedIps with IPv4 addresses before IPv6 addresses', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34', '93.184.216.35']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => [
+      '2606:4700:4700::1111',
+      '2001:4860:4860::8888',
+    ]);
+
+    const result = await validateUrl('https://safe.example.com');
+
+    assert.strictEqual(result.valid, true);
+    assert.deepStrictEqual(result.resolvedIps, [
+      '93.184.216.34',
+      '93.184.216.35',
+      '2606:4700:4700::1111',
+      '2001:4860:4860::8888',
+    ]);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('keeps resolvedIp backward-compatible as the first ordered public IP', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['2606:4700:4700::1111']);
+
+    const result = await validateUrl('https://safe.example.com');
+
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.resolvedIp, '93.184.216.34');
+    assert.deepStrictEqual(result.resolvedIps, ['93.184.216.34', '2606:4700:4700::1111']);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
   it('should reject when DNS has no records (both fail)', async (t) => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
       throw new Error('ENOTFOUND');
@@ -346,6 +387,31 @@ describe('validateUrl', () => {
 });
 
 describe('fetchValidated', () => {
+  it('fails over to the next resolved IP when a wrapped transient network error occurs', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['1.2.3.4', '5.6.7.8']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['2001:db8::1']);
+    let callCount = 0;
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        throw new TypeError('fetch failed', { cause: createErrorWithCode('first IP unreachable', 'EHOSTUNREACH') });
+      }
+
+      return new Response('ok', { status: 200 });
+    });
+
+    const result = await fetchValidated('https://safe.example.com');
+
+    assert.ok(result.response);
+    assert.strictEqual(await result.response.text(), 'ok');
+    assert.strictEqual(fetchMock.mock.callCount(), 2);
+    assert.deepStrictEqual(result.validation.resolvedIps, ['1.2.3.4', '5.6.7.8', '2001:db8::1']);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
   it('pins fetches with a dispatcher while preserving the original URL', async (t) => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
@@ -410,6 +476,62 @@ describe('fetchValidated', () => {
     fetchMock.mock.restore();
     resolve4Mock.mock.restore();
     resolve6Mock.mock.restore();
+  });
+
+  it('does not retry the next IP after a non-transient TLS error', async (t) => {
+    const tlsError = createErrorWithCode('certificate mismatch', 'ERR_TLS_CERT_ALTNAME_INVALID');
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      throw tlsError;
+    });
+
+    await assert.rejects(
+      fetchValidated('https://safe.example.com', undefined, {
+        valid: true,
+        resolvedIp: '1.2.3.4',
+        resolvedIps: ['1.2.3.4', '5.6.7.8'],
+      }),
+      (err: unknown) => {
+        assert.strictEqual(err, tlsError);
+        return true;
+      },
+    );
+    assert.strictEqual(fetchMock.mock.callCount(), 1);
+
+    fetchMock.mock.restore();
+  });
+
+  it('stops iterating resolved IPs when the caller signal aborts', async (t) => {
+    const controller = new AbortController();
+    const abortReason = new DOMException('Timed out', 'AbortError');
+    const fetchMock = t.mock.method(globalThis, 'fetch', async (_url, init) => {
+      const signal = init?.signal;
+      assert.ok(signal);
+
+      return await new Promise<Response>((_resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+    });
+
+    const pending = fetchValidated(
+      'https://safe.example.com',
+      { signal: controller.signal },
+      { valid: true, resolvedIp: '1.2.3.4', resolvedIps: ['1.2.3.4', '5.6.7.8'] },
+    );
+    controller.abort(abortReason);
+
+    await assert.rejects(pending, (err: unknown) => {
+      assert.strictEqual(err, abortReason);
+      return true;
+    });
+    assert.strictEqual(fetchMock.mock.callCount(), 1);
+
+    fetchMock.mock.restore();
   });
 
   it('reuses an existing validation without performing a fresh DNS lookup', async (t) => {

@@ -111,12 +111,70 @@ function isPrivateIp(ip: string): boolean {
 export interface UrlValidationResult {
   valid: boolean;
   reason?: string;
-  /** First public IP the hostname resolved to. Callers should pin requests to this IP. */
+  /** First public IP the hostname resolved to after IPv4-first ordering. */
   resolvedIp?: string;
+  /** All public IPs the hostname resolved to, ordered IPv4-first for fetch failover. */
+  resolvedIps?: string[];
 }
 
 type ValidatedFetchInit = Parameters<typeof fetch>[1];
 type ValidatedFetchInitWithDispatcher = ValidatedFetchInit & { dispatcher?: Dispatcher };
+
+const TRANSIENT_NETWORK_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+function sortResolvedIps(ips: string[]): string[] {
+  return [...ips].sort((left, right) => {
+    const leftPriority = net.isIPv4(left) ? 0 : 1;
+    const rightPriority = net.isIPv4(right) ? 0 : 1;
+    return leftPriority - rightPriority;
+  });
+}
+
+function getErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null || !('code' in err)) {
+    return undefined;
+  }
+
+  const { code } = err as { code?: unknown };
+  return typeof code === 'string' ? code : undefined;
+}
+
+function isTransientFetchError(err: unknown): boolean {
+  const directCode = getErrorCode(err);
+  if (directCode !== undefined && TRANSIENT_NETWORK_ERROR_CODES.has(directCode)) {
+    return true;
+  }
+
+  if (!(err instanceof Error) || err.message !== 'fetch failed') {
+    return false;
+  }
+
+  const causeCode = getErrorCode((err as Error & { cause?: unknown }).cause);
+  return causeCode !== undefined && TRANSIENT_NETWORK_ERROR_CODES.has(causeCode);
+}
+
+function throwIfAborted(signal: AbortSignal | null | undefined): void {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  if (signal.reason instanceof Error) {
+    throw signal.reason;
+  }
+
+  throw new DOMException(
+    typeof signal.reason === 'string' && signal.reason.length > 0 ? signal.reason : 'The operation was aborted',
+    'AbortError',
+  );
+}
 
 export async function validateUrl(url: string): Promise<UrlValidationResult> {
   // 1. Parse URL
@@ -178,14 +236,19 @@ export async function validateUrl(url: string): Promise<UrlValidationResult> {
     return { valid: false, reason: 'DNS resolution failed' };
   }
 
-  for (const ip of allIps) {
+  const resolvedIps = sortResolvedIps(allIps);
+
+  for (const ip of resolvedIps) {
     if (isPrivateIp(ip)) {
       return { valid: false, reason: 'URL resolves to private IP' };
     }
   }
 
-  // 7. All checks passed — return first resolved IP so callers can pin to it
-  return { valid: true, resolvedIp: allIps[0] };
+  return {
+    valid: true,
+    resolvedIp: resolvedIps[0],
+    resolvedIps,
+  };
 }
 
 function createPinnedDispatcher(resolvedIp: string): Dispatcher {
@@ -278,23 +341,35 @@ export async function fetchValidated(
     return { response: null, validation };
   }
 
-  const dispatcher = createPinnedDispatcher(validation.resolvedIp);
+  const signal = init?.signal;
+  const resolvedIps = validation.resolvedIps?.length ? validation.resolvedIps : [validation.resolvedIp];
+  let lastTransientError: unknown;
 
-  try {
-    // Use the original URL so TLS SNI and certificate verification still target
-    // the hostname, while the dispatcher lookup pins the actual socket to the
-    // validated IP address.
-    const response = await fetch(url, {
-      ...(init ?? {}),
-      dispatcher,
-    } as ValidatedFetchInitWithDispatcher);
+  for (const resolvedIp of resolvedIps) {
+    throwIfAborted(signal);
 
-    return {
-      response: bindDispatcherLifecycle(response, dispatcher),
-      validation,
-    };
-  } catch (err) {
-    await closeDispatcher(dispatcher);
-    throw err;
+    const dispatcher = createPinnedDispatcher(resolvedIp);
+
+    try {
+      const response = await fetch(url, {
+        ...(init ?? {}),
+        dispatcher,
+      } as ValidatedFetchInitWithDispatcher);
+
+      return {
+        response: bindDispatcherLifecycle(response, dispatcher),
+        validation,
+      };
+    } catch (err) {
+      await closeDispatcher(dispatcher);
+      if (!isTransientFetchError(err)) {
+        throw err;
+      }
+
+      lastTransientError = err;
+      throwIfAborted(signal);
+    }
   }
+
+  throw lastTransientError;
 }
