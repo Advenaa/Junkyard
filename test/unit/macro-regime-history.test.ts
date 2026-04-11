@@ -101,7 +101,7 @@ describe('getMacroRegimeHistoryByReport', () => {
 
 describe('Macro regime history structure', () => {
   const migrations = readSrc('src/db/migrations.ts');
-  const synth = readSrc('src/process/synthesize.ts');
+  const synth = readSrc('src/process/synthesize.ts') + '\n' + readSrc('src/process/synthesis-context.ts');
   const server = readServerSource();
 
   it('migration 32 creates macro_regimes table with a unique report_id', () => {

@@ -25,7 +25,7 @@ function readSrc(relPath: string): string {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Synthesize: alpha propagation prompt injection', () => {
-  const src = readSrc('src/process/synthesize.ts');
+  const src = readSrc('src/process/synthesize.ts') + '\n' + readSrc('src/process/synthesis-context.ts');
 
   it('imports getAlphaPropagationSummary from ../db/queries.js', () => {
     assert.match(src, /getAlphaPropagationSummary/);

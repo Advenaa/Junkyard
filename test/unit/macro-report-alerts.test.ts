@@ -33,7 +33,7 @@ describe('MarketReportLLMSchema includes macroAlerts', () => {
 });
 
 describe('Daily and pulse prompts mention macroAlerts', () => {
-  const synth = readSrc('src/process/synthesize.ts');
+  const synth = readSrc('src/process/synthesize.ts') + '\n' + readSrc('src/process/synthesis-context.ts');
   const pulse = readSrc('src/process/pulse.ts');
 
   it('daily prompt schema includes macroAlerts', () => {

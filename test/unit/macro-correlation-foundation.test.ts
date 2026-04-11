@@ -118,7 +118,7 @@ describe('Macro tracker integration', () => {
 });
 
 describe('Macro prompt context', () => {
-  const synth = readSrc('src/process/synthesize.ts');
+  const synth = readSrc('src/process/synthesize.ts') + '\n' + readSrc('src/process/synthesis-context.ts');
   const pulse = readSrc('src/process/pulse.ts');
 
   it('daily synthesis prompt mentions macro_context', () => {
