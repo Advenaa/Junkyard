@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createSynthesizer } from '../../src/process/synthesize.js';
 import type { Config } from '../../src/config.js';
 
@@ -8,7 +9,7 @@ import type { Config } from '../../src/config.js';
 // ---------------------------------------------------------------------------
 
 /** Build a mock Pool whose .query() returns the given rows/rowCount. */
-function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []) {
+function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number; error?: unknown }> = []) {
   let callIndex = 0;
   const calls: Array<{ text: string; values: unknown[] }> = [];
   return {
@@ -17,6 +18,9 @@ function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []
       calls.push({ text, values: values ?? [] });
       const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
       callIndex++;
+      if ('error' in resp && resp.error !== undefined) {
+        throw resp.error;
+      }
       return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
     },
   };
@@ -1222,6 +1226,128 @@ describe('synthesize: runFlash', () => {
     assert.notStrictEqual(result, null);
     assert.match(llmCalls[1]!.system, /validation errors/i);
     assert.match(llmCalls[1]!.system, /keyEvents/);
+  });
+
+  it('records a synth_aborted health event before rethrowing a flash DB failure after synthesis', async () => {
+    const entity = {
+      entityName: 'Bitcoin',
+      sources: [{ source: 'discord', sourceId: 'src-1', trustWeight: 1 }],
+      weightedSum: 6.0,
+      urgency: 'breaking',
+    };
+    const row = makeSummaryRow();
+    const pool = mockPool([
+      { rows: [row] },
+      { rows: [] },
+      { rows: [{ value: 'UTC' }] },
+      { error: new Error('db down') },
+      { rows: [], rowCount: 1 },
+    ]);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      mockLlm() as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    await assert.rejects(synth.runFlash([entity]), /db down/);
+
+    const healthCall = pool.calls.find((call) => call.text.includes('INSERT INTO health_events'));
+    assert.ok(healthCall, 'expected a health_events insert before the error escaped');
+    assert.equal(healthCall!.values[1], 'synth_aborted');
+    assert.equal(healthCall!.values[2], 'error');
+    assert.match(String(healthCall!.values[3]), /flash synthesis aborted: db down/);
+    const metadata = JSON.parse(String(healthCall!.values[4])) as {
+      stage: string;
+      error: string;
+      timestamp: number;
+    };
+    assert.equal(metadata.stage, 'flash');
+    assert.equal(metadata.error, 'db down');
+    assert.equal(typeof metadata.timestamp, 'number');
+  });
+
+  it('uses Asia/Jakarta as default flash timezone when config load fails', async () => {
+    const entity = {
+      entityName: 'Bitcoin',
+      sources: [{ source: 'discord', sourceId: 'src-1', trustWeight: 1 }],
+      weightedSum: 6.0,
+      urgency: 'breaking',
+    };
+    const row = makeSummaryRow();
+    const expectedDate = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: 'Asia/Jakarta',
+    }).format(new Date());
+    const pool = mockPool([
+      { rows: [row] },
+      { rows: [] },
+      { error: new Error('timezone unavailable') },
+      {
+        rows: [
+          {
+            id: 'report-timezone',
+            date: expectedDate,
+            type: 'flash',
+            body: makeReportJson(),
+            tldr: 'Bitcoin rallied on ETF flows. Market sentiment is bullish.',
+            sentiment: 0.7,
+            delivery_status: 'pending',
+            delivered_at: null,
+            created_at: Date.now(),
+          },
+        ],
+      },
+    ]);
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      mockLlm() as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    const result = await synth.runFlash([entity]);
+
+    assert.notStrictEqual(result, null);
+    const insertCall = pool.calls.find((call) => call.text.includes('INSERT INTO reports'));
+    assert.ok(insertCall, 'expected flash report insertion to proceed');
+    assert.equal(insertCall!.values[1], expectedDate);
+    assert.ok(
+      !pool.calls.some((call) => call.text.includes('INSERT INTO health_events')),
+      'timezone fallback should not record a synth_aborted event',
+    );
+  });
+});
+
+describe('index flash pipeline error routing', () => {
+  it('logs flash failures separately from summarizer failures', () => {
+    const indexSrc = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+    const loopStart = indexSrc.indexOf('for (const row of sourcesWithReady.rows)');
+    const loopEnd = indexSrc.indexOf('// Embed new summaries immediately', loopStart);
+
+    assert.ok(loopStart > -1, 'expected the source poll loop in index.ts');
+    assert.ok(loopEnd > loopStart, 'expected to isolate the source poll loop body');
+
+    const loopBody = indexSrc.slice(loopStart, loopEnd);
+
+    assert.match(
+      loopBody,
+      /catch \(err: unknown\) {\s*log\.error\(\{ err, source: row\.source, sourceId: row\.source_id \}, 'summarizer batch failed'\);\s*continue;\s*}/s,
+      'summarizer failures should be logged and short-circuit before flash handling',
+    );
+    assert.match(
+      loopBody,
+      /if \(result\.hasBreaking\) {\s*try {[\s\S]*log\.error\(\{ err, source: row\.source, sourceId: row\.source_id \}, 'flash report pipeline failed'\);\s*}\s*}/s,
+      'flash/correlate/delivery failures should log with the flash-specific label',
+    );
   });
 });
 

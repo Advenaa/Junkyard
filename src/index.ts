@@ -484,8 +484,10 @@ program
       );
 
       for (const row of sourcesWithReady.rows) {
+        let result: { summaryCount: number; hasBreaking: boolean } = { summaryCount: 0, hasBreaking: false };
         try {
-          const result = await summarizer.runBatch(row.source, row.source_id, row.min_ts, row.max_ts);
+          result = await summarizer.runBatch(row.source, row.source_id, row.min_ts, row.max_ts);
+          const { hasBreaking } = result;
 
           if (result.summaryCount > 0) {
             log.info(
@@ -493,14 +495,19 @@ program
                 source: row.source,
                 sourceId: row.source_id,
                 summaries: result.summaryCount,
-                hasBreaking: result.hasBreaking,
+                hasBreaking,
               },
               'summarizer batch complete',
             );
           }
+        } catch (err: unknown) {
+          log.error({ err, source: row.source, sourceId: row.source_id }, 'summarizer batch failed');
+          continue;
+        }
 
-          // If breaking urgency detected, trigger flash report
-          if (result.hasBreaking) {
+        // If breaking urgency detected, trigger flash report
+        if (result.hasBreaking) {
+          try {
             const { correlated, shouldFlash } = await correlator.run(row.min_ts);
             if (shouldFlash) {
               const flashReport = await synthesizer.runFlash(correlated);
@@ -508,9 +515,9 @@ program
                 await delivery.deliver(flashReport);
               }
             }
+          } catch (err: unknown) {
+            log.error({ err, source: row.source, sourceId: row.source_id }, 'flash report pipeline failed');
           }
-        } catch (err: unknown) {
-          log.error({ err, source: row.source, sourceId: row.source_id }, 'summarizer batch failed');
         }
       }
 
