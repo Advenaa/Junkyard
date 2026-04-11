@@ -55,12 +55,28 @@ describe('NR-004: parseLabeledOutput handles skipped labels', () => {
 describe('NR-003: News source type handled in poll loop', () => {
   const indexSrc = readSrc('src/index.ts');
   const newsSectionStart = indexSrc.indexOf("source === 'news'");
-  const newsSection = indexSrc.slice(newsSectionStart, newsSectionStart + 250);
+  const newsSection = indexSrc.slice(newsSectionStart, newsSectionStart + 900);
 
   it('has explicit news source handling', () => {
     assert.ok(indexSrc.includes("source === 'news'"), 'Poll loop must explicitly handle news source type');
     assert.ok(indexSrc.includes('createNewsAdapter(log)'), 'Poll loop must instantiate the news adapter');
-    assert.ok(newsSection.includes('newsAdapter.extract(src.source_id)'), 'News source must call the news adapter');
+    assert.ok(
+      newsSection.includes('const result = await newsAdapter.extract(src.source_id)'),
+      'News source must call the news adapter',
+    );
+    assert.ok(
+      newsSection.includes('if (result.fetchFailed)'),
+      'News source must distinguish fetch failures from empty extraction',
+    );
+    assert.ok(
+      newsSection.includes('news extraction failed — not advancing state'),
+      'News fetch failures must be logged before returning',
+    );
+    assert.ok(newsSection.includes('INSERT INTO source_state'), 'News fetch failures must increment source_state');
+    assert.ok(
+      newsSection.includes('items = result.item ? [result.item] : []'),
+      'News source must still advance on empty extraction',
+    );
     assert.ok(!newsSection.includes('skip in poll loop'), 'News source must not be a silent no-op');
   });
 });

@@ -26,6 +26,7 @@ import {
 } from './server-route-helpers.js';
 import { registerSearchRoutes } from './server-search-routes.js';
 import { registerSourceRoutes } from './server-source-routes.js';
+import type { SchedulerDiagnostics } from './scheduler.js';
 
 export async function createServer(
   config: Config,
@@ -37,6 +38,7 @@ export async function createServer(
   onTokensChanged?: () => Promise<DiscordRuntimeToken[]>,
   getTokenHealth?: () => Promise<DiscordTokenHealthState[]>,
   initialDiscordTokens: DiscordRuntimeToken[] = createEnvDiscordTokens(config.discordTokens),
+  getSchedulerDiagnostics?: () => SchedulerDiagnostics,
 ): Promise<FastifyInstance> {
   // Warn if Discord OAuth is configured without PUBLIC_URL (DB-008)
   if (config.discordClientId && config.discordClientSecret && !config.publicUrl) {
@@ -111,6 +113,7 @@ export async function createServer(
     pool,
     requireAdmin,
     sessionManager,
+    getSchedulerDiagnostics,
   });
 
   registerInsightRoutes({

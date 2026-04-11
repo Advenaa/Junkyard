@@ -16,6 +16,7 @@ const diagRoutes = [
   '/api/v1/diag/stuck-items',
   '/api/v1/diag/backpressure',
   '/api/v1/diag/halted-sources',
+  '/api/v1/diag/scheduler',
   '/api/v1/diag/health-events',
 ];
 
@@ -69,6 +70,13 @@ describe('diag endpoints — queries hit the right tables', () => {
     assert.match(block, /FROM\s+sources/i);
     assert.match(block, /JOIN\s+source_state/i);
     assert.match(block, /status\s*=\s*'halted'/);
+  });
+
+  it('scheduler exposes the scheduler callback payload with process timezone and jobs', () => {
+    const block = routeBlock('/api/v1/diag/scheduler', 1200);
+    assert.match(block, /getSchedulerDiagnostics\?\.\(\)/);
+    assert.match(block, /processTimezone/);
+    assert.match(block, /jobs:\s*\[\]/);
   });
 
   it('health-events filters to error/critical severity since a timestamp', () => {

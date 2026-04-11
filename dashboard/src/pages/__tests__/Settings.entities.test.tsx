@@ -222,6 +222,13 @@ describe('Settings entity relationships', () => {
         });
       }
 
+      if (path === '/api/v1/config' && method === 'GET') {
+        return new Response(JSON.stringify({ digestTime: '09:00', timezone: 'Asia/Jakarta', webhookUrl: '' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       if (path === '/api/v1/entities/search' && method === 'GET') {
         const q = requestUrl.searchParams.get('q')?.toLowerCase() ?? '';
         const entities = knownEntities.filter(

@@ -15,6 +15,17 @@ vi.mock('../../components/AuthProvider', () => ({
     logout: vi.fn(),
   }),
 }));
+vi.mock('../../components/StatusProvider', () => {
+  const statusValue = {
+    ready: true,
+    status: null,
+    disabledFeatures: [],
+    isFeatureDisabled: () => false,
+    getDisabledFeature: () => null,
+    registerDisabledFeature: vi.fn(),
+  };
+  return { useStatus: () => statusValue };
+});
 
 interface MockToken {
   id: string;
@@ -107,6 +118,58 @@ describe('Settings proxy management', () => {
 
         if (path === '/api/v1/discord/tokens/health' && method === 'GET') {
           return new Response(JSON.stringify({ states: health }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/status' && method === 'GET') {
+          return new Response(
+            JSON.stringify({ itemsReady: 4, itemsProcessing: 1, summariesToday: 9, costToday: 1.42 }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          );
+        }
+
+        if (path === '/api/v1/health' && method === 'GET') {
+          return new Response(JSON.stringify({ status: 'ok', checks: { db: 'ok', ingest: 'ok' } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/config' && method === 'GET') {
+          return new Response(JSON.stringify({ digestTime: '09:00', timezone: 'Asia/Jakarta', webhookUrl: '' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/calendar-events' && method === 'GET') {
+          return new Response(JSON.stringify({ events: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/macro' && method === 'GET') {
+          return new Response(JSON.stringify({ error: 'No macro data available yet' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/unusual-activity' && method === 'GET') {
+          return new Response(JSON.stringify({ latestDate: '2026-04-08', entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/narratives' && method === 'GET') {
+          return new Response(JSON.stringify({ latestDate: '2026-04-08', entries: [] }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           });

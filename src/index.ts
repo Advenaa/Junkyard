@@ -403,8 +403,22 @@ program
                 }
               }
             } else if (src.source === 'news') {
-              const item = await newsAdapter.extract(src.source_id);
-              items = item ? [item] : [];
+              const result = await newsAdapter.extract(src.source_id);
+              if (result.fetchFailed) {
+                log.error(
+                  { source: src.source, sourceId: src.source_id },
+                  'news extraction failed — not advancing state',
+                );
+                await pool.query(
+                  `INSERT INTO source_state (source, source_id, error_count, last_error, status)
+                   VALUES ($2, $3, 1, $1, 'active')
+                   ON CONFLICT (source, source_id)
+                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
+                  ['news extraction failed', src.source, src.source_id],
+                );
+                return;
+              }
+              items = result.item ? [result.item] : [];
             }
 
             // Normalize each item
@@ -716,6 +730,7 @@ program
       onTokensChanged,
       getTokenHealth,
       initialDiscordTokens,
+      () => scheduler.getDiagnostics(),
     );
     await startServer(app, config.port, log);
 

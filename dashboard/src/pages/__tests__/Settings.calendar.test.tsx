@@ -15,6 +15,17 @@ vi.mock('../../components/AuthProvider', () => ({
     logout: vi.fn(),
   }),
 }));
+vi.mock('../../components/StatusProvider', () => {
+  const statusValue = {
+    ready: true,
+    status: null,
+    disabledFeatures: [],
+    isFeatureDisabled: () => false,
+    getDisabledFeature: () => null,
+    registerDisabledFeature: vi.fn(),
+  };
+  return { useStatus: () => statusValue };
+});
 
 interface MockCalendarEvent {
   id: string;
@@ -83,6 +94,13 @@ describe('Settings market calendar', () => {
 
         if (path === '/api/v1/health' && method === 'GET') {
           return new Response(JSON.stringify({ status: 'ok', checks: { db: 'ok', ingest: 'ok' } }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/config' && method === 'GET') {
+          return new Response(JSON.stringify({ digestTime: '09:00', timezone: 'Asia/Jakarta', webhookUrl: '' }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           });
