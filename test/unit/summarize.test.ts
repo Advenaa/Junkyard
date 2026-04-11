@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSystemPrompt,
+  hasShortDiscordSignalMarker,
   normalizeChunkSummaryCandidate,
   shouldFilterShortDiscordChunk,
   stripCodeFences,
@@ -91,6 +92,23 @@ describe('shouldFilterShortDiscordChunk', () => {
 
   it('does not apply the short-content guard to non-Discord sources', () => {
     assert.equal(shouldFilterShortDiscordChunk('twitter', [{ content: 'back to stone age' }]), false);
+  });
+});
+
+describe('hasShortDiscordSignalMarker', () => {
+  it('does not treat ordinary short chatter as ticker signal', () => {
+    assert.equal(hasShortDiscordSignalMarker('lol gm to all'), false);
+    assert.equal(hasShortDiscordSignalMarker('wtf was that trade'), false);
+    assert.equal(hasShortDiscordSignalMarker('BTC moon'), false);
+  });
+
+  it('still matches dollar-prefixed tickers', () => {
+    assert.equal(hasShortDiscordSignalMarker('$ETH pumping'), true);
+    assert.equal(hasShortDiscordSignalMarker('$BTC just broke 100k'), true);
+  });
+
+  it('still matches numeric signal fallback without a dollar-prefixed ticker', () => {
+    assert.equal(hasShortDiscordSignalMarker('BTC up 5%'), true);
   });
 });
 

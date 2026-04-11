@@ -27,7 +27,7 @@ const MAX_ITEM_RETRIES = 3;
 const MAX_SONNET_ESCALATIONS_PER_BATCH = 3;
 const MIN_SUMMARIZABLE_DISCORD_CHUNK_CHARS = 50;
 const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
-const SHORT_DISCORD_TICKER_SIGNAL_PATTERN = /(?:^|[^A-Za-z0-9_])(?:\$[A-Za-z]{2,10}|[A-Z]{2,10})(?=$|[^A-Za-z0-9_])/;
+const SHORT_DISCORD_TICKER_SIGNAL_PATTERN = /(?:^|[^A-Za-z0-9_])\$[A-Za-z]{2,10}(?=$|[^A-Za-z0-9_])/;
 const SHORT_DISCORD_NUMERIC_SIGNAL_PATTERN = /\b\d+(?:\.\d+)?%?\b/;
 const SHORT_DISCORD_URL_SIGNAL_PATTERN = /https?:\/\//i;
 const SHORT_DISCORD_KEYWORD_SIGNAL_PATTERN =
@@ -225,7 +225,7 @@ function buildChunkRawText<T extends { content: string }>(chunk: T[]): string {
     .trim();
 }
 
-function hasShortDiscordSignalMarker(text: string): boolean {
+export function hasShortDiscordSignalMarker(text: string): boolean {
   return (
     SHORT_DISCORD_TICKER_SIGNAL_PATTERN.test(text) ||
     SHORT_DISCORD_NUMERIC_SIGNAL_PATTERN.test(text) ||
