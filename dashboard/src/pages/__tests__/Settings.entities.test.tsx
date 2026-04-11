@@ -296,14 +296,6 @@ describe('Settings entity relationships', () => {
         );
       }
 
-      const priceMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/price$/);
-      if (priceMatch && method === 'GET') {
-        return new Response(JSON.stringify({ error: 'No price data available yet' }), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
       if (path === '/api/v1/entities/relationships' && method === 'POST') {
         const payload = JSON.parse(String(init?.body ?? '{}')) as CreateRelationshipPayload;
         lastCreatePayload = payload;
