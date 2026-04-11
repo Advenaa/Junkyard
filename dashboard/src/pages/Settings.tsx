@@ -2020,7 +2020,7 @@ function SourcesTab() {
                   ? 'Channel ID'
                   : addSource === 'twitter'
                     ? '@username or search query (e.g. "ethereum OR defi")'
-                    : 'Source identifier'
+                    : 'https://example.com/articles/some-article'
             }
             className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
           />
@@ -2036,6 +2036,12 @@ function SourcesTab() {
                 -exclude
               </p>
             </>
+          )}
+          {addSource === 'news' && (
+            <p className="text-text-secondary text-xs font-body mt-1">
+              Enter the full URL of a single article. Podders refetches the page on each poll and extracts the readable
+              body via Readability.
+            </p>
           )}
         </div>
         <div className="space-y-1.5">
