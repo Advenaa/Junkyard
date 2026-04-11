@@ -58,6 +58,10 @@ interface AdminRouteDeps {
 }
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000;
+const COST_SPIKES_WINDOW_HOURS = 24;
+const COST_SPIKES_WINDOW_MS = COST_SPIKES_WINDOW_HOURS * 60 * 60 * 1000;
+const COST_SPIKES_BASELINE_DAYS = 14;
+const COST_SPIKES_BASELINE_MS = COST_SPIKES_BASELINE_DAYS * 24 * 60 * 60 * 1000;
 
 export const ACCESS_REQUEST_CSRF_COOKIE = 'podders_access_request_csrf';
 export const ACCESS_REQUEST_CSRF_COOKIE_PATH = '/api/v1/access-requests';
@@ -858,6 +862,81 @@ export function registerAdminRoutes({
       };
     },
   );
+
+  app.get('/api/v1/diag/cost-spikes', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    const nowMs = Date.now();
+    const recentSinceMs = nowMs - COST_SPIKES_WINDOW_MS;
+    const historicalSinceMs = recentSinceMs - COST_SPIKES_BASELINE_MS;
+    const { rows } = await pool.query<{
+      model: string;
+      hour_epoch_ms: string;
+      actual_usd: string;
+      baseline_usd: string;
+      ratio: string;
+    }>(
+      `WITH recent AS (
+         SELECT
+           model,
+           date_trunc('hour', timezone('UTC', to_timestamp(created_at / 1000.0))) AS hour_ts,
+           SUM(cost_usd) AS actual_usd
+         FROM llm_usage
+         WHERE created_at >= $1::bigint
+         GROUP BY model, hour_ts
+       ),
+       historical AS (
+         SELECT
+           model,
+           EXTRACT(HOUR FROM timezone('UTC', to_timestamp(created_at / 1000.0))) AS hour_of_day,
+           SUM(cost_usd) AS bucket_usd
+         FROM llm_usage
+         WHERE created_at >= $2::bigint AND created_at < $1::bigint
+         GROUP BY
+           model,
+           date_trunc('hour', timezone('UTC', to_timestamp(created_at / 1000.0))),
+           EXTRACT(HOUR FROM timezone('UTC', to_timestamp(created_at / 1000.0)))
+       ),
+       baselines AS (
+         SELECT
+           model,
+           hour_of_day,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY bucket_usd) AS median_usd
+         FROM historical
+         GROUP BY model, hour_of_day
+       )
+       SELECT
+         r.model,
+         (EXTRACT(EPOCH FROM (r.hour_ts AT TIME ZONE 'UTC')) * 1000)::bigint AS hour_epoch_ms,
+         r.actual_usd,
+         b.median_usd AS baseline_usd,
+         r.actual_usd / NULLIF(b.median_usd, 0) AS ratio
+       FROM recent r
+       INNER JOIN baselines b
+         ON b.model = r.model
+         AND b.hour_of_day = EXTRACT(HOUR FROM r.hour_ts)
+       WHERE b.median_usd > 0
+         AND r.actual_usd > 3 * b.median_usd
+       ORDER BY r.actual_usd / NULLIF(b.median_usd, 0) DESC`,
+      [recentSinceMs, historicalSinceMs],
+    );
+    return {
+      windowHours: COST_SPIKES_WINDOW_HOURS,
+      spikes: rows.map((row) =>
+        toCamelCase<{
+          model: string;
+          hourEpochMs: number;
+          actualUsd: number;
+          baselineUsd: number;
+          ratio: number;
+        }>({
+          model: row.model,
+          hour_epoch_ms: Number(row.hour_epoch_ms),
+          actual_usd: Number(row.actual_usd),
+          baseline_usd: Number(row.baseline_usd),
+          ratio: Number(row.ratio),
+        }),
+      ),
+    };
+  });
 
   app.post(
     '/api/v1/config/test-webhook',
