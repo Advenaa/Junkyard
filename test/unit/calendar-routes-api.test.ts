@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -19,7 +20,7 @@ function readSrc(relPath: string): string {
 }
 
 describe('Calendar route module wiring', () => {
-  const serverSrc = readSrc('src/server.ts');
+  const serverSrc = readServerSource();
   const routesSrc = readSrc('src/server-calendar-routes.ts');
 
   it('server wires registerCalendarRoutes', () => {

@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -114,7 +115,7 @@ describe('pulse.ts price context injection', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('server.ts entity price endpoint', () => {
-  const server = readSrc('src/server.ts');
+  const server = readServerSource();
 
   it('has GET /entities/:entityId/price route', () => {
     assert.match(server, /\/api\/v1\/entities\/:entityId\/price/);

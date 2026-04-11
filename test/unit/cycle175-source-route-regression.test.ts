@@ -1,16 +1,11 @@
 import { before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_SRC = resolve(__dirname, '../../src/server.ts');
+import { readServerSource } from './helpers/server-source.js';
 
 let source: string;
 
 before(async () => {
-  source = await readFile(SERVER_SRC, 'utf-8');
+  source = readServerSource();
 });
 
 describe('Cycle 175 — source action routes support query-string sourceId', () => {

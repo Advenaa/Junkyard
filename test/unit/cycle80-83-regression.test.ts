@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -15,7 +16,7 @@ function readSrc(relPath: string): string {
 // ===========================================================================
 
 describe('CD-002: PATCH /sources/:source/:sourceId', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('registers a PATCH route for /sources/:source/:sourceId', () => {
     const pattern = /app\.patch\(\s*['"]\/api\/v1\/sources\/:source\/:sourceId['"]/;
@@ -37,7 +38,7 @@ describe('CD-002: PATCH /sources/:source/:sourceId', () => {
 // ===========================================================================
 
 describe('CD-003: PATCH /users/:discordId', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('registers a PATCH route for /users/:discordId', () => {
     const pattern = /app\.patch\(\s*['"]\/api\/v1\/users\/:discordId['"]/;
@@ -58,7 +59,7 @@ describe('CD-003: PATCH /users/:discordId', () => {
 // ===========================================================================
 
 describe('CD-004: GET /api/v1/status', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('registers a GET route for /api/v1/status', () => {
     const pattern = /app\.get\(\s*['"]\/api\/v1\/status['"]/;
@@ -71,7 +72,7 @@ describe('CD-004: GET /api/v1/status', () => {
 // ===========================================================================
 
 describe('CD-005: POST /api/v1/config/test-webhook', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('registers a POST route for /api/v1/config/test-webhook', () => {
     const pattern = /app\.post\(\s*['"]\/api\/v1\/config\/test-webhook['"]/;
@@ -114,7 +115,7 @@ describe('CD-012: getAllSourcesWithState query', () => {
   });
 
   it('server.ts imports getAllSourcesWithState', () => {
-    const serverSrc = readSrc('src/server.ts');
+    const serverSrc = readServerSource();
     assert.match(serverSrc, /getAllSourcesWithState/, 'server.ts must import getAllSourcesWithState');
   });
 });

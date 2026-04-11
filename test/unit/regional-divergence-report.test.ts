@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -53,7 +54,7 @@ describe('Daily and pulse prompts mention regionalDivergence', () => {
 });
 
 describe('reports/:id exposes regionalDivergence', () => {
-  const server = readSrc('src/server.ts');
+  const server = readServerSource();
 
   it('extracts regionalDivergence from parsed report bodies', () => {
     assert.ok(server.includes('report.regionalDivergence'));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -15,7 +16,7 @@ function readSrc(relPath: string): string {
 // ===========================================================================
 
 describe('AU-021: POST /sources requires admin', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('POST /api/v1/sources route includes requireAdmin in preHandler', () => {
     // Match the route definition: app.post('/api/v1/sources', { preHandler: [..., requireAdmin], ...
