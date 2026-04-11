@@ -13,6 +13,15 @@ export interface EmbedResult {
   model: string; // 'text-embedding-004'
 }
 
+export type EmbedModel = Pick<
+  ReturnType<GoogleGenerativeAI['getGenerativeModel']>,
+  'embedContent' | 'batchEmbedContents'
+>;
+
+export interface CreateEmbedderOptions {
+  model?: EmbedModel | null;
+}
+
 interface GoogleGenerativeAIFetchError extends Error {
   status: number;
 }
@@ -103,11 +112,11 @@ async function withRetry<T>(fn: () => Promise<T>, log: Logger): Promise<T> {
 
 // ── Public API ─────────────────────────────────────────────────────────
 
-export function createEmbedder(config: Config, pool: Pool, log: Logger) {
+export function createEmbedder(config: Config, pool: Pool, log: Logger, options: CreateEmbedderOptions = {}) {
   const geminiKey = config.geminiApiKey ?? config.googleApiKey;
-  const available = Boolean(geminiKey);
-  const genAI = available ? new GoogleGenerativeAI(geminiKey!) : null;
-  const model = genAI ? genAI.getGenerativeModel({ model: MODEL_NAME }) : null;
+  const model =
+    options.model ?? (geminiKey ? new GoogleGenerativeAI(geminiKey).getGenerativeModel({ model: MODEL_NAME }) : null);
+  const available = Boolean(model);
 
   // ── Daily quota tracking (in-memory, resets each calendar day) ──────
   let dailyCount = 0;
@@ -217,6 +226,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     const results: (EmbedResult | null)[] = [];
     let totalInputTokens = 0;
     let chunksCompleted = 0;
+    let batchError: unknown = null;
 
     try {
       for (let i = 0; i < texts.length; i += BATCH_CHUNK_SIZE) {
@@ -234,6 +244,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         );
 
         chunksCompleted += 1;
+        totalInputTokens += chunk.reduce((sum, text) => sum + estimateTokens(text), 0);
 
         if (batchResult.embeddings.length !== chunk.length) {
           log.warn(
@@ -256,26 +267,40 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
               throw new Error(`embedBatch: expected ${DIMENSIONS} dimensions but got ${vector.length}`);
             }
             results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
-            totalInputTokens += estimateTokens(chunk[j]);
           } else {
             results.push(null);
           }
         }
       }
     } catch (err) {
-      dailyCount -= totalRequests - chunksCompleted; // Refund unused
-      throw err;
+      batchError = err;
     }
 
-    await insertLlmUsage(pool, {
-      id: ulid(),
-      stage: 'embedding',
-      model: MODEL_NAME,
-      inputTokens: totalInputTokens,
-      outputTokens: 0,
-      costUsd: 0,
-      createdAt: Date.now(),
-    });
+    dailyCount -= totalRequests - chunksCompleted; // Refund unused
+
+    if (chunksCompleted > 0) {
+      try {
+        await insertLlmUsage(pool, {
+          id: ulid(),
+          stage: 'embedding',
+          model: MODEL_NAME,
+          inputTokens: totalInputTokens,
+          outputTokens: 0,
+          costUsd: 0,
+          createdAt: Date.now(),
+        });
+      } catch (usageErr) {
+        if (batchError) {
+          log.warn({ err: usageErr }, 'embedBatch: failed to record usage after batch error');
+        } else {
+          throw usageErr;
+        }
+      }
+    }
+
+    if (batchError) {
+      throw batchError;
+    }
 
     return results;
   }
