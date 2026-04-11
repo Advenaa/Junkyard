@@ -243,23 +243,20 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
             },
             'embed: batch result count mismatch — some items may have been filtered',
           );
+          throw new Error(`embedBatch: expected ${chunk.length} embeddings but got ${batchResult.embeddings.length}`);
         }
 
         for (let j = 0; j < chunk.length; j++) {
-          if (j < batchResult.embeddings.length) {
-            const vector = new Float32Array(batchResult.embeddings[j].values);
-            if (vector.length !== DIMENSIONS) {
-              log.warn(
-                { expected: DIMENSIONS, got: vector.length, model: MODEL_NAME, batchIndex: j },
-                'embedBatch: unexpected vector dimensions',
-              );
-              throw new Error(`embedBatch: expected ${DIMENSIONS} dimensions but got ${vector.length}`);
-            }
-            results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
-            totalInputTokens += estimateTokens(chunk[j]);
-          } else {
-            results.push(null);
+          const vector = new Float32Array(batchResult.embeddings[j].values);
+          if (vector.length !== DIMENSIONS) {
+            log.warn(
+              { expected: DIMENSIONS, got: vector.length, model: MODEL_NAME, batchIndex: j },
+              'embedBatch: unexpected vector dimensions',
+            );
+            throw new Error(`embedBatch: expected ${DIMENSIONS} dimensions but got ${vector.length}`);
           }
+          results.push({ vector, dimensions: DIMENSIONS, model: MODEL_NAME });
+          totalInputTokens += estimateTokens(chunk[j]);
         }
       }
     } catch (err) {
