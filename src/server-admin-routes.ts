@@ -25,6 +25,7 @@ import {
   type UserAuditRow,
   type UserRow,
 } from './server-route-helpers.js';
+import type { SchedulerDiagnostics } from './scheduler.js';
 
 type RoutePreHandler = (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 
@@ -53,6 +54,7 @@ interface AdminRouteDeps {
   pool: Pool;
   requireAdmin: RoutePreHandler;
   sessionManager: SessionManagerLike;
+  getSchedulerDiagnostics?: () => SchedulerDiagnostics;
 }
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000;
@@ -75,6 +77,7 @@ export function registerAdminRoutes({
   pool,
   requireAdmin,
   sessionManager,
+  getSchedulerDiagnostics,
 }: AdminRouteDeps): void {
   app.get('/api/v1/config', { preHandler: [authPreHandler] }, async (request) => {
     const [digestTime, timezone, webhookUrl] = await Promise.all([
@@ -803,6 +806,15 @@ export function registerAdminRoutes({
     return {
       haltedSources: rows.map((r) => toCamelCase(r as unknown as Record<string, unknown>)),
     };
+  });
+
+  app.get('/api/v1/diag/scheduler', { preHandler: [authPreHandler, requireAdmin] }, async () => {
+    return (
+      getSchedulerDiagnostics?.() ?? {
+        processTimezone: process.env.TZ ?? null,
+        jobs: [],
+      }
+    );
   });
 
   app.get<{ Querystring: { sinceMs?: number; limit?: number } }>(

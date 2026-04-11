@@ -313,6 +313,31 @@ describe('buildDailyCron', () => {
     await scheduler.stop();
   });
 
+  it('falls back to Asia/Jakarta when scheduler timezone config is invalid', async () => {
+    const { log, warnMessages } = capturingLog();
+    const deps = baseDeps({
+      pool: createMockPool({ digest_time: '09:00', timezone: 'Invalid/Timezone' }),
+      log,
+    });
+    const scheduler = createScheduler(deps);
+    await scheduler.start();
+
+    const diagnostics = scheduler.getDiagnostics();
+    const timezoneJobs = diagnostics.jobs.filter((job) => job.job !== 'source-poll-tick');
+
+    assert.ok(timezoneJobs.length > 0, 'timezone-aware cron jobs should be registered');
+    assert.ok(
+      timezoneJobs.every((job) => job.timezone === 'Asia/Jakarta'),
+      'invalid scheduler timezone should fall back to Asia/Jakarta',
+    );
+    assert.ok(
+      warnMessages.some((message) => message.includes('invalid scheduler timezone')),
+      'invalid scheduler timezone should emit a warning',
+    );
+
+    await scheduler.stop();
+  });
+
   it('keeps the existing daily task when refreshDailyCron fails to schedule a replacement', async (t) => {
     errors = [];
 
@@ -497,6 +522,44 @@ describe('cron registration', () => {
     await scheduler.start();
 
     assert.equal(recovered, 42);
+    await scheduler.stop();
+  });
+
+  it('forces timezone-aware cron jobs onto a UTC host timezone and exposes next-run diagnostics', async (t) => {
+    const { log, warnMessages } = capturingLog();
+    const originalTimezone = process.env.TZ;
+    t.after(() => {
+      if (originalTimezone === undefined) {
+        delete process.env.TZ;
+      } else {
+        process.env.TZ = originalTimezone;
+      }
+    });
+
+    process.env.TZ = 'America/Los_Angeles';
+
+    const deps = baseDeps({
+      pool: createMockPool({ digest_time: '09:00', timezone: 'Asia/Jakarta' }),
+      log,
+    });
+    const scheduler = createScheduler(deps);
+    await scheduler.start();
+
+    const diagnostics = scheduler.getDiagnostics();
+    const pulseJob = diagnostics.jobs.find((job) => job.job === 'market-pulse');
+    const sourcePollJob = diagnostics.jobs.find((job) => job.job === 'source-poll-tick');
+
+    assert.equal(diagnostics.processTimezone, 'UTC', 'scheduler should normalize process.env.TZ to UTC');
+    assert.ok(
+      warnMessages.some((message) => message.includes('forcing process.env.TZ to UTC')),
+      'scheduler should warn when it overrides a non-UTC process timezone',
+    );
+    assert.ok(pulseJob, 'market-pulse diagnostics should exist');
+    assert.equal(pulseJob?.timezone, 'Asia/Jakarta');
+    assert.match(pulseJob?.nextRun ?? '', /^\d{4}-\d{2}-\d{2}T/, 'market-pulse should expose its next run');
+    assert.ok(pulseJob?.status, 'market-pulse should expose its scheduler status');
+    assert.equal(sourcePollJob?.timezone, null, 'source-poll-tick should remain host-timezone-based');
+
     await scheduler.stop();
   });
 });
