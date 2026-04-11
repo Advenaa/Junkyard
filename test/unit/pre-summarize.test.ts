@@ -292,6 +292,45 @@ describe('createPreSummarizer.run()', () => {
     );
   });
 
+  it('clears batch_id when releasing items after an LLM error', async () => {
+    const content = longContent(5000);
+    const calls: { text: string; values: unknown[] }[] = [];
+
+    const mockPool = {
+      query: async (text: string, values?: unknown[]) => {
+        calls.push({ text, values: values ?? [] });
+        if (text.includes('SELECT')) {
+          return {
+            rows: [{ id: 'item-1', source: 'rss', content }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+    } as any;
+
+    const mockLlm = {
+      call: async () => {
+        throw new Error('llm failed');
+      },
+      sanitizeForPrompt: (s: string) => s,
+      wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
+    };
+
+    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    await ps.run();
+
+    assert.ok(
+      calls.some(
+        (call) =>
+          /UPDATE items SET retry_count = retry_count \+ 1, status = 'ready', batch_id = NULL WHERE id = ANY\(\$1::text\[\]\)/s.test(
+            call.text,
+          ) && Array.isArray(call.values[0]),
+      ),
+      'failure release query must clear batch_id',
+    );
+  });
+
   it('updates content for successfully summarized items', async () => {
     const content = longContent(5000);
     const queries: string[] = [];
