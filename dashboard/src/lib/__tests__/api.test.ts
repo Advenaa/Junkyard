@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiFetch, AUTH_EXPIRED_EVENT, authRedirect } from '../api';
+import { ApiError, apiFetch, AUTH_EXPIRED_EVENT, authRedirect } from '../api';
 
 describe('apiFetch', () => {
   function mockLocationAssign() {
@@ -74,5 +74,58 @@ describe('apiFetch', () => {
     expect(onAuthExpired).not.toHaveBeenCalled();
 
     window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+  });
+
+  it('wraps non-ok JSON responses in an ApiError with status, statusText, and detail', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'Invalid webhook URL', detail: 'private IPs blocked' }), {
+          status: 400,
+          statusText: 'Bad Request',
+          headers: new Headers({ 'content-type': 'application/json' }),
+        }),
+      ),
+    );
+
+    await expect(apiFetch('/config/test-webhook', { method: 'POST' })).rejects.toThrow('API 400');
+
+    try {
+      await apiFetch('/config/test-webhook', { method: 'POST' });
+      throw new Error('expected apiFetch to reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({
+        status: 400,
+        statusText: 'Bad Request',
+        detail: 'private IPs blocked',
+      });
+    }
+  });
+
+  it('falls back to null detail when the response body is not JSON', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('<html>server error</html>', {
+          status: 500,
+          statusText: 'Internal Server Error',
+          headers: new Headers({ 'content-type': 'text/html' }),
+        }),
+      ),
+    );
+
+    try {
+      await apiFetch('/config/test-webhook', { method: 'POST' });
+      throw new Error('expected apiFetch to reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({
+        status: 500,
+        statusText: 'Internal Server Error',
+        detail: null,
+      });
+      expect((err as ApiError).message).toBe('API 500: Internal Server Error');
+    }
   });
 });

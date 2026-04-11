@@ -26,6 +26,39 @@ export function isFeatureDisabledError(err: unknown): err is FeatureDisabledErro
   return err instanceof FeatureDisabledError;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly statusText: string;
+  readonly detail: string | null;
+
+  constructor(status: number, statusText: string, detail: string | null) {
+    const base = `API ${status}: ${statusText}`;
+    super(detail ? `${base} — ${detail}` : base);
+    this.name = 'ApiError';
+    this.status = status;
+    this.statusText = statusText;
+    this.detail = detail;
+  }
+}
+
+export function isApiError(err: unknown): err is ApiError {
+  return err instanceof ApiError;
+}
+
+async function extractErrorDetail(res: Response): Promise<string | null> {
+  try {
+    const parsed = (await res.clone().json()) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      const obj = parsed as { detail?: unknown; error?: unknown };
+      if (typeof obj.detail === 'string' && obj.detail.length > 0) return obj.detail;
+      if (typeof obj.error === 'string' && obj.error.length > 0) return obj.error;
+    }
+  } catch {
+    // Fall through when the error body is not JSON.
+  }
+  return null;
+}
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const { headers: extraHeaders, body, ...rest } = options ?? {};
   const headers: Record<string, string> = { ...(extraHeaders as Record<string, string>) };
@@ -45,7 +78,8 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
       window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
       authRedirect.toLogin();
     }
-    throw new Error(`API ${res.status}: ${res.statusText}`);
+    const detail = await extractErrorDetail(res);
+    throw new ApiError(res.status, res.statusText, detail);
   }
   if (res.status === 503) {
     const parsed = await res
@@ -56,7 +90,10 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
       throw new FeatureDisabledError(parsed as FeatureDisabledBody);
     }
   }
-  if (!res.ok) throw new Error(`API ${res.status}: ${res.statusText}`);
+  if (!res.ok) {
+    const detail = await extractErrorDetail(res);
+    throw new ApiError(res.status, res.statusText, detail);
+  }
   if (res.status === 204 || res.headers.get('content-length') === '0') {
     return undefined as T;
   }

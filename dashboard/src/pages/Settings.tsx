@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router';
-import { apiFetch, isFeatureDisabledError } from '../lib/api';
+import { apiFetch, isApiError, isFeatureDisabledError } from '../lib/api';
 import { useAuth } from '../components/AuthProvider';
 import { useStatus } from '../components/StatusProvider';
 import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
@@ -2743,8 +2743,12 @@ function DeliveryTab() {
         body: JSON.stringify({ url: webhookUrl }),
       });
       setTestResult('Test payload sent successfully.');
-    } catch {
-      setTestResult('Failed to send test payload. Check the URL and try again.');
+    } catch (err) {
+      if (isApiError(err) && err.detail) {
+        setTestResult(`Failed to send test payload: ${err.detail}`);
+      } else {
+        setTestResult('Failed to send test payload. Check the URL and try again.');
+      }
     } finally {
       setTesting(false);
     }
