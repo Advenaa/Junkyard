@@ -909,6 +909,43 @@ describe('pulse', { concurrency: 1 }, () => {
       const result = await runPulse();
       assert.equal(result, null);
     });
+
+    it('records a synth_aborted health event when pulse schema validation fails twice', async () => {
+      const queryCalls: Array<{ sql: string; params?: unknown[] }> = [];
+      const pool = makePool({ summaries: [makeSummaryRow()] });
+      const originalQuery = pool.query.bind(pool);
+      pool.query = async (sql: string, params?: unknown[]) => {
+        queryCalls.push({ sql, params });
+        return originalQuery(sql, params);
+      };
+
+      let callCount = 0;
+      const llm = {
+        call: async () => {
+          callCount += 1;
+          return { content: JSON.stringify({ ...makeValidReport(), tldr: 42 }) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
+      };
+
+      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const result = await runPulse();
+
+      assert.equal(result, null);
+      assert.equal(callCount, 2);
+
+      const healthEventInsert = queryCalls.find(({ sql }) => sql.includes('INSERT INTO health_events'));
+      assert.ok(healthEventInsert, 'expected a health_events insert');
+      assert.equal(healthEventInsert.params?.[1], 'synth_aborted');
+      assert.match(String(healthEventInsert.params?.[3]), /pulse LLM response failed schema validation after retry/);
+
+      const metadata = JSON.parse(String(healthEventInsert.params?.[4])) as { stage?: string; error?: string };
+      assert.equal(metadata.stage, 'pulse');
+      assert.match(String(metadata.error), /\S/);
+
+      const reportInsert = queryCalls.find(({ sql }) => sql.includes('INSERT INTO reports'));
+      assert.equal(reportInsert, undefined);
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════
