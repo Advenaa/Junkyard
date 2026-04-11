@@ -307,6 +307,67 @@ describe('createChatHandler sources', () => {
     assert.doesNotMatch(result.sources[0]!.snippet, /Focused summary chain:/);
   });
 
+  it('tracks chat budget from system prompt and reconciles to LLM usage metadata', async () => {
+    const query = 'Summarize the bridge exploit follow-up';
+    const budgetEvents: Array<{ type: 'reserve' | 'refund'; tokens: number }> = [];
+    let trackedTokenCount = 0;
+
+    const pool = {
+      async query(text: string, params?: unknown[]) {
+        if (text.includes('INSERT INTO chat_daily_usage')) {
+          const tokens = Number(params?.[2] ?? 0);
+          budgetEvents.push({ type: 'reserve', tokens });
+          trackedTokenCount += tokens;
+          return { rows: [{ token_count: trackedTokenCount }], rowCount: 1 };
+        }
+
+        if (text.includes('SELECT token_count FROM chat_daily_usage')) {
+          return { rows: [{ token_count: trackedTokenCount }], rowCount: 1 };
+        }
+
+        if (text.includes('UPDATE chat_daily_usage')) {
+          const tokens = Number(params?.[2] ?? 0);
+          budgetEvents.push({ type: 'refund', tokens });
+          trackedTokenCount = Math.max(trackedTokenCount - tokens, 0);
+          return { rows: [], rowCount: 1 };
+        }
+
+        return { rows: [] };
+      },
+    } as any;
+
+    const llm = {
+      async call() {
+        return {
+          content: 'final answer',
+          usage: { input_tokens: 500, output_tokens: 120 },
+        };
+      },
+      wrapWithNonce(content: string) {
+        return { wrapped: `<wrapped>${content}</wrapped>`, nonce: 'nonce' };
+      },
+      sanitizeForPrompt(content: string) {
+        return content;
+      },
+    } as any;
+
+    const handler = createChatHandler(
+      pool,
+      noopLog,
+      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
+      llm,
+      stubVectorCache([]),
+      stubEmbedder,
+    );
+
+    await handler.handle(query, 'conv-usage', 'user-usage');
+
+    const reserveTokens = budgetEvents.filter((event) => event.type === 'reserve').map((event) => event.tokens);
+    assert.ok(reserveTokens[0]! > Math.ceil(query.length / 4));
+    assert.ok(budgetEvents.some((event) => event.type === 'refund' && event.tokens === 5_000));
+    assert.equal(trackedTokenCount, 620);
+  });
+
   it('frames tool results with nonce-tagged wrappers before sending them back to the LLM', async () => {
     const pool = {
       async query(text: string) {

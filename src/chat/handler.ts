@@ -438,9 +438,9 @@ export function createChatHandler(
     const toolDefsText = JSON.stringify(TOOL_DEFINITIONS);
     const systemWithTools = `${SYSTEM_PROMPT}\n\nTool definitions:\n${toolDefsText}\n\nTo use a tool, respond with a <tool_call> block containing JSON with "name" and "args". You may use multiple tool calls. When you have enough information, respond with your final answer as plain text (no tool_call blocks).`;
 
-    // Count input tokens once (user query + history)
-    const inputTokens = Math.ceil(messages.reduce((sum, m) => sum + m.content.length / 4, 0));
-    const inputBudget = await reserveTrackedTokens(userId, inputTokens);
+    const initialInputEstimate =
+      estimateTokens(systemWithTools) + messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+    const inputBudget = await reserveTrackedTokens(userId, initialInputEstimate);
     if (inputBudget === 'limit') {
       return budgetExceededResult();
     }
@@ -454,6 +454,7 @@ export function createChatHandler(
 
     const toolFailures = new Map<string, number>();
     let totalToolResultChars = 0;
+    let totalInputTokensCharged = initialInputEstimate;
 
     while (rounds < MAX_TOOL_ROUNDS) {
       rounds++;
@@ -498,8 +499,24 @@ export function createChatHandler(
         return { response: 'An error occurred processing your request. Please try again.', toolsUsed, sources: [] };
       }
 
-      const responseTokens = estimateTokens(result.content ?? '');
-      await refundTrackedTokens(userId, CHAT_RESPONSE_TOKEN_RESERVATION - responseTokens);
+      const actualInputTokens = result.usage?.input_tokens ?? initialInputEstimate;
+      const actualOutputTokens = result.usage?.output_tokens ?? estimateTokens(result.content ?? '');
+      const inputDelta = actualInputTokens - totalInputTokensCharged;
+      if (inputDelta > 0) {
+        const deltaReservation = await reserveTrackedTokens(userId, inputDelta);
+        if (deltaReservation === 'limit') {
+          await refundTrackedTokens(userId, CHAT_RESPONSE_TOKEN_RESERVATION);
+          return budgetExceededResult();
+        }
+        if (deltaReservation === 'error') {
+          log.warn({ userId, inputDelta }, 'chat: failed to charge input-token delta, proceeding');
+        }
+      } else if (inputDelta < 0) {
+        await refundTrackedTokens(userId, -inputDelta);
+      }
+      totalInputTokensCharged = actualInputTokens;
+
+      await refundTrackedTokens(userId, CHAT_RESPONSE_TOKEN_RESERVATION - actualOutputTokens);
 
       const toolCalls = parseToolCalls(result.content);
 
