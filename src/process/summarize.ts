@@ -3,6 +3,7 @@ import { ulid } from 'ulid';
 import { ChunkSummaryLLMSchema } from './schemas.js';
 import type { AuthorClaim, ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk } from './chunk.js';
+import { verifyEntities, verifyEvents, verifyRelationships } from './chunk-verify.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
 import {
@@ -36,18 +37,6 @@ const SHORT_DISCORD_KEYWORD_SIGNAL_PATTERN =
 const EventFollowUpSchema = z.object({
   followUp: z.boolean(),
 });
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function hasBoundaryMatch(rawText: string, candidate: string): boolean {
-  const trimmed = candidate.trim();
-  if (trimmed === '') return false;
-
-  const pattern = new RegExp(`(?:^|[^A-Za-z0-9_])${escapeRegExp(trimmed)}(?=$|[^A-Za-z0-9_])`, 'i');
-  return pattern.test(rawText);
-}
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
@@ -263,108 +252,6 @@ export function shouldFilterShortDiscordChunk<T extends { content: string }>(sou
   if (rawChunkText.length >= MIN_SUMMARIZABLE_DISCORD_CHUNK_CHARS) return false;
 
   return !hasShortDiscordSignalMarker(rawChunkText);
-}
-
-export function verifyEntities(
-  parsed: ChunkSummary,
-  rawText: string,
-  log: Logger,
-  source: string,
-  sourceId: string,
-): ChunkSummary {
-  const verified = parsed.entities.filter((entity) => {
-    const found = [entity.name, ...entity.aliases].some((name) => hasBoundaryMatch(rawText, name));
-    if (!found) {
-      log.info({ entity: entity.name, source, sourceId }, 'Dropped entity not found in raw text');
-    }
-    return found;
-  });
-  return { ...parsed, entities: verified };
-}
-
-export function verifyEvents(parsed: ChunkSummary, log: Logger, source: string, sourceId: string): ChunkSummary {
-  const validEntityKeys = new Set<string>();
-  for (const entity of parsed.entities) {
-    const canonical = normalizeAlias(entity.name);
-    if (canonical) validEntityKeys.add(canonical);
-    for (const alias of entity.aliases) {
-      const normalizedAlias = normalizeAlias(alias);
-      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
-    }
-  }
-
-  const verified = parsed.events.filter((event) => {
-    const normalizedEntityName = normalizeAlias(event.entityName);
-    const found = normalizedEntityName !== '' && validEntityKeys.has(normalizedEntityName);
-    if (!found) {
-      log.info(
-        { eventType: event.eventType, entityName: event.entityName, source, sourceId },
-        'Dropped event without verified entity match',
-      );
-    }
-    return found;
-  });
-
-  return { ...parsed, events: verified };
-}
-
-export function verifyRelationships(parsed: ChunkSummary, log: Logger, source: string, sourceId: string): ChunkSummary {
-  const validEntityKeys = new Set<string>();
-  for (const entity of parsed.entities) {
-    const canonical = normalizeAlias(entity.name);
-    if (canonical) validEntityKeys.add(canonical);
-    for (const alias of entity.aliases) {
-      const normalizedAlias = normalizeAlias(alias);
-      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
-    }
-  }
-
-  const seen = new Set<string>();
-  const verified = parsed.relationships.filter((relationship) => {
-    const entityNameA = normalizeAlias(relationship.entityNameA);
-    const entityNameB = normalizeAlias(relationship.entityNameB);
-    const valid =
-      entityNameA !== '' &&
-      entityNameB !== '' &&
-      entityNameA !== entityNameB &&
-      validEntityKeys.has(entityNameA) &&
-      validEntityKeys.has(entityNameB);
-
-    if (!valid) {
-      log.info(
-        {
-          entityNameA: relationship.entityNameA,
-          entityNameB: relationship.entityNameB,
-          relationshipType: relationship.relationshipType,
-          source,
-          sourceId,
-        },
-        'Dropped relationship without verified distinct entity match',
-      );
-      return false;
-    }
-
-    const [canonA, canonB] = entityNameA < entityNameB ? [entityNameA, entityNameB] : [entityNameB, entityNameA];
-    const dedupeKey = `${canonA}\0${canonB}\0${relationship.relationshipType}`;
-    if (seen.has(dedupeKey)) {
-      log.info(
-        {
-          entityNameA: relationship.entityNameA,
-          entityNameB: relationship.entityNameB,
-          relationshipType: relationship.relationshipType,
-          source,
-          sourceId,
-        },
-        'Dropped duplicate verified relationship',
-      );
-      return false;
-    }
-
-    seen.add(dedupeKey);
-    return true;
-  });
-
-  return { ...parsed, relationships: verified };
 }
 
 function verifyAuthorClaims(

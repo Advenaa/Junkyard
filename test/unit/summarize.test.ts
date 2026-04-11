@@ -6,10 +6,8 @@ import {
   normalizeChunkSummaryCandidate,
   shouldFilterShortDiscordChunk,
   stripCodeFences,
-  verifyEntities,
-  verifyEvents,
-  verifyRelationships,
 } from '../../src/process/summarize.js';
+import { verifyEntities, verifyEvents, verifyRelationships } from '../../src/process/chunk-verify.js';
 import type { Logger } from '../../src/logger.js';
 import { ChunkSummaryLLMSchema } from '../../src/process/schemas.js';
 import type { ChunkSummary } from '../../src/process/schemas.js';
