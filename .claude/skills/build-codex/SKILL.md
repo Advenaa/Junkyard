@@ -38,7 +38,7 @@ runs the local CI gate. Claude does every git and gh operation.**
 | Run local CI gate (`build`, `lint`, `format:check`, `test`, `test:dashboard`) | **Codex** |
 | Return structured status (`passing` / `gate_failed` / `hard_error`) | **Codex** |
 | Append NDJSON attempt record to `.clankerism/attempts/issue-<N>.ndjson` | Claude |
-| Local retry wrapper around the Codex Agent call (up to 3 attempts per tick) | Claude |
+| Local retry wrapper around the direct Codex CLI call (up to 3 attempts per tick) | Claude |
 | Stage, commit with `Fixes #N`, push branch | Claude |
 | Open PR via `gh pr create` | Claude |
 | Watch CI via `gh run watch` | Claude |
@@ -52,12 +52,33 @@ runs the local CI gate. Claude does every git and gh operation.**
 
 Git worktrees have their real `.git` directory at
 `<main>/.git/worktrees/issue-<N>/`, **outside** the worktree path. Codex
-CLI's `workspace-write` sandbox is rooted at the worktree, so Codex cannot
-acquire `.git/index.lock`, cannot write packed-refs, and cannot run
-`git commit` from inside the worktree. That's why Claude — which runs
-unsandboxed and can access the parent `.git/worktrees/` dir — owns every
-git-mutating operation. Codex owns every source-file-editing operation
-because it is the better coder.
+CLI's `workspace-write` sandbox is rooted at `git rev-parse --show-toplevel`
+of its `--cwd`, so when Codex runs with `--cwd <worktree>` the writable
+root is the worktree and the parent `.git/worktrees/` dir is outside that
+scope. Codex cannot acquire `.git/index.lock`, cannot write packed-refs,
+and cannot run `git commit` from inside the worktree. That's why Claude —
+which runs unsandboxed and can access the parent `.git/worktrees/` dir —
+owns every git-mutating operation. Codex owns every source-file-editing
+operation because it is the better coder.
+
+### Why we bypass `codex:codex-rescue` here
+
+The `codex:codex-rescue` subagent is a pure forwarder whose cwd is
+inherited from Claude's harness process cwd (always the main checkout),
+not from whatever Bash `cd` Claude has issued. It also does not forward
+a `--cwd` flag — any `--cwd` in the forwarded text is treated as literal
+prompt content. Result: Codex's sandbox would land on the main checkout,
+and every write into the worktree would return `operation not permitted`.
+
+This skill therefore invokes `codex-companion.mjs task --cwd <worktree>
+--write --prompt-file ...` **directly via Bash**, bypassing rescue.
+`resolveCommandCwd` in codex-companion resolves `--cwd` against
+`process.cwd()`, then `resolveWorkspaceRoot` computes
+`git rev-parse --show-toplevel` of that cwd, which — for a worktree path
+— returns the worktree itself. Sandbox root lands on the worktree, and
+file writes succeed. This is the one and only place in the codebase
+where direct codex-companion invocation is the correct pattern; all other
+Codex work still goes through `codex:codex-rescue`.
 
 If the Codex attempt loop never produces a passing local gate, Claude
 flips the issue to `state:blocked` and increments the per-tick failure
@@ -66,9 +87,10 @@ counter. Three consecutive tick failures trip the circuit breaker (touch
 
 ### Budgets at a glance
 
-- **3 local attempts per tick.** Claude wraps the Codex Agent call in a
-  retry loop of up to 3 iterations. Each iteration passes the prior
-  attempt's failure excerpt back to Codex as `PRIOR_FAILURE_LOG`.
+- **3 local attempts per tick.** Claude wraps the direct
+  `codex-companion.mjs task` Bash call in a retry loop of up to 3
+  iterations. Each iteration passes the prior attempt's failure excerpt
+  back to Codex as `PRIOR_FAILURE_LOG`.
 - **5 total failed attempts per issue across all runs/ticks.** Tracked in
   `.clankerism/attempts/issue-<N>.ndjson` (main checkout, not the
   worktree, so it survives `worktree.mjs release`). Exceed 5 → issue
@@ -87,10 +109,11 @@ preflight, and all writes to `.clankerism/attempts/issue-<N>.ndjson`
 happen.
 
 Once the tick claims or resumes an issue, it creates (or reattaches) a
-dedicated worktree at `/Users/advena/project/poddershub-worktrees/issue-<N>`
-and `cd`s into it. The codex:codex-rescue subagent inherits Claude's
-cwd, so Codex runs in the worktree — not in main. The main checkout is
-never modified by Codex.
+dedicated worktree at `/Users/advena/project/poddershub-worktrees/issue-<N>`.
+Step 7 invokes `codex-companion.mjs task --cwd <worktree> --write`
+directly via Bash (not the `codex:codex-rescue` Agent), so Codex's
+sandbox root is explicitly the worktree — not the main checkout inherited
+from Claude's process cwd. The main checkout is never modified by Codex.
 
 After each Codex attempt returns, Claude appends the NDJSON attempt
 record from the **main-checkout cwd** (absolute path
@@ -312,10 +335,20 @@ else
 fi
 ```
 
-Claude's cwd is now inside the worktree, so the codex:codex-rescue
-subagent spawned in Step 7 inherits it and runs Codex there. Codex will
-edit files and run the local gate; all git/gh writes happen from Claude
-in Step 7.5.
+Claude's cwd is now inside the worktree. Step 7 invokes Codex via
+`node codex-companion.mjs task --cwd <worktree> --write` directly via
+Bash — not through the `codex:codex-rescue` Agent — so Codex's sandbox
+root lands on the worktree regardless of Claude's process cwd. Codex
+will edit files and run the local gate; all git/gh writes happen from
+Claude in Step 7.5.
+
+Before Step 7 runs for the first time on a given worktree, Claude must
+ensure `node_modules` exists in the worktree. Fresh `git worktree add`
+directories start without dependencies installed — run
+`corepack pnpm install --frozen-lockfile` from the worktree cwd once,
+at the end of Step 6. The `postinstall` hook inside the worktree may
+emit a harmless `mkdir .git: Not a directory` warning because a
+worktree's `.git` is a file pointer, not a directory — ignore it.
 
 **Critical**: on the resume path, do not `git push origin "$BRANCH"` and
 do not `gh issue edit --remove-label state:ready`. Both are already
@@ -326,10 +359,19 @@ Record the start timestamp now — Step 9 needs it for the duration field.
 
 ### Step 7 — Delegate to Codex (retry loop)
 
-Wrap the `codex:codex-rescue` Agent call in a 3-attempt retry loop.
-Each attempt reads the prior failure excerpt, re-delegates to Codex, and
-classifies Codex's structured status. Claude appends the NDJSON attempt
-record from the main checkout cwd after every attempt (pass or fail).
+Wrap a direct `node codex-companion.mjs task --cwd <worktree> --write
+--prompt-file <prompt>` Bash call in a 3-attempt retry loop. **Do not
+use `codex:codex-rescue` here** — the rescue subagent inherits Claude's
+process cwd (always the main checkout) and cannot forward `--cwd` to
+codex-companion, so its sandbox root would land on the main checkout
+instead of the worktree. Direct invocation is the only way to make
+Codex's `workspace-write` root equal the worktree. See "Why we bypass
+`codex:codex-rescue` here" above for the full mechanism.
+
+Each attempt writes a fresh prompt file, shells out to codex-companion
+with the three-line structured status contract, and classifies Codex's
+reply. Claude appends the NDJSON attempt record from the main checkout
+cwd after every attempt (pass or fail).
 
 ```
 TICK_MAX=3
@@ -349,19 +391,40 @@ fi
 
 START_TS=$(date +%s%3N)
 
+CODEX_COMPANION="/Users/advena/.claude/plugins/cache/openai-codex/codex/1.0.2/scripts/codex-companion.mjs"
+
 while [ "$TICK_ATTEMPT" -le "$TICK_CAP" ]; do
-  # --- Agent call: codex:codex-rescue with prompt below. Foreground. ---
-  AGENT_RESULT=<Agent tool call, see prompt template below>
+  # --- Render the prompt file (substitute N, TITLE, ACCEPTANCE, etc.) ---
+  PROMPT_FILE="/tmp/codex-prompt-${N}-${TICK_ATTEMPT}.md"
+  # ... build $PROMPT_FILE from the template below ...
+
+  # --- Direct Bash invocation of codex-companion. NOT codex:codex-rescue.
+  # --cwd <worktree> is the whole point: resolveWorkspaceRoot(cwd) returns
+  # the worktree path, so Codex's workspace-write sandbox lands on the
+  # worktree and edits succeed. No --model, no --effort (match rescue
+  # defaults). --write enables workspace-write mode. Foreground by
+  # default — no --background, no --wait, no --fresh, no --resume.
+  CODEX_OUT=$(node "$CODEX_COMPANION" task \
+    --cwd "$WT" \
+    --write \
+    --prompt-file "$PROMPT_FILE" 2>&1) || true
 
   # --- Parse Codex's structured status. Codex's LAST message must end
   # with exactly three lines:
   #   STATUS=passing            (or gate_failed or hard_error)
   #   GATE_STEP=<step>          (build|lint|format:check|test|test:dashboard|adversarial-review|none)
   #   EXCERPT_PATH=<path>       (relative or absolute; "none" if passing)
-  # If the contract is violated, treat as hard_error.
-  STATUS=<parsed>
-  GATE_STEP=<parsed>
-  EXCERPT_PATH=<parsed>
+  # Parse the last 3 non-empty lines of $CODEX_OUT. If the contract is
+  # violated, treat as hard_error.
+  LAST_LINES=$(printf '%s\n' "$CODEX_OUT" | awk 'NF' | tail -n 3)
+  STATUS=$(echo "$LAST_LINES" | grep '^STATUS=' | cut -d= -f2)
+  GATE_STEP=$(echo "$LAST_LINES" | grep '^GATE_STEP=' | cut -d= -f2)
+  EXCERPT_PATH=$(echo "$LAST_LINES" | grep '^EXCERPT_PATH=' | cut -d= -f2)
+  if [ -z "$STATUS" ] || [ -z "$GATE_STEP" ] || [ -z "$EXCERPT_PATH" ]; then
+    STATUS=hard_error
+    GATE_STEP=none
+    EXCERPT_PATH=none
+  fi
 
   # --- Load the excerpt file Codex wrote (if any). ---
   EXCERPT=""
@@ -423,8 +486,6 @@ Substitute `<N>`, `<BRANCH>`, `<WT_PATH>`, `<TITLE>`, `<ACCEPTANCE>`,
 very first attempt for a fresh issue).
 
 ```
---wait
-
 You are working in a git worktree at <WT_PATH> on branch <BRANCH>. The
 worktree is sandboxed — you can edit source files and run local commands,
 but you CANNOT run `git commit`, `git push`, `git stash`, `gh pr create`,
@@ -436,12 +497,13 @@ Your job for this attempt:
 1. Read GitHub issue #<N> ("<TITLE>") and its acceptance criteria below.
 2. Produce the smallest diff that satisfies the acceptance criteria.
 3. Run the local CI gate in this exact order, short-circuiting on the
-   first failing step:
-     pnpm run build
-     pnpm run lint
-     pnpm run format:check
-     pnpm test
-     pnpm run test:dashboard
+   first failing step. Prefix every command with `corepack` because
+   `pnpm` is not on the sandboxed shell's PATH — `corepack pnpm …` is:
+     corepack pnpm run build
+     corepack pnpm run lint
+     corepack pnpm run format:check
+     corepack pnpm test
+     corepack pnpm run test:dashboard
 4. On the FIRST failure, stop, capture the last 40 lines of output to
    <WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log, and return the structured
    status below.
@@ -491,8 +553,10 @@ Full conventions in CLAUDE.md. Reference skill:
 
 Three invariants the retry loop depends on:
 
-- **`--wait` stays mandatory.** Background mode breaks structured-status
-  verification because the Agent call returns before Codex has run.
+- **Foreground execution is mandatory.** The direct `codex-companion.mjs
+  task` call runs in foreground by default — never pass `--background`.
+  Structured-status verification depends on parsing the last three lines
+  of the synchronous stdout; a queued job only returns a job ID.
 - **The three-line final-message contract is the integration point.**
   Claude parses the last 3 lines of Codex's last assistant message. If
   Codex omits any line or uses a different format, Claude treats the
@@ -521,7 +585,7 @@ $COMMIT_BODY
 Fixes #$N
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
-Co-Authored-By: Codex via codex:codex-rescue <noreply@anthropic.com>
+Co-Authored-By: Codex via codex-companion <noreply@anthropic.com>
 EOF
 )"
 git push -u origin "$BRANCH"
@@ -579,13 +643,19 @@ while :; do
     '{ts:$ts, tick_id:$tick_id, attempt:$attempt, run:$run, outcome:$outcome, gate_step:$gate_step, output_excerpt:$excerpt, diff_summary:null, terminal:false}' \
     >> "$ATTEMPTS_FILE"
 
-  # --- Re-delegate a ONE-SHOT fix to Codex via the same prompt template.
-  # Use FAILURE_LOG as PRIOR_FAILURE_LOG, TICK_ATTEMPT = remote-fix,
-  # NO retry loop around this call. Codex writes its own excerpt to
-  # <WT>/codex-attempt-remote-fix.log and must end with the same 3-line
-  # contract. Local gate must pass before Claude pushes the fix.
+  # --- Re-delegate a ONE-SHOT fix to Codex via the same direct
+  # codex-companion invocation. Use FAILURE_LOG as PRIOR_FAILURE_LOG,
+  # TICK_ATTEMPT = remote-fix, NO retry loop around this call. Codex
+  # writes its own excerpt to <WT>/codex-attempt-remote-fix.log and
+  # must end with the same 3-line contract. Local gate must pass before
+  # Claude pushes the fix.
 
-  FIX_RESULT=<Agent call to codex:codex-rescue with remote-fix prompt>
+  FIX_PROMPT_FILE="/tmp/codex-prompt-${N}-remote-fix.md"
+  # ... build $FIX_PROMPT_FILE ...
+  FIX_OUT=$(node "$CODEX_COMPANION" task \
+    --cwd "$WT" \
+    --write \
+    --prompt-file "$FIX_PROMPT_FILE" 2>&1) || true
   parse STATUS GATE_STEP EXCERPT_PATH as before
   FIX_EXCERPT=$(sed -e 's/\x1b\[[0-9;]*m//g' "$EXCERPT_PATH" 2>/dev/null | head -n 40)
 
@@ -605,7 +675,7 @@ while :; do
 $FAILURE_LOG
 
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
-Co-Authored-By: Codex via codex:codex-rescue <noreply@anthropic.com>"
+Co-Authored-By: Codex via codex-companion <noreply@anthropic.com>"
   git push
 
   REMOTE_FIX_USED=1
@@ -880,9 +950,13 @@ not abort the tick.
 - **Never delete `.clankerism/loop-log.ndjson` or
   `.clankerism/loop-state.json`.** They are the audit trail and the
   failure counter.
-- **Never call codex:codex-rescue without `--wait` in the prompt.** The
-  default for long tasks is background, which breaks verification —
-  Claude parses Codex's structured status from the Agent call return.
+- **Never call `codex:codex-rescue` from this skill.** The rescue
+  subagent cannot forward `--cwd`, so its sandbox root would land on
+  the main checkout and every worktree write would fail with
+  `operation not permitted`. This skill invokes
+  `node codex-companion.mjs task --cwd <worktree> --write
+  --prompt-file <file>` directly via Bash. Never pass `--background` —
+  the retry loop parses structured status from synchronous stdout.
 - **Never push to main from this skill.** Codex never pushes anything.
   The pre-push hook will block main pushes anyway.
 - **Never use `--no-verify`** anywhere, in this skill or the Codex prompt.
@@ -924,8 +998,16 @@ not abort the tick.
   progress with failure context, more attempts with the same blind
   prompt won't either.
 - **Use `--background` for "throughput".** No. Verification depends on
-  parsing Codex's structured status from the synchronous Agent return.
-  Background mode returns a job ID immediately and breaks everything.
+  parsing Codex's structured status from synchronous stdout of the
+  direct `codex-companion.mjs task` call. Background mode returns a
+  job ID immediately and breaks everything.
+- **Route Codex through `codex:codex-rescue` here.** No. Rescue's
+  forwarder strips nothing from `--cwd` but also doesn't pass it to
+  codex-companion — it ends up in the natural-language prompt text, so
+  codex-companion resolves cwd to Claude's process cwd (the main
+  checkout). Sandbox root lands on main, every worktree write fails
+  with `operation not permitted`, and you get an attempts file full of
+  `hard_error` records. Call codex-companion directly.
 - **Skip the sweep on first tick.** No. The sweep is what cleans up
   after a previous Claude session that crashed mid-loop — and what
   surfaces resumable issues for the new retry model.
