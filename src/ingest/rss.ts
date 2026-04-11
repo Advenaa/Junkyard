@@ -26,10 +26,10 @@ function safeParseDate(isoDate: string | undefined | null): number {
   const t = new Date(isoDate).getTime();
   return Number.isNaN(t) ? 0 : t;
 }
-const MAX_FEED_BYTES = 5 * 1024 * 1024; // 5 MB
+export const MAX_FEED_BYTES = 5 * 1024 * 1024; // 5 MB
 const MAX_ITEMS_PER_POLL = 50;
 
-async function readBodyLimited(response: Response, maxBytes: number): Promise<string | null> {
+export async function readBodyLimited(response: Response, maxBytes: number): Promise<string | null> {
   const reader = response.body?.getReader();
   if (!reader) return null;
   const chunks: Uint8Array[] = [];
