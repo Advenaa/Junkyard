@@ -874,6 +874,30 @@ const migrations: Migration[] = [
         WHERE sentiment IS NOT NULL
     `);
   },
+
+  // Migration 35: close normalize URL dedup race (#50)
+  async (client) => {
+    await client.query(`
+      WITH dupes AS (
+        SELECT id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY url
+                 ORDER BY created_at ASC, id ASC
+               ) AS rn
+          FROM items
+         WHERE url IS NOT NULL
+      )
+      DELETE FROM items
+       WHERE id IN (SELECT id FROM dupes WHERE rn > 1)
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_items_url_unique
+        ON items(url) WHERE url IS NOT NULL
+    `);
+
+    await client.query(`DROP INDEX IF EXISTS idx_items_url`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
