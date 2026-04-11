@@ -126,7 +126,7 @@ describe('AppRouter auth expiry flow', () => {
 
     render(<AppRouter />);
 
-    await screen.findByText('No reports yet');
+    await screen.findByText('Report not found');
     window.dispatchEvent(new Event('focus'));
 
     await waitFor(() => {

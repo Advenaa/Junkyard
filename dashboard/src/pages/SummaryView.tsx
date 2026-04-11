@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { apiFetch } from '../lib/api';
+import { apiFetch, isApiError } from '../lib/api';
 import { EmptyState } from '../components/EmptyState';
 
 interface SummaryEntity {
@@ -158,11 +158,14 @@ export function SummaryView() {
         }
       })
       .catch((err) => {
-        if (!cancelled) {
-          setSummary(null);
-          setError(err.message);
-          setLoadedKey(id);
+        if (cancelled) return;
+        setSummary(null);
+        if (isApiError(err) && err.status === 404) {
+          setError(null);
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
         }
+        setLoadedKey(requestKey);
       });
 
     return () => {
