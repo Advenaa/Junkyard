@@ -911,6 +911,27 @@ export function createSynthesizer(
     }
   }
 
+  async function recordFlashAbort(err: Error): Promise<void> {
+    const timestamp = Date.now();
+
+    try {
+      await insertHealthEvent(pool, {
+        id: ulid(),
+        category: 'synth_aborted',
+        severity: 'error',
+        message: `flash synthesis aborted: ${err.message}`,
+        metadata: {
+          stage: 'flash',
+          error: err.message,
+          timestamp,
+        },
+        createdAt: timestamp,
+      });
+    } catch (healthErr: unknown) {
+      log.error({ err: toLoggedError(healthErr), stage: 'flash', synthErr: err }, 'Failed to record synth abort');
+    }
+  }
+
   async function getYesterdayTldr(): Promise<string | null> {
     const { rows } = await pool.query<{ tldr: string | null }>(
       `SELECT tldr FROM reports WHERE type='daily' ORDER BY created_at DESC LIMIT 1`,
@@ -1355,113 +1376,132 @@ export function createSynthesizer(
   }
 
   async function runFlash(correlatedEntities: CorrelatedEntity[]): Promise<ReportRow | null> {
-    if (correlatedEntities.length === 0) {
-      log.info('No correlated entities for flash report, skipping');
-      return null;
-    }
-
-    // Load last 4 hours of summaries
-    const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
-    const rows = await getSummariesByTimeWindow(pool, fourHoursAgo, Date.now());
-
-    if (rows.length === 0) {
-      log.info('No recent summaries for flash report, skipping');
-      return null;
-    }
-
-    // Parse summaries
-    const summaries = parseSummaries(rows);
-    if (summaries.length === 0) {
-      log.warn('All summaries failed to parse, skipping flash synthesis');
-      return null;
-    }
-
-    // Filter to summaries mentioning correlated entities
-    const entityNames = new Set(correlatedEntities.map((c) => c.entityName.toLowerCase()));
-    const relevant = summaries.filter((s) => s.parsed.entities.some((e) => entityNames.has(e.name.toLowerCase())));
-
-    if (relevant.length === 0) {
-      log.info('No summaries mention correlated entities, skipping flash');
-      return null;
-    }
-
-    // Duplicate guard: skip if a flash report was already created in the last 4h
-    const { rows: existingFlash } = await pool.query<{ id: string }>(
-      `SELECT id FROM reports WHERE type = 'flash' AND created_at > $1 LIMIT 1`,
-      [fourHoursAgo],
-    );
-    if (existingFlash.length > 0) {
-      log.info({ existingId: existingFlash[0].id }, 'Flash report already exists in last 4h, skipping');
-      return null;
-    }
-
-    const prompt = prepareBudgetedSynthesisPrompt({
-      llm,
-      log,
-      model: config.models.thinkalot,
-      systemPrompt: FLASH_SYSTEM_PROMPT,
-      maxTokens: 2000,
-      label: 'Flash synthesis',
-      summaries: relevant,
-      minSummaryCount: 1,
-      buildUserMessage: (candidateSummaries) => buildFlashUserMessage(candidateSummaries, correlatedEntities),
-    });
-    if (!prompt) return null;
-
-    const relevantSummaries = prompt.summaries;
-
-    log.info(
-      {
-        entities: correlatedEntities.length,
-        summaries: relevantSummaries.length,
-        estimatedInputTokens: prompt.estimatedInputTokens,
-        inputBudget: prompt.inputBudget,
-      },
-      'Sending flash synthesis to LLM',
-    );
-
-    const report = await callReportWithRetry(
-      llm,
-      log,
-      config.models.thinkalot,
-      FLASH_SYSTEM_PROMPT,
-      prompt.wrappedContent,
-      2000,
-      'synthesize',
-      'Flash synthesis',
-    );
-    if (!report) return null;
-
-    // Insert into DB
-    const reportId = ulid();
-    const avgSentiment = computeAvgSentiment(report);
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    const { dateString } = getTodayWindow(timezone);
-    const sourceFamilies = [...new Set(relevantSummaries.map((s) => s.row.source))].sort();
-
-    let reportRow: ReportRow;
     try {
-      reportRow = await insertReport(pool, {
-        id: reportId,
-        date: dateString,
-        type: 'flash',
-        body: JSON.stringify({ ...report, sourceFamilies }),
-        tldr: report.tldr,
-        sentiment: avgSentiment,
-        createdAt: Date.now(),
-      });
-    } catch (err: unknown) {
-      // Unique constraint violation (23505) means a concurrent flash was created first
-      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
-        log.info({ date: dateString }, 'Flash report race: another process created it first');
+      if (correlatedEntities.length === 0) {
+        log.info('No correlated entities for flash report, skipping');
         return null;
       }
-      throw err;
+
+      // Load last 4 hours of summaries
+      const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+      const rows = await loadContextOrDefault<SummaryRow[]>('flash summaries', [], () =>
+        getSummariesByTimeWindow(pool, fourHoursAgo, Date.now()),
+      );
+
+      if (rows.length === 0) {
+        log.info('No recent summaries for flash report, skipping');
+        return null;
+      }
+
+      // Parse summaries
+      const summaries = parseSummaries(rows);
+      if (summaries.length === 0) {
+        log.warn('All summaries failed to parse, skipping flash synthesis');
+        return null;
+      }
+
+      // Filter to summaries mentioning correlated entities
+      const entityNames = new Set(correlatedEntities.map((c) => c.entityName.toLowerCase()));
+      const relevant = summaries.filter((s) => s.parsed.entities.some((e) => entityNames.has(e.name.toLowerCase())));
+
+      if (relevant.length === 0) {
+        log.info('No summaries mention correlated entities, skipping flash');
+        return null;
+      }
+
+      // Duplicate guard: skip if a flash report was already created in the last 4h
+      const existingFlash = await loadContextOrDefault<Array<{ id: string }>>(
+        'flash existing report state',
+        [],
+        async () =>
+          (
+            await pool.query<{ id: string }>(
+              `SELECT id FROM reports WHERE type = 'flash' AND created_at > $1 LIMIT 1`,
+              [fourHoursAgo],
+            )
+          ).rows,
+      );
+      if (existingFlash.length > 0) {
+        log.info({ existingId: existingFlash[0].id }, 'Flash report already exists in last 4h, skipping');
+        return null;
+      }
+
+      const timezone =
+        (await loadContextOrDefault<string | null>('flash synthesis timezone', 'Asia/Jakarta', () =>
+          getAppConfig(pool, 'timezone'),
+        )) ?? 'Asia/Jakarta';
+      const { dateString } = getTodayWindow(timezone);
+
+      const prompt = prepareBudgetedSynthesisPrompt({
+        llm,
+        log,
+        model: config.models.thinkalot,
+        systemPrompt: FLASH_SYSTEM_PROMPT,
+        maxTokens: 2000,
+        label: 'Flash synthesis',
+        summaries: relevant,
+        minSummaryCount: 1,
+        buildUserMessage: (candidateSummaries) => buildFlashUserMessage(candidateSummaries, correlatedEntities),
+      });
+      if (!prompt) return null;
+
+      const relevantSummaries = prompt.summaries;
+
+      log.info(
+        {
+          entities: correlatedEntities.length,
+          summaries: relevantSummaries.length,
+          estimatedInputTokens: prompt.estimatedInputTokens,
+          inputBudget: prompt.inputBudget,
+        },
+        'Sending flash synthesis to LLM',
+      );
+
+      const report = await callReportWithRetry(
+        llm,
+        log,
+        config.models.thinkalot,
+        FLASH_SYSTEM_PROMPT,
+        prompt.wrappedContent,
+        2000,
+        'synthesize',
+        'Flash synthesis',
+      );
+      if (!report) return null;
+
+      // Insert into DB
+      const reportId = ulid();
+      const avgSentiment = computeAvgSentiment(report);
+      const sourceFamilies = [...new Set(relevantSummaries.map((s) => s.row.source))].sort();
+
+      let reportRow: ReportRow;
+      try {
+        reportRow = await insertReport(pool, {
+          id: reportId,
+          date: dateString,
+          type: 'flash',
+          body: JSON.stringify({ ...report, sourceFamilies }),
+          tldr: report.tldr,
+          sentiment: avgSentiment,
+          createdAt: Date.now(),
+        });
+      } catch (err: unknown) {
+        // Unique constraint violation (23505) means a concurrent flash was created first
+        if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+          log.info({ date: dateString }, 'Flash report race: another process created it first');
+          return null;
+        }
+        throw err;
+      }
+
+      log.info({ reportId, entities: correlatedEntities.map((c) => c.entityName) }, 'Flash report created');
+
+      return reportRow;
+    } catch (err: unknown) {
+      const loggedErr = toLoggedError(err);
+      await recordFlashAbort(loggedErr);
+      throw loggedErr;
     }
-
-    log.info({ reportId, entities: correlatedEntities.map((c) => c.entityName) }, 'Flash report created');
-
-    return reportRow;
   }
 
   return { runDaily, runFlash };
