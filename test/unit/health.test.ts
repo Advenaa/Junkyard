@@ -616,6 +616,164 @@ describe('health monitor', () => {
     });
   });
 
+  describe('db-down fallback alerts', () => {
+    it('still sends the first critical fallback alert immediately when the DB goes down', async (t) => {
+      const now = 1_700_000_000_000;
+      const dateNowMock = t.mock.method(Date, 'now', () => now);
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            throw new Error('db down');
+          }
+          return { rows: [] };
+        },
+      });
+
+      const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+      const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+        throw new Error('no AAAA record');
+      });
+      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+      const monitor = createHealthMonitor(
+        pool,
+        silentLog,
+        fakeConfig({ alertWebhookUrl: 'https://alerts.example.com/hook' }),
+      );
+      await monitor.check();
+
+      assert.strictEqual(fetchMock.mock.callCount(), 1, 'first DB-down check should trigger one alert');
+      const [, requestInit] = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
+      const payload = JSON.parse(String(requestInit.body)) as {
+        embeds: Array<{ title: string; description: string }>;
+      };
+      assert.equal(payload.embeds[0]?.title, 'Health Alert: db_connectivity');
+      assert.equal(payload.embeds[0]?.description, 'DB unreachable: db down');
+
+      fetchMock.mock.restore();
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
+      dateNowMock.mock.restore();
+    });
+
+    it('dedups repeated DB-down fallback alerts for 30 minutes and fires again after the window', async (t) => {
+      let now = 1_700_000_000_000;
+      const dateNowMock = t.mock.method(Date, 'now', () => now);
+      const pool = createMockPool({
+        queryFn: async (text: string) => {
+          if (text.includes('SELECT 1')) {
+            throw new Error('db down');
+          }
+          return { rows: [] };
+        },
+      });
+
+      const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+      const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+        throw new Error('no AAAA record');
+      });
+      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+      const monitor = createHealthMonitor(
+        pool,
+        silentLog,
+        fakeConfig({ alertWebhookUrl: 'https://alerts.example.com/hook' }),
+      );
+
+      await monitor.check();
+      assert.strictEqual(fetchMock.mock.callCount(), 1, 'first DB-down check should alert');
+
+      now += 5 * 60 * 1000;
+      await monitor.check();
+      assert.strictEqual(fetchMock.mock.callCount(), 1, '5-minute retry should be deduped');
+
+      now += 30 * 60 * 1000;
+      await monitor.check();
+      assert.strictEqual(fetchMock.mock.callCount(), 2, 'next DB-down check after 35 minutes should alert again');
+
+      fetchMock.mock.restore();
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
+      dateNowMock.mock.restore();
+    });
+
+    it('does not double-alert when the normal event path resumes after a fallback DB-down alert', async (t) => {
+      let now = 1_700_000_000_000;
+      const dateNowMock = t.mock.method(Date, 'now', () => now);
+      let dbDown = true;
+      const insertedEvents: unknown[][] = [];
+      const pool = createMockPool({
+        queryFn: async (text: string, params?: unknown[]) => {
+          if (text.includes('INSERT INTO health_events')) {
+            insertedEvents.push([...(params ?? [])]);
+            return { rows: [], rowCount: 1 };
+          }
+          if (text.includes('SELECT 1')) {
+            if (dbDown) {
+              throw new Error('db down');
+            }
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes('FROM entity_aliases')) {
+            return { rows: [{ alias_count: 1000 }] };
+          }
+          if (text.includes('FROM entities') && text.includes('WHERE last_seen')) {
+            return { rows: [{ entity_count: 1000 }] };
+          }
+          if (text.includes("type = 'pulse'") || text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+
+      const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+      const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+        throw new Error('no AAAA record');
+      });
+      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+      const monitor = createHealthMonitor(
+        pool,
+        silentLog,
+        fakeConfig({ alertWebhookUrl: 'https://alerts.example.com/hook' }),
+      );
+
+      await monitor.check();
+      assert.strictEqual(fetchMock.mock.callCount(), 1, 'fallback DB-down alert should fire immediately');
+
+      dbDown = false;
+      now += 5 * 60 * 1000;
+      await monitor.check();
+      assert.strictEqual(fetchMock.mock.callCount(), 1, 'recovery check should not emit another DB-down alert');
+
+      await monitor.recordEvent({
+        category: 'db_connectivity',
+        severity: 'critical',
+        message: 'DB unreachable: db down',
+        metadata: { checkName: 'db_connectivity', status: 'critical' },
+      });
+
+      assert.equal(insertedEvents.length, 1, 'recovered DB should allow the normal event path to insert');
+      assert.strictEqual(
+        fetchMock.mock.callCount(),
+        1,
+        'normal event path should respect the recent fallback alert for the same category',
+      );
+
+      fetchMock.mock.restore();
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
+      dateNowMock.mock.restore();
+    });
+  });
+
   describe('checkEntityAliases', () => {
     it('returns ok on fresh install when there are no active entities', async () => {
       const pool = createMockPool({

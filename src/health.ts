@@ -27,7 +27,9 @@ export interface HealthMonitor {
 }
 
 export function createHealthMonitor(pool: Pool, log: Logger, config: Config): HealthMonitor {
+  const ALERT_DEDUP_WINDOW_MS = 30 * 60 * 1000;
   let readyBacklogHighTicks = 0;
+  const lastAlertSentAt = new Map<string, number>();
 
   // HM-001: Log confirmation that alert webhook is configured (URL already validated in config.ts)
   if (config.alertWebhookUrl) {
@@ -361,10 +363,28 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     return { name: 'ready_backlog', status: 'ok' };
   }
 
+  function alertedRecently(category: string, now: number): boolean {
+    const last = lastAlertSentAt.get(category) ?? 0;
+    return now - last < ALERT_DEDUP_WINDOW_MS;
+  }
+
+  async function maybeSendFallbackAlert(event: HealthEvent): Promise<void> {
+    if (!config.alertWebhookUrl) return;
+
+    const now = Date.now();
+    if (alertedRecently(event.category, now)) {
+      log.debug({ category: event.category }, 'Skipping duplicate fallback alert (DB down)');
+      return;
+    }
+
+    lastAlertSentAt.set(event.category, now);
+    await sendAlertWebhook(event);
+  }
+
   async function insertEvent(event: HealthEvent): Promise<void> {
     const id = ulid();
     const now = Date.now();
-    const cutoff = now - 30 * 60 * 1000;
+    const cutoff = now - ALERT_DEDUP_WINDOW_MS;
 
     // HM-021: Atomic dedup — INSERT only if no recent unacknowledged event exists
     const { rowCount } = await pool.query(
@@ -386,6 +406,12 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     }
 
     if (event.severity === 'critical' && config.alertWebhookUrl) {
+      if (alertedRecently(event.category, now)) {
+        log.debug({ category: event.category }, 'Skipping duplicate health alert webhook');
+        return;
+      }
+
+      lastAlertSentAt.set(event.category, now);
       await sendAlertWebhook(event);
     }
   }
@@ -506,12 +532,12 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       if (dbDown) {
         // Can't write to DB, but still alert for critical
         if (result.status === 'critical' && config.alertWebhookUrl) {
-          await sendAlertWebhook({
+          await maybeSendFallbackAlert({
             category: result.name,
             severity: result.status,
             message: result.message ?? `${result.name} check failed`,
             metadata: { checkName: result.name, status: result.status },
-          }).catch((err) => log.error({ err }, 'alert webhook failed'));
+          }).catch((err) => log.error({ err }, 'fallback alert webhook failed'));
         }
         continue;
       }
