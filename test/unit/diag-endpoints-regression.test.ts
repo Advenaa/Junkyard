@@ -18,6 +18,7 @@ const diagRoutes = [
   '/api/v1/diag/halted-sources',
   '/api/v1/diag/scheduler',
   '/api/v1/diag/health-events',
+  '/api/v1/diag/cost-spikes',
 ];
 
 describe('diag endpoints — registration + admin auth', () => {
@@ -89,5 +90,15 @@ describe('diag endpoints — queries hit the right tables', () => {
   it('health-events limits the response and caps at 200', () => {
     const block = routeBlock('/api/v1/diag/health-events');
     assert.match(block, /limit:\s*\{\s*type:\s*'integer'[^}]*maximum:\s*200/);
+  });
+
+  it('cost-spikes queries llm_usage against a rolling median baseline and camelCases the response', () => {
+    const block = routeBlock('/api/v1/diag/cost-spikes', 4000);
+    assert.match(block, /FROM\s+llm_usage/i);
+    assert.match(block, /percentile_cont\s*\(\s*0\.5\s*\)/i);
+    assert.match(block, /created_at\s*>=\s*\$1::bigint/);
+    assert.match(block, /created_at\s*>=\s*\$2::bigint\s+AND\s+created_at\s*<\s*\$1::bigint/i);
+    assert.match(block, /actual_usd\s*>\s*3\s*\*\s*b\.median_usd/i);
+    assert.match(block, /toCamelCase/);
   });
 });
