@@ -932,6 +932,18 @@ const migrations: Migration[] = [
         ON alpha_propagation(entity_id, tier, first_mention_day)
     `);
   },
+
+  // Migration 37: Drop dead manual-grading columns left over after #111 (deploy 2 of the two-step backward-compatible removal)
+  async (client) => {
+    await client.query(`DROP INDEX IF EXISTS idx_authors_credibility`);
+    await client.query(`DROP INDEX IF EXISTS idx_author_calls_unresolved`);
+
+    await client.query(`ALTER TABLE authors DROP COLUMN IF EXISTS credibility_score`);
+    await client.query(`ALTER TABLE authors DROP COLUMN IF EXISTS correct_calls`);
+    await client.query(`ALTER TABLE author_calls DROP COLUMN IF EXISTS outcome`);
+    await client.query(`ALTER TABLE author_calls DROP COLUMN IF EXISTS resolved`);
+    await client.query(`ALTER TABLE author_calls DROP COLUMN IF EXISTS resolved_at`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
