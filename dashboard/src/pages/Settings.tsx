@@ -1495,6 +1495,8 @@ function SourcesTab() {
   const [adding, setAdding] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editLabel, setEditLabel] = useState('');
+  const [editingPollKey, setEditingPollKey] = useState<string | null>(null);
+  const [editPollValue, setEditPollValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
   const [tokens, setTokens] = useState<DiscordManagedToken[]>([]);
   const [tokensLoading, setTokensLoading] = useState(true);
@@ -1890,6 +1892,44 @@ function SourcesTab() {
 
   const cancelEditLabel = () => {
     setEditingKey(null);
+  };
+
+  const startEditPoll = (s: Source) => {
+    setEditingPollKey(`${s.source}-${s.sourceId}`);
+    setEditPollValue(String(s.pollInterval));
+  };
+
+  const savePollInterval = async (s: Source) => {
+    const raw = editPollValue.trim();
+    setEditingPollKey(null);
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+      setError(`Poll interval must be an integer (seconds). Got "${raw}".`);
+      return;
+    }
+    if (parsed < 60 || parsed > 86400) {
+      setError(`Poll interval must be between 60 and 86400 seconds. Got ${parsed}.`);
+      return;
+    }
+    if (parsed === s.pollInterval) return;
+    setError(null);
+    try {
+      await apiFetch(buildSourceActionPath(s), {
+        method: 'PATCH',
+        body: JSON.stringify({ poll_interval: parsed }),
+      });
+      setSources((prev) =>
+        prev.map((src) =>
+          src.source === s.source && src.sourceId === s.sourceId ? { ...src, pollInterval: parsed } : src,
+        ),
+      );
+    } catch {
+      setError(`Failed to update poll interval for "${getSourceDisplayName(s)}".`);
+    }
+  };
+
+  const cancelEditPoll = () => {
+    setEditingPollKey(null);
   };
 
   const addSourceButton = (
@@ -2370,11 +2410,34 @@ function SourcesTab() {
                           {s.sourceId.startsWith('@') ? '@handle' : 'search'}
                         </span>
                       )}
-                      <span className="ml-2 text-text-secondary/60">
-                        {s.pollInterval >= 3600
-                          ? `${Math.floor(s.pollInterval / 3600)}h`
-                          : `${Math.floor(s.pollInterval / 60)}m`}
-                      </span>
+                      {editingPollKey === `${s.source}-${s.sourceId}` ? (
+                        <input
+                          autoFocus
+                          type="number"
+                          min={60}
+                          max={86400}
+                          step={60}
+                          value={editPollValue}
+                          onChange={(e) => setEditPollValue(e.target.value)}
+                          onBlur={() => savePollInterval(s)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') savePollInterval(s);
+                            if (e.key === 'Escape') cancelEditPoll();
+                          }}
+                          aria-label={`Edit poll interval for ${getSourceDisplayName(s)}`}
+                          className="ml-2 w-20 bg-background border border-accent rounded px-1 py-0 text-text-primary text-[11px] font-mono focus:outline-none"
+                        />
+                      ) : (
+                        <span
+                          onDoubleClick={() => startEditPoll(s)}
+                          title="Double-click to edit poll interval (seconds, 60–86400)"
+                          className="ml-2 text-text-secondary/60 cursor-default"
+                        >
+                          {s.pollInterval >= 3600
+                            ? `${Math.floor(s.pollInterval / 3600)}h`
+                            : `${Math.floor(s.pollInterval / 60)}m`}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-text-primary font-body">
                       {editingKey === `${s.source}-${s.sourceId}` ? (
