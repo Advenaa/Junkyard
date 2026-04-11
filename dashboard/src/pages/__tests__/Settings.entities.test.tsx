@@ -78,18 +78,223 @@ interface GraphResponse {
   relationships: MockEntityRelationship[];
 }
 
+interface MockEntitySuggestion {
+  id: string;
+  name: string;
+  matchedAlias: string | null;
+  status: 'active' | 'archived';
+  relevance: number;
+  lastSeen: number;
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function createEntitySearchFetchMock(knownEntities: MockEntitySuggestion[]) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const requestUrl = new URL(url, 'http://localhost');
+    const path = requestUrl.pathname;
+    const method = init?.method ?? 'GET';
+
+    if (path === '/api/v1/sources' && method === 'GET') {
+      return jsonResponse({ sources: [] });
+    }
+
+    if (path === '/api/v1/discord/tokens' && method === 'GET') {
+      return jsonResponse({ tokens: [] });
+    }
+
+    if (path === '/api/v1/discord/tokens/health' && method === 'GET') {
+      return jsonResponse({ states: [] });
+    }
+
+    if (path === '/api/v1/config' && method === 'GET') {
+      return jsonResponse({ digestTime: '09:00', timezone: 'Asia/Jakarta', webhookUrl: '' });
+    }
+
+    if (path === '/api/v1/entities/search' && method === 'GET') {
+      const q = requestUrl.searchParams.get('q')?.toLowerCase() ?? '';
+      const status = requestUrl.searchParams.get('status') as MockEntitySuggestion['status'] | null;
+      const entities = knownEntities.filter((entity) => {
+        const matchesQuery =
+          entity.name.toLowerCase().startsWith(q) || (entity.matchedAlias?.toLowerCase().startsWith(q) ?? false);
+        const matchesStatus = status == null || entity.status === status;
+        return matchesQuery && matchesStatus;
+      });
+      return jsonResponse({ entities });
+    }
+
+    throw new Error(`Unhandled fetch ${method} ${path}${requestUrl.search}`);
+  });
+}
+
 describe('Settings entity relationships', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
+  it('shows active and archived lifecycle badges in entity search suggestions', async () => {
+    const knownEntities: MockEntitySuggestion[] = [
+      {
+        id: 'ent-arb',
+        name: 'Arbitrum',
+        matchedAlias: 'arb',
+        status: 'active',
+        relevance: 1.4,
+        lastSeen: Date.UTC(2026, 3, 10, 12, 0, 0),
+      },
+      {
+        id: 'ent-arch',
+        name: 'Archway',
+        matchedAlias: 'arch',
+        status: 'archived',
+        relevance: 0.25,
+        lastSeen: Date.UTC(2025, 11, 1, 9, 0, 0),
+      },
+    ];
+    vi.stubGlobal('fetch', createEntitySearchFetchMock(knownEntities));
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Entities' }));
+    await user.type(screen.getByPlaceholderText('Search entities by name or alias'), 'Ar');
+
+    const suggestions = await screen.findByLabelText('Entity detail suggestions');
+    expect(within(suggestions).getByText('active')).toBeInTheDocument();
+    expect(within(suggestions).getByText('archived')).toBeInTheDocument();
+  });
+
+  it('requests archived-only entity suggestions when the Archived filter is selected', async () => {
+    const knownEntities: MockEntitySuggestion[] = [
+      {
+        id: 'ent-arb',
+        name: 'Arbitrum',
+        matchedAlias: 'arb',
+        status: 'active',
+        relevance: 0.87,
+        lastSeen: Date.UTC(2026, 3, 10, 12, 0, 0),
+      },
+      {
+        id: 'ent-arch',
+        name: 'Archway',
+        matchedAlias: 'arch',
+        status: 'archived',
+        relevance: 0.25,
+        lastSeen: Date.UTC(2025, 11, 1, 9, 0, 0),
+      },
+    ];
+    const fetchMock = createEntitySearchFetchMock(knownEntities);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Entities' }));
+    await user.type(screen.getByPlaceholderText('Search entities by name or alias'), 'Ar');
+    await screen.findByLabelText('Entity detail suggestions');
+
+    await user.click(screen.getByRole('button', { name: 'Archived' }));
+
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) => {
+          const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+          const requestUrl = new URL(url, 'http://localhost');
+          return (
+            requestUrl.pathname === '/api/v1/entities/search' &&
+            requestUrl.searchParams.get('q') === 'Ar' &&
+            requestUrl.searchParams.get('status') === 'archived'
+          );
+        }),
+      ).toBe(true);
+    });
+  });
+
+  it('shows a clamped relevance indicator in entity search suggestions', async () => {
+    const knownEntities: MockEntitySuggestion[] = [
+      {
+        id: 'ent-arb',
+        name: 'Arbitrum',
+        matchedAlias: 'arb',
+        status: 'active',
+        relevance: 1.4,
+        lastSeen: Date.UTC(2026, 3, 10, 12, 0, 0),
+      },
+      {
+        id: 'ent-arch',
+        name: 'Archway',
+        matchedAlias: 'arch',
+        status: 'archived',
+        relevance: 0.25,
+        lastSeen: Date.UTC(2025, 11, 1, 9, 0, 0),
+      },
+    ];
+    vi.stubGlobal('fetch', createEntitySearchFetchMock(knownEntities));
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <Settings />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Entities' }));
+    await user.type(screen.getByPlaceholderText('Search entities by name or alias'), 'Ar');
+
+    const suggestions = await screen.findByLabelText('Entity detail suggestions');
+    expect(within(suggestions).getByText('100%')).toBeInTheDocument();
+    expect(within(suggestions).getByText('25%')).toBeInTheDocument();
+  });
+
   it('shows entity details and lets admins add and remove relationships from the Entities tab', async () => {
-    const knownEntities = [
-      { id: 'ent-eth', name: 'Ethereum', matchedAlias: 'eth' },
-      { id: 'ent-sol', name: 'Solana', matchedAlias: 'sol' },
-      { id: 'ent-arb', name: 'Arbitrum', matchedAlias: 'arb' },
-      { id: 'ent-base', name: 'Base', matchedAlias: 'base' },
+    const knownEntities: MockEntitySuggestion[] = [
+      {
+        id: 'ent-eth',
+        name: 'Ethereum',
+        matchedAlias: 'eth',
+        status: 'active',
+        relevance: 0.96,
+        lastSeen: Date.UTC(2026, 3, 10, 12, 0, 0),
+      },
+      {
+        id: 'ent-sol',
+        name: 'Solana',
+        matchedAlias: 'sol',
+        status: 'active',
+        relevance: 0.9,
+        lastSeen: Date.UTC(2026, 3, 10, 11, 0, 0),
+      },
+      {
+        id: 'ent-arb',
+        name: 'Arbitrum',
+        matchedAlias: 'arb',
+        status: 'active',
+        relevance: 0.73,
+        lastSeen: Date.UTC(2026, 3, 9, 10, 0, 0),
+      },
+      {
+        id: 'ent-base',
+        name: 'Base',
+        matchedAlias: 'base',
+        status: 'archived',
+        relevance: 0.32,
+        lastSeen: Date.UTC(2025, 11, 25, 8, 0, 0),
+      },
     ];
     const entityNameById = new Map(knownEntities.map((entity) => [entity.id, entity.name]));
     const relationships: MockEntityRelationship[] = [

@@ -34,7 +34,7 @@ interface EntityRouteDeps {
 }
 
 export function registerEntityRoutes({ app, authPreHandler, config, pool, requireAdmin }: EntityRouteDeps): void {
-  app.get<{ Querystring: { q: string; limit?: number } }>(
+  app.get<{ Querystring: { q: string; limit?: number; status?: 'active' | 'archived' } }>(
     '/api/v1/entities/search',
     {
       preHandler: [authPreHandler],
@@ -45,6 +45,7 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
           properties: {
             q: { type: 'string', minLength: 2, maxLength: 100 },
             limit: { type: 'integer', minimum: 1, maximum: 10 },
+            status: { type: 'string', enum: ['active', 'archived'] },
           },
           additionalProperties: false,
         },
@@ -60,9 +61,21 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
       const rawPrefix = `${rawQuery.toLowerCase()}%`;
       const aliasPrefix = `${normalizedQuery}%`;
       const limit = Math.min(Math.max(request.query.limit ?? 6, 1), 10);
+      const params: Array<string | number> = [rawPrefix, aliasPrefix, rawQuery.toLowerCase(), normalizedQuery];
+      const statusFilter = request.query.status;
+      const statusClause =
+        statusFilter == null
+          ? ''
+          : (() => {
+              params.push(statusFilter);
+              return ` AND e.status = $${params.length}`;
+            })();
+
+      params.push(limit);
+      const limitPlaceholder = `$${params.length}`;
 
       const { rows } = await pool.query<EntitySearchSuggestionRow>(
-        `SELECT id, name, matched_alias
+        `SELECT id, name, matched_alias, status, relevance, last_seen
            FROM (
              SELECT DISTINCT ON (e.id)
                     e.id,
@@ -76,19 +89,23 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
                       WHEN ea.alias = $4 THEN 1
                       WHEN LOWER(e.name) LIKE $1 THEN 2
                       ELSE 3
-                    END AS rank
+                    END AS rank,
+                    e.status,
+                    e.relevance,
+                    e.last_seen
                FROM entities e
                LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
-              WHERE LOWER(e.name) LIKE $1
-                 OR ea.alias LIKE $2
+              WHERE (LOWER(e.name) LIKE $1
+                 OR ea.alias LIKE $2)
+                ${statusClause}
               ORDER BY e.id,
                        rank ASC,
                        LENGTH(e.name) ASC,
                        e.name ASC
            ) ranked
           ORDER BY rank ASC, LENGTH(name) ASC, name ASC
-          LIMIT $5`,
-        [rawPrefix, aliasPrefix, rawQuery.toLowerCase(), normalizedQuery, limit],
+          LIMIT ${limitPlaceholder}`,
+        params,
       );
 
       return {
@@ -96,6 +113,9 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
           id: row.id,
           name: row.name,
           matchedAlias: row.matched_alias,
+          status: row.status,
+          relevance: row.relevance,
+          lastSeen: row.last_seen,
         })),
       };
     },

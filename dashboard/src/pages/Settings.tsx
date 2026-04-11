@@ -207,6 +207,9 @@ interface EntitySuggestion {
   id: string;
   name: string;
   matchedAlias: string | null;
+  status: 'active' | 'archived';
+  relevance: number;
+  lastSeen: number;
 }
 
 type EntityRelationshipType =
@@ -413,10 +416,19 @@ async function fetchNarrativeDrilldownData(narrativeId: string): Promise<Narrati
   return res.narrative;
 }
 
-async function fetchEntitySuggestionsData(query: string): Promise<EntitySuggestion[]> {
-  const res = await apiFetch<{ entities: EntitySuggestion[] }>(
-    `/entities/search?q=${encodeURIComponent(query)}&limit=6`,
-  );
+async function fetchEntitySuggestionsData(
+  query: string,
+  statusFilter: 'active' | 'archived' | null = null,
+): Promise<EntitySuggestion[]> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: '6',
+  });
+  if (statusFilter != null) {
+    params.set('status', statusFilter);
+  }
+
+  const res = await apiFetch<{ entities: EntitySuggestion[] }>(`/entities/search?${params.toString()}`);
   return res.entities;
 }
 
@@ -463,6 +475,64 @@ async function fetchEntityAuthorsData(entityId: string): Promise<EntityAuthor[]>
 
 async function fetchAuthorProfileData(authorId: string): Promise<AuthorProfileData> {
   return apiFetch<AuthorProfileData>(`/authors/${authorId}?callLimit=20`);
+}
+
+function clampEntityRelevance(relevance: number): number {
+  if (!Number.isFinite(relevance)) return 0;
+  return Math.min(Math.max(relevance, 0), 1);
+}
+
+function getEntityStatusBadgeClasses(status: EntitySuggestion['status']): string {
+  return status === 'active'
+    ? 'bg-emerald-500/15 border border-emerald-500/25 text-emerald-300'
+    : 'bg-background border border-border text-text-secondary';
+}
+
+function formatEntityRelevancePercent(relevance: number): string {
+  return `${Math.round(clampEntityRelevance(relevance) * 100)}%`;
+}
+
+function EntityLifecycleMeta({
+  entity,
+  align = 'end',
+}: {
+  entity: Pick<EntitySuggestion, 'status' | 'relevance'>;
+  align?: 'start' | 'end';
+}) {
+  const relevancePercent = formatEntityRelevancePercent(entity.relevance);
+
+  return (
+    <div className={`flex items-center gap-2 flex-wrap ${align === 'end' ? 'justify-end' : ''}`}>
+      <span
+        className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${getEntityStatusBadgeClasses(entity.status)}`}
+      >
+        {entity.status}
+      </span>
+      <div className="flex items-center gap-2" aria-label={`Relevance ${relevancePercent}`}>
+        <div className="h-1.5 w-14 rounded-full border border-border bg-background overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-200"
+            style={{
+              width: relevancePercent,
+              backgroundColor: entity.status === 'active' ? '#34d399' : '#6b7280',
+            }}
+          />
+        </div>
+        <span className="text-[11px] font-mono uppercase tracking-wide text-text-secondary">{relevancePercent}</span>
+      </div>
+    </div>
+  );
+}
+
+function buildFallbackEntitySuggestion(id: string, name: string): EntitySuggestion {
+  return {
+    id,
+    name,
+    matchedAlias: null,
+    status: 'active',
+    relevance: 0,
+    lastSeen: Date.now(),
+  };
 }
 
 function formatCompactNumber(num: number): string {
@@ -1272,7 +1342,7 @@ function EntityRelationshipGraph({
                         <button
                           key={node.id}
                           type="button"
-                          onClick={() => onInspectEntity({ id: node.id, name: node.name, matchedAlias: null })}
+                          onClick={() => onInspectEntity(buildFallbackEntitySuggestion(node.id, node.name))}
                           aria-label={`Inspect ${node.name} from 2-hop context`}
                           className="inline-flex items-center rounded-full border border-border bg-background px-3 py-1.5 text-xs font-body text-text-primary hover:border-accent/30 hover:text-accent transition-colors focus:outline-none focus:ring-2 focus:ring-accent/60"
                         >
@@ -3741,6 +3811,7 @@ function EntitiesTab() {
   const [entitySuggestions, setEntitySuggestions] = useState<EntitySuggestion[]>([]);
   const [entitySuggestionsLoading, setEntitySuggestionsLoading] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<EntitySuggestion | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'active' | 'archived' | 'all'>('all');
   const [relationships, setRelationships] = useState<EntityRelationship[]>([]);
   const [competitors, setCompetitors] = useState<EntityRelationship[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -3783,7 +3854,7 @@ function EntitiesTab() {
     let cancelled = false;
     setEntitySuggestionsLoading(true);
 
-    fetchEntitySuggestionsData(query)
+    fetchEntitySuggestionsData(query, statusFilter === 'all' ? null : statusFilter)
       .then((entities) => {
         if (cancelled) return;
         setEntitySuggestions(entities);
@@ -3799,7 +3870,7 @@ function EntitiesTab() {
     return () => {
       cancelled = true;
     };
-  }, [entityQuery, selectedEntity]);
+  }, [entityQuery, selectedEntity, statusFilter]);
 
   useEffect(() => {
     const query = relatedEntityQuery.trim();
@@ -4165,11 +4236,7 @@ function EntitiesTab() {
   }
 
   function inspectConnectedEntity(connection: EntityRelationshipGraphConnection): void {
-    selectEntity({
-      id: connection.relatedEntityId,
-      name: connection.relatedEntityName,
-      matchedAlias: null,
-    });
+    selectEntity(buildFallbackEntitySuggestion(connection.relatedEntityId, connection.relatedEntityName));
   }
 
   return (
@@ -4184,6 +4251,29 @@ function EntitiesTab() {
         <div className="p-4 space-y-3">
           <div className="space-y-1.5">
             <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Entity Search</label>
+            <div className="flex gap-1 flex-wrap">
+              {(
+                [
+                  { label: 'All', value: 'all' },
+                  { label: 'Active', value: 'active' },
+                  { label: 'Archived', value: 'archived' },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setStatusFilter(option.value)}
+                  aria-pressed={statusFilter === option.value}
+                  className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide transition-colors ${
+                    statusFilter === option.value
+                      ? 'bg-accent/20 text-accent border border-accent/30'
+                      : 'bg-background border border-border text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
             <input
               type="text"
               value={entityQuery}
@@ -4212,13 +4302,16 @@ function EntitiesTab() {
                       onClick={() => selectEntity(entity)}
                       className="w-full text-left px-3 py-2 hover:bg-surface-raised transition-colors"
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-text-primary text-sm font-body">{entity.name}</span>
-                        {entity.matchedAlias && (
-                          <span className="text-text-secondary/70 text-[11px] font-mono uppercase tracking-wide">
-                            alias: {entity.matchedAlias}
-                          </span>
-                        )}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-text-primary text-sm font-body">{entity.name}</div>
+                          {entity.matchedAlias && (
+                            <div className="text-text-secondary/70 text-[11px] font-mono uppercase tracking-wide mt-1">
+                              alias: {entity.matchedAlias}
+                            </div>
+                          )}
+                        </div>
+                        <EntityLifecycleMeta entity={entity} />
                       </div>
                     </button>
                   ))}
@@ -4243,11 +4336,16 @@ function EntitiesTab() {
               <div className="font-mono text-[10px] uppercase tracking-wider text-text-secondary mb-2">
                 Selected Entity
               </div>
-              <div className="text-lg text-text-primary font-heading">{selectedEntity.name}</div>
-              <div className="text-sm text-text-secondary font-body mt-2">
-                {selectedEntity.matchedAlias
-                  ? `Matched via alias: ${selectedEntity.matchedAlias}`
-                  : 'Matched on canonical name'}
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="min-w-0">
+                  <div className="text-lg text-text-primary font-heading">{selectedEntity.name}</div>
+                  <div className="text-sm text-text-secondary font-body mt-2">
+                    {selectedEntity.matchedAlias
+                      ? `Matched via alias: ${selectedEntity.matchedAlias}`
+                      : 'Matched on canonical name'}
+                  </div>
+                </div>
+                <EntityLifecycleMeta entity={selectedEntity} align="start" />
               </div>
             </div>
             <div className="bg-surface border border-border rounded-lg p-4">

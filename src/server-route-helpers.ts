@@ -372,6 +372,9 @@ export interface EntitySearchSuggestionRow {
   id: string;
   name: string;
   matched_alias: string | null;
+  status: 'active' | 'archived';
+  relevance: number;
+  last_seen: number;
 }
 
 export async function getManagedDiscordTokenViews(pool: Pool, encKey: string): Promise<DiscordTokenView[]> {
