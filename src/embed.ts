@@ -31,7 +31,7 @@ const RETRY_BACKOFFS = [2_000, 8_000, 32_000]; // 3 retries for 5xx
 const DEFAULT_429_WAIT = 60_000;
 
 // Gemini free tier: 1500 req/day. Leave 100 buffer for manual/debug use.
-const DAILY_QUOTA_LIMIT = 1400;
+export const DAILY_QUOTA_LIMIT = 1400;
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -117,7 +117,6 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
 
   async function initQuota(): Promise<void> {
     if (initialized) return;
-    initialized = true;
     try {
       const today = new Date().toISOString().slice(0, 10);
       const { rows } = await pool.query<{ count: string }>(
@@ -125,12 +124,18 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
         [new Date(today + 'T00:00:00Z').getTime()],
       );
       dailyCount = parseInt(rows[0]?.count ?? '0', 10);
+      initialized = true;
       if (dailyCount > 0) {
         log.info({ dailyCount }, 'Restored embedding quota from DB');
       }
     } catch {
-      log.warn('Could not restore embedding quota from DB, starting at 0');
+      dailyCount = DAILY_QUOTA_LIMIT;
+      log.warn({ dailyCount }, 'Could not restore embedding quota from DB, failing closed until retry succeeds');
     }
+  }
+
+  function getQuotaState(): { dailyCount: number; initialized: boolean } {
+    return { dailyCount, initialized };
   }
 
   function resetIfNewDay(): void {
@@ -306,5 +311,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     prepareText,
     vectorToBytes,
     bytesToVector,
+    /** @internal — exposed for unit tests */
+    getQuotaState,
   };
 }
