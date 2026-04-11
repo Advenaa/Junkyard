@@ -240,7 +240,9 @@ describe('synthesize: runDaily', () => {
   });
 
   it('generates quiet-day report when no summaries found in the time window', async () => {
-    const pool = mockPool(dailyPoolResponses([]));
+    const responses = dailyPoolResponses([]);
+    responses.splice(5, 1); // Quiet-day path skips the chain entity lookup query.
+    const pool = mockPool(responses);
     const synth = createSynthesizer(
       pool as never,
       silentLog,
@@ -741,6 +743,110 @@ describe('synthesize: runDaily', () => {
     assert.strictEqual(result, null);
   });
 
+  it('inserts a synth_aborted health event before rethrowing a daily LLM failure', async () => {
+    const row = makeSummaryRow();
+    const pool = mockPool(dailyPoolResponses([row]));
+    const llm = {
+      call: async () => {
+        throw new Error('llm down');
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    };
+    const synth = createSynthesizer(
+      pool as never,
+      silentLog,
+      fakeConfig(),
+      llm as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+
+    await assert.rejects(synth.runDaily(), /llm down/);
+
+    const healthCall = pool.calls.find((call) => call.text.includes('INSERT INTO health_events'));
+    assert.ok(healthCall, 'expected a health_events insert before the error escaped');
+    assert.equal(healthCall!.values[1], 'synth_aborted');
+    assert.equal(healthCall!.values[2], 'error');
+    assert.match(String(healthCall!.values[3]), /daily synthesis aborted: llm down/);
+    const metadata = JSON.parse(String(healthCall!.values[4])) as {
+      stage: string;
+      error: string;
+      timestamp: number;
+    };
+    assert.equal(metadata.stage, 'daily');
+    assert.equal(metadata.error, 'llm down');
+    assert.equal(typeof metadata.timestamp, 'number');
+    assert.ok(!pool.calls.some((call) => call.text.includes('INSERT INTO reports')));
+
+    const resetSynth = createSynthesizer(
+      mockPool(dailyPoolResponses([makeSummaryRow()])) as never,
+      silentLog,
+      fakeConfig(),
+      mockLlm() as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    const resetResult = await resetSynth.runDaily();
+    assert.notStrictEqual(resetResult, null);
+  });
+
+  it('promotes the second consecutive daily abort health event to critical', async () => {
+    const makeFailingLlm = () => ({
+      call: async () => {
+        throw new Error('llm down');
+      },
+      wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'x' }),
+    });
+    const firstPool = mockPool(dailyPoolResponses([makeSummaryRow()]));
+    const secondPool = mockPool(dailyPoolResponses([makeSummaryRow()]));
+
+    await assert.rejects(
+      createSynthesizer(
+        firstPool as never,
+        silentLog,
+        fakeConfig(),
+        makeFailingLlm() as never,
+        mockCorrelator() as never,
+        mockSentimentTracker() as never,
+        mockDivergenceTracker() as never,
+      ).runDaily(),
+      /llm down/,
+    );
+    await assert.rejects(
+      createSynthesizer(
+        secondPool as never,
+        silentLog,
+        fakeConfig(),
+        makeFailingLlm() as never,
+        mockCorrelator() as never,
+        mockSentimentTracker() as never,
+        mockDivergenceTracker() as never,
+      ).runDaily(),
+      /llm down/,
+    );
+
+    const firstHealthCall = firstPool.calls.find((call) => call.text.includes('INSERT INTO health_events'));
+    const secondHealthCall = secondPool.calls.find((call) => call.text.includes('INSERT INTO health_events'));
+    assert.ok(firstHealthCall);
+    assert.ok(secondHealthCall);
+    assert.equal(firstHealthCall!.values[2], 'error');
+    assert.equal(secondHealthCall!.values[2], 'critical');
+
+    const resetSynth = createSynthesizer(
+      mockPool(dailyPoolResponses([makeSummaryRow()])) as never,
+      silentLog,
+      fakeConfig(),
+      mockLlm() as never,
+      mockCorrelator() as never,
+      mockSentimentTracker() as never,
+      mockDivergenceTracker() as never,
+    );
+    const resetResult = await resetSynth.runDaily();
+    assert.notStrictEqual(resetResult, null);
+  });
+
   it('uses Asia/Jakarta as default timezone when config missing', async () => {
     const pool = mockPool([
       { rows: [] }, // getAppConfig → null (defaults to Asia/Jakarta)
@@ -748,7 +854,6 @@ describe('synthesize: runDaily', () => {
       { rows: [] }, // getSummariesByTimeWindow → empty (quiet day)
       { rows: [] }, // getYesterdayTldr
       { rows: [] }, // narratives query
-      { rows: [] }, // chain entity lookup
       { rows: [] }, // recent event chains query
       { rows: [{ latest_date: null }] }, // getUnusualActivityOverview -> no daily rollup yet
       { rows: [] }, // latest macro snapshots query

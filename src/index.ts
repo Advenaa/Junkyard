@@ -54,6 +54,10 @@ import type { RawItem } from './ingest/rss.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
 
+function toLoggedError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 /** Load all active Discord tokens (env var + DB), deduplicated. */
 async function loadAllTokens(pool: Pool, envTokens: string[], log: Logger): Promise<DiscordRuntimeToken[]> {
   const tokens = createEnvDiscordTokens(envTokens);
@@ -515,7 +519,7 @@ program
       try {
         reportRow = await pulse.runPulse();
       } catch (err: unknown) {
-        log.error({ err }, 'pulse generation failed');
+        log.error({ err: toLoggedError(err) }, 'pulse generation failed');
         return;
       }
       if (reportRow) {
@@ -575,7 +579,7 @@ program
           try {
             reportRow = await synthesizer.runDaily();
           } catch (err: unknown) {
-            log.error({ err }, 'daily synthesis failed');
+            log.error({ err: toLoggedError(err) }, 'daily synthesis failed');
           }
         } finally {
           await pool.query('SELECT pg_advisory_unlock(42424243)').catch(() => {});

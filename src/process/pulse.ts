@@ -5,6 +5,7 @@ import type { MarketReport } from './schemas.js';
 import {
   getSummariesByTimeWindow,
   insertReport,
+  insertHealthEvent,
   getAppConfig,
   getSentimentShiftAroundTime,
   getRecentEventChains,
@@ -407,6 +408,12 @@ function computeAvgSentiment(report: MarketReport): number | null {
   return Math.round((sum / report.entitySentiment.length) * 100) / 100;
 }
 
+let pulseAbortStreak = 0;
+
+function toLoggedError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
+}
+
 /** Validate a timezone string. Returns the timezone if valid, fallback otherwise. */
 function validateTimezone(tz: string, fallback: string, log: Logger): string {
   try {
@@ -517,6 +524,43 @@ export function createPulse(
     }
 
     return flags;
+  }
+
+  async function loadContextOrDefault<T>(label: string, fallback: T, load: () => Promise<T>): Promise<T> {
+    try {
+      return await load();
+    } catch (err: unknown) {
+      log.warn({ err: toLoggedError(err) }, `Failed to load ${label}, continuing without it`);
+      return fallback;
+    }
+  }
+
+  function succeed<T>(value: T): T {
+    pulseAbortStreak = 0;
+    return value;
+  }
+
+  async function recordPulseAbort(err: Error): Promise<void> {
+    pulseAbortStreak += 1;
+    const severity = pulseAbortStreak >= 2 ? 'critical' : 'error';
+    const timestamp = Date.now();
+
+    try {
+      await insertHealthEvent(pool, {
+        id: ulid(),
+        category: 'synth_aborted',
+        severity,
+        message: `pulse synthesis aborted: ${err.message}`,
+        metadata: {
+          stage: 'pulse',
+          error: err.message,
+          timestamp,
+        },
+        createdAt: timestamp,
+      });
+    } catch (healthErr: unknown) {
+      log.error({ err: toLoggedError(healthErr), stage: 'pulse', synthErr: err }, 'Failed to record synth abort');
+    }
   }
 
   /**
@@ -679,371 +723,449 @@ export function createPulse(
   }
 
   async function runPulse(): Promise<ReportRow | null> {
-    const now = Date.now();
-    const threeHoursMs = 3 * 60 * 60 * 1000;
-    const windowStart = now - threeHoursMs;
+    try {
+      const now = Date.now();
+      const threeHoursMs = 3 * 60 * 60 * 1000;
+      const windowStart = now - threeHoursMs;
 
-    log.info({ windowStart, windowEnd: now }, 'Running 3-hour pulse');
+      log.info({ windowStart, windowEnd: now }, 'Running 3-hour pulse');
 
-    // Load summaries from the last 3 hours
-    let summaryRows = await getSummariesByTimeWindow(pool, windowStart, now);
-
-    // Quality gate: skip if no summaries
-    if (summaryRows.length === 0) {
-      log.info('No summaries in the last 3 hours, skipping pulse');
-      return null;
-    }
-
-    // Cap summaries to prevent unbounded LLM cost during high activity
-    const MAX_PULSE_SUMMARIES = 50;
-    if (summaryRows.length > MAX_PULSE_SUMMARIES) {
-      log.info({ total: summaryRows.length, capped: MAX_PULSE_SUMMARIES }, 'Capping pulse summaries');
-      summaryRows = summaryRows.slice(-MAX_PULSE_SUMMARIES); // keep newest
-    }
-
-    log.info({ summaryCount: summaryRows.length }, 'Loaded summaries for pulse');
-
-    // Parse summaries and collect entity sentiments
-    const parsedSummaries: {
-      summary: string;
-      source: string;
-      entities: string;
-      urgency: string;
-      parsedEntities: { name: string; type: string; sentiment: number; mentionCount: number }[];
-    }[] = [];
-    let hasBreaking = false;
-    let hasElevated = false;
-    const rawTz = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    const timezone = validateTimezone(rawTz, 'Asia/Jakarta', log);
-
-    for (const row of summaryRows) {
-      const parsed = parseSummaryBody(row.body);
-      if (!parsed) {
-        log.warn({ summaryId: row.id }, 'Failed to parse summary body, skipping');
-        continue;
-      }
-
-      const urgency = row.urgency ?? parsed.urgency ?? 'routine';
-      if (urgency === 'breaking') hasBreaking = true;
-      if (urgency === 'elevated') hasElevated = true;
-
-      const entityStr = parsed.entities.map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`).join(', ');
-
-      parsedSummaries.push({
-        summary: parsed.summary,
-        source: row.source,
-        entities: entityStr,
-        urgency,
-        parsedEntities: parsed.entities.map((e) => ({
-          name: e.name,
-          type: e.type,
-          sentiment: e.sentiment,
-          mentionCount: e.mentionCount,
-        })),
-      });
-    }
-
-    if (parsedSummaries.length === 0) {
-      log.warn('All summaries failed to parse, skipping pulse');
-      return null;
-    }
-
-    // Duplicate guard: skip if a pulse report was already created in this 3-hour window
-    const { rows: existingPulse } = await pool.query<{ id: string }>(
-      `SELECT id FROM reports WHERE type = 'pulse' AND created_at > $1 LIMIT 1`,
-      [windowStart],
-    );
-    if (existingPulse.length > 0) {
-      log.info({ existingId: existingPulse[0].id }, 'Pulse report already exists for this window, skipping');
-      return null;
-    }
-
-    // Build current entity sentiment map (average across mentions)
-    const entitySentimentSums = new Map<string, { total: number; count: number }>();
-    for (const s of parsedSummaries) {
-      for (const e of s.parsedEntities) {
-        const key = e.name.toLowerCase();
-        const existing = entitySentimentSums.get(key) ?? { total: 0, count: 0 };
-        existing.total += e.sentiment;
-        existing.count += 1;
-        entitySentimentSums.set(key, existing);
-      }
-    }
-    const currentEntitySentiment = new Map<string, number>();
-    for (const [key, val] of entitySentimentSums) {
-      currentEntitySentiment.set(key, val.total / val.count);
-    }
-
-    // Drift detection: compare with prior pulse
-    const prior = await getPriorPulse();
-    const driftFlags = detectDrift(currentEntitySentiment, prior.entitySentiment);
-
-    if (driftFlags.length > 0) {
-      log.info(
-        { driftCount: driftFlags.length, entities: driftFlags.map((d) => d.entity) },
-        'Detected sentiment drift',
+      // Load summaries from the last 3 hours
+      let summaryRows = await loadContextOrDefault('pulse summaries', [], () =>
+        getSummariesByTimeWindow(pool, windowStart, now),
       );
-    }
 
-    // Fetch sentiment momentum for mentioned entities
-    const entityNames = [...currentEntitySentiment.keys()];
-    const entityIdRows =
-      entityNames.length > 0
-        ? (
-            await pool.query<{ id: string; name: string }>(
-              `SELECT DISTINCT e.id, e.name FROM entities e
+      // Quality gate: skip if no summaries
+      if (summaryRows.length === 0) {
+        log.info('No summaries in the last 3 hours, skipping pulse');
+        return succeed(null);
+      }
+
+      // Cap summaries to prevent unbounded LLM cost during high activity
+      const MAX_PULSE_SUMMARIES = 50;
+      if (summaryRows.length > MAX_PULSE_SUMMARIES) {
+        log.info({ total: summaryRows.length, capped: MAX_PULSE_SUMMARIES }, 'Capping pulse summaries');
+        summaryRows = summaryRows.slice(-MAX_PULSE_SUMMARIES); // keep newest
+      }
+
+      log.info({ summaryCount: summaryRows.length }, 'Loaded summaries for pulse');
+
+      // Parse summaries and collect entity sentiments
+      const parsedSummaries: {
+        summary: string;
+        source: string;
+        entities: string;
+        urgency: string;
+        parsedEntities: { name: string; type: string; sentiment: number; mentionCount: number }[];
+      }[] = [];
+      let hasBreaking = false;
+      let hasElevated = false;
+      const rawTz =
+        (await loadContextOrDefault<string | null>('pulse timezone', 'Asia/Jakarta', () =>
+          getAppConfig(pool, 'timezone'),
+        )) ?? 'Asia/Jakarta';
+      const timezone = validateTimezone(rawTz, 'Asia/Jakarta', log);
+
+      for (const row of summaryRows) {
+        const parsed = parseSummaryBody(row.body);
+        if (!parsed) {
+          log.warn({ summaryId: row.id }, 'Failed to parse summary body, skipping');
+          continue;
+        }
+
+        const urgency = row.urgency ?? parsed.urgency ?? 'routine';
+        if (urgency === 'breaking') hasBreaking = true;
+        if (urgency === 'elevated') hasElevated = true;
+
+        const entityStr = parsed.entities.map((e) => `${e.name} (${e.type}, sentiment: ${e.sentiment})`).join(', ');
+
+        parsedSummaries.push({
+          summary: parsed.summary,
+          source: row.source,
+          entities: entityStr,
+          urgency,
+          parsedEntities: parsed.entities.map((e) => ({
+            name: e.name,
+            type: e.type,
+            sentiment: e.sentiment,
+            mentionCount: e.mentionCount,
+          })),
+        });
+      }
+
+      if (parsedSummaries.length === 0) {
+        log.warn('All summaries failed to parse, skipping pulse');
+        return succeed(null);
+      }
+
+      // Duplicate guard: skip if a pulse report was already created in this 3-hour window
+      const existingPulse = await loadContextOrDefault<Array<{ id: string }>>(
+        'existing pulse state',
+        [],
+        async () =>
+          (
+            await pool.query<{ id: string }>(
+              `SELECT id FROM reports WHERE type = 'pulse' AND created_at > $1 LIMIT 1`,
+              [windowStart],
+            )
+          ).rows,
+      );
+      if (existingPulse.length > 0) {
+        log.info({ existingId: existingPulse[0].id }, 'Pulse report already exists for this window, skipping');
+        return succeed(null);
+      }
+
+      // Build current entity sentiment map (average across mentions)
+      const entitySentimentSums = new Map<string, { total: number; count: number }>();
+      for (const s of parsedSummaries) {
+        for (const e of s.parsedEntities) {
+          const key = e.name.toLowerCase();
+          const existing = entitySentimentSums.get(key) ?? { total: 0, count: 0 };
+          existing.total += e.sentiment;
+          existing.count += 1;
+          entitySentimentSums.set(key, existing);
+        }
+      }
+      const currentEntitySentiment = new Map<string, number>();
+      for (const [key, val] of entitySentimentSums) {
+        currentEntitySentiment.set(key, val.total / val.count);
+      }
+
+      // Drift detection: compare with prior pulse
+      const prior = await loadContextOrDefault<{ tldr: string | null; entitySentiment: EntitySentimentEntry[] }>(
+        'prior pulse context',
+        { tldr: null, entitySentiment: [] },
+        getPriorPulse,
+      );
+      const driftFlags = detectDrift(currentEntitySentiment, prior.entitySentiment);
+
+      if (driftFlags.length > 0) {
+        log.info(
+          { driftCount: driftFlags.length, entities: driftFlags.map((d) => d.entity) },
+          'Detected sentiment drift',
+        );
+      }
+
+      // Fetch sentiment momentum for mentioned entities
+      const entityNames = [...currentEntitySentiment.keys()];
+      const entityIdRows =
+        entityNames.length > 0
+          ? await loadContextOrDefault<Array<{ id: string; name: string }>>(
+              'pulse entity alias lookup',
+              [],
+              async () =>
+                (
+                  await pool.query<{ id: string; name: string }>(
+                    `SELECT DISTINCT e.id, e.name FROM entities e
            LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
            WHERE LOWER(e.name) = ANY($1) OR ea.alias = ANY($1)`,
-              [entityNames],
+                    [entityNames],
+                  )
+                ).rows,
             )
-          ).rows
-        : [];
-    const entityIds = entityIdRows.map((r) => r.id);
-    const momentum = entityIds.length > 0 ? await sentimentTracker.getMomentumContext(entityIds) : [];
+          : [];
+      const entityIds = entityIdRows.map((r) => r.id);
+      const momentum =
+        entityIds.length > 0
+          ? await loadContextOrDefault<MomentumEntry[]>('pulse sentiment momentum', [], () =>
+              sentimentTracker.getMomentumContext(entityIds),
+            )
+          : [];
 
-    // Fetch latest prices for token entities
-    const priceSnapshots = entityIds.length > 0 ? await getLatestPricesForEntities(pool, entityIds) : [];
-    const entityIdToName = new Map(entityIdRows.map((r) => [r.id, r.name]));
-    const firstMovers =
-      entityIds.length > 0 ? await getEntityFirstMovers(pool, entityIds, windowStart - FIRST_MOVER_LOOKBACK_MS, 6) : [];
+      // Fetch latest prices for token entities
+      const priceSnapshots =
+        entityIds.length > 0
+          ? await loadContextOrDefault<PriceSnapshotRow[]>('pulse price snapshots', [], () =>
+              getLatestPricesForEntities(pool, entityIds),
+            )
+          : [];
+      const entityIdToName = new Map(entityIdRows.map((r) => [r.id, r.name]));
+      const firstMovers =
+        entityIds.length > 0
+          ? await loadContextOrDefault<EntityFirstMoverRow[]>('pulse first-mover context', [], () =>
+              getEntityFirstMovers(pool, entityIds, windowStart - FIRST_MOVER_LOOKBACK_MS, 6),
+            )
+          : [];
 
-    const priceContext: PriceContextEntry[] = priceSnapshots.map((snap) => {
-      const name = entityIdToName.get(snap.entityId) ?? snap.entityId;
-      const sentiment = currentEntitySentiment.get(name.toLowerCase()) ?? null;
-      let contrarian: string | null = null;
+      const priceContext: PriceContextEntry[] = priceSnapshots.map((snap) => {
+        const name = entityIdToName.get(snap.entityId) ?? snap.entityId;
+        const sentiment = currentEntitySentiment.get(name.toLowerCase()) ?? null;
+        let contrarian: string | null = null;
 
-      if (sentiment !== null && snap.priceChange24h !== null) {
-        if (sentiment < -0.2 && snap.priceChange24h > 3) {
-          contrarian = 'price rising, community bearish — potential accumulation or short squeeze';
-        } else if (sentiment > 0.2 && snap.priceChange24h < -3) {
-          contrarian = 'price falling, community bullish — potential distribution or capitulation';
+        if (sentiment !== null && snap.priceChange24h !== null) {
+          if (sentiment < -0.2 && snap.priceChange24h > 3) {
+            contrarian = 'price rising, community bearish — potential accumulation or short squeeze';
+          } else if (sentiment > 0.2 && snap.priceChange24h < -3) {
+            contrarian = 'price falling, community bullish — potential distribution or capitulation';
+          }
+        }
+
+        return {
+          entityName: name,
+          priceUsd: snap.priceUsd,
+          priceChange24h: snap.priceChange24h,
+          priceChange7d: snap.priceChange7d,
+          sentiment,
+          contrarian,
+        };
+      });
+
+      log.info(
+        {
+          priceEntries: priceContext.length,
+          contrarianCount: priceContext.filter((p) => p.contrarian).length,
+          firstMoverEntries: firstMovers.length,
+        },
+        'Loaded price context for pulse',
+      );
+
+      // Fetch alpha propagation for active entities (7-day window)
+      const alphaLookbackMs = 7 * 24 * 60 * 60 * 1000;
+      const alphaSinceTime = Date.now() - alphaLookbackMs;
+      const alphaPropagation: AlphaPropagationContext[] = [];
+
+      if (entityIds.length > 0) {
+        try {
+          const alphaResults = await Promise.all(
+            entityIds.map((id) => getAlphaPropagationSummary(pool, id, alphaSinceTime)),
+          );
+          for (let i = 0; i < entityIds.length; i++) {
+            const tiers = alphaResults[i];
+            if (tiers.length < 2) continue; // Need at least 2 tiers for propagation
+            const name = entityIdToName.get(entityIds[i]) ?? entityIds[i];
+            // Sort by first mention time
+            tiers.sort((a, b) => a.firstMentionTime - b.firstMentionTime);
+            // Calculate propagation speed from earliest to latest tier
+            const earliest = tiers[0];
+            const latest = tiers[tiers.length - 1];
+            const diffMs = latest.firstMentionTime - earliest.firstMentionTime;
+            const diffHours = diffMs / (1000 * 60 * 60);
+            const propagationSpeed =
+              diffHours < 1
+                ? `${earliest.tier} → ${latest.tier} in ${Math.round(diffMs / 60000)}m`
+                : `${earliest.tier} → ${latest.tier} in ${diffHours.toFixed(1)}h`;
+            alphaPropagation.push({ entityName: name, tiers, propagationSpeed });
+          }
+          log.info({ alphaEntries: alphaPropagation.length }, 'Loaded alpha propagation context for pulse');
+        } catch (alphaErr: unknown) {
+          log.warn(
+            { err: toLoggedError(alphaErr) },
+            'Failed to fetch alpha propagation context, continuing without it',
+          );
         }
       }
 
-      return {
-        entityName: name,
-        priceUsd: snap.priceUsd,
-        priceChange24h: snap.priceChange24h,
-        priceChange7d: snap.priceChange7d,
-        sentiment,
-        contrarian,
-      };
-    });
+      log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for pulse');
 
-    log.info(
-      {
-        priceEntries: priceContext.length,
-        contrarianCount: priceContext.filter((p) => p.contrarian).length,
-        firstMoverEntries: firstMovers.length,
-      },
-      'Loaded price context for pulse',
-    );
+      // Fetch regional divergence for the pulse window
+      const divergence = await loadContextOrDefault<DivergenceEntry[]>('pulse regional divergence', [], () =>
+        divergenceTracker.getDivergence(windowStart, now),
+      );
 
-    // Fetch alpha propagation for active entities (7-day window)
-    const alphaLookbackMs = 7 * 24 * 60 * 60 * 1000;
-    const alphaSinceTime = Date.now() - alphaLookbackMs;
-    const alphaPropagation: AlphaPropagationContext[] = [];
+      log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for pulse');
 
-    if (entityIds.length > 0) {
-      try {
-        const alphaResults = await Promise.all(
-          entityIds.map((id) => getAlphaPropagationSummary(pool, id, alphaSinceTime)),
-        );
-        for (let i = 0; i < entityIds.length; i++) {
-          const tiers = alphaResults[i];
-          if (tiers.length < 2) continue; // Need at least 2 tiers for propagation
-          const name = entityIdToName.get(entityIds[i]) ?? entityIds[i];
-          // Sort by first mention time
-          tiers.sort((a, b) => a.firstMentionTime - b.firstMentionTime);
-          // Calculate propagation speed from earliest to latest tier
-          const earliest = tiers[0];
-          const latest = tiers[tiers.length - 1];
-          const diffMs = latest.firstMentionTime - earliest.firstMentionTime;
-          const diffHours = diffMs / (1000 * 60 * 60);
-          const propagationSpeed =
-            diffHours < 1
-              ? `${earliest.tier} → ${latest.tier} in ${Math.round(diffMs / 60000)}m`
-              : `${earliest.tier} → ${latest.tier} in ${diffHours.toFixed(1)}h`;
-          alphaPropagation.push({ entityName: name, tiers, propagationSpeed });
-        }
-        log.info({ alphaEntries: alphaPropagation.length }, 'Loaded alpha propagation context for pulse');
-      } catch (alphaErr: unknown) {
-        log.warn({ err: alphaErr }, 'Failed to fetch alpha propagation context, continuing without it');
-      }
-    }
-
-    log.info({ momentumEntries: momentum.length }, 'Loaded sentiment momentum for pulse');
-
-    // Fetch regional divergence for the pulse window
-    const divergence = await divergenceTracker.getDivergence(windowStart, now);
-
-    log.info({ divergenceEntries: divergence.length }, 'Loaded regional divergence for pulse');
-
-    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
-    const { rows: narrativeRows } = await pool.query<{
-      name: string;
-      signal_strength: string;
-      member_count: number;
-      created_at: number;
-    }>(
-      `SELECT name, signal_strength, member_count, created_at
+      const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+      const narrativeRows = await loadContextOrDefault<
+        Array<{ name: string; signal_strength: string; member_count: number; created_at: number }>
+      >(
+        'pulse narrative context',
+        [],
+        async () =>
+          (
+            await pool.query<{
+              name: string;
+              signal_strength: string;
+              member_count: number;
+              created_at: number;
+            }>(
+              `SELECT name, signal_strength, member_count, created_at
        FROM narratives
        WHERE created_at > $1
        ORDER BY member_count DESC LIMIT 10`,
-      [twoDaysAgo],
-    );
-    const narratives: NarrativeContext[] = narrativeRows.map((r) => ({
-      name: r.name,
-      growthRate: r.signal_strength,
-      summaryCount: r.member_count,
-      createdAt: r.created_at,
-    }));
+              [twoDaysAgo],
+            )
+          ).rows,
+      );
+      const narratives: NarrativeContext[] = narrativeRows.map((r) => ({
+        name: r.name,
+        growthRate: r.signal_strength,
+        summaryCount: r.member_count,
+        createdAt: r.created_at,
+      }));
 
-    log.info({ narrativeCount: narratives.length }, 'Loaded narrative context for pulse');
+      log.info({ narrativeCount: narratives.length }, 'Loaded narrative context for pulse');
 
-    const recentCalendarEvents = await calendarTracker.getRecentEvents(now - 24 * 60 * 60 * 1000, now);
-    const recentEventAnalysis = (
-      await Promise.all(
-        recentCalendarEvents.slice(0, 3).map(async (event) => {
-          const shift = await getSentimentShiftAroundTime(pool, event.nextOccurrence, event.entityId);
-          if (shift.pre_mention_count === 0 && shift.post_mention_count === 0) {
-            return null;
-          }
-          return {
-            event,
-            preAvgSentiment: shift.pre_avg_sentiment,
-            preMentionCount: shift.pre_mention_count,
-            postAvgSentiment: shift.post_avg_sentiment,
-            postMentionCount: shift.post_mention_count,
-            sentimentDelta:
-              shift.pre_avg_sentiment !== null && shift.post_avg_sentiment !== null
-                ? shift.post_avg_sentiment - shift.pre_avg_sentiment
-                : null,
-          };
-        }),
-      )
-    ).filter((entry): entry is RecentEventAnalysisEntry => entry !== null);
-    const recentEventChains = await getRecentEventChains(pool, entityIds, now - EVENT_CHAIN_LOOKBACK_MS);
-    const calendarEvents = await calendarTracker.getUpcomingEvents(now, now + 48 * 60 * 60 * 1000);
-    const unusualActivity = await getUnusualActivityOverview(pool, 8, timezone);
-    const macroSnapshots = await getLatestMacroSnapshots(pool);
-    const macroContext = buildMacroContext(macroSnapshots);
-    const cryptoAggregate = summarizeCryptoSentiment(
-      parsedSummaries.flatMap((summary) =>
-        summary.parsedEntities.map((entity) => ({
-          type: entity.type,
-          sentiment: entity.sentiment,
-          mentionCount: entity.mentionCount,
-        })),
-      ),
-    );
+      const recentCalendarEvents = await loadContextOrDefault<CalendarEventEntry[]>(
+        'pulse recent calendar events',
+        [],
+        () => calendarTracker.getRecentEvents(now - 24 * 60 * 60 * 1000, now),
+      );
+      const recentEventAnalysis = await loadContextOrDefault<RecentEventAnalysisEntry[]>(
+        'pulse recent event sentiment analysis',
+        [],
+        async () =>
+          (
+            await Promise.all(
+              recentCalendarEvents.slice(0, 3).map(async (event) => {
+                const shift = await getSentimentShiftAroundTime(pool, event.nextOccurrence, event.entityId);
+                if (shift.pre_mention_count === 0 && shift.post_mention_count === 0) {
+                  return null;
+                }
+                return {
+                  event,
+                  preAvgSentiment: shift.pre_avg_sentiment,
+                  preMentionCount: shift.pre_mention_count,
+                  postAvgSentiment: shift.post_avg_sentiment,
+                  postMentionCount: shift.post_mention_count,
+                  sentimentDelta:
+                    shift.pre_avg_sentiment !== null && shift.post_avg_sentiment !== null
+                      ? shift.post_avg_sentiment - shift.pre_avg_sentiment
+                      : null,
+                };
+              }),
+            )
+          ).filter((entry): entry is RecentEventAnalysisEntry => entry !== null),
+      );
+      const recentEventChains = await loadContextOrDefault<EventChainRow[]>('pulse recent event chains', [], () =>
+        getRecentEventChains(pool, entityIds, now - EVENT_CHAIN_LOOKBACK_MS),
+      );
+      const calendarEvents = await loadContextOrDefault<CalendarEventEntry[]>(
+        'pulse upcoming calendar events',
+        [],
+        () => calendarTracker.getUpcomingEvents(now, now + 48 * 60 * 60 * 1000),
+      );
+      const unusualActivity = await loadContextOrDefault<UnusualActivityOverview>(
+        'pulse unusual activity watchlist',
+        { latestDate: null, entries: [] },
+        () => getUnusualActivityOverview(pool, 8, timezone),
+      );
+      const macroSnapshots = await loadContextOrDefault<Awaited<ReturnType<typeof getLatestMacroSnapshots>>>(
+        'pulse macro snapshots',
+        [],
+        () => getLatestMacroSnapshots(pool),
+      );
+      const macroContext = buildMacroContext(macroSnapshots);
+      const cryptoAggregate = summarizeCryptoSentiment(
+        parsedSummaries.flatMap((summary) =>
+          summary.parsedEntities.map((entity) => ({
+            type: entity.type,
+            sentiment: entity.sentiment,
+            mentionCount: entity.mentionCount,
+          })),
+        ),
+      );
 
-    log.info(
-      {
-        recentCalendarEventCount: recentCalendarEvents.length,
-        recentEventAnalysisCount: recentEventAnalysis.length,
-        recentEventChainCount: recentEventChains.length,
-        calendarEventCount: calendarEvents.length,
-      },
-      'Loaded calendar events for pulse',
-    );
-    log.info(
-      {
-        unusualActivityEntries: unusualActivity.entries.length,
-        narrativeCount: narratives.length,
-        macroEntries: macroContext.entries.length,
-        macroBias: macroContext.overallBias,
-      },
-      'Loaded macro context for pulse',
-    );
+      log.info(
+        {
+          recentCalendarEventCount: recentCalendarEvents.length,
+          recentEventAnalysisCount: recentEventAnalysis.length,
+          recentEventChainCount: recentEventChains.length,
+          calendarEventCount: calendarEvents.length,
+        },
+        'Loaded calendar events for pulse',
+      );
+      log.info(
+        {
+          unusualActivityEntries: unusualActivity.entries.length,
+          narrativeCount: narratives.length,
+          macroEntries: macroContext.entries.length,
+          macroBias: macroContext.overallBias,
+        },
+        'Loaded macro context for pulse',
+      );
 
-    // Activity-scaled maxTokens
-    const maxTokens = computeMaxTokens(parsedSummaries.length, hasBreaking, hasElevated);
+      // Activity-scaled maxTokens
+      const maxTokens = computeMaxTokens(parsedSummaries.length, hasBreaking, hasElevated);
 
-    // Build prompt
-    const userMessage = buildUserMessage(
-      parsedSummaries,
-      driftFlags,
-      prior.tldr,
-      momentum,
-      divergence,
-      priceContext,
-      firstMovers,
-      unusualActivity,
-      macroContext,
-      cryptoAggregate,
-      alphaPropagation,
-      narratives,
-      recentCalendarEvents,
-      recentEventAnalysis,
-      recentEventChains,
-      calendarEvents,
-      timezone,
-    );
+      // Build prompt
+      const userMessage = buildUserMessage(
+        parsedSummaries,
+        driftFlags,
+        prior.tldr,
+        momentum,
+        divergence,
+        priceContext,
+        firstMovers,
+        unusualActivity,
+        macroContext,
+        cryptoAggregate,
+        alphaPropagation,
+        narratives,
+        recentCalendarEvents,
+        recentEventAnalysis,
+        recentEventChains,
+        calendarEvents,
+        timezone,
+      );
 
-    log.info(
-      {
-        summaries: parsedSummaries.length,
+      log.info(
+        {
+          summaries: parsedSummaries.length,
+          maxTokens,
+          hasPriorPulse: !!prior.tldr,
+          driftFlags: driftFlags.length,
+        },
+        'Sending pulse to LLM',
+      );
+
+      // Wrap user message with nonce to defend against prompt injection
+      const { wrapped } = llm.wrapWithNonce(userMessage);
+
+      const report = await callReportWithRetry(
+        llm,
+        log,
+        config.models.thinkalot,
+        PULSE_SYSTEM_PROMPT,
+        wrapped,
         maxTokens,
-        hasPriorPulse: !!prior.tldr,
-        driftFlags: driftFlags.length,
-      },
-      'Sending pulse to LLM',
-    );
+        'pulse',
+        'Pulse synthesis',
+      );
+      if (!report) return succeed(null);
 
-    // Wrap user message with nonce to defend against prompt injection
-    const { wrapped } = llm.wrapWithNonce(userMessage);
+      // Insert report
+      const reportId = ulid();
+      const dateString = getDateString(timezone);
+      const avgSentiment = computeAvgSentiment(report);
+      const sourceFamilies = [...new Set(parsedSummaries.map((s) => s.source))].sort();
 
-    const report = await callReportWithRetry(
-      llm,
-      log,
-      config.models.thinkalot,
-      PULSE_SYSTEM_PROMPT,
-      wrapped,
-      maxTokens,
-      'pulse',
-      'Pulse synthesis',
-    );
-    if (!report) return null;
-
-    // Insert report
-    const reportId = ulid();
-    const dateString = getDateString(timezone);
-    const avgSentiment = computeAvgSentiment(report);
-    const sourceFamilies = [...new Set(parsedSummaries.map((s) => s.source))].sort();
-
-    let reportRow: ReportRow;
-    try {
-      reportRow = await insertReport(pool, {
-        id: reportId,
-        date: dateString,
-        type: 'pulse',
-        body: JSON.stringify({ ...report, sourceFamilies }),
-        tldr: report.tldr,
-        sentiment: avgSentiment,
-        createdAt: Date.now(),
-      });
-    } catch (err: unknown) {
-      // Unique constraint violation (23505) means a concurrent pulse was created first
-      if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
-        log.info({ date: dateString }, 'Pulse report race: another process created it first');
-        return null;
+      let reportRow: ReportRow;
+      try {
+        reportRow = await insertReport(pool, {
+          id: reportId,
+          date: dateString,
+          type: 'pulse',
+          body: JSON.stringify({ ...report, sourceFamilies }),
+          tldr: report.tldr,
+          sentiment: avgSentiment,
+          createdAt: Date.now(),
+        });
+      } catch (err: unknown) {
+        // Unique constraint violation (23505) means a concurrent pulse was created first
+        if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
+          log.info({ date: dateString }, 'Pulse report race: another process created it first');
+          return succeed(null);
+        }
+        throw err;
       }
-      throw err;
+
+      log.info(
+        {
+          reportId,
+          date: dateString,
+          sections: report.sections.length,
+          events: report.keyEvents.length,
+          maxTokens,
+        },
+        'Pulse report created',
+      );
+
+      return succeed(reportRow);
+    } catch (err: unknown) {
+      const loggedErr = toLoggedError(err);
+      await recordPulseAbort(loggedErr);
+      throw loggedErr;
     }
-
-    log.info(
-      {
-        reportId,
-        date: dateString,
-        sections: report.sections.length,
-        events: report.keyEvents.length,
-        maxTokens,
-      },
-      'Pulse report created',
-    );
-
-    return reportRow;
   }
 
   return { runPulse };

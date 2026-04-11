@@ -272,6 +272,41 @@ describe('pulse', { concurrency: 1 }, () => {
       assert.strictEqual(result!.type, 'pulse');
     });
 
+    it('continues when momentum loading fails and omits the momentum context', async () => {
+      const llm = {
+        calls: [] as unknown[],
+        call: async (params: unknown) => {
+          llm.calls.push(params);
+          return { content: JSON.stringify(makeValidReport()) };
+        },
+        wrapWithNonce: (content: string) => ({ wrapped: `<nonce>${content}</nonce>`, nonce: 'abc123' }),
+      };
+      const pool = makePool({
+        summaries: [makeSummaryRow()],
+        entityRows: [{ id: 'ent-btc', name: 'Bitcoin' }],
+      });
+      const flakySentimentTracker = {
+        getMomentumContext: async () => {
+          throw new Error('momentum unavailable');
+        },
+      };
+
+      const { runPulse } = createPulse(
+        pool,
+        noopLog,
+        baseConfig,
+        llm,
+        flakySentimentTracker as never,
+        mockDivergenceTracker,
+      );
+
+      const result = await runPulse();
+
+      assert.equal(result?.type, 'pulse');
+      const call = llm.calls[0] as { messages: Array<{ content: string }> };
+      assert.doesNotMatch(call.messages[0]!.content, /<sentiment_momentum>/);
+    });
+
     it('injects upcoming calendar events into the pulse prompt', async () => {
       const llm = {
         calls: [] as unknown[],
