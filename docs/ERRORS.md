@@ -166,7 +166,7 @@ Reports with `delivery_status = 'failed'` listed with date, type, and error reas
 2. Open DB, run migrations (D1 halts here)
 3. Crash recovery: reset orphaned `processing` items to `ready`
 4. Start cron scheduler
-5. Connect Discord Gateway (sequential, 5s gap between tokens)
+5. Initialize Discord REST polling helpers and token health state
 6. Start Fastify server
 
 If any fatal error occurs in steps 1-2, the process exits with a clear error message. Steps 3-6 log but do not halt on non-fatal errors.

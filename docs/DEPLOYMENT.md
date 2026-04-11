@@ -4,7 +4,7 @@
 
 **Recommendation: Hetzner CAX11 ARM VPS** — EUR 3.79/mo (~$5), 2 vCPU, 4GB RAM, 40GB disk.
 
-The workload is bursty outbound HTTP (LLM calls, twitterapi.io). Discord Gateway WebSockets idle 99% of the time. Actual need: 1 vCPU, 512MB-1GB RAM, 10GB disk. Hetzner is overkill and still under $5/mo.
+The workload is bursty outbound HTTP (LLM calls, twitterapi.io, Discord REST polling). Actual need: 1 vCPU, 512MB-1GB RAM, 10GB disk. Hetzner is overkill and still under $5/mo.
 
 Alternatives: Fly.io, Railway — 2-3x more expensive, add platform-specific failure modes (volume migrations, ephemeral storage). A plain VPS with pm2 or systemd is simpler.
 
@@ -161,7 +161,7 @@ sudo systemctl restart podders
 
 ### Message Loss During Restart
 
-Discord Gateway disconnects during restart (~5-10s). Messages received by Discord while disconnected are **lost** — user tokens don't get replay. At 5K items/day (~3/min), expect 0-2 lost messages per deploy. Acceptable.
+Discord polling pauses during restart (~5-10s). On the next successful poll, the process resumes from the stored `last_id`, so short restarts usually catch up cleanly. The main remaining risk is a very busy channel exceeding the 250-message poll cap while the process is down.
 
 Crash recovery handles in-flight LLM work: orphaned `processing` items reset to `ready` on startup.
 

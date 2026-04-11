@@ -30,7 +30,7 @@ Defined in ARCHITECTURE.md build order. Included here for completeness. Everythi
 - Parallel source processing (via Promise.allSettled, enabled by Postgres)
 - Raw Discord feed with image attachments (live mirror on dashboard)
 - Embeddings (summary + report embedding, per EMBEDDINGS.md)
-- Discord Gateway ingestion (multi-token)
+- Discord REST ingestion (multi-token)
 - Twitter/X via twitterapi.io
 - News article extraction (Readability)
 - Stage 2 cross-source correlation (SQL)
