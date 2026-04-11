@@ -1,4 +1,4 @@
-import type { FeatureDisabledBody, FeatureKey } from './types';
+import type { FeatureDisabledBody, FeatureDisabledReason, FeatureKey } from './types';
 
 const BASE = '/api/v1';
 export const AUTH_EXPIRED_EVENT = 'podders:auth-expired';
@@ -12,6 +12,7 @@ export class FeatureDisabledError extends Error {
   readonly feature: FeatureKey;
   readonly missingEnv: string;
   readonly disables: string[];
+  readonly reason?: FeatureDisabledReason;
 
   constructor(body: FeatureDisabledBody) {
     super(`feature_disabled: ${body.feature} (missing ${body.missingEnv})`);
@@ -19,6 +20,7 @@ export class FeatureDisabledError extends Error {
     this.feature = body.feature;
     this.missingEnv = body.missingEnv;
     this.disables = body.disables ?? [];
+    this.reason = body.reason;
   }
 }
 

@@ -2,7 +2,23 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { Config } from '../../src/config.js';
-import { computeDisabledFeatures, formatStartupWarning, isFeatureDisabled } from '../../src/features.js';
+import {
+  computeDisabledFeatures,
+  featureDisabledResponse,
+  formatStartupWarning,
+  isFeatureDisabled,
+  markFeatureKeyRejected,
+} from '../../src/features.js';
+
+const noopLog = {
+  info() {},
+  debug() {},
+  warn() {},
+  error() {},
+  child() {
+    return noopLog;
+  },
+} as any;
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -33,9 +49,9 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
       thinkalotFallback: null,
     },
     disabledFeatures: {
-      embeddings: { disabled: true, missingEnv: 'GEMINI_API_KEY', disables: [] },
-      prices: { disabled: true, missingEnv: 'COINGECKO_API_KEY', disables: [] },
-      macro: { disabled: true, missingEnv: 'FRED_API_KEY', disables: [] },
+      embeddings: { disabled: true, missingEnv: 'GEMINI_API_KEY', disables: [], keyRejected: false },
+      prices: { disabled: true, missingEnv: 'COINGECKO_API_KEY', disables: [], keyRejected: false },
+      macro: { disabled: true, missingEnv: 'FRED_API_KEY', disables: [], keyRejected: false },
     },
     secrets: [],
     ...overrides,
@@ -154,5 +170,46 @@ describe('features / formatStartupWarning', () => {
     assert.match(warning!, /FRED_API_KEY/);
     assert.ok(!warning!.includes('GEMINI_API_KEY'));
     assert.ok(!warning!.includes('COINGECKO_API_KEY'));
+  });
+});
+
+describe('features / markFeatureKeyRejected', () => {
+  it('flips the keyRejected flag and marks the feature disabled', () => {
+    const flags = computeDisabledFeatures(
+      makeConfig({
+        geminiApiKey: 'g',
+        coingeckoApiKey: 'c',
+        fredApiKey: 'f',
+      }),
+    );
+
+    markFeatureKeyRejected(flags, 'macro', noopLog);
+
+    assert.equal(flags.macro.keyRejected, true);
+    assert.equal(flags.macro.disabled, true);
+    assert.equal(isFeatureDisabled(flags, 'macro'), true);
+    assert.equal(isFeatureDisabled(flags, 'prices'), false);
+  });
+
+  it('featureDisabledResponse reports reason: auth_failed after a runtime rejection', () => {
+    const flags = computeDisabledFeatures(
+      makeConfig({
+        geminiApiKey: 'g',
+        coingeckoApiKey: 'c',
+        fredApiKey: 'f',
+      }),
+    );
+
+    markFeatureKeyRejected(flags, 'prices', noopLog);
+
+    const response = featureDisabledResponse(flags, 'prices');
+    assert.equal(response.reason, 'auth_failed');
+  });
+
+  it('featureDisabledResponse reports reason: missing_env when the env was never set', () => {
+    const flags = computeDisabledFeatures(makeConfig({ coingeckoApiKey: null }));
+
+    const response = featureDisabledResponse(flags, 'prices');
+    assert.equal(response.reason, 'missing_env');
   });
 });

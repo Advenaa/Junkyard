@@ -1,3 +1,4 @@
+import type { Logger } from './logger.js';
 import type { Config } from './config.js';
 
 export type FeatureKey = 'embeddings' | 'prices' | 'macro';
@@ -6,6 +7,7 @@ export interface FeatureFlag {
   disabled: boolean;
   missingEnv: string;
   disables: readonly string[];
+  keyRejected: boolean;
 }
 
 export type DisabledFeatures = Readonly<Record<FeatureKey, FeatureFlag>>;
@@ -22,21 +24,24 @@ export function computeDisabledFeatures(config: Config): DisabledFeatures {
   const hasFred = Boolean(config.fredApiKey);
 
   return Object.freeze({
-    embeddings: Object.freeze({
+    embeddings: {
       disabled: !hasGemini,
       missingEnv: 'GEMINI_API_KEY',
       disables: EMBEDDINGS_DISABLES,
-    }),
-    prices: Object.freeze({
+      keyRejected: false,
+    },
+    prices: {
       disabled: !hasCoinGecko,
       missingEnv: 'COINGECKO_API_KEY',
       disables: PRICES_DISABLES,
-    }),
-    macro: Object.freeze({
+      keyRejected: false,
+    },
+    macro: {
       disabled: !hasFred,
       missingEnv: 'FRED_API_KEY',
       disables: MACRO_DISABLES,
-    }),
+      keyRejected: false,
+    },
   });
 }
 
@@ -44,11 +49,14 @@ export function isFeatureDisabled(flags: DisabledFeatures, key: FeatureKey): boo
   return flags[key].disabled;
 }
 
+export type FeatureDisabledReason = 'missing_env' | 'auth_failed';
+
 export interface FeatureDisabledResponse {
   error: 'feature_disabled';
   feature: FeatureKey;
   missingEnv: string;
   disables: readonly string[];
+  reason: FeatureDisabledReason;
 }
 
 export function featureDisabledResponse(flags: DisabledFeatures, feature: FeatureKey): FeatureDisabledResponse {
@@ -58,7 +66,21 @@ export function featureDisabledResponse(flags: DisabledFeatures, feature: Featur
     feature,
     missingEnv: flag.missingEnv,
     disables: flag.disables,
+    reason: flag.keyRejected ? 'auth_failed' : 'missing_env',
   };
+}
+
+export function markFeatureKeyRejected(flags: DisabledFeatures, feature: FeatureKey, log: Logger): void {
+  const flag = flags[feature];
+  if (flag.keyRejected) return;
+
+  flag.keyRejected = true;
+  flag.disabled = true;
+
+  log.warn(
+    { feature, missingEnv: flag.missingEnv },
+    `Feature "${feature}" disabled at runtime: upstream rejected ${flag.missingEnv}`,
+  );
 }
 
 export function formatStartupWarning(flags: DisabledFeatures): string | null {

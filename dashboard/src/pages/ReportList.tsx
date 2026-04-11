@@ -151,7 +151,12 @@ export function ReportList() {
       .catch((err) => {
         if (cancelled) return;
         if (isFeatureDisabledError(err)) {
-          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          registerDisabledFeature({
+            feature: err.feature,
+            missingEnv: err.missingEnv,
+            disables: err.disables,
+            reason: err.reason,
+          });
         } else {
           setNarratives(null);
         }

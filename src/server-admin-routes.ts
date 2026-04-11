@@ -722,20 +722,20 @@ export function registerAdminRoutes({
       [timezone],
     );
     const row = rows[0];
-    const disabledFeatures = (Object.keys(config.disabledFeatures) as Array<keyof typeof config.disabledFeatures>)
-      .filter((key) => config.disabledFeatures[key].disabled)
-      .map((key) => ({
-        feature: key,
-        missingEnv: config.disabledFeatures[key].missingEnv,
-        disables: config.disabledFeatures[key].disables,
-      }));
     return {
+      twitterApiKeyConfigured: !!config.twitterApiKey,
       itemsReady: parseInt(row.items_ready, 10),
       itemsProcessing: parseInt(row.items_processing, 10),
       summariesToday: parseInt(row.summaries_today, 10),
       costToday: parseFloat(row.cost_today),
-      twitterApiKeyConfigured: !!config.twitterApiKey,
-      disabledFeatures,
+      disabledFeatures: (Object.keys(config.disabledFeatures) as Array<keyof typeof config.disabledFeatures>)
+        .filter((key) => config.disabledFeatures[key].disabled)
+        .map((key) => ({
+          feature: key,
+          missingEnv: config.disabledFeatures[key].missingEnv,
+          disables: config.disabledFeatures[key].disables,
+          reason: config.disabledFeatures[key].keyRejected ? 'auth_failed' : 'missing_env',
+        })),
     };
   });
 

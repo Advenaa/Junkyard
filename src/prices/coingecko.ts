@@ -67,7 +67,7 @@ function delay(ms: number): Promise<void> {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function createPriceFetcher(log: Logger, apiKey?: string): PriceFetcher {
+export function createPriceFetcher(log: Logger, apiKey?: string, onAuthFailure?: () => void): PriceFetcher {
   const baseUrl = apiKey ? PRO_BASE_URL : FREE_BASE_URL;
 
   async function fetchChunk(ids: string[]): Promise<Map<string, PriceData>> {
@@ -96,6 +96,9 @@ export function createPriceFetcher(log: Logger, apiKey?: string): PriceFetcher {
     });
 
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        onAuthFailure?.();
+      }
       const body = await response.text().catch(() => '');
       throw new Error(`CoinGecko returned ${response.status}: ${body.slice(0, 200)}`);
     }

@@ -8,8 +8,8 @@ export interface PriceTracker {
   fetchAndStore(): Promise<{ fetched: number; stored: number }>;
 }
 
-export function createPriceTracker(pool: Pool, log: Logger, apiKey?: string): PriceTracker {
-  const fetcher = createPriceFetcher(log, apiKey);
+export function createPriceTracker(pool: Pool, log: Logger, apiKey?: string, onAuthFailure?: () => void): PriceTracker {
+  const fetcher = createPriceFetcher(log, apiKey, onAuthFailure);
 
   async function fetchAndStore(): Promise<{ fetched: number; stored: number }> {
     const mappings = await getActiveTokensWithCoinGeckoIds(pool);

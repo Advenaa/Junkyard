@@ -49,9 +49,9 @@ function createConfig(overrides: Partial<Config> = {}): Config {
       thinkalotFallback: null,
     },
     disabledFeatures: {
-      embeddings: { disabled: true, missingEnv: 'GEMINI_API_KEY', disables: [] },
-      prices: { disabled: true, missingEnv: 'COINGECKO_API_KEY', disables: [] },
-      macro: { disabled: true, missingEnv: 'FRED_API_KEY', disables: [] },
+      embeddings: { disabled: true, missingEnv: 'GEMINI_API_KEY', disables: [], keyRejected: false },
+      prices: { disabled: true, missingEnv: 'COINGECKO_API_KEY', disables: [], keyRejected: false },
+      macro: { disabled: true, missingEnv: 'FRED_API_KEY', disables: [], keyRejected: false },
     },
     secrets: [],
     ...overrides,
