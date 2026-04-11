@@ -396,27 +396,44 @@ CODEX_COMPANION="/Users/advena/.claude/plugins/cache/openai-codex/codex/1.0.2/sc
 while [ "$TICK_ATTEMPT" -le "$TICK_CAP" ]; do
   # --- Render the prompt file (substitute N, TITLE, ACCEPTANCE, etc.) ---
   PROMPT_FILE="/tmp/codex-prompt-${N}-${TICK_ATTEMPT}.md"
+  CODEX_OUT_FILE="/tmp/codex-out-${N}-${TICK_ATTEMPT}.txt"
   # ... build $PROMPT_FILE from the template below ...
 
   # --- Direct Bash invocation of codex-companion. NOT codex:codex-rescue.
   # --cwd <worktree> is the whole point: resolveWorkspaceRoot(cwd) returns
   # the worktree path, so Codex's workspace-write sandbox lands on the
   # worktree and edits succeed. No --model, no --effort (match rescue
-  # defaults). --write enables workspace-write mode. Foreground by
-  # default — no --background, no --wait, no --fresh, no --resume.
-  CODEX_OUT=$(node "$CODEX_COMPANION" task \
+  # defaults). --write enables workspace-write mode.
+  #
+  # IMPORTANT: Claude invokes this Bash call with run_in_background: true
+  # and waits for the task-notification — NOT with a subshell `$(...)`
+  # capture. Two reasons:
+  #   1. Direct `> file 2>&1` redirection writes the codex trace to
+  #      disk as it arrives, so Claude can `tail -f` or Read the file
+  #      mid-attempt for live progress. A subshell `$(... 2>&1)` buffers
+  #      the whole trace until the process exits — no visibility during
+  #      long refactors (10–20 min is routine).
+  #   2. Bash run_in_background + task-notification lets Claude's loop
+  #      proceed without blocking on the conversation thread. The
+  #      notification fires on process exit, replacing ScheduleWakeup
+  #      polling for attempt-in-flight.
+  # Still no codex-companion `--background` flag (that spawns a detached
+  # codex session and only returns a job id — breaks the structured
+  # status contract). The direct-to-file foreground-but-bash-backgrounded
+  # pattern is the right default.
+  node "$CODEX_COMPANION" task \
     --cwd "$WT" \
     --write \
-    --prompt-file "$PROMPT_FILE" 2>&1) || true
+    --prompt-file "$PROMPT_FILE" > "$CODEX_OUT_FILE" 2>&1
 
   # --- Parse Codex's structured status. Codex's LAST message must end
   # with exactly three lines:
   #   STATUS=passing            (or gate_failed or hard_error)
   #   GATE_STEP=<step>          (build|lint|format:check|test|test:dashboard|adversarial-review|none)
   #   EXCERPT_PATH=<path>       (relative or absolute; "none" if passing)
-  # Parse the last 3 non-empty lines of $CODEX_OUT. If the contract is
-  # violated, treat as hard_error.
-  LAST_LINES=$(printf '%s\n' "$CODEX_OUT" | awk 'NF' | tail -n 3)
+  # Parse the last 3 non-empty lines of $CODEX_OUT_FILE. If the contract
+  # is violated, treat as hard_error.
+  LAST_LINES=$(awk 'NF' "$CODEX_OUT_FILE" | tail -n 3)
   STATUS=$(echo "$LAST_LINES" | grep '^STATUS=' | cut -d= -f2)
   GATE_STEP=$(echo "$LAST_LINES" | grep '^GATE_STEP=' | cut -d= -f2)
   EXCERPT_PATH=$(echo "$LAST_LINES" | grep '^EXCERPT_PATH=' | cut -d= -f2)
@@ -496,7 +513,16 @@ Your job for this attempt:
 
 1. Read GitHub issue #<N> ("<TITLE>") and its acceptance criteria below.
 2. Produce the smallest diff that satisfies the acceptance criteria.
-3. Run the local CI gate in this exact order, short-circuiting on the
+3. **Pre-flight hygiene (mandatory before the gate).** After your last
+   edit and before step 4, run Prettier in --write mode on every file
+   you just touched so the `format:check` step is a guaranteed no-op:
+     corepack pnpm exec prettier --write <path1> <path2> ...
+   A `format:check` failure at the end of a 10–20 minute refactor wastes
+   a retry budget. Prevent it by formatting your own edits first. You
+   may also run `corepack pnpm exec prettier --write src/ dashboard/src/
+   test/` as a blanket sweep if you edited a wide slice — it's
+   idempotent and safe.
+4. Run the local CI gate in this exact order, short-circuiting on the
    first failing step. Prefix every command with `corepack` because
    `pnpm` is not on the sandboxed shell's PATH — `corepack pnpm …` is:
      corepack pnpm run build
@@ -504,7 +530,7 @@ Your job for this attempt:
      corepack pnpm run format:check
      corepack pnpm test
      corepack pnpm run test:dashboard
-4. On the FIRST failure, stop, capture the last 40 lines of output to
+5. On the FIRST failure, stop, capture the last 40 lines of output to
    <WT_PATH>/codex-attempt-<TICK_ATTEMPT>.log, and return the structured
    status below.
 
@@ -553,10 +579,19 @@ Full conventions in CLAUDE.md. Reference skill:
 
 Three invariants the retry loop depends on:
 
-- **Foreground execution is mandatory.** The direct `codex-companion.mjs
-  task` call runs in foreground by default — never pass `--background`.
-  Structured-status verification depends on parsing the last three lines
-  of the synchronous stdout; a queued job only returns a job ID.
+- **No codex-companion `--background` flag.** Never pass `--background`
+  to `codex-companion.mjs task` — that spawns a detached codex session
+  and only returns a job id, breaking the three-line structured status
+  contract. The task itself runs in codex-companion's foreground mode.
+- **Claude runs the Bash call with `run_in_background: true`.** That's
+  Claude's Bash tool, not codex-companion's flag — the two are
+  unrelated. Backgrounding the Bash call lets Claude's conversation loop
+  proceed while the codex trace streams directly to `$CODEX_OUT_FILE`;
+  Claude receives a `<task-notification>` on process exit and resumes
+  the retry loop then. The trace is also available for live `tail -f`
+  or `Read` mid-attempt because it goes straight to disk (no subshell
+  buffering). This replaces fixed-delay `ScheduleWakeup` polling for
+  attempt-in-flight waits.
 - **The three-line final-message contract is the integration point.**
   Claude parses the last 3 lines of Codex's last assistant message. If
   Codex omits any line or uses a different format, Claude treats the
@@ -651,12 +686,15 @@ while :; do
   # Claude pushes the fix.
 
   FIX_PROMPT_FILE="/tmp/codex-prompt-${N}-remote-fix.md"
+  FIX_OUT_FILE="/tmp/codex-out-${N}-remote-fix.txt"
   # ... build $FIX_PROMPT_FILE ...
-  FIX_OUT=$(node "$CODEX_COMPANION" task \
+  # Same direct-to-file + Bash run_in_background pattern as Step 7.
+  node "$CODEX_COMPANION" task \
     --cwd "$WT" \
     --write \
-    --prompt-file "$FIX_PROMPT_FILE" 2>&1) || true
-  parse STATUS GATE_STEP EXCERPT_PATH as before
+    --prompt-file "$FIX_PROMPT_FILE" > "$FIX_OUT_FILE" 2>&1
+  LAST_LINES=$(awk 'NF' "$FIX_OUT_FILE" | tail -n 3)
+  # parse STATUS GATE_STEP EXCERPT_PATH as before
   FIX_EXCERPT=$(sed -e 's/\x1b\[[0-9;]*m//g' "$EXCERPT_PATH" 2>/dev/null | head -n 40)
 
   # Append the fix attempt record.
