@@ -126,18 +126,64 @@ released between ticks.
 
 ## Tick flow
 
-### Step 1 — `cd` and load state
+### Step 1 — `cd`, detect parallel mode, and load state
 
 ```bash
 cd /Users/advena/project/poddershub
 [ -f .clankerism/loop-state.json ] || cat > .clankerism/loop-state.json <<'EOF'
 {"consecutive_failures":0,"last_outcome":"none","last_tick_ts":0,"last_issue":null,"empty_streak":0,"paused_notified":false}
 EOF
+
+# Parallel-mode sentinel — if present, this tick will hand the PR off to
+# /queue instead of watching/merging it directly (see Step 7.5 fork).
+# Multiple /build-codex sessions can run concurrently against disjoint
+# issues when this is set, because the serialized merge gate moves to
+# /queue. Create with `touch .clankerism/PARALLEL` to enable, `rm` to
+# disable.
+if [ -f .clankerism/PARALLEL ]; then
+  PARALLEL_MODE=1
+else
+  PARALLEL_MODE=0
+fi
 ```
 
-Read `.clankerism/loop-state.json` with the Read tool. You need
-`consecutive_failures`, `empty_streak`, and `paused_notified` for later
-steps.
+**Atomic loop-state lock.** Multiple concurrent sessions race on the
+shared `.clankerism/loop-state.json` and `.clankerism/loop-log.ndjson`.
+Guard every read-modify-write on those files with an mkdir-based lock
+(mkdir is atomic on POSIX — the first caller to create the directory
+wins, every other caller's mkdir returns non-zero):
+
+```bash
+acquire_loop_state_lock() {
+  local deadline=$(( $(date +%s) + 30 ))
+  while ! mkdir .clankerism/loop-state.lock 2>/dev/null; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      # Stale lock (another tick crashed holding it). Steal it — the
+      # lock directory only protects short read-modify-write windows,
+      # so a 30s stale directory is never a legitimate owner.
+      rmdir .clankerism/loop-state.lock 2>/dev/null || true
+      mkdir .clankerism/loop-state.lock
+      break
+    fi
+    sleep 1
+  done
+}
+release_loop_state_lock() {
+  rmdir .clankerism/loop-state.lock 2>/dev/null || true
+}
+```
+
+Use this lock around: Step 1's initial loop-state read, Step 3's
+updates that mutate `resumable_issues[]`, Step 8's terminal NDJSON
+append to `attempts/issue-<N>.ndjson` (which is per-issue and doesn't
+need the global lock — only `loop-state.json` and `loop-log.ndjson`
+do), and Step 9's loop-state write + loop-log append. Acquire only
+for the short read-modify-write window; never hold across an
+`Agent`/`Bash` subprocess call to Codex.
+
+Read `.clankerism/loop-state.json` with the Read tool under the lock.
+You need `consecutive_failures`, `empty_streak`, and `paused_notified`
+for later steps.
 
 ### Step 2 — PAUSED brake (hard stop)
 
@@ -197,6 +243,7 @@ walking state:ready**.
 | PR state | Attempts state | Extra commits | Action |
 |----------|----------------|---------------|--------|
 | Merged (`mergedAt` non-null) | any | any | Release worktree, `rm -f $ATTEMPTS_FILE`, `gh issue edit --remove-label state:in-progress` (idempotent cleanup after a /queue merge) |
+| Open, has `queue:ready` or `queue:deferred` label | any | any | **Not a zombie.** The PR was handed off to /queue by a prior parallel-mode tick and is waiting its turn in the serialized merge lane. Skip entirely — do NOT add to `resumable_issues[]`, do NOT flip labels, do NOT release the worktree. Continue the sweep. |
 | Open, all checks SUCCESS or pending | any | any | `wait_for_in_flight = true`. Leave worktree alone. A prior tick's watch is finishing. |
 | Open, any check FAILURE/CANCELLED | `PRIOR_FAILS >= 5` | any | Budget exhausted. Comment "Sweep: attempt budget (5/5) exhausted. state:blocked.", `gh issue edit --remove-label state:in-progress --add-label state:blocked`, leave worktree + NDJSON for `/fix`. |
 | Open, any check FAILURE/CANCELLED | `PRIOR_FAILS < 5` | `FIX_COMMITS >= 2` (1 fix commit already pushed) | Remote fix commit didn't save it. Comment "Sweep: remote fix commit exhausted. state:blocked.", flip to `state:blocked`, leave worktree + NDJSON. |
@@ -633,6 +680,23 @@ PR_URL=$(gh pr create --base main --head "$BRANCH" \
 <short summary from Codex's last passing attempt>")
 PR_NUMBER=$(gh pr view "$PR_URL" --json number --jq '.number')
 
+# --- Parallel-mode fork: hand off to /queue instead of watching CI here ---
+# When $PARALLEL_MODE=1 (the `.clankerism/PARALLEL` sentinel is set in
+# Step 1), the serialized merge gate lives in a separate `/queue`
+# session. This tick labels the PR `queue:ready`, classifies the
+# outcome as `handed_to_queue`, and exits immediately — it does NOT
+# run `gh run watch`, does NOT attempt a remote fix commit, and does
+# NOT release the worktree or delete the NDJSON. The worktree stays
+# in place because a red CI in /queue flips the issue to
+# `state:blocked`, and a future repair tick reads the NDJSON.
+if [ "$PARALLEL_MODE" = "1" ]; then
+  gh pr edit "$PR_NUMBER" --add-label queue:ready
+  CLASSIFICATION=handed_to_queue
+  # Fall through to Step 8 — the reconciliation table handles the
+  # handed_to_queue classification (no label flip, no cleanup, schedule
+  # next tick).
+else
+
 # --- Wait for the first run to register, then capture its ID ---
 sleep 5
 RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')
@@ -735,6 +799,8 @@ Co-Authored-By: Codex via codex-companion <noreply@anthropic.com>"
   RUN_ID="$NEW_RUN_ID"
   # loop back to gh run watch
 done
+
+fi   # end of if [ "$PARALLEL_MODE" = "1" ]; then ... else ... fi
 ```
 
 **Race guard**: before any final `gh issue edit --add-label state:blocked`
@@ -777,6 +843,7 @@ gh pr list --head "$BRANCH" --state all \
 | CLASSIFICATION from Step 7/7.5 | Reconciliation with live state | Final outcome + cleanup |
 |---|---|---|
 | `clean_win` (merged in 7.5) | Issue closed, label cleared, worktree released, NDJSON deleted | nothing more to do |
+| `handed_to_queue` (parallel-mode fork ran) | PR open with `queue:ready` label, issue still `state:in-progress` | Do NOT flip labels, do NOT release the worktree, do NOT delete the NDJSON. The `/queue` session will merge (or flip to `queue:blocked` → sweep picks up as repair) on its own cadence. Schedule next tick at the `clean_win` cadence so the loop can grab more work. |
 | `soft_failure` (budget/TICK_CAP) | Still `state:in-progress` | Comment "attempt budget exhausted after $TICK_ATTEMPT tick attempts, $PRIOR_FAILS prior runs", flip → `state:blocked` (but re-read labels first and skip if human already set `state:blocked`), append `terminal:true` marker to NDJSON, **leave** worktree + NDJSON for `/fix` |
 | `hard_failure` (hard_error, contract violation, fix-commit path failed) | Still `state:in-progress`, PR may or may not exist | Comment with Codex's last 200 chars of output, flip → `state:blocked` (race-guarded), append `terminal:true`, leave worktree + NDJSON |
 | PR open, all checks SUCCESS but not merged (anomaly) | Merge step never ran in 7.5 | `wait_in_flight` — log "anomaly: green CI but not merged", do not flip labels |
@@ -820,6 +887,7 @@ Step 9 schedules a 120s wakeup so the next tick can re-verify.
 | Outcome | `consecutive_failures` change |
 |---------|-------------------------------|
 | `clean_win` | reset to 0 |
+| `handed_to_queue` | reset to 0 (parallel-mode handoff is a success from this tick's perspective — /queue owns the merge outcome) |
 | `soft_failure` | += 1 |
 | `hard_failure` | += 1 |
 | `wait_in_flight` | unchanged |
@@ -867,6 +935,7 @@ Send Discord:
 | Outcome | Delay | Reason string |
 |---------|-------|---------------|
 | `clean_win` | 60s | "tick clean, checking queue" |
+| `handed_to_queue` | 60s | "handed PR to /queue, checking next issue" |
 | `soft_failure` | 120s | "soft failure, brief cooldown" |
 | `hard_failure` | 180s | "hard failure, longer cooldown" |
 | `wait_in_flight` | 120s | "in-flight PR still running CI" |
@@ -998,9 +1067,15 @@ not abort the tick.
 - **Never push to main from this skill.** Codex never pushes anything.
   The pre-push hook will block main pushes anyway.
 - **Never use `--no-verify`** anywhere, in this skill or the Codex prompt.
-- **Never run multiple ticks in parallel.** Dynamic pacing serializes
-  for a reason — branch claims, NDJSON appends, and label flips need a
-  single writer per issue.
+- **Never run multiple ticks in parallel against the same issue.** The
+  branch-push-as-lock in Step 6 makes that a claim race the second
+  session will lose (and exit `branch_race_lost`). Multiple sessions
+  working on **disjoint issues** is fine and is the whole point of
+  parallel mode — see the "Parallel mode" section below. Under parallel
+  mode the shared-file writes (`loop-state.json`, `loop-log.ndjson`)
+  are protected by the `mkdir`-based lock introduced in Step 1. Per-issue
+  files (`attempts/issue-<N>.ndjson`, the per-issue worktree path) are
+  already serialized by issue number.
 - **Never have Codex run git or gh.** Codex cannot acquire
   `.git/index.lock` inside a worktree because the real `.git` dir lives
   at `<main>/.git/worktrees/issue-<N>/`, outside Codex's sandbox. Claude
@@ -1071,3 +1146,87 @@ not abort the tick.
 - **Pretty-print the NDJSON log.** No. One record per line. Pretty
   formatting breaks `grep '^{'`, `jq -s`, and the malformed-line
   tolerance rule.
+
+## Parallel mode
+
+`/build-codex` is designed for one tick at a time, but the default
+serial cadence caps throughput at roughly one issue every 15–30 min.
+Parallel mode lets multiple `/build-codex` sessions run at once
+(each in its own Claude Code conversation) by making the merge gate
+asynchronous: instead of each tick running `gh run watch` and
+`gh pr merge` itself, the tick hands the PR off to a separate
+`/queue` session that serializes merges across all parallel builders.
+
+### Enabling parallel mode
+
+```bash
+touch /Users/advena/project/poddershub/.clankerism/PARALLEL
+```
+
+`rm` the file to return to serial mode. The sentinel is checked in
+Step 1 of every tick, so flipping it in-flight takes effect on the
+next tick. A tick that is currently mid-`gh run watch` will finish its
+current merge under whichever mode it started in.
+
+You MUST run a `/queue` loop somewhere (in a separate Claude Code
+session, or via the GitHub Action) whenever the `PARALLEL` sentinel is
+set. Otherwise PRs pile up at `queue:ready` with nothing to merge them,
+and every future tick's sweep will spend time walking the backlog
+before finding real zombies.
+
+### What changes per tick
+
+1. **Step 1** reads `.clankerism/PARALLEL` and sets `$PARALLEL_MODE`.
+2. **Step 3 sweep** skips any open PR that already has `queue:ready`
+   or `queue:deferred` (those are waiting in `/queue`'s lane — not
+   zombies for this session to recover).
+3. **Step 6** is unchanged. Per-issue worktree paths
+   (`<main>-worktrees/issue-<N>`) and branch-push-as-lock give each
+   issue a unique writer by construction. Two parallel sessions
+   trying to claim the same issue will lose one side's push to
+   origin — the loser exits `branch_race_lost` and retries in 60s.
+4. **Step 7.5** forks at the top of the publish block:
+   - `$PARALLEL_MODE=0` → unchanged: local watch, optional remote
+     fix commit, merge, worktree release.
+   - `$PARALLEL_MODE=1` → add `queue:ready` label, set
+     `CLASSIFICATION=handed_to_queue`, return. No `gh run watch`,
+     no merge, no worktree release, no NDJSON wipe. `/queue`
+     handles the rest.
+5. **Step 8** treats `handed_to_queue` as the parallel-mode success
+   path (do not flip labels, leave everything in place).
+6. **Step 9** resets `consecutive_failures` on `handed_to_queue` (same
+   as `clean_win`) and schedules the next tick at the 60s clean
+   cadence.
+
+### Shared state serialization
+
+Multiple parallel ticks race on these shared files:
+
+| File | Protection |
+|------|------------|
+| `.clankerism/loop-state.json` | `mkdir`-based lock from Step 1 |
+| `.clankerism/loop-log.ndjson` | same lock (read-modify-write is really just append, but the lock serializes the writer so records don't interleave mid-line) |
+| `.clankerism/PAUSED` | read-only from all sessions; set/removed by humans |
+| `.clankerism/PARALLEL` | read-only from all sessions; set/removed by humans |
+| `.clankerism/attempts/issue-<N>.ndjson` | per-issue — already serialized by issue number, no lock needed |
+| `<main>-worktrees/issue-<N>` | per-issue — already serialized by issue number |
+
+Never hold the lock across a Codex invocation — the call may run for
+20 min and would stall every other parallel session. Acquire only for
+the short read-modify-write window, release, then fire Codex.
+
+### Backing out
+
+If parallel mode misbehaves (merge queue saturated, attempts files
+corrupted, NDJSON log interleaving), pause immediately:
+
+```bash
+touch /Users/advena/project/poddershub/.clankerism/PAUSED
+rm /Users/advena/project/poddershub/.clankerism/PARALLEL
+```
+
+Every in-flight tick will finish its current Codex attempt, honor the
+PAUSED brake on its next loop iteration, and exit cleanly. On resume,
+the next tick runs under serial mode and the sweep recovers any open
+`queue:ready` PRs as normal in-flight work (they're safe to leave —
+`/queue` or a future tick will still merge them).
