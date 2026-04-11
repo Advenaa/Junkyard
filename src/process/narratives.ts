@@ -368,7 +368,7 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
       await pool.query(
         `INSERT INTO narratives (id, name, date, member_count, avg_sentiment, signal_strength, summary_ids, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [id, name, dateStr, indices.length, avgSentiment, signalStrength, JSON.stringify(summaryIds), Date.now()],
+        [id, name, dateStr, indices.length, avgSentiment, signalStrength, summaryIds, Date.now()],
       );
 
       narratives.push(narrative);

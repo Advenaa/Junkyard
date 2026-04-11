@@ -384,6 +384,28 @@ describe('createNarrativeDetector', () => {
     assert.equal(inserts.length, narratives.length);
   });
 
+  it('binds summary_ids as a JS array for Postgres text[] inserts', async () => {
+    const dim = 10;
+    const { vectors, buffers } = makeClusteredVectors([4, 4, 4], dim);
+    const rows = vectors.map((v, i) => ({
+      summary_id: `s${i}`,
+      vector: buffers[i],
+      body: `Summary ${i}: topic about cluster ${Math.floor(i / 4)}`,
+      sentiment: 0.5,
+    }));
+
+    const { pool, inserts } = mockPool({ summaryRows: rows });
+    const llm = mockLlm(['Cluster Alpha', 'Cluster Beta', 'Cluster Gamma']);
+    const detector = createNarrativeDetector(pool, noopLog, defaultConfig, llm, enabledEmbedder);
+    await detector.detectNarratives();
+
+    assert.ok(inserts.length > 0, 'Expected at least one narrative insert');
+    for (const params of inserts) {
+      assert.ok(Array.isArray(params[6]), 'summary_ids bind param must be a JS array');
+      assert.notEqual(typeof params[6], 'string', 'summary_ids bind param must not be JSON text');
+    }
+  });
+
   it('narratives have correct signalStrength "new" when no prior narratives', async () => {
     const dim = 10;
     const { vectors, buffers } = makeClusteredVectors([5, 5], dim);
