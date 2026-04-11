@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -24,7 +25,7 @@ function readSrc(relPath: string): string {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Twitter sourceId validation (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('validates twitter sourceId that starts with @', () => {
     // The validation should check for 'twitter' source and @ prefix
@@ -82,7 +83,7 @@ describe('Twitter sourceId validation (src/server.ts)', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Status endpoint twitterApiKeyConfigured (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('status endpoint response includes twitterApiKeyConfigured field', () => {
     // Find the /api/v1/status route — handler can be >800 chars with the SQL query

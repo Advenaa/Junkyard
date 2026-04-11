@@ -6,12 +6,9 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
-const serverPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'server.ts');
-const src = readFileSync(serverPath, 'utf-8');
+const src = readServerSource();
 
 // ---------------------------------------------------------------------------
 // Helpers — extract handler blocks by route pattern

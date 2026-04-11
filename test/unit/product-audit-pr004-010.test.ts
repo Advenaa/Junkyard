@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -167,11 +168,14 @@ describe('PR-009: Delete uses Modal not window.confirm', () => {
 // ===========================================================================
 
 describe('PR-010: Config PATCH accepts camelCase', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
+  const patchMatch = src.match(/app\.patch\(\s*'\/api\/v1\/config'/);
+  assert.ok(patchMatch && patchMatch.index !== undefined, 'PATCH /api/v1/config route must exist');
+  const patchStart = patchMatch.index;
 
   it('PATCH /config schema includes camelCase keys', () => {
     // The schema should accept both snake_case and camelCase
-    const patchConfig = src.slice(src.indexOf('app.patch'), src.indexOf('app.patch') + 1000);
+    const patchConfig = src.slice(patchStart, patchStart + 1000);
     const hasDigestTime = patchConfig.includes('digestTime');
     const hasWebhookUrl = patchConfig.includes('webhookUrl');
     assert.ok(
@@ -181,7 +185,7 @@ describe('PR-010: Config PATCH accepts camelCase', () => {
   });
 
   it('normalizes camelCase to snake_case for DB storage', () => {
-    const patchHandler = src.slice(src.indexOf('app.patch'), src.indexOf('app.patch') + 2000);
+    const patchHandler = src.slice(patchStart, patchStart + 2000);
     // Should have normalization logic: digestTime -> digest_time
     const hasDigestNormalization = patchHandler.includes("'digestTime'") && patchHandler.includes("'digest_time'");
     const hasWebhookNormalization = patchHandler.includes("'webhookUrl'") && patchHandler.includes("'webhook_url'");
@@ -192,7 +196,7 @@ describe('PR-010: Config PATCH accepts camelCase', () => {
   });
 
   it('still accepts snake_case keys for backward compatibility', () => {
-    const patchConfig = src.slice(src.indexOf('app.patch'), src.indexOf('app.patch') + 1000);
+    const patchConfig = src.slice(patchStart, patchStart + 1000);
     assert.ok(
       patchConfig.includes('digest_time') && patchConfig.includes('webhook_url'),
       'PATCH /config schema must still accept snake_case keys for backward compatibility',

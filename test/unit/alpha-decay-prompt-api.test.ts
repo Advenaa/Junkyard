@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -98,7 +99,7 @@ describe('Pulse: alpha propagation prompt injection', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Server: alpha propagation API', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('imports getAlphaPropagationSummary from queries', () => {
     assert.match(src, /getAlphaPropagationSummary/);

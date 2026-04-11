@@ -9,22 +9,14 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-function readSrc(relPath: string): string {
-  return readFileSync(path.join(ROOT, relPath), 'utf-8');
-}
+import { readServerSource } from './helpers/server-source.js';
 
 // ===========================================================================
 // SR-008: Search endpoint gains `days` and `mode` query params
 // ===========================================================================
 
 describe('SR-008: Search endpoint days and mode query params', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   // --- Schema assertions ---
 

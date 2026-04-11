@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -220,7 +221,7 @@ describe('Author queries (src/db/queries.ts)', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Server: author API endpoints (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('imports getTopAuthorsByEntity', () => {
     assert.ok(src.includes('getTopAuthorsByEntity'), 'server.ts must import getTopAuthorsByEntity');

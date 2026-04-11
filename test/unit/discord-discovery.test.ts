@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -66,7 +67,7 @@ describe('Discord REST module (discord-rest.ts)', () => {
 // ==========================================================================
 
 describe('Discord discovery routes (server.ts)', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('imports createDiscordRest', () => {
     assert.ok(src.includes('createDiscordRest'), 'Must import createDiscordRest from discord-rest');
@@ -114,7 +115,7 @@ describe('Discord discovery routes (server.ts)', () => {
 // ==========================================================================
 
 describe('Discord snowflake validation (server.ts)', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('validates discord sourceId as snowflake pattern', () => {
     // Must have a regex check for 17-20 digit snowflakes for discord sources

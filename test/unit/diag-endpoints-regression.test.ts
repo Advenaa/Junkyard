@@ -8,11 +8,9 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
-const root = resolve(import.meta.dirname, '..', '..');
-const server = readFileSync(resolve(root, 'src/server.ts'), 'utf-8');
+const server = readServerSource();
 
 const diagRoutes = [
   '/api/v1/diag/stuck-items',

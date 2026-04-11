@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -94,7 +95,7 @@ describe('RS-011: Items per poll capped at 50', () => {
 // ===========================================================================
 
 describe('RS-012: RSS feed URLs validated at POST /sources', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('imports validateUrl from url-validator', () => {
     assert.match(
@@ -181,7 +182,7 @@ describe('TM-002: Pulse/health crons use configured timezone', () => {
 // ===========================================================================
 
 describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
   const patchSourcesRe = /app\.patch\(\s*\n?\s*'\/api\/v1\/sources\/:source\/:sourceId'/;
 
   function getPatchSourcesStart(): number {

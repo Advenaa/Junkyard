@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -22,7 +23,7 @@ function readSrc(relPath: string): string {
 // ===========================================================================
 
 describe('QR-010: insertSource call uses Date.now() not epoch-seconds', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   // Extract the line(s) around the insertSource call
   const insertSourceCallLines = src.split('\n').filter((line) => line.includes('insertSource'));

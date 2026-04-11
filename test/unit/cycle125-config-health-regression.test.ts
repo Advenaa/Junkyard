@@ -1,8 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readServerSource } from './helpers/server-source.js';
 
-const serverSrc = readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf-8');
+const serverSrc = readServerSource();
 const indexSrc = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
 const healthSrc = readFileSync(new URL('../../src/health.ts', import.meta.url), 'utf-8');
 

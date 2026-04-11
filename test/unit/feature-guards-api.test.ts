@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 import { computeDisabledFeatures, featureDisabledResponse, type DisabledFeatures } from '../../src/features.js';
 import type { Config } from '../../src/config.js';
@@ -133,7 +134,7 @@ describe('server-insight-routes — 503 guards', () => {
 });
 
 describe('server.ts — 503 guards and status extension', () => {
-  const serverSrc = readSrc('src/server.ts');
+  const serverSrc = readServerSource();
 
   it('imports featureDisabledResponse from features.js', () => {
     assert.ok(serverSrc.includes("from './features.js'"));
