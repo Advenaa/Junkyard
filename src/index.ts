@@ -19,7 +19,7 @@ import { createEmbedPipeline } from './embed-pipeline.js';
 import { createEntityManager } from './knowledge/entities.js';
 import { createAlphaTracker } from './knowledge/alpha-tracker.js';
 import { createDecayManager } from './knowledge/decay.js';
-import { createDelivery } from './deliver/webhook.js';
+import { createDelivery, recoverStalePendingReports } from './deliver/webhook.js';
 import { createTwitterAdapter } from './ingest/twitter.js';
 import { createNewsAdapter } from './ingest/news.js';
 import { createPriceTracker } from './prices/tracker.js';
@@ -706,6 +706,7 @@ program
 
     // ── 6. Crash recovery (before server accepts requests) ─────────────
     await resetCrashed(pool);
+    await recoverStalePendingReports(pool, log);
 
     // ── 7. Load vector cache (must complete before server accepts requests) ──
     await vectorCache.load();

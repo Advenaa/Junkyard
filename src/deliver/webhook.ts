@@ -85,6 +85,7 @@ const MAX_CONSECUTIVE_DELIVERY_FAILURES = 5;
 const DELIVERY_CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000;
 const FAILED_DELIVERY_RETRY_LOOKBACK_MS = 60 * 60 * 1000;
 const FAILED_DAILY_RETRY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const STALE_PENDING_DELIVERY_MS = 5 * 60 * 1000;
 
 interface WebhookPostFailure {
   ok: false;
@@ -461,6 +462,24 @@ async function updateDeliveryStatus(pool: Pool, reportId: string, status: 'deliv
   ]);
 }
 
+export async function recoverStalePendingReports(
+  pool: Pool,
+  log: Logger,
+  staleMs: number = STALE_PENDING_DELIVERY_MS,
+): Promise<number> {
+  const threshold = Date.now() - staleMs;
+  const result = await pool.query(
+    `UPDATE reports SET delivery_status = 'failed'
+     WHERE delivery_status = 'pending' AND created_at < $1`,
+    [threshold],
+  );
+  const recovered = result.rowCount ?? 0;
+  if (recovered > 0) {
+    log.info({ recovered }, 'recovered stale pending report deliveries');
+  }
+  return recovered;
+}
+
 export function createDelivery(pool: Pool, log: Logger, config: Config) {
   let consecutiveDeliveryFailures = 0;
   let deliveryCircuitOpenUntil: number | null = null;
@@ -684,14 +703,21 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
 
     const { rows } = await pool.query<{ id: string; type: string; body: string; date: string }>(
       `SELECT id, type, body, date FROM reports
-       WHERE delivery_status = 'failed'
+       WHERE (
+         delivery_status = 'failed'
+         OR (delivery_status = 'pending' AND created_at < $3)
+       )
          AND (
            (type = 'daily' AND created_at > $1)
            OR (type != 'daily' AND created_at > $2)
          )
        ORDER BY created_at ASC
        LIMIT 5`,
-      [Date.now() - FAILED_DAILY_RETRY_LOOKBACK_MS, Date.now() - FAILED_DELIVERY_RETRY_LOOKBACK_MS],
+      [
+        Date.now() - FAILED_DAILY_RETRY_LOOKBACK_MS,
+        Date.now() - FAILED_DELIVERY_RETRY_LOOKBACK_MS,
+        Date.now() - STALE_PENDING_DELIVERY_MS,
+      ],
     );
 
     let retried = 0;
