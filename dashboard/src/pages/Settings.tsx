@@ -2796,14 +2796,11 @@ function ApiAccessSection({ apiKey }: { apiKey: string | null }) {
 function PipelineTab() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { ready: statusReady, isFeatureDisabled, getDisabledFeature, registerDisabledFeature } = useStatus();
+  const { status, ready: statusReady, isFeatureDisabled, getDisabledFeature, registerDisabledFeature } = useStatus();
   const macroDisabled = isFeatureDisabled('macro');
   const embeddingsDisabled = isFeatureDisabled('embeddings');
   const disabledMacro = getDisabledFeature('macro');
   const disabledEmbeddings = getDisabledFeature('embeddings');
-  const [status, setStatus] = useState<PipelineStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [macroOverview, setMacroOverview] = useState<MacroOverview | null>(null);
   const [macroLoading, setMacroLoading] = useState(true);
@@ -2834,13 +2831,6 @@ function PipelineTab() {
   const [calendarActionError, setCalendarActionError] = useState<string | null>(null);
   const [savingCalendarEvent, setSavingCalendarEvent] = useState(false);
   const [removingCalendarEventId, setRemovingCalendarEventId] = useState<string | null>(null);
-
-  useEffect(() => {
-    apiFetch<PipelineStatus>('/status')
-      .then(setStatus)
-      .catch(() => setError('Failed to load pipeline status.'))
-      .finally(() => setLoading(false));
-  }, []);
 
   useEffect(() => {
     fetch('/api/v1/health')
@@ -3124,9 +3114,8 @@ function PipelineTab() {
     }
   }
 
-  if (loading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
-  if (!status)
-    return <p className="text-red-400 text-sm font-body py-4">{error ?? 'Failed to load pipeline status.'}</p>;
+  if (!statusReady) return <div className="text-text-secondary font-body py-8">Loading...</div>;
+  if (!status) return <p className="text-red-400 text-sm font-body py-4">Failed to load pipeline status.</p>;
 
   const healthColor =
     health?.status === 'ok'

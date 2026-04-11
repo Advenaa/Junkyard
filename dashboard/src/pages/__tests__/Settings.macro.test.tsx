@@ -18,7 +18,7 @@ vi.mock('../../components/AuthProvider', () => ({
 vi.mock('../../components/StatusProvider', () => {
   const statusValue = {
     ready: true,
-    status: null,
+    status: { itemsReady: 0, itemsProcessing: 0, summariesToday: 0, costToday: 0, disabledFeatures: [] },
     disabledFeatures: [],
     isFeatureDisabled: () => false,
     getDisabledFeature: () => null,
