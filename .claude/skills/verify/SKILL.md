@@ -1,207 +1,240 @@
 ---
 name: verify
-description: Browser-level regression watcher. Drives a real browser against the dashboard (local dev server or the VPS) to catch behavior that unit tests miss — layout breaks, JS runtime errors, broken nav, silent data-fetch failures. Files any regression it finds as a GitHub Issue.
+description: Prod-only browser regression watcher for the Podders dashboard. Drives a real browser against the live VPS to catch layout breaks, JS exceptions, broken nav, and silent data-fetch failures. Read-only. Files any regression it finds as a GitHub Issue.
 ---
 
 # /verify — Clankerism Regression Watcher
 
 The food taster. Unit tests prove the ingredients work; `/verify` confirms
-the dish is actually edible in a real browser. Drives Playwright through
-the key dashboard flows, looks for anything a unit test would miss
-(layout collapse, JS runtime errors, 5xx responses, blank screens,
-navigation that "works" but lands on an error state).
+the dish is actually edible in a real browser pointed at the live site.
 
-`/verify` is the 4th Clankerism role. Unlike `/scout` (which reads source
-code) and `/build` (which writes source code), `/verify` is the only
-clanker that drives a real browser.
+`/verify` is the 4th Clankerism role. It is the only clanker that drives a
+real browser, and the only clanker that talks to prod. It never writes —
+not to the codebase, not to the database, not to prod. Its entire job is
+to walk the dashboard, observe, and file issues for anything broken.
 
-**Invocation**:
+## Invocation
 
-- `/verify` — run the full smoke suite against the default target (local)
-- `/verify local` — force local dev server (`http://localhost:3000`)
-- `/verify prod` — run against the VPS (`http://77.90.51.87:3000` — read-only flows only)
-- `/verify pr <N>` — run against a PR branch (checks out, boots, tests, cleans up)
+```
+/verify
+```
+
+No flags, no modes. One target: prod. The prod URL is read from
+`.clankerism/verify-target` (one line, no trailing slash). If that file is
+missing, exit with a setup error.
 
 ## Hard rules
 
-1. **Never write to production.** In `prod` mode, only read-only flows
-   run: load pages, click through nav, observe. No form submits, no
-   config changes, no source toggles. The only allowed writes on prod
-   are Discord OAuth login to establish a session.
-2. **Never modify source code.** Like `/scout`, `/verify` is read-only
-   against the codebase. It only writes GitHub Issues (for regressions)
-   and its own screenshots/artifacts under `.clankerism/verify-runs/`
-   (gitignored).
-3. **Check the PAUSED brake.** If `.clankerism/PAUSED` exists, exit.
-4. **No new issue types.** Regressions found by `/verify` are filed as
-   `type:bug` with `source:scout` (yes — `/verify` files under scout
-   because it's a finding, not a build task).
-5. **Never claim or close issues.**
-6. **Screenshots are mandatory** for any regression filed. A regression
-   without visual evidence is not a regression — it's a guess. Attach
-   the screenshot to the issue.
-
-## What a smoke run covers
-
-### Must-pass flows (fail the run if any break)
-
-1. **Auth**: Land on `/`, follow login, reach the home page authenticated.
-2. **Nav**: Click every item in the main nav. Every landing page must
-   render without a visible error state and without console errors.
-3. **Reports list**: `/reports` loads at least one report row OR shows a
-   valid empty state (not a blank screen).
-4. **Report detail**: Click the first report. Detail page loads. No
-   unhandled rejection in console.
-5. **Raw feed**: `/feed` loads. Either shows at least one source OR shows
-   the no-sources empty state.
-6. **Chat**: `/chat` loads. Input box is reachable. (Don't actually send
-   a message in prod mode.)
-7. **Settings** (local mode only): Every tab opens. Save button on each
-   tab is enabled for a valid config.
-
-### Passive observations (file issues but don't fail the run)
-
-- Console warnings / errors that don't block the page
-- Slow responses (>3s for any page load)
-- Broken image URLs (404 on `<img src>`)
-- Network requests returning 4xx/5xx that aren't handled as explicit
-  empty/error states
-- Layout breaks at common breakpoints (desktop, tablet, mobile)
+1. **Read-only, always.** No form submits, no config changes, no source
+   toggles, no chat messages, no webhook tests. Navigation and observation
+   only. The only network writes allowed are whatever Playwright itself
+   does to attach cookies and load pages.
+2. **Never modify source code.** `/verify` writes GitHub Issues and its own
+   artifacts under `.clankerism/verify-runs/` (gitignored). Nothing else.
+3. **Check the PAUSED brake.** If `.clankerism/PAUSED` exists, exit. The
+   remote `CLANKERISM_PAUSED` variable is enforced by CI workflows
+   separately and is not this skill's concern.
+4. **Never claim, close, or label issues other than the ones you file.**
+5. **Screenshots are mandatory** for any regression filed. A regression
+   without visual evidence is not a regression — it's a guess.
+6. **One retry for flake, then file it.** If a flow fails, reload once. If
+   it fails again, file the regression. Don't loop to make it pass.
 
 ## Prerequisites
 
-- Playwright MCP server available (check via `/verify` spawning the
-  `playwright__browser_navigate` tool — if it errors out, exit with
-  "playwright unavailable").
-- For local mode: `npm run dev` running on port 3000, OR the skill starts
-  it in the background and tears it down after.
-- Authenticated Discord session cookie (for prod mode — store in
-  `.clankerism/verify-session.json`, gitignored, user-seeded once).
+Checked in order at the top of every run. If any check fails, report the
+specific missing piece to the user and exit — do not proceed to the walk.
+
+1. `.clankerism/PAUSED` must not exist.
+2. `.clankerism/verify-target` must exist and contain a single https URL.
+3. `.clankerism/verify-session.json` must exist. This file holds the
+   `podders_session` cookie value seeded manually once via
+   `scripts/oauth-login.mjs` (or by hand). `/verify` does not try to log in
+   interactively — if the session is expired or missing, it files a p1
+   issue "verify: session expired, re-seed `.clankerism/verify-session.json`"
+   and exits.
+4. Playwright MCP tools must be available in the current session (the
+   `playwright__browser_*` tool family). If they aren't, exit with
+   "playwright unavailable — load the Playwright MCP plugin". Do not try
+   to fall back.
 
 ## Flow
 
 ### Step 1: Preflight
 
-```bash
-if [ -f .clankerism/PAUSED ]; then
-  echo "PAUSED — exiting"
-  exit 0
-fi
-
-# Decide target
-TARGET="${1:-local}"
-case "$TARGET" in
-  local) BASE_URL="http://localhost:3000" ;;
-  prod)  BASE_URL="http://77.90.51.87:3000" ;;
-  pr)    # check out the PR branch locally, run `npm run build`, start it
-         ;;
-  *)     echo "unknown target: $TARGET"; exit 1 ;;
-esac
-```
-
-For `local` target: verify the dev server is up (`curl -s -o /dev/null
--w '%{http_code}' $BASE_URL/api/v1/health` returns a response). If not,
-start it in the background and wait until the health check comes back.
+- Read the target URL from `.clankerism/verify-target`.
+- **Reachability check**: `curl -s -o /dev/null -w '%{http_code}' "$TARGET/"` —
+  expect 2xx within 5s. The dashboard root serves the SPA shell and is the
+  most honest answer to "is the site up." If this fails (connection error
+  or non-2xx), file a p0 issue "verify: $TARGET unreachable" and exit.
+  Do **not** preflight against `/api/v1/health` — that endpoint reports
+  degraded (HTTP 503) whenever any internal check fails, even while the
+  SPA is perfectly browseable. A 503 from `/api/v1/health` is a signal to
+  observe, not a reason to abort.
+- **Health snapshot**: `curl -s "$TARGET/api/v1/health"` and parse the JSON
+  body. For each entry in `checks[]`:
+    - `status: "critical"` → file a p1 issue `verify: health critical: <name>`
+      with the `message` field in the body. Fingerprint
+      `verify-health-<name>` so recurring alerts deduplicate cleanly.
+    - `status: "warn"` → file a p2 issue, same fingerprint pattern.
+    - `status: "ok"` → nothing.
+  If the health endpoint is unreachable or the JSON is unparseable, file a
+  single p1 "verify: health endpoint unparseable" and continue — the
+  browser walk is still meaningful.
+- Create `.clankerism/verify-runs/<ISO-timestamp>/` to hold this run's
+  artifacts.
 
 ### Step 2: Auth setup
 
-- **local**: use a seeded viewer account or bypass auth via the
-  development bootstrap admin ID.
-- **prod**: load `.clankerism/verify-session.json`, inject the
-  `podders_session` cookie into the Playwright context.
-
-If auth setup fails, file a p1 issue "Cannot authenticate for verify run"
-and exit.
+- Read `.clankerism/verify-session.json`. Inject the `podders_session`
+  cookie into the Playwright browser context before the first navigation.
+- Navigate to the target root. If the page redirects to `/login`, the
+  session is dead — file the p1 "session expired" issue described in the
+  prerequisites section and exit.
 
 ### Step 3: Walk the must-pass flows
 
-For each flow in the must-pass list:
+For each flow: navigate, wait for network idle, screenshot, read console
+messages, assert, and record pass/fail. Each failure saves its screenshot
+and console log under `.clankerism/verify-runs/<timestamp>/<flow>/`.
 
-1. Navigate.
-2. Wait for network idle.
-3. Screenshot.
-4. Read console messages.
-5. Assert:
-   - No uncaught exceptions in console.
-   - Page has rendered (not a blank `<div id="root"></div>`).
-   - Expected landmark element exists (e.g., `<h1>` on reports list).
-6. If the assertion fails, save the screenshot + console log to
-   `.clankerism/verify-runs/<timestamp>/<flow>/` and mark the flow as
-   failed.
+Must-pass flows (any failure → p1 regression filed, run marked failed):
+
+1. **Home** — `/` renders a report view or a valid empty state. Not a
+   blank `<div id="root">`.
+2. **Reports list** — `/reports` renders at least one row or a valid
+   empty state. `<h1>` or equivalent landmark present.
+3. **Report detail** — click the first row on `/reports` (or navigate to
+   a known report id if the list is empty). Detail page renders, no
+   uncaught console errors.
+4. **Raw feed** — `/feed` renders. At least one source row or a valid
+   "no sources configured" empty state.
+5. **Chat** — `/chat` renders, input box is reachable. Do not send a
+   message.
+6. **Search** — `/search` renders, input box is reachable. Do not submit.
+7. **Settings** — `/settings` renders. Observe only. Do not click save,
+   do not toggle anything.
+
+Nav sanity: every item in the main `<Header />` nav must be reachable
+and land on a non-error page. If a nav item 404s or throws, that's a p1.
 
 ### Step 4: Walk the passive observations
 
-Same pattern, but failures become p2 or p3 issues rather than p1.
+Same navigation pattern, but findings here become p2 or p3 — they don't
+fail the run.
+
+- **p2**: console `error` level messages that don't block rendering;
+  network requests returning 5xx on any walked page; `<img>` 404s;
+  uncaught promise rejections.
+- **p3**: console `warn` level messages; network 4xx that aren't handled
+  as explicit empty/error states; page loads that take longer than 3s to
+  reach network idle.
 
 ### Step 5: File regressions
 
-For each failed flow:
+For each finding, dedup by fingerprint first. The fingerprint is a short
+hash of `(flow, symptom, URL path)` so the same broken nav item doesn't
+produce a new issue every run.
+
+```bash
+gh issue list --label type:bug --search "clanker-fingerprint:verify-<flow>-<hash>" --state open
+```
+
+If an open issue with the same fingerprint exists, skip. Otherwise:
 
 ```bash
 gh issue create \
-  --title "verify regression: <flow name> on <target>" \
+  --title "verify: <flow> failed on prod" \
   --body "$(cat <<EOF
 ## Summary
-The must-pass <flow name> flow failed on $TARGET during verify run <run-id>.
+The <flow> flow failed against $TARGET during verify run <run-id>.
 
 ## Evidence
-- Screenshot: attached
-- Console log: attached
+- Screenshot: .clankerism/verify-runs/<timestamp>/<flow>/screenshot.png
+- Console log: .clankerism/verify-runs/<timestamp>/<flow>/console.log
 - Timestamp: <ISO 8601>
-- Commit: $(git rev-parse --short HEAD)
+- Commit at time of run: $(git rev-parse --short HEAD)
 
-## Steps to reproduce
-1. ...
-2. ...
-3. ...
+## Observed
+<what happened>
 
-## What happened
-<observed>
+## Expected
+<what should happen>
 
-## What should happen
-<expected>
-
-<!-- clanker-fingerprint:verify-<flow>-<short-hash> -->
+<!-- clanker-fingerprint:verify-<flow>-<hash> -->
 EOF
 )" \
   --label state:ready \
-  --label "<p1|p2|p3>" \
+  --label "<p0|p1|p2|p3>" \
   --label type:bug \
-  --label source:scout
+  --label source:manual
 ```
 
-Dedup via the fingerprint marker, same mechanism as `/scout`.
+Label notes:
+- **Priority**: p0 only for "target root unreachable" — the SPA shell
+  doesn't load at all, or the TCP connection fails. Never p0 for a
+  degraded `/api/v1/health` response; that's the health endpoint doing
+  its job. p1 for any must-pass browser flow failure, for every
+  `critical` health check, and for unparseable health output. p2 for
+  `warn` health checks and the passive-observation rules above. p3 per
+  the passive-observation rules.
+- **Source**: `source:manual`. `/verify` is not `/scout` — its findings
+  are empirical observations of prod, filed by a human-invoked run. If
+  you ever want a dedicated `source:verify` label, that's a separate
+  change to `.clankerism/labels.json`.
 
-### Step 6: Report
+### Step 6: Report to the user
 
-Tell the user:
+Print a compact summary:
 
 ```
-Target: <local|prod|pr>
-Flows: <N passed>, <M failed>
-Passive findings: <K>
-Regressions filed: #<N1>, #<N2>, ...
+Target: <url>
+Must-pass: <N passed> / <M total>
+Passive: <K findings>
+New issues: #<N1>, #<N2>, ...
+Dedup'd (existing): #<N3>
 Artifacts: .clankerism/verify-runs/<timestamp>/
 Duration: <Ns>
 ```
 
 Exit.
 
+## Setup, one-time
+
+To use `/verify` in a fresh checkout:
+
+1. Write the target URL:
+   ```bash
+   echo "https://your-prod-url" > .clankerism/verify-target
+   ```
+2. Seed the session cookie:
+   ```bash
+   node scripts/oauth-login.mjs  # or log in via a browser and copy the cookie value
+   # then write the cookie value to .clankerism/verify-session.json
+   ```
+3. Ensure the Playwright MCP plugin is loaded in your Claude Code session.
+
+Both files are gitignored. Re-seed the session whenever `/verify` files
+the "session expired" issue.
+
 ## When to run /verify
 
-- **Before every release**: `/verify prod`. Confirms the live site still
-  works.
-- **After a large refactor PR merges**: `/verify local` against main.
-- **Nightly cron** (future): `/verify prod` as a regression canary.
-- **User-initiated**: user says "check the dashboard" → `/verify local`.
+- **Before a release**: after you think main is shippable, point verify
+  at prod and confirm nothing has silently rotted.
+- **After a dashboard-heavy PR merges to main**: same idea — main is
+  deployed; did anything break that the unit tests missed?
+- **When the user says "check the dashboard"**: that's a verify run.
 
 ## Things you will be tempted to do and must not
 
-- **Fix the regression you just found.** No. File it. `/fix` or `/build`
-  handle the fix.
-- **Retry a flaky flow 5 times to make it pass.** No — retry once, if
-  still failing, file the regression. Flaky is its own bug.
-- **Drive writes on prod** "just to test". Never.
-- **Disable auth checks** because they're annoying. Never.
-- **Delete verify-runs artifacts without the user's ok.** They may be
-  the only record of a transient regression.
+- **Fix the regression you just found.** No. File it. `/fix` handles the
+  fix; `/verify` is strictly observe-and-report.
+- **Retry a flaky flow until it passes.** One reload, no more. Flaky is
+  its own bug and deserves its own issue.
+- **Drive writes on prod "just to test the happy path".** Never. If you
+  need to test a write flow, that's a unit test or an integration test,
+  not `/verify`.
+- **Skip the screenshot because the failure is "obvious".** No. Future
+  you, reading the issue three weeks later, will thank present you.
+- **Delete `.clankerism/verify-runs/` artifacts without the user's ok.**
+  They may be the only record of a transient regression.

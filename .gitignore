@@ -9,6 +9,7 @@ dashboard/node_modules/
 .clankerism/PAUSED
 .clankerism/verify-runs/
 .clankerism/verify-session.json
+.clankerism/verify-target
 .clankerism/loop-state.json
 .clankerism/loop-log.ndjson
 .clankerism/attempts/
