@@ -25,7 +25,7 @@ Complete implementation plan in 3 phases, 32 steps. Each step lists exact files,
 
 ### Step 1: Scaffolding
 
-**Goal**: Project compiles with `npm run build`.
+**Goal**: Project compiles with `pnpm run build`.
 
 **Files to create**:
 - `package.json` — `"type": "module"`, `"engines": { "node": ">=22" }`
@@ -52,7 +52,7 @@ Complete implementation plan in 3 phases, 32 steps. Each step lists exact files,
 
 **Verify**:
 ```bash
-npm run build && node dist/index.js   # prints 'podders'
+pnpm run build && node dist/index.js   # prints 'podders'
 ```
 
 **Depends on**: Nothing.
@@ -94,7 +94,7 @@ interface Config {
 
 Auto-generation: log WARNING with the generated value so user can save to `.env`.
 
-**Verify**: `npm run build` compiles. Without `.env` → crashes with clear "DATABASE_URL is required" message.
+**Verify**: `pnpm run build` compiles. Without `.env` → crashes with clear "DATABASE_URL is required" message.
 
 **Depends on**: Step 1.
 
@@ -252,7 +252,7 @@ export function createLLM(pool, logger, config) {
 
 **Logging**: every successful call writes to `llm_usage` table (stage, model, tokens, cost).
 
-**Verify**: `npm run build` compiles. Unit tests for `estimateTokens`, `sanitizeForPrompt`, `wrapWithNonce`.
+**Verify**: `pnpm run build` compiles. Unit tests for `estimateTokens`, `sanitizeForPrompt`, `wrapWithNonce`.
 
 **Depends on**: Steps 1-6.
 
@@ -769,7 +769,7 @@ Track F: 3.10 (testing) ──────────────────�
 
 **SPA catch-all** in `server.ts`: serve `dashboard/dist/index.html`.
 
-**Verify**: `cd dashboard && npm run dev` renders dark header. Auth redirects unauthenticated users to login.
+**Verify**: `pnpm --dir dashboard dev` renders dark header. Auth redirects unauthenticated users to login.
 
 **Depends on**: 3.3 (auth middleware).
 
@@ -877,7 +877,7 @@ Same implementation as Phase 2 Step 2.13 — if not already built there, build h
 
 All tests mock external APIs.
 
-**Verify**: `npm test` passes all files.
+**Verify**: `pnpm test` passes all files.
 
 **Depends on**: Corresponding features built. Independent ordering.
 

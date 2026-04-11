@@ -19,13 +19,13 @@ Podders v2 is a 24/7 market intelligence engine that scrapes social media (Disco
 ## Commands
 
 ```bash
-npm install              # Install all dependencies
-npm run build            # TypeScript compile + Vite dashboard build
-npm run dev              # Dev server with watch (ts-node + Vite dev)
-npm run start            # Production: node dist/index.js run
-npm test                 # Unit tests (golden file + normalize)
-npm run test:integration # Full pipeline integration tests (requires .env)
-npm run test:prompts     # Prompt regression tests (manual, ~$0.25/run, requires .env)
+pnpm install              # Install root + dashboard dependencies
+pnpm run build            # TypeScript compile + Vite dashboard build
+pnpm run dev              # Dev server with watch (ts-node + Vite dev)
+pnpm run start            # Production: node dist/index.js run
+pnpm test                 # Unit tests (golden file + normalize)
+pnpm run test:integration # Full pipeline integration tests (requires .env)
+pnpm run test:prompts     # Prompt regression tests (manual, ~$0.25/run, requires .env)
 ```
 
 ## File Structure
@@ -114,7 +114,7 @@ Work is queued as **GitHub Issues** labeled `state:ready | p0–p3 | type:* | so
    git push -u origin build/issue-<N>
    gh issue edit <N> --remove-label state:ready --add-label state:in-progress
    ```
-3. **Implement the smallest diff** that fully solves the issue. Verify locally with `npm run build`, `npm run lint`, `npm run format:check`, and the narrowest relevant tests. Avoid drive-by refactors.
+3. **Implement the smallest diff** that fully solves the issue. Verify locally with `pnpm run build`, `pnpm run lint`, `pnpm run format:check`, and the narrowest relevant tests. Avoid drive-by refactors.
 4. **Open the PR** with a `Fixes #<N>` footer so GitHub auto-closes the issue on merge.
 5. **Watch CI synchronously.** Do NOT use `gh pr merge --auto` — it is unreliable on this free-plan repo (no branch protection means `--auto` either fires immediately or refuses to arm):
    ```bash
@@ -129,7 +129,7 @@ Work is queued as **GitHub Issues** labeled `state:ready | p0–p3 | type:* | so
 
 ### Safety model (no GitHub Pro)
 
-The repo is private on the free GitHub plan, so branch protection is unavailable. Enforcement lives in `scripts/hooks/pre-push`, auto-installed on every `npm ci` via the `postinstall` script. The hook:
+The repo is private on the free GitHub plan, so branch protection is unavailable. Enforcement lives in `scripts/hooks/pre-push`, auto-installed on every `pnpm install` via the `postinstall` script. The hook:
 
 - Rejects any push to `main` (override: `CLANKERISM_ALLOW_MAIN=1`, logged to `.clankerism/override-log.txt`)
 - Rejects any non-fast-forward push anywhere (override: `CLANKERISM_ALLOW_FORCE=1`, never honored on main)

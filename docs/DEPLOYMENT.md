@@ -150,7 +150,8 @@ External health check on `/api/v1/status` every 60s. Options:
 cd /opt/podders && git pull
 
 # Install deps + build (backend tsc + dashboard vite in one command)
-npm install && npm run build
+corepack enable
+pnpm install && pnpm run build
 
 # Restart (pm2)
 pm2 restart podders

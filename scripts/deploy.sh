@@ -13,27 +13,25 @@ git fetch origin main
 git reset --hard origin/main
 
 echo "==> Installing dependencies..."
-npm ci --production=false
-cd dashboard && npm ci && cd ..
+corepack enable
+pnpm install --frozen-lockfile
 
 echo "==> Building..."
-if ! npm run build; then
+if ! pnpm run build; then
   echo "!!! BUILD FAILED — rolling back to $OLD_HASH"
   git checkout "$OLD_HASH"
-  npm ci --production=false
-  cd dashboard && npm ci && cd ..
-  npm run build
+  pnpm install --frozen-lockfile
+  pnpm run build
   echo "!!! Rolled back to $OLD_HASH"
   exit 1
 fi
 
 echo "==> Running migrations..."
-if ! node dist/index.js migrate; then
+if ! pnpm run migrate; then
   echo "!!! MIGRATION FAILED — rolling back to $OLD_HASH"
   git checkout "$OLD_HASH"
-  npm ci --production=false
-  cd dashboard && npm ci && cd ..
-  npm run build
+  pnpm install --frozen-lockfile
+  pnpm run build
   echo "!!! Rolled back to $OLD_HASH"
   exit 1
 fi
