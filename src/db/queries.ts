@@ -2913,9 +2913,6 @@ export interface AuthorRow {
   firstSeen: number;
   lastSeen: number;
   mentionCount: number;
-  credibilityScore: number | null;
-  totalCalls: number;
-  correctCalls: number;
   createdAt: number;
 }
 
@@ -2941,15 +2938,9 @@ export interface EntityFirstMoverRow {
   leadWindowMs: number | null;
 }
 
-export interface FirstMoverWatchlistEntryRow extends EntityFirstMoverRow {
-  credibilityScore: number | null;
-  totalCalls: number;
-  correctCalls: number;
-}
-
 export interface FirstMoverWatchlistOverview {
   latestTimestamp: number | null;
-  entries: FirstMoverWatchlistEntryRow[];
+  entries: EntityFirstMoverRow[];
 }
 
 export interface AuthorCallRow {
@@ -2962,11 +2953,31 @@ export interface AuthorCallRow {
   confidence: number;
   sourceItemId: string | null;
   timestamp: number;
-  resolved: boolean;
-  outcome: string | null;
-  resolvedAt: number | null;
   createdAt: number;
 }
+
+const AUTHOR_BASE_COLUMNS = [
+  'id',
+  'platform',
+  'handle',
+  'display_name',
+  'first_seen',
+  'last_seen',
+  'mention_count',
+  'created_at',
+].join(', ');
+
+const AUTHOR_CALL_COLUMNS = [
+  'id',
+  'author_id',
+  'entity_id',
+  'claim_type',
+  'claim_text',
+  'confidence',
+  'source_item_id',
+  'timestamp',
+  'created_at',
+].join(', ');
 
 function toAuthorRow(row: Record<string, unknown>): AuthorRow {
   return {
@@ -2977,9 +2988,6 @@ function toAuthorRow(row: Record<string, unknown>): AuthorRow {
     firstSeen: Number(row.first_seen),
     lastSeen: Number(row.last_seen),
     mentionCount: Number(row.mention_count),
-    credibilityScore: row.credibility_score != null ? Number(row.credibility_score) : null,
-    totalCalls: Number(row.total_calls),
-    correctCalls: Number(row.correct_calls),
     createdAt: Number(row.created_at),
   };
 }
@@ -2995,9 +3003,6 @@ function toAuthorCallRow(row: Record<string, unknown>): AuthorCallRow {
     confidence: Number(row.confidence),
     sourceItemId: (row.source_item_id as string) ?? null,
     timestamp: Number(row.timestamp),
-    resolved: Boolean(row.resolved),
-    outcome: (row.outcome as string) ?? null,
-    resolvedAt: row.resolved_at != null ? Number(row.resolved_at) : null,
     createdAt: Number(row.created_at),
   };
 }
@@ -3018,19 +3023,22 @@ export async function upsertAuthor(
      SET last_seen = GREATEST(authors.last_seen, EXCLUDED.last_seen),
          mention_count = authors.mention_count + 1,
          display_name = COALESCE(EXCLUDED.display_name, authors.display_name)
-     RETURNING *`,
+     RETURNING ${AUTHOR_BASE_COLUMNS}`,
     [id, platform, handle, displayName, timestamp, now],
   );
   return toAuthorRow(rows[0]);
 }
 
 export async function getAuthorByHandle(pool: Pool, platform: string, handle: string): Promise<AuthorRow | null> {
-  const { rows } = await pool.query(`SELECT * FROM authors WHERE platform = $1 AND handle = $2`, [platform, handle]);
+  const { rows } = await pool.query(`SELECT ${AUTHOR_BASE_COLUMNS} FROM authors WHERE platform = $1 AND handle = $2`, [
+    platform,
+    handle,
+  ]);
   return rows.length > 0 ? toAuthorRow(rows[0]) : null;
 }
 
 export async function getAuthorById(pool: Pool, authorId: string): Promise<AuthorRow | null> {
-  const { rows } = await pool.query(`SELECT * FROM authors WHERE id = $1`, [authorId]);
+  const { rows } = await pool.query(`SELECT ${AUTHOR_BASE_COLUMNS} FROM authors WHERE id = $1`, [authorId]);
   return rows.length > 0 ? toAuthorRow(rows[0]) : null;
 }
 
@@ -3053,7 +3061,14 @@ export async function getTopAuthorsByEntity(pool: Pool, entityId: string, limit 
      ),
      ranked_authors AS (
        SELECT
-         a.*,
+         a.id,
+         a.platform,
+         a.handle,
+         a.display_name,
+         a.first_seen,
+         a.last_seen,
+         a.mention_count,
+         a.created_at,
          mc.entity_mention_count,
          fc.first_entity_call_time,
          MIN(fc.first_entity_call_time) OVER () AS earliest_entity_call_time
@@ -3102,15 +3117,6 @@ function toEntityFirstMoverRow(row: Record<string, unknown>): EntityFirstMoverRo
     timestamp: Number(row.timestamp),
     nextTrackedCallTime: row.next_tracked_call_time != null ? Number(row.next_tracked_call_time) : null,
     leadWindowMs: row.lead_window_ms != null ? Number(row.lead_window_ms) : null,
-  };
-}
-
-function toFirstMoverWatchlistEntryRow(row: Record<string, unknown>): FirstMoverWatchlistEntryRow {
-  return {
-    ...toEntityFirstMoverRow(row),
-    credibilityScore: row.credibility_score != null ? Number(row.credibility_score) : null,
-    totalCalls: Number(row.total_calls),
-    correctCalls: Number(row.correct_calls),
   };
 }
 
@@ -3192,9 +3198,6 @@ export async function getRecentFirstMoverWatchlist(
          a.platform,
          a.handle,
          a.display_name,
-         a.credibility_score,
-         a.total_calls,
-         a.correct_calls,
          ac.claim_type,
          ac.claim_text,
          ac.source_item_id,
@@ -3227,7 +3230,7 @@ export async function getRecentFirstMoverWatchlist(
 
   return {
     latestTimestamp,
-    entries: rows.map((row) => toFirstMoverWatchlistEntryRow(row as Record<string, unknown>)),
+    entries: rows.map((row) => toEntityFirstMoverRow(row as Record<string, unknown>)),
   };
 }
 
@@ -3248,7 +3251,7 @@ export async function insertAuthorCall(
   const { rows } = await pool.query(
     `INSERT INTO author_calls (id, author_id, entity_id, claim_type, claim_text, confidence, source_item_id, timestamp, created_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     RETURNING *`,
+     RETURNING ${AUTHOR_CALL_COLUMNS}`,
     [
       id,
       call.authorId,
@@ -3266,7 +3269,7 @@ export async function insertAuthorCall(
 
 export async function getAuthorCalls(pool: Pool, authorId: string, limit = 20): Promise<AuthorCallRow[]> {
   const { rows } = await pool.query(
-    `SELECT ac.*, e.name AS entity_name
+    `SELECT ${AUTHOR_CALL_COLUMNS.replaceAll(/(^|,\s*)([a-z_]+)/g, '$1ac.$2')}, e.name AS entity_name
        FROM author_calls ac
        JOIN entities e ON e.id = ac.entity_id
       WHERE ac.author_id = $1
@@ -3275,42 +3278,4 @@ export async function getAuthorCalls(pool: Pool, authorId: string, limit = 20): 
     [authorId, limit],
   );
   return rows.map(toAuthorCallRow);
-}
-
-export async function getUnresolvedCalls(pool: Pool, limit = 50): Promise<AuthorCallRow[]> {
-  const { rows } = await pool.query(
-    `SELECT * FROM author_calls WHERE resolved = false ORDER BY timestamp ASC LIMIT $1`,
-    [limit],
-  );
-  return rows.map(toAuthorCallRow);
-}
-
-export async function resolveAuthorCall(
-  pool: Pool,
-  callId: string,
-  outcome: 'correct' | 'incorrect' | 'unresolved',
-): Promise<boolean> {
-  const now = Date.now();
-  const { rows } = await pool.query(
-    `UPDATE author_calls SET resolved = true, outcome = $2, resolved_at = $3
-     WHERE id = $1 AND resolved = false
-     RETURNING author_id`,
-    [callId, outcome, now],
-  );
-  if (rows.length === 0) {
-    return false;
-  }
-  if (rows.length > 0 && outcome !== 'unresolved') {
-    const authorId = rows[0].author_id as string;
-    const correctIncrement = outcome === 'correct' ? 1 : 0;
-    await pool.query(
-      `UPDATE authors SET total_calls = total_calls + 1, correct_calls = correct_calls + $2,
-       credibility_score = CASE WHEN total_calls + 1 >= 5
-         THEN (correct_calls + $2)::REAL / (total_calls + 1)
-         ELSE NULL END
-       WHERE id = $1`,
-      [authorId, correctIncrement],
-    );
-  }
-  return true;
 }

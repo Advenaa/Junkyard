@@ -15,7 +15,6 @@ import {
   getPriceHistory,
   getTopAuthorsByEntity,
   getTopDivergentEntities,
-  resolveAuthorCall,
   upsertEntityRelationship,
   type EntityRelationshipSource,
   type EntityRelationshipType,
@@ -499,44 +498,6 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
         author: toCamelCase<Record<string, unknown>>(author as unknown as Record<string, unknown>),
         calls: calls.map((c) => toCamelCase<Record<string, unknown>>(c as unknown as Record<string, unknown>)),
       };
-    },
-  );
-
-  app.patch<{
-    Params: { callId: string };
-    Body: { outcome: 'correct' | 'incorrect' | 'unresolved' };
-  }>(
-    '/api/v1/author-calls/:callId',
-    {
-      preHandler: [authPreHandler, requireAdmin],
-      schema: {
-        params: {
-          type: 'object',
-          required: ['callId'],
-          properties: {
-            callId: { type: 'string', minLength: 1 },
-          },
-        },
-        body: {
-          type: 'object',
-          required: ['outcome'],
-          properties: {
-            outcome: {
-              type: 'string',
-              enum: ['correct', 'incorrect', 'unresolved'],
-            },
-          },
-          additionalProperties: false,
-        },
-      },
-    },
-    async (request, reply) => {
-      const didResolve = await resolveAuthorCall(pool, request.params.callId, request.body.outcome);
-      if (!didResolve) {
-        return reply.code(404).send({ error: 'Author call not found or already resolved' });
-      }
-
-      return reply.code(204).send();
     },
   );
 }

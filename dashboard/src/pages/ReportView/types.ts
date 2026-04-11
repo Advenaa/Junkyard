@@ -109,9 +109,6 @@ export interface FirstMoverWatchlistEntry {
   timestamp: number;
   nextTrackedCallTime: number | null;
   leadWindowMs: number | null;
-  credibilityScore: number | null;
-  totalCalls: number;
-  correctCalls: number;
 }
 
 export interface FirstMoverWatchlistOverview {

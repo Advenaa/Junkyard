@@ -27,12 +27,12 @@ describe('First-mover watchlist queries (src/db/queries.ts)', () => {
     assert.match(src, /export\s+async\s+function\s+getRecentFirstMoverWatchlist\s*\(/);
   });
 
-  it('reads from author_calls and selects reviewed-outcome counts for the watchlist', () => {
+  it('reads from author_calls and exposes first-mover timing without review aggregates', () => {
     assert.ok(src.includes('FROM author_calls'));
-    assert.ok(src.includes('credibility_score'));
-    assert.ok(src.includes('total_calls'));
-    assert.ok(src.includes('correct_calls'));
+    assert.ok(src.includes('next_tracked_call_time'));
     assert.ok(src.includes('entity_rank = 1'));
+    assert.ok(!src.includes('credibility_score'));
+    assert.ok(!src.includes('correct_calls'));
   });
 });
 
@@ -68,11 +68,11 @@ describe('First-mover watchlist dashboard surface', () => {
 
   it('FirstMoverSection renders the First Mover Watch card and Settings handoff copy', () => {
     assert.ok(sectionSrc.includes('First Mover Watch'));
-    assert.ok(sectionSrc.includes('Detailed author timing and review history remain in'));
+    assert.ok(sectionSrc.includes('Detailed author timing remains in'));
   });
 
-  it('formatters.tsx exposes lead-window and reviewed-outcome helpers', () => {
+  it('formatters.tsx exposes the lead-window helper without review-history copy', () => {
     assert.ok(formattersSrc.includes('solo tracked call'));
-    assert.ok(formattersSrc.includes('reviewed correct'));
+    assert.ok(!formattersSrc.includes('reviewed correct'));
   });
 });
