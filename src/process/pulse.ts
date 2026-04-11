@@ -1010,6 +1010,7 @@ export function createPulse(
     const reportId = ulid();
     const dateString = getDateString(timezone);
     const avgSentiment = computeAvgSentiment(report);
+    const sourceFamilies = [...new Set(parsedSummaries.map((s) => s.source))].sort();
 
     let reportRow: ReportRow;
     try {
@@ -1017,7 +1018,7 @@ export function createPulse(
         id: reportId,
         date: dateString,
         type: 'pulse',
-        body: JSON.stringify(report),
+        body: JSON.stringify({ ...report, sourceFamilies }),
         tldr: report.tldr,
         sentiment: avgSentiment,
         createdAt: Date.now(),

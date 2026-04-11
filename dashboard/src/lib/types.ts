@@ -62,6 +62,7 @@ export interface Report {
   macroAlerts?: string[];
   macroRegime?: MacroRegime | null;
   macroRegimeHistory?: MacroRegimeHistory | null;
+  sourceFamilies?: string[];
 }
 
 export interface ReportChainDrilldown {

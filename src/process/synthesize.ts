@@ -1178,6 +1178,7 @@ export function createSynthesizer(
     // Insert into DB
     const reportId = ulid();
     const avgSentiment = computeAvgSentiment(report);
+    const sourceFamilies = [...new Set(summaries.map((s) => s.row.source))].sort();
 
     let reportRow: ReportRow;
     try {
@@ -1185,7 +1186,7 @@ export function createSynthesizer(
         id: reportId,
         date: dateString,
         type: 'daily',
-        body: JSON.stringify(report),
+        body: JSON.stringify({ ...report, sourceFamilies }),
         tldr: report.tldr,
         sentiment: avgSentiment,
         createdAt: Date.now(),
@@ -1305,6 +1306,7 @@ export function createSynthesizer(
     const avgSentiment = computeAvgSentiment(report);
     const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
     const { dateString } = getTodayWindow(timezone);
+    const sourceFamilies = [...new Set(relevantSummaries.map((s) => s.row.source))].sort();
 
     let reportRow: ReportRow;
     try {
@@ -1312,7 +1314,7 @@ export function createSynthesizer(
         id: reportId,
         date: dateString,
         type: 'flash',
-        body: JSON.stringify(report),
+        body: JSON.stringify({ ...report, sourceFamilies }),
         tldr: report.tldr,
         sentiment: avgSentiment,
         createdAt: Date.now(),

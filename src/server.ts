@@ -660,6 +660,10 @@ export async function createServer(
             if (macroAlerts.length > 0) {
               report.macroAlerts = macroAlerts;
             }
+            const sourceFamilies = extractStringArrayField(parsed?.sourceFamilies ?? parsed?.source_families, 10);
+            if (sourceFamilies.length > 0) {
+              report.sourceFamilies = sourceFamilies;
+            }
             const macroRegime = extractMacroRegime(parsed?.macroRegime ?? parsed?.macro_regime);
             if (macroRegime) {
               report.macroRegime = macroRegime;
@@ -720,6 +724,7 @@ export async function createServer(
         report.macroAlerts = (parsed.macroAlerts ?? parsed.macro_alerts ?? []) as unknown[];
         report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
         report.sections = (parsed.sections ?? []) as unknown[];
+        report.sourceFamilies = (parsed.sourceFamilies ?? parsed.source_families ?? []) as unknown[];
         const macroRegime = extractMacroRegime(parsed.macroRegime ?? parsed.macro_regime);
         if (macroRegime) {
           report.macroRegime = macroRegime;
