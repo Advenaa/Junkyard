@@ -32,17 +32,19 @@ export function registerSourceRoutes({ app, authPreHandler, requireAdmin, pool }
             sourceId: { type: 'string', minLength: 1, maxLength: 255 },
             label: { type: 'string', maxLength: 255 },
             poll_interval: { type: 'integer', minimum: 60, maximum: 86400 },
+            tier: { type: 'string', enum: ['alpha', 'influencer', 'general', 'mainstream'] },
           },
           additionalProperties: false,
         },
       },
     },
     async (request, reply) => {
-      const { source, sourceId, label, poll_interval } = request.body as {
+      const { source, sourceId, label, poll_interval, tier } = request.body as {
         source?: string;
         sourceId?: string;
         label?: string;
         poll_interval?: number;
+        tier?: string;
       };
       if (!source || !sourceId) {
         return reply.code(400).send({ error: 'source and sourceId are required' });
@@ -70,6 +72,9 @@ export function registerSourceRoutes({ app, authPreHandler, requireAdmin, pool }
             source,
             sourceId,
           ]);
+        }
+        if (tier != null) {
+          await updateSourceTier(pool, source, sourceId, tier);
         }
       } catch (err: unknown) {
         if (err instanceof Error && 'code' in err && (err as { code: string }).code === '23505') {
