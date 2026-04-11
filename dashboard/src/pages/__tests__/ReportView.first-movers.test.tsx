@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ReportView } from '../ReportView';
 
@@ -185,6 +186,62 @@ describe('ReportView first movers', () => {
     expect(
       screen.getByText('Ethereum was first tracked by DeFi Dad roughly 4h before the next monitored call.'),
     ).toBeInTheDocument();
+  });
+
+  it('shows overflow control when more than 3 first mover entries exist', async () => {
+    const report = makeFullReport();
+    const entries = Array.from({ length: 5 }, (_, i) => ({
+      entityId: `entity-${i}`,
+      entityName: `Token ${i}`,
+      authorId: `auth-${i}`,
+      platform: 'twitter',
+      handle: `user${i}`,
+      displayName: `User ${i}`,
+      claimType: 'bullish',
+      claimText: `Claim about Token ${i}.`,
+      sourceItemId: `item-${i}`,
+      timestamp: Date.UTC(2026, 3, 8, 9, 30, 0) - i * 3600000,
+      nextTrackedCallTime: null,
+      leadWindowMs: 4 * 60 * 60 * 1000,
+      credibilityScore: 0.7,
+      totalCalls: 3,
+      correctCalls: 2,
+    }));
+    const watchlist = { latestTimestamp: entries[0].timestamp, entries };
+
+    vi.stubGlobal('fetch', buildReportFetchMock(report, watchlist));
+
+    render(
+      <MemoryRouter initialEntries={[`/reports/${report.id}`]}>
+        <Routes>
+          <Route path="/reports/:id" element={<ReportView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+
+    await screen.findByText('First Mover Watch');
+    expect(screen.getByText('5 recent')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 0' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 1' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 2' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Token 3' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Token 4' })).not.toBeInTheDocument();
+
+    const moreButton = screen.getByRole('button', { name: '+2 more' });
+    expect(moreButton).toBeInTheDocument();
+
+    await user.click(moreButton);
+
+    expect(screen.getByRole('heading', { name: 'Token 3' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 4' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show fewer' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Show fewer' }));
+
+    expect(screen.queryByRole('heading', { name: 'Token 3' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '+2 more' })).toBeInTheDocument();
   });
 
   it('does not show First Movers section when firstMovers array is empty', async () => {

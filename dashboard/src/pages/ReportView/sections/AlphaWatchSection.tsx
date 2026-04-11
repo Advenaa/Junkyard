@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { AlphaWatchEntry, AlphaWatchOverview } from '../types';
+import { ALPHA_WATCH_PREVIEW_LIMIT } from '../types';
 import {
   alphaTierToneClasses,
   formatAlphaWatchNarrative,
@@ -13,9 +15,15 @@ interface AlphaWatchSectionProps {
 }
 
 export function AlphaWatchSection({ alphaWatch, alphaWatchEntries }: AlphaWatchSectionProps) {
+  const [expanded, setExpanded] = useState(false);
+
   if (alphaWatchEntries.length === 0) {
     return null;
   }
+
+  const hasOverflow = alphaWatchEntries.length > ALPHA_WATCH_PREVIEW_LIMIT;
+  const visibleEntries = expanded ? alphaWatchEntries : alphaWatchEntries.slice(0, ALPHA_WATCH_PREVIEW_LIMIT);
+  const hiddenCount = alphaWatchEntries.length - ALPHA_WATCH_PREVIEW_LIMIT;
 
   return (
     <div className="bg-surface border border-border rounded-lg overflow-hidden">
@@ -38,7 +46,7 @@ export function AlphaWatchSection({ alphaWatch, alphaWatchEntries }: AlphaWatchS
       </div>
 
       <div className="p-4 grid gap-3 md:grid-cols-3">
-        {alphaWatchEntries.map((entry) => (
+        {visibleEntries.map((entry) => (
           <div key={entry.entityId} className="rounded-lg border border-border bg-background p-3 space-y-3">
             <div className="space-y-1">
               <h3 className="text-text-primary text-sm font-body leading-snug">{entry.entityName}</h3>
@@ -75,6 +83,17 @@ export function AlphaWatchSection({ alphaWatch, alphaWatchEntries }: AlphaWatchS
           </div>
         ))}
       </div>
+      {hasOverflow && (
+        <div className="px-4 pb-4 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="font-mono text-[11px] uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
+          >
+            {expanded ? 'Show fewer' : `+${hiddenCount} more`}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
