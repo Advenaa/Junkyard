@@ -45,6 +45,18 @@ export function requireAuth(pool: Pool, config: Config, sessionManager: SessionM
           username,
           role,
         };
+
+        if (session.refreshed) {
+          reply.setCookie('podders_session', sessionId.value, {
+            httpOnly: true,
+            signed: true,
+            secure: config.publicUrl?.startsWith('https') ?? false,
+            sameSite: 'lax',
+            path: '/',
+            maxAge: 30 * 24 * 60 * 60, // 30 days
+          });
+        }
+
         return;
       }
     }

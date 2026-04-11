@@ -4,7 +4,11 @@ import type { Logger } from '../logger.js';
 
 export interface SessionManager {
   create(discordId: string, ip: string, userAgent: string): Promise<string>;
-  validate(sessionId: string, ip: string, userAgent: string): Promise<{ discordId: string; role: string } | null>;
+  validate(
+    sessionId: string,
+    ip: string,
+    userAgent: string,
+  ): Promise<{ discordId: string; role: string; refreshed: boolean } | null>;
   delete(sessionId: string): Promise<void>;
   deleteAllForUser(discordId: string): Promise<number>;
   cleanupExpired(): Promise<number>;
@@ -99,7 +103,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       sessionId: string,
       ip: string,
       userAgent: string,
-    ): Promise<{ discordId: string; role: string } | null> {
+    ): Promise<{ discordId: string; role: string; refreshed: boolean } | null> {
       const result = await pool.query<{
         discord_id: string;
         role: string;
@@ -170,6 +174,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
 
       // Sliding refresh: update last_refreshed_at if stale
       const hoursSinceRefresh = (now - row.last_refreshed_at) / (1000 * 60 * 60);
+      let refreshed = false;
 
       if (hoursSinceRefresh > SLIDING_REFRESH_HOURS) {
         const newExpiresAt = now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
@@ -178,6 +183,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
           sessionId,
           newExpiresAt,
         ]);
+        refreshed = true;
       }
 
       // Opportunistic cleanup of expired sessions (AU-022)
@@ -196,7 +202,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
           });
       }
 
-      return { discordId: row.discord_id, role: row.role };
+      return { discordId: row.discord_id, role: row.role, refreshed };
     },
 
     async delete(sessionId: string): Promise<void> {
