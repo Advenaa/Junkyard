@@ -550,6 +550,18 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         await client.query('COMMIT');
       }
 
+      if (entities.length > 0 && resolvedEntityIds.length === 0) {
+        log.warn(
+          {
+            inputNames: entities.map((entity) => entity.name),
+            reason: 'all_filtered_or_failed',
+            source,
+            summaryId,
+          },
+          'Entity resolution returned zero results from non-empty input',
+        );
+      }
+
       log.info({ count: entities.length, source, summaryId }, `Resolved ${entities.length} entities from ${source}`);
 
       return [...resolvedEntitiesById.values()];

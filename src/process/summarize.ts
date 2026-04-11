@@ -1246,6 +1246,18 @@ Rules:
           client.release();
         }
 
+        if (parsed.entities.length > 0 && resolvedEntityIds.length === 0) {
+          log.warn(
+            {
+              summaryId,
+              extracted: parsed.entities.map((entity) => entity.name),
+              source,
+              sourceId,
+            },
+            'Summary had extracted entities but all failed to resolve',
+          );
+        }
+
         // Track alpha propagation for resolved entities after the summary transaction commits.
         if (alphaTracker && resolvedEntityIds.length > 0) {
           try {

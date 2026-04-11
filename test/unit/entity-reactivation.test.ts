@@ -43,6 +43,21 @@ interface QueryResultRow {
   [key: string]: unknown;
 }
 
+function makeCapturingLog() {
+  const warnings: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  const log: Logger = {
+    info: () => {},
+    warn: (obj: Record<string, unknown>, msg: string) => {
+      warnings.push({ obj, msg });
+    },
+    error: () => {},
+    debug: () => {},
+    child: () => log,
+  } as unknown as Logger;
+
+  return { log, warnings };
+}
+
 function makeMockDb(seed: MockDbSeed) {
   const entities = new Map(seed.entities.map((entity) => [entity.id, { ...entity }]));
   const mentions = [...(seed.mentions ?? [])];
@@ -317,5 +332,41 @@ describe('entity reactivation sentiment handling', () => {
     assert.equal(divergence.engSentiment, 0.8);
     assert.equal(divergence.indSentiment, -0.2);
     assert.equal(divergence.divergence, 1);
+  });
+});
+
+describe('entity resolution empty-result warnings', () => {
+  it('warns when non-empty input resolves to zero entities', async () => {
+    const { pool } = makeMockDb({ aliases: [], entities: [] });
+    const { log, warnings } = makeCapturingLog();
+    const manager = createEntityManager(pool as never, log, config, llm);
+
+    const resolvedIds = await manager.resolveEntities(
+      [
+        { name: '$', aliases: ['$'], type: 'token', mentionCount: 1, sentiment: 0.1 },
+        { name: '  ', aliases: ['  '], type: 'project', mentionCount: 1, sentiment: -0.2 },
+      ],
+      'discord',
+      'sum-empty',
+      'eng',
+    );
+
+    assert.deepEqual(resolvedIds, []);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0]?.msg, 'Entity resolution returned zero results from non-empty input');
+    assert.deepEqual(warnings[0]?.obj.inputNames, ['$', '  ']);
+    assert.equal(warnings[0]?.obj.reason, 'all_filtered_or_failed');
+    assert.equal(warnings[0]?.obj.summaryId, 'sum-empty');
+  });
+
+  it('does not warn when there are no input entities', async () => {
+    const { pool } = makeMockDb({ aliases: [], entities: [] });
+    const { log, warnings } = makeCapturingLog();
+    const manager = createEntityManager(pool as never, log, config, llm);
+
+    const resolvedIds = await manager.resolveEntities([], 'discord', 'sum-no-input', 'eng');
+
+    assert.deepEqual(resolvedIds, []);
+    assert.equal(warnings.length, 0);
   });
 });
