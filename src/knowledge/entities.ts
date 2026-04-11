@@ -13,6 +13,11 @@ export interface ExtractedEntity {
   sentiment: number;
 }
 
+export interface ResolvedEntity {
+  entityId: string;
+  disambiguationFailed?: boolean;
+}
+
 export const DisambiguatedEntitySchema = z.array(
   z.object({
     name: z.string(),
@@ -22,6 +27,42 @@ export const DisambiguatedEntitySchema = z.array(
 );
 
 type DisambiguatedEntity = z.infer<typeof DisambiguatedEntitySchema>[number];
+
+export type Tier3DisambiguationFallbackReason =
+  | 'invalid-json'
+  | 'zod-validation'
+  | 'llm-exception'
+  | 'partial-response';
+
+export interface Tier3DisambiguationFallbackStats {
+  totalCount: number;
+  byReason: Record<Tier3DisambiguationFallbackReason, number>;
+}
+
+function createEmptyTier3DisambiguationFallbackStats(): Tier3DisambiguationFallbackStats {
+  return {
+    totalCount: 0,
+    byReason: {
+      'invalid-json': 0,
+      'zod-validation': 0,
+      'llm-exception': 0,
+      'partial-response': 0,
+    },
+  };
+}
+
+let tier3DisambiguationFallbackStats = createEmptyTier3DisambiguationFallbackStats();
+
+export function resetTier3DisambiguationFallbackStats(): void {
+  tier3DisambiguationFallbackStats = createEmptyTier3DisambiguationFallbackStats();
+}
+
+export function getTier3DisambiguationFallbackStats(): Tier3DisambiguationFallbackStats {
+  return {
+    totalCount: tier3DisambiguationFallbackStats.totalCount,
+    byReason: { ...tier3DisambiguationFallbackStats.byReason },
+  };
+}
 
 interface LLM {
   call(params: LLMCallParams): Promise<LLMCallResult>;
@@ -41,7 +82,7 @@ export function normalizeAlias(alias: string): string {
   return result;
 }
 
-interface EntityManager {
+export interface EntityManager {
   resolveEntities(
     entities: ExtractedEntity[],
     source: string,
@@ -49,16 +90,48 @@ interface EntityManager {
     language?: string | null,
     client?: PoolClient,
   ): Promise<string[]>;
+  resolveEntitiesDetailed(
+    entities: ExtractedEntity[],
+    source: string,
+    summaryId: string,
+    language?: string | null,
+    client?: PoolClient,
+  ): Promise<ResolvedEntity[]>;
+}
+
+function recordTier3DisambiguationFallback(
+  log: Logger,
+  reason: Tier3DisambiguationFallbackReason,
+  entities: readonly ExtractedEntity[],
+  metadata: Record<string, unknown>,
+): void {
+  if (entities.length === 0) {
+    return;
+  }
+
+  tier3DisambiguationFallbackStats.totalCount += entities.length;
+  tier3DisambiguationFallbackStats.byReason[reason] += entities.length;
+
+  log.warn(
+    {
+      ...metadata,
+      reason,
+      entityNames: entities.map((entity) => entity.name),
+      fallbackCount: entities.length,
+      totalFallbackCount: tier3DisambiguationFallbackStats.totalCount,
+    },
+    'Tier 3 disambiguation fell back to default entity types',
+  );
 }
 
 export function createEntityManager(pool: Pool, log: Logger, config: Config, llm: LLM): EntityManager {
-  async function resolveEntities(
+  async function resolveEntitiesDetailed(
     entities: ExtractedEntity[],
     source: string,
     summaryId: string,
     language?: string | null,
     clientOverride?: PoolClient,
-  ): Promise<string[]> {
+  ): Promise<ResolvedEntity[]> {
     const client = clientOverride ?? (await pool.connect());
     const ownsTransaction = clientOverride == null;
     try {
@@ -70,7 +143,29 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
       const resolvedIds: string[] = [];
       const unresolvedEntities: ExtractedEntity[] = [];
       const entityIdMap = new Map<ExtractedEntity, string>();
+      const resolvedEntitiesById = new Map<string, ResolvedEntity>();
       const reactivatedEntities = new Set<ExtractedEntity>();
+
+      const rememberResolvedEntity = (
+        entity: ExtractedEntity,
+        entityId: string,
+        options?: { disambiguationFailed?: boolean },
+      ): void => {
+        entityIdMap.set(entity, entityId);
+
+        const existing = resolvedEntitiesById.get(entityId);
+        if (existing) {
+          if (options?.disambiguationFailed) {
+            existing.disambiguationFailed = true;
+          }
+          return;
+        }
+
+        resolvedEntitiesById.set(
+          entityId,
+          options?.disambiguationFailed ? { entityId, disambiguationFailed: true } : { entityId },
+        );
+      };
 
       // ── Tier 1: Alias lookup ────────────────────────────────────────────
       for (const entity of entities) {
@@ -104,7 +199,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             log.info({ entityId: row.entity_id, alias: canonical }, 'reactivated archived entity via alias match');
           }
           resolvedIds.push(row.entity_id);
-          entityIdMap.set(entity, row.entity_id);
+          rememberResolvedEntity(entity, row.entity_id);
           continue;
         }
 
@@ -169,7 +264,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
               );
             }
             resolvedIds.push(match.entityId);
-            entityIdMap.set(entity, match.entityId);
+            rememberResolvedEntity(entity, match.entityId);
             log.info({ name: canonical, entityId: match.entityId }, `Tier 2 resolved: ${canonical}`);
           } else {
             stillUnresolved.push(entity);
@@ -187,6 +282,24 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         }));
 
         let disambiguated: DisambiguatedEntity[] | undefined;
+        let fallbackReason: Tier3DisambiguationFallbackReason | undefined;
+        const tier3FallbackEntities: ExtractedEntity[] = [];
+        const recordBatchFallback = (
+          reason: Tier3DisambiguationFallbackReason,
+          fallbackEntities: readonly ExtractedEntity[],
+          metadata: Record<string, unknown> = {},
+        ): void => {
+          if (fallbackEntities.length === 0) {
+            return;
+          }
+          tier3FallbackEntities.push(...fallbackEntities);
+          recordTier3DisambiguationFallback(log, reason, fallbackEntities, {
+            source,
+            summaryId,
+            batchSize: stillUnresolved.length,
+            ...metadata,
+          });
+        };
 
         try {
           const result = await llm.call({
@@ -207,10 +320,8 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           try {
             parsed = JSON.parse(result.content);
           } catch {
-            log.warn(
-              { content: result.content.slice(0, 200) },
-              'Tier 3 disambiguation returned invalid JSON, falling back to defaults',
-            );
+            fallbackReason = 'invalid-json';
+            recordBatchFallback(fallbackReason, stillUnresolved, { content: result.content.slice(0, 200) });
           }
 
           if (parsed !== undefined) {
@@ -218,17 +329,13 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             if (validation.success) {
               disambiguated = validation.data;
             } else {
-              log.warn(
-                { errors: validation.error.issues },
-                'Tier 3 disambiguation failed zod validation, falling back to defaults',
-              );
+              fallbackReason = 'zod-validation';
+              recordBatchFallback(fallbackReason, stillUnresolved, { errors: validation.error.issues });
             }
           }
         } catch (err) {
-          log.error(
-            { err, count: stillUnresolved.length },
-            'Tier 3 disambiguation failed, creating entities with defaults',
-          );
+          fallbackReason = 'llm-exception';
+          recordBatchFallback(fallbackReason, stillUnresolved, { err });
         }
 
         if (disambiguated) {
@@ -250,7 +357,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
             const entityId = upsertResult.rows[0].id;
             resolvedIds.push(entityId);
-            entityIdMap.set(matchedEntity, entityId);
+            rememberResolvedEntity(matchedEntity, entityId);
 
             // Save context-aware alias for self-improving lookup
             await client.query(
@@ -264,7 +371,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           }
 
           // Handle entities not returned by partial LLM response
-          for (const entity of stillUnresolved) {
+          const partialFallbackEntities = stillUnresolved.filter((entity) => !entityIdMap.has(entity));
+          recordBatchFallback('partial-response', partialFallbackEntities);
+
+          for (const entity of partialFallbackEntities) {
             if (entityIdMap.has(entity)) continue;
 
             const canonical = normalizeAlias(entity.name);
@@ -279,7 +389,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             );
 
             const entityId = upsertResult.rows[0].id;
-            entityIdMap.set(entity, entityId);
+            rememberResolvedEntity(entity, entityId, { disambiguationFailed: true });
 
             await client.query(
               `INSERT INTO entity_aliases (alias, context_key, entity_id)
@@ -292,6 +402,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           }
         } else {
           // Fallback: create entities without LLM disambiguation
+          if (tier3FallbackEntities.length === 0) {
+            recordBatchFallback(fallbackReason ?? 'llm-exception', stillUnresolved);
+          }
+
           for (const entity of stillUnresolved) {
             const canonical = normalizeAlias(entity.name);
             const newId = ulid();
@@ -305,7 +419,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             );
 
             const entityId = upsertResult.rows[0].id;
-            entityIdMap.set(entity, entityId);
+            rememberResolvedEntity(entity, entityId, { disambiguationFailed: true });
 
             await client.query(
               `INSERT INTO entity_aliases (alias, context_key, entity_id)
@@ -314,6 +428,21 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
               [canonical, entityId],
             );
           }
+        }
+
+        const fallbackRate = stillUnresolved.length === 0 ? 0 : tier3FallbackEntities.length / stillUnresolved.length;
+        if (fallbackRate > 0.5) {
+          log.warn(
+            {
+              source,
+              summaryId,
+              batchSize: stillUnresolved.length,
+              fallbackCount: tier3FallbackEntities.length,
+              fallbackRate,
+              fallbackEntityNames: tier3FallbackEntities.map((entity) => entity.name),
+            },
+            'Tier 3 disambiguation fallback rate exceeded 50% of batch',
+          );
         }
       }
 
@@ -417,15 +546,13 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         );
       }
 
-      const resolvedEntityIds = [...new Set(entityIdMap.values())];
-
       if (ownsTransaction) {
         await client.query('COMMIT');
       }
 
       log.info({ count: entities.length, source, summaryId }, `Resolved ${entities.length} entities from ${source}`);
 
-      return resolvedEntityIds;
+      return [...resolvedEntitiesById.values()];
     } catch (err) {
       if (ownsTransaction) {
         await client.query('ROLLBACK').catch(() => {});
@@ -438,7 +565,19 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
     }
   }
 
+  async function resolveEntities(
+    entities: ExtractedEntity[],
+    source: string,
+    summaryId: string,
+    language?: string | null,
+    clientOverride?: PoolClient,
+  ): Promise<string[]> {
+    const resolvedEntities = await resolveEntitiesDetailed(entities, source, summaryId, language, clientOverride);
+    return resolvedEntities.map((entity) => entity.entityId);
+  }
+
   return {
     resolveEntities,
+    resolveEntitiesDetailed,
   };
 }

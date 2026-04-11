@@ -15,11 +15,11 @@ import {
   upsertAuthor,
 } from '../db/queries.js';
 import type { EntityRelationshipType, EventRow } from '../db/queries.js';
-import type { Pool, PoolClient } from '../db/connection.js';
+import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { normalizeAlias } from '../knowledge/entities.js';
-import type { ExtractedEntity } from '../knowledge/entities.js';
+import type { EntityManager, ExtractedEntity } from '../knowledge/entities.js';
 import type { AlphaTracker } from '../knowledge/alpha-tracker.js';
 
 /** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
@@ -47,16 +47,6 @@ function hasBoundaryMatch(rawText: string, candidate: string): boolean {
 
   const pattern = new RegExp(`(?:^|[^A-Za-z0-9_])${escapeRegExp(trimmed)}(?=$|[^A-Za-z0-9_])`, 'i');
   return pattern.test(rawText);
-}
-
-interface EntityManager {
-  resolveEntities(
-    entities: ExtractedEntity[],
-    source: string,
-    summaryId: string,
-    language?: string | null,
-    client?: PoolClient,
-  ): Promise<string[]>;
 }
 
 // ── LLM interface ─────────────────────────────────────────────────────
