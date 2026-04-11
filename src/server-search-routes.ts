@@ -16,6 +16,7 @@ import {
   extractStringArrayField,
   getReportPreviewChains,
   getReportSearchPreview,
+  getSummarySearchPreview,
   parseItemRecord,
   parseReportBody,
   REPORT_EVENT_CHAIN_LOOKBACK_MS,
@@ -79,6 +80,8 @@ export function registerSearchRoutes({ app, authPreHandler, chatHandler, config,
       const scope = rawScope ?? 'summary';
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
       const likeQuery = `%${q}%`;
+      const normalizedQuery = q.toLowerCase();
+      const summaryPrefetchLimit = Math.max(limit * 3, 30);
 
       const summaryResults =
         scope === 'report'
@@ -86,14 +89,22 @@ export function registerSearchRoutes({ app, authPreHandler, chatHandler, config,
           : (
               await pool.query<SummaryRow>(
                 `SELECT * FROM summaries WHERE body ILIKE $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3`,
-                [likeQuery, cutoff, limit],
+                [likeQuery, cutoff, summaryPrefetchLimit],
               )
-            ).rows.map((row) =>
-              toCamelCase<Record<string, unknown>>({
-                ...row,
-                result_type: 'summary',
-              } as Record<string, unknown>),
-            );
+            ).rows
+              .map((row) => ({
+                row,
+                bodyPreview: getSummarySearchPreview(row.body),
+              }))
+              .filter(({ bodyPreview }) => bodyPreview.toLowerCase().includes(normalizedQuery))
+              .slice(0, limit)
+              .map(({ row, bodyPreview }) =>
+                toCamelCase<Record<string, unknown>>({
+                  ...row,
+                  body: bodyPreview,
+                  result_type: 'summary',
+                } as Record<string, unknown>),
+              );
 
       const reportResults =
         scope === 'summary'
