@@ -456,6 +456,11 @@ export function ReportList() {
                           Macro regime · {formatMacroRegimePreview(report.macroRegime, report.macroRegimeHistory)}
                         </span>
                       )}
+                      {report.sourceFamilies && report.sourceFamilies.length > 1 && (
+                        <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">
+                          Sources · {report.sourceFamilies.join(' + ')}
+                        </span>
+                      )}
                       {visibleChainCount > 0 &&
                         (storyChipAction.mode === 'none' ? (
                           <span className="font-mono text-[10px] uppercase tracking-wider text-text-secondary">

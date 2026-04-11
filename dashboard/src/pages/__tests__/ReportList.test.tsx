@@ -990,4 +990,69 @@ describe('ReportList', () => {
     expect(screen.getByText('Fading')).toBeInTheDocument();
     expect(screen.getByText('2026-04-08')).toBeInTheDocument();
   });
+
+  it('renders source-mix chip on multi-source pulse cards', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(url, 'http://localhost');
+      const narrativeResponse = maybeNarrativesResponse(path);
+      if (narrativeResponse) return narrativeResponse;
+
+      if (path.pathname === '/api/v1/reports') {
+        return new Response(
+          JSON.stringify({
+            reports: [
+              {
+                id: 'report-multi-source',
+                date: '2026-04-10',
+                type: 'pulse',
+                tldr: 'Discord and X both flagged the same DeFi exploit within minutes.',
+                sentiment: -0.22,
+                deliveryStatus: 'delivered',
+                createdAt: Date.now(),
+                firstMovers: ['DeFi exploit first appeared in Discord before X picked it up.'],
+                sourceFamilies: ['discord', 'twitter'],
+                eventChains: [],
+                chainDrilldowns: [],
+              },
+              {
+                id: 'report-single-source',
+                date: '2026-04-10',
+                type: 'pulse',
+                tldr: 'Discord-only chatter stayed muted in the last window.',
+                sentiment: 0.05,
+                deliveryStatus: 'delivered',
+                createdAt: Date.now(),
+                sourceFamilies: ['discord'],
+                eventChains: [],
+                chainDrilldowns: [],
+              },
+            ],
+            total: 2,
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      throw new Error(`Unhandled fetch ${path.pathname}${path.search}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={['/reports']}>
+        <Routes>
+          <Route path="/reports" element={<ReportList />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Reports');
+    expect(screen.getByText('Sources · discord + twitter')).toBeInTheDocument();
+    const sourceChips = screen.getAllByText(/^Sources ·/);
+    expect(sourceChips).toHaveLength(1);
+  });
 });
