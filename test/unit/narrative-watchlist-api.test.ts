@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -41,7 +42,7 @@ describe('Narrative watchlist queries (src/db/queries.ts)', () => {
 });
 
 describe('Narrative watchlist API route (insight route module)', () => {
-  const serverSrc = readSrc('src/server.ts');
+  const serverSrc = readServerSource();
   const routesSrc = readSrc('src/server-insight-routes.ts');
 
   it('server wires registerInsightRoutes', () => {

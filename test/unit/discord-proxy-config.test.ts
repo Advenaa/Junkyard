@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createEnvDiscordTokens, maskProxyUrl, normalizeProxyUrl } from '../../src/discord-tokens.js';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const migrationsSrc = readFileSync(resolve(ROOT, 'src/db/migrations.ts'), 'utf-8');
 const queriesSrc = readFileSync(resolve(ROOT, 'src/db/queries.ts'), 'utf-8');
-const serverSrc = readFileSync(resolve(ROOT, 'src/server.ts'), 'utf-8');
+const serverSrc = readServerSource();
 
 describe('Discord proxy config helpers', () => {
   it('normalizes http proxy URLs with credentials', () => {

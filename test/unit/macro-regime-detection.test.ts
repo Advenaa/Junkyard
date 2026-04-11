@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -53,7 +54,7 @@ describe('Daily and pulse prompts mention macroRegime', () => {
 });
 
 describe('reports/:id exposes macroRegime', () => {
-  const server = readSrc('src/server.ts');
+  const server = readServerSource();
 
   it('extracts macroRegime from parsed report bodies', () => {
     assert.ok(server.includes('report.macroRegime'));

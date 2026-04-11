@@ -13,9 +13,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readServerSource } from './helpers/server-source.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SERVER_SRC = resolve(__dirname, '../../src/server.ts');
 
 // ---------------------------------------------------------------------------
 // Replicate the toCamelCase implementation from server.ts so we can unit-test
@@ -111,7 +111,8 @@ let source: string;
 let queriesSource: string;
 
 before(async () => {
-  [source, queriesSource] = await Promise.all([readFile(SERVER_SRC, 'utf-8'), readFile(QUERIES_SRC, 'utf-8')]);
+  source = readServerSource();
+  queriesSource = await readFile(QUERIES_SRC, 'utf-8');
 });
 
 describe('toCamelCase — structural (server.ts source)', () => {

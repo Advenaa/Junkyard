@@ -8,10 +8,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const root = resolve(import.meta.dirname, '..', '..');
 
-const server = readFileSync(resolve(root, 'src/server.ts'), 'utf-8');
+const server = readServerSource();
 const scheduler = readFileSync(resolve(root, 'src/scheduler.ts'), 'utf-8');
 const index = readFileSync(resolve(root, 'src/index.ts'), 'utf-8');
 const retention = readFileSync(resolve(root, 'src/ops/retention.ts'), 'utf-8');

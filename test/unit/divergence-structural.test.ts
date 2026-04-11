@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -157,7 +158,7 @@ describe('Regional Divergence queries (src/db/queries.ts)', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Regional Divergence routes (src/server.ts)', () => {
-  const src = readSrc('src/server.ts');
+  const src = readServerSource();
 
   it('imports getEntityDivergence from db/queries', () => {
     assert.ok(

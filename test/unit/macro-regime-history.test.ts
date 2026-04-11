@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getMacroRegimeHistoryByReport } from '../../src/db/queries.js';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -101,7 +102,7 @@ describe('getMacroRegimeHistoryByReport', () => {
 describe('Macro regime history structure', () => {
   const migrations = readSrc('src/db/migrations.ts');
   const synth = readSrc('src/process/synthesize.ts');
-  const server = readSrc('src/server.ts');
+  const server = readServerSource();
 
   it('migration 32 creates macro_regimes table with a unique report_id', () => {
     assert.ok(migrations.includes('CREATE TABLE IF NOT EXISTS macro_regimes'));

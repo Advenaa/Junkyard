@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readServerSource } from './helpers/server-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -101,7 +102,7 @@ describe('Alpha propagation queries', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Server: source tier API', () => {
-  const server = readSrc('src/server.ts');
+  const server = readServerSource();
 
   it('imports updateSourceTier', () => {
     assert.ok(server.includes('updateSourceTier'));
