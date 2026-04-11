@@ -267,15 +267,6 @@ export function formatFirstMoverLeadWindow(entry: FirstMoverWatchlistEntry): str
   return `lead ${formatCompactDuration(entry.leadWindowMs)}`;
 }
 
-export function formatFirstMoverReviewHistory(
-  entry: Pick<FirstMoverWatchlistEntry, 'correctCalls' | 'totalCalls'>,
-): string {
-  if (entry.totalCalls <= 0) {
-    return 'no reviewed calls';
-  }
-  return `${entry.correctCalls}/${entry.totalCalls} reviewed correct`;
-}
-
 export function formatSourceTierLabel(tier: SourceTier): string {
   switch (tier) {
     case 'alpha':

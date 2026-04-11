@@ -6,7 +6,6 @@ import {
   formatFirstMoverAuthor,
   formatFirstMoverClaimType,
   formatFirstMoverLeadWindow,
-  formatFirstMoverReviewHistory,
 } from '../formatters';
 
 interface FirstMoverSectionProps {
@@ -31,8 +30,7 @@ export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: Fi
         <div>
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">First Mover Watch</h2>
           <p className="text-text-secondary/70 text-sm font-body mt-1">
-            Recent tracked first calls from monitored authors. Detailed author timing and review history remain in
-            Settings &gt; Entities.
+            Recent tracked first calls from monitored authors. Detailed author timing remains in Settings &gt; Entities.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
@@ -75,11 +73,6 @@ export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: Fi
               <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
                 {formatFirstMoverLeadWindow(entry)}
               </span>
-              {entry.totalCalls > 0 && (
-                <span className="px-2 py-1 rounded bg-surface border border-border text-text-secondary">
-                  {formatFirstMoverReviewHistory(entry)}
-                </span>
-              )}
             </div>
           </div>
         ))}

@@ -179,19 +179,19 @@ describe('Author queries (src/db/queries.ts)', () => {
     );
   });
 
-  it('exports getUnresolvedCalls function', () => {
-    assert.match(
+  it('does not export getUnresolvedCalls function', () => {
+    assert.doesNotMatch(
       src,
       /export\s+(async\s+)?function\s+getUnresolvedCalls\s*\(/,
-      'getUnresolvedCalls must be an exported function',
+      'getUnresolvedCalls must not be exported',
     );
   });
 
-  it('exports resolveAuthorCall function', () => {
-    assert.match(
+  it('does not export resolveAuthorCall function', () => {
+    assert.doesNotMatch(
       src,
       /export\s+(async\s+)?function\s+resolveAuthorCall\s*\(/,
-      'resolveAuthorCall must be an exported function',
+      'resolveAuthorCall must not be exported',
     );
   });
 
@@ -207,12 +207,13 @@ describe('Author queries (src/db/queries.ts)', () => {
     );
   });
 
-  it('resolveAuthorCall updates credibility_score', () => {
-    const fnStart = src.indexOf('function resolveAuthorCall');
-    assert.ok(fnStart !== -1, 'resolveAuthorCall must exist');
-    const fnSlice = src.slice(fnStart, fnStart + 1200);
+  it('getAuthorCalls omits manual grading columns', () => {
+    const fnStart = src.indexOf('function getAuthorCalls');
+    assert.ok(fnStart !== -1, 'getAuthorCalls must exist');
+    const fnSlice = src.slice(fnStart, fnStart + 800);
 
-    assert.ok(fnSlice.includes('credibility_score'), 'resolveAuthorCall must update credibility_score');
+    assert.ok(!fnSlice.includes('outcome'), 'getAuthorCalls must not select outcome');
+    assert.ok(!fnSlice.includes('resolved_at'), 'getAuthorCalls must not select resolved_at');
   });
 });
 

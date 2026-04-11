@@ -42,9 +42,6 @@ interface EntityAuthor {
   firstSeen: number;
   lastSeen: number;
   mentionCount: number;
-  credibilityScore: number | null;
-  totalCalls: number;
-  correctCalls: number;
   createdAt: number;
   entityMentionCount: number;
   firstEntityCallTime: number | null;
@@ -53,7 +50,6 @@ interface EntityAuthor {
 }
 
 type AuthorClaimType = 'bullish' | 'bearish' | 'event' | 'neutral';
-type AuthorCallOutcome = 'correct' | 'incorrect' | 'unresolved';
 
 interface AuthorCall {
   id: string;
@@ -65,9 +61,6 @@ interface AuthorCall {
   confidence: number;
   sourceItemId: string | null;
   timestamp: number;
-  resolved: boolean;
-  outcome: AuthorCallOutcome | null;
-  resolvedAt: number | null;
   createdAt: number;
 }
 
@@ -94,9 +87,6 @@ function makeAuthor(overrides: Partial<EntityAuthor> = {}): EntityAuthor {
     firstSeen: Date.UTC(2026, 2, 15, 12, 0, 0),
     lastSeen: Date.UTC(2026, 3, 8, 9, 0, 0),
     mentionCount: 18,
-    credibilityScore: null,
-    totalCalls: 4,
-    correctCalls: 3,
     createdAt: Date.UTC(2026, 2, 15, 12, 0, 0),
     entityMentionCount: 6,
     firstEntityCallTime: Date.UTC(2026, 3, 6, 10, 0, 0),
@@ -117,9 +107,6 @@ function makeCall(overrides: Partial<AuthorCall> = {}): AuthorCall {
     confidence: 0.81,
     sourceItemId: 'item-1',
     timestamp: Date.UTC(2026, 3, 8, 8, 0, 0),
-    resolved: false,
-    outcome: null,
-    resolvedAt: null,
     createdAt: Date.UTC(2026, 3, 8, 8, 0, 0),
     ...overrides,
   };
@@ -224,45 +211,6 @@ function buildFetchMock(
       return jsonResponse(cloneProfile(profile));
     }
 
-    const resolveMatch = path.match(/^\/api\/v1\/author-calls\/([^/]+)$/);
-    if (resolveMatch && method === 'PATCH') {
-      const callId = resolveMatch[1];
-      const payload = JSON.parse(String(init?.body ?? '{}')) as { outcome?: AuthorCallOutcome };
-      const outcome = payload.outcome;
-      if (outcome == null) {
-        return jsonResponse({ error: 'Missing outcome' }, 400);
-      }
-
-      for (const profile of Object.values(profilesByAuthor)) {
-        const call = profile.calls.find((candidate) => candidate.id === callId);
-        if (!call) continue;
-
-        call.resolved = true;
-        call.outcome = outcome;
-        call.resolvedAt = Date.UTC(2026, 3, 8, 12, 0, 0);
-        if (outcome !== 'unresolved') {
-          profile.author.totalCalls += 1;
-          if (outcome === 'correct') {
-            profile.author.correctCalls += 1;
-          }
-          profile.author.credibilityScore =
-            profile.author.totalCalls >= 5 ? profile.author.correctCalls / profile.author.totalCalls : null;
-        }
-
-        for (const authors of Object.values(authorsByEntity)) {
-          const author = authors.find((candidate) => candidate.id === profile.author.id);
-          if (!author) continue;
-          author.totalCalls = profile.author.totalCalls;
-          author.correctCalls = profile.author.correctCalls;
-          author.credibilityScore = profile.author.credibilityScore;
-        }
-
-        return new Response(null, { status: 204 });
-      }
-
-      return jsonResponse({ error: 'Author call not found' }, 404);
-    }
-
     throw new Error(`Unhandled fetch ${method} ${path}${requestUrl.search}`);
   });
 }
@@ -284,9 +232,6 @@ describe('Settings influencer tracking', () => {
           displayName: null,
           entityMentionCount: 3,
           mentionCount: 9,
-          totalCalls: 1,
-          correctCalls: 1,
-          credibilityScore: null,
           firstEntityCallTime: Date.UTC(2026, 3, 6, 14, 0, 0),
           firstMover: false,
           firstMoverLagMs: 14_400_000,
@@ -304,9 +249,6 @@ describe('Settings influencer tracking', () => {
             claimType: 'event',
             claimText: 'DeFi Dad reported the Ethereum client release had shipped.',
             sourceItemId: 'item-2',
-            resolved: true,
-            outcome: 'correct',
-            resolvedAt: Date.UTC(2026, 3, 7, 18, 0, 0),
           }),
         ],
       },
@@ -319,9 +261,6 @@ describe('Settings influencer tracking', () => {
             claimType: 'neutral',
             claimText: 'chainwatcher said validator chatter stayed cautious after the upgrade.',
             sourceItemId: null,
-            resolved: true,
-            outcome: 'unresolved',
-            resolvedAt: Date.UTC(2026, 3, 7, 16, 0, 0),
           }),
         ],
       },
@@ -354,12 +293,16 @@ describe('Settings influencer tracking', () => {
     await screen.findByText(/validator chatter stayed cautious after the upgrade/i);
     expect(screen.getAllByText(/Discord \| chainwatcher/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText('+4h after lead').length).toBeGreaterThan(0);
-    expect(screen.getByText('Dismissed')).toBeInTheDocument();
+    expect(screen.queryByText('Correct Calls')).not.toBeInTheDocument();
+    expect(screen.queryByText(/reviewed correct/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Mark claim correct:/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Mark claim incorrect:/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Dismiss claim:/i })).not.toBeInTheDocument();
   });
 
-  it('lets admins resolve an unresolved author claim and refreshes credibility data', async () => {
+  it('does not render manual grading controls or reviewed-call copy on the author profile', async () => {
     const authorsByEntity: Record<string, EntityAuthor[]> = {
-      'ent-eth': [makeAuthor({ id: 'author-1', entityMentionCount: 8, totalCalls: 4, correctCalls: 3 })],
+      'ent-eth': [makeAuthor({ id: 'author-1', entityMentionCount: 8 })],
     };
     const profilesByAuthor: Record<string, AuthorProfile> = {
       'author-1': {
@@ -383,19 +326,20 @@ describe('Settings influencer tracking', () => {
     await user.click(await screen.findByRole('button', { name: /Ethereum/i }));
 
     await screen.findByText(/clean audit should accelerate Ethereum L2 adoption/i);
-    await user.click(screen.getByRole('button', { name: /Mark claim correct:/i }));
-
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: /Mark claim correct:/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Correct Calls')).not.toBeInTheDocument();
+      expect(screen.queryByText(/reviewed correct/i)).not.toBeInTheDocument();
     });
-
-    expect(screen.getAllByText('4/5 reviewed correct').length).toBeGreaterThan(0);
-    expect(screen.getByText('Correct')).toBeInTheDocument();
+    expect(screen.queryByText(/No reviewed calls yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Needs review/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Mark claim correct:/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Mark claim incorrect:/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Dismiss claim:/i })).not.toBeInTheDocument();
     expect(
       fetchMock.mock.calls.some(([input, init]) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
         return url.includes('/api/v1/author-calls/call-1') && init?.method === 'PATCH';
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

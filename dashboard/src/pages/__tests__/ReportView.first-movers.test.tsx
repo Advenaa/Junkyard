@@ -138,9 +138,6 @@ describe('ReportView first movers', () => {
           timestamp: Date.UTC(2026, 3, 8, 9, 30, 0),
           nextTrackedCallTime: Date.UTC(2026, 3, 8, 13, 30, 0),
           leadWindowMs: 4 * 60 * 60 * 1000,
-          credibilityScore: 0.8,
-          totalCalls: 5,
-          correctCalls: 4,
         },
       ],
     };
@@ -157,13 +154,12 @@ describe('ReportView first movers', () => {
 
     await screen.findByText('First Mover Watch');
     expect(screen.getByText(report.tldr)).toBeInTheDocument();
-    expect(screen.getByText(/Detailed author timing and review history remain in Settings/)).toBeInTheDocument();
+    expect(screen.getByText(/Detailed author timing remains in Settings/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Ethereum' })).toBeInTheDocument();
     expect(screen.getByText('First tracked by DeFi Dad (defidad).')).toBeInTheDocument();
     expect(screen.getByText('bullish')).toBeInTheDocument();
     expect(screen.getByText('"ETH breakout likely if ETF chatter sticks."')).toBeInTheDocument();
     expect(screen.getByText('lead 4h')).toBeInTheDocument();
-    expect(screen.getByText('4/5 reviewed correct')).toBeInTheDocument();
     expect(screen.getByText('1 recent')).toBeInTheDocument();
   });
 
@@ -203,9 +199,6 @@ describe('ReportView first movers', () => {
       timestamp: Date.UTC(2026, 3, 8, 9, 30, 0) - i * 3600000,
       nextTrackedCallTime: null,
       leadWindowMs: 4 * 60 * 60 * 1000,
-      credibilityScore: 0.7,
-      totalCalls: 3,
-      correctCalls: 2,
     }));
     const watchlist = { latestTimestamp: entries[0].timestamp, entries };
 

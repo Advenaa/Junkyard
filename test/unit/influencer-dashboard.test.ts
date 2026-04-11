@@ -54,62 +54,37 @@ describe('Influencer dashboard queries (src/db/queries.ts)', () => {
     assert.ok(fnSlice.includes('e.name AS entity_name'), 'getAuthorCalls must select entity_name');
   });
 
-  it('resolveAuthorCall returns a boolean success signal', () => {
-    const fnStart = src.indexOf('function resolveAuthorCall');
-    assert.ok(fnStart !== -1, 'resolveAuthorCall must exist');
-    const fnSlice = src.slice(fnStart, fnStart + 1000);
+  it('AuthorRow omits manual grading aggregates', () => {
+    const rowStart = src.indexOf('export interface AuthorRow');
+    assert.ok(rowStart !== -1, 'AuthorRow must exist');
+    const rowSlice = src.slice(rowStart, rowStart + 400);
 
-    assert.ok(fnSlice.includes('Promise<boolean>'), 'resolveAuthorCall must return Promise<boolean>');
-    assert.ok(fnSlice.includes('return false'), 'resolveAuthorCall must return false when no row is updated');
-    assert.ok(fnSlice.includes('return true'), 'resolveAuthorCall must return true when the update succeeds');
+    assert.ok(!rowSlice.includes('credibilityScore'), 'AuthorRow must not expose credibilityScore');
+    assert.ok(!rowSlice.includes('correctCalls'), 'AuthorRow must not expose correctCalls');
+  });
+
+  it('AuthorCallRow omits manual grading fields', () => {
+    const rowStart = src.indexOf('export interface AuthorCallRow');
+    assert.ok(rowStart !== -1, 'AuthorCallRow must exist');
+    const rowSlice = src.slice(rowStart, rowStart + 400);
+
+    assert.ok(!rowSlice.includes('resolved:'), 'AuthorCallRow must not expose resolved');
+    assert.ok(!rowSlice.includes('outcome:'), 'AuthorCallRow must not expose outcome');
+    assert.ok(!rowSlice.includes('resolvedAt:'), 'AuthorCallRow must not expose resolvedAt');
   });
 });
 
 describe('Influencer dashboard routes (src/server.ts)', () => {
   const src = readServerSource();
 
-  it('imports resolveAuthorCall from db/queries', () => {
-    assert.match(
-      src,
-      /import\s*\{[\s\S]*resolveAuthorCall[\s\S]*\}\s*from\s*'\.\/db\/queries\.js'/,
-      'server.ts must import resolveAuthorCall',
-    );
+  it('does not import resolveAuthorCall from db/queries', () => {
+    assert.doesNotMatch(src, /resolveAuthorCall/, 'server.ts must not import resolveAuthorCall');
   });
 
-  it('defines PATCH /api/v1/author-calls/:callId route', () => {
-    assert.ok(src.includes("'/api/v1/author-calls/:callId'"), 'server.ts must define the author-call resolution route');
-  });
-
-  it('author-call resolution route requires admin auth', () => {
-    const routeIdx = src.indexOf("'/api/v1/author-calls/:callId'");
-    assert.ok(routeIdx !== -1, 'author-call resolution route must exist');
-    const routeSlice = src.slice(Math.max(0, routeIdx - 250), routeIdx + 900);
-
+  it('does not define PATCH /api/v1/author-calls/:callId route', () => {
     assert.ok(
-      routeSlice.includes('authPreHandler') && routeSlice.includes('requireAdmin'),
-      'author-call resolution route must use authPreHandler and requireAdmin',
-    );
-  });
-
-  it('author-call resolution route validates outcome enum values', () => {
-    const routeIdx = src.indexOf("'/api/v1/author-calls/:callId'");
-    assert.ok(routeIdx !== -1, 'author-call resolution route must exist');
-    const routeSlice = src.slice(routeIdx, routeIdx + 1200);
-
-    assert.ok(
-      routeSlice.includes("enum: ['correct', 'incorrect', 'unresolved']"),
-      'author-call resolution route must validate correct/incorrect/unresolved outcomes',
-    );
-  });
-
-  it('author-call resolution route calls resolveAuthorCall with callId and outcome', () => {
-    const routeIdx = src.indexOf("'/api/v1/author-calls/:callId'");
-    assert.ok(routeIdx !== -1, 'author-call resolution route must exist');
-    const routeSlice = src.slice(routeIdx, routeIdx + 1500);
-
-    assert.ok(
-      routeSlice.includes('resolveAuthorCall(pool, request.params.callId, request.body.outcome)'),
-      'author-call resolution route must delegate to resolveAuthorCall',
+      !src.includes("'/api/v1/author-calls/:callId'"),
+      'server.ts must not define the author-call resolution route',
     );
   });
 });

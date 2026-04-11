@@ -308,9 +308,6 @@ interface AuthorRecord {
   firstSeen: number;
   lastSeen: number;
   mentionCount: number;
-  credibilityScore: number | null;
-  totalCalls: number;
-  correctCalls: number;
   createdAt: number;
 }
 
@@ -322,7 +319,6 @@ interface EntityAuthor extends AuthorRecord {
 }
 
 type AuthorClaimType = 'bullish' | 'bearish' | 'event' | 'neutral';
-type AuthorCallOutcome = 'correct' | 'incorrect' | 'unresolved';
 
 interface AuthorCall {
   id: string;
@@ -334,9 +330,6 @@ interface AuthorCall {
   confidence: number;
   sourceItemId: string | null;
   timestamp: number;
-  resolved: boolean;
-  outcome: AuthorCallOutcome | null;
-  resolvedAt: number | null;
   createdAt: number;
 }
 
@@ -470,13 +463,6 @@ async function fetchEntityAuthorsData(entityId: string): Promise<EntityAuthor[]>
 
 async function fetchAuthorProfileData(authorId: string): Promise<AuthorProfileData> {
   return apiFetch<AuthorProfileData>(`/authors/${authorId}?callLimit=20`);
-}
-
-async function resolveAuthorClaim(callId: string, outcome: AuthorCallOutcome): Promise<void> {
-  await apiFetch<void>(`/author-calls/${callId}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ outcome }),
-  });
 }
 
 function formatCompactNumber(num: number): string {
@@ -906,33 +892,6 @@ function getAuthorClaimTypeStyles(type: AuthorClaimType): string {
   if (type === 'bearish') return 'bg-red-500/10 border border-red-500/20 text-red-400';
   if (type === 'event') return 'bg-blue-500/10 border border-blue-500/20 text-blue-400';
   return 'bg-background border border-border text-text-secondary';
-}
-
-function formatAuthorOutcome(outcome: AuthorCallOutcome | null, resolved: boolean): string {
-  if (!resolved || outcome == null) return 'Needs review';
-  if (outcome === 'correct') return 'Correct';
-  if (outcome === 'incorrect') return 'Incorrect';
-  return 'Dismissed';
-}
-
-function getAuthorOutcomeStyles(outcome: AuthorCallOutcome | null, resolved: boolean): string {
-  if (!resolved || outcome == null) return 'bg-background border border-border text-text-secondary';
-  if (outcome === 'correct') return 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400';
-  if (outcome === 'incorrect') return 'bg-red-500/10 border border-red-500/20 text-red-400';
-  return 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400';
-}
-
-function formatAuthorReviewHistory(author: Pick<AuthorRecord, 'correctCalls' | 'totalCalls'>): string {
-  if (author.totalCalls === 0) {
-    return 'No reviewed calls yet';
-  }
-
-  const remaining = Math.max(0, 5 - author.totalCalls);
-  if (remaining > 0) {
-    return `${author.correctCalls}/${author.totalCalls} reviewed correct | ${remaining} more for stable history`;
-  }
-
-  return `${author.correctCalls}/${author.totalCalls} reviewed correct`;
 }
 
 function formatCompactDuration(durationMs: number): string {
@@ -3810,7 +3769,6 @@ function EntitiesTab() {
   const [authorProfile, setAuthorProfile] = useState<AuthorProfileData | null>(null);
   const [authorProfileLoading, setAuthorProfileLoading] = useState(false);
   const [authorProfileError, setAuthorProfileError] = useState<string | null>(null);
-  const [resolvingAuthorCallId, setResolvingAuthorCallId] = useState<string | null>(null);
 
   useEffect(() => {
     const query = entityQuery.trim();
@@ -4040,51 +3998,6 @@ function EntitiesTab() {
     };
   }, [selectedAuthorId]);
 
-  async function reloadEntityAuthors(preferredAuthorId?: string): Promise<void> {
-    if (!selectedEntity) return;
-
-    setAuthorsLoading(true);
-    setAuthorsError(null);
-    try {
-      const nextAuthors = await fetchEntityAuthorsData(selectedEntity.id);
-      setEntityAuthors(nextAuthors);
-      setSelectedAuthorId((current) => {
-        const targetAuthorId = preferredAuthorId ?? current;
-        if (targetAuthorId && nextAuthors.some((author) => author.id === targetAuthorId)) {
-          return targetAuthorId;
-        }
-        return nextAuthors[0]?.id ?? null;
-      });
-      if (nextAuthors.length === 0) {
-        setAuthorProfile(null);
-        setAuthorProfileError(null);
-      }
-    } catch {
-      setEntityAuthors([]);
-      setSelectedAuthorId(null);
-      setAuthorProfile(null);
-      setAuthorsError('Failed to load top authors.');
-    } finally {
-      setAuthorsLoading(false);
-    }
-  }
-
-  async function reloadAuthorProfile(authorId = selectedAuthorId): Promise<void> {
-    if (!authorId) return;
-
-    setAuthorProfileLoading(true);
-    setAuthorProfileError(null);
-    try {
-      const nextProfile = await fetchAuthorProfileData(authorId);
-      setAuthorProfile(nextProfile);
-    } catch {
-      setAuthorProfile(null);
-      setAuthorProfileError('Failed to load author profile.');
-    } finally {
-      setAuthorProfileLoading(false);
-    }
-  }
-
   async function reloadSelectedEntityDetails(): Promise<void> {
     if (!selectedEntity) return;
 
@@ -4150,7 +4063,6 @@ function EntitiesTab() {
     setSelectedAuthorId(null);
     setAuthorProfile(null);
     setAuthorProfileError(null);
-    setResolvingAuthorCallId(null);
   }
 
   function selectRelatedEntity(entity: EntitySuggestion): void {
@@ -4227,21 +4139,6 @@ function EntitiesTab() {
       setActionError('Failed to remove relationship.');
     } finally {
       setRemovingRelationshipId(null);
-    }
-  }
-
-  async function handleResolveAuthorCall(callId: string, outcome: AuthorCallOutcome): Promise<void> {
-    if (!selectedAuthorId) return;
-
-    setResolvingAuthorCallId(callId);
-    setActionError(null);
-    try {
-      await resolveAuthorClaim(callId, outcome);
-      await Promise.all([reloadEntityAuthors(selectedAuthorId), reloadAuthorProfile(selectedAuthorId)]);
-    } catch {
-      setActionError('Failed to resolve author claim.');
-    } finally {
-      setResolvingAuthorCallId(null);
     }
   }
 
@@ -4752,9 +4649,6 @@ function EntitiesTab() {
                               <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
                                 {author.mentionCount} total mention{author.mentionCount !== 1 ? 's' : ''}
                               </span>
-                              <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
-                                {author.totalCalls} resolved call{author.totalCalls !== 1 ? 's' : ''}
-                              </span>
                               <span
                                 className={`px-2 py-1 rounded-full border ${
                                   author.firstEntityCallTime == null
@@ -4765,9 +4659,6 @@ function EntitiesTab() {
                                 }`}
                               >
                                 {formatAuthorTiming(author)}
-                              </span>
-                              <span className="px-2 py-1 rounded-full bg-background border border-border text-text-secondary">
-                                {formatAuthorReviewHistory(author)}
                               </span>
                             </div>
                             {author.firstEntityCallTime != null && (
@@ -4786,7 +4677,7 @@ function EntitiesTab() {
                   <div className="px-4 py-3 border-b border-border">
                     <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Author Profile</h3>
                     <p className="text-text-secondary/70 text-sm font-body mt-1">
-                      Recent extracted calls and review controls for the selected author.
+                      Recent extracted calls and timing for the selected author.
                     </p>
                   </div>
                   {authorProfileError ? (
@@ -4797,7 +4688,7 @@ function EntitiesTab() {
                     ) : (
                       <EmptyState
                         title="Choose an author"
-                        description="Select an author from the list to inspect recent claims and review history."
+                        description="Select an author from the list to inspect recent claims and timing."
                       />
                     )
                   ) : authorProfile == null ? (
@@ -4817,12 +4708,9 @@ function EntitiesTab() {
                             {formatAuthorHandle(authorProfile.author.platform, authorProfile.author.handle)}
                           </div>
                         </div>
-                        <span className="px-2.5 py-1 rounded-full bg-background border border-border text-[11px] font-mono uppercase tracking-wide text-text-secondary">
-                          {formatAuthorReviewHistory(authorProfile.author)}
-                        </span>
                       </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+                      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
                         <div className="rounded-lg border border-border bg-background/70 p-3">
                           <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
                             Entity Mentions
@@ -4863,14 +4751,6 @@ function EntitiesTab() {
                         </div>
                         <div className="rounded-lg border border-border bg-background/70 p-3">
                           <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
-                            Correct Calls
-                          </div>
-                          <div className="mt-1 text-sm text-text-primary font-body">
-                            {authorProfile.author.correctCalls}/{authorProfile.author.totalCalls}
-                          </div>
-                        </div>
-                        <div className="rounded-lg border border-border bg-background/70 p-3">
-                          <div className="text-[10px] font-mono uppercase tracking-wide text-text-secondary">
                             Last Seen
                           </div>
                           <div className="mt-1 text-sm text-text-primary font-body">
@@ -4890,7 +4770,7 @@ function EntitiesTab() {
                         </div>
                         {authorCalls.length === 0 ? (
                           <EmptyState
-                            title="No calls to review"
+                            title="No tracked calls yet"
                             description="This author has been observed, but there are no extracted calls stored yet."
                           />
                         ) : (
@@ -4907,11 +4787,6 @@ function EntitiesTab() {
                                     >
                                       {formatAuthorClaimType(call.claimType)}
                                     </span>
-                                    <span
-                                      className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${getAuthorOutcomeStyles(call.outcome, call.resolved)}`}
-                                    >
-                                      {formatAuthorOutcome(call.outcome, call.resolved)}
-                                    </span>
                                   </div>
                                   <div className="text-xs text-text-secondary font-body">
                                     {formatRelativeTime(call.timestamp)}
@@ -4927,14 +4802,9 @@ function EntitiesTab() {
                                   <span className="px-2 py-1 rounded-full bg-surface border border-border">
                                     {Math.round(call.confidence * 100)}% confidence
                                   </span>
-                                  {call.resolvedAt != null && (
-                                    <span className="px-2 py-1 rounded-full bg-surface border border-border">
-                                      Reviewed {formatRelativeTime(call.resolvedAt)}
-                                    </span>
-                                  )}
                                 </div>
 
-                                <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <div className="flex items-center gap-3 flex-wrap">
                                   {call.sourceItemId ? (
                                     <Link
                                       to={`/items/${call.sourceItemId}`}
@@ -4944,43 +4814,6 @@ function EntitiesTab() {
                                     </Link>
                                   ) : (
                                     <span className="text-xs text-text-secondary font-body">No source item linked</span>
-                                  )}
-                                  {isAdmin && !call.resolved && (
-                                    <div className="flex gap-2 flex-wrap">
-                                      <button
-                                        type="button"
-                                        aria-label={`Mark claim correct: ${call.claimText}`}
-                                        onClick={() => {
-                                          void handleResolveAuthorCall(call.id, 'correct');
-                                        }}
-                                        disabled={resolvingAuthorCallId === call.id}
-                                        className="px-3 py-2 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-mono uppercase tracking-wide hover:bg-emerald-500/20 transition-colors disabled:opacity-50"
-                                      >
-                                        {resolvingAuthorCallId === call.id ? 'Saving...' : 'Correct'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        aria-label={`Mark claim incorrect: ${call.claimText}`}
-                                        onClick={() => {
-                                          void handleResolveAuthorCall(call.id, 'incorrect');
-                                        }}
-                                        disabled={resolvingAuthorCallId === call.id}
-                                        className="px-3 py-2 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-mono uppercase tracking-wide hover:bg-red-500/20 transition-colors disabled:opacity-50"
-                                      >
-                                        Incorrect
-                                      </button>
-                                      <button
-                                        type="button"
-                                        aria-label={`Dismiss claim: ${call.claimText}`}
-                                        onClick={() => {
-                                          void handleResolveAuthorCall(call.id, 'unresolved');
-                                        }}
-                                        disabled={resolvingAuthorCallId === call.id}
-                                        className="px-3 py-2 rounded-lg bg-yellow-500/15 border border-yellow-500/30 text-yellow-400 text-xs font-mono uppercase tracking-wide hover:bg-yellow-500/20 transition-colors disabled:opacity-50"
-                                      >
-                                        Dismiss
-                                      </button>
-                                    </div>
                                   )}
                                 </div>
                               </div>
