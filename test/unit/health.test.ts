@@ -182,7 +182,7 @@ describe('health monitor', () => {
   });
 
   describe('missed pulse check', () => {
-    it('returns critical when no pulse report exists in the last 4 hours', async () => {
+    it('returns critical when no pulse report exists in the last 4 hours and summaries were created', async () => {
       const pool = createMockPool({
         queryFn: async (text: string) => {
           if (text.includes('SELECT 1')) {
@@ -190,6 +190,9 @@ describe('health monitor', () => {
           }
           if (text.includes("type = 'pulse'")) {
             return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('FROM summaries')) {
+            return { rows: [{ count: '2' }] };
           }
           if (text.includes("type = 'daily'")) {
             return { rows: [{ count: '1' }] };
@@ -211,6 +214,42 @@ describe('health monitor', () => {
       assert.ok(pulse, 'missed_pulse check should exist');
       assert.equal(pulse.status, 'critical');
       assert.equal(pulse.message, 'No pulse report in last 4 hours');
+    });
+
+    it('returns ok when no pulse report exists but the window was quiet', async () => {
+      let summaryParams: unknown[] | undefined;
+      const pool = createMockPool({
+        queryFn: async (text: string, params?: unknown[]) => {
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes("type = 'pulse'")) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('FROM summaries')) {
+            summaryParams = params;
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+      const monitor = createHealthMonitor(pool, silentLog, fakeConfig());
+
+      const { checks } = await monitor.getStatus();
+      const pulse = checks.find((check) => check.name === 'missed_pulse');
+
+      assert.ok(pulse, 'missed_pulse check should exist');
+      assert.equal(pulse.status, 'ok');
+      assert.equal(summaryParams?.length, 2, 'summary query should inspect the closed missing-pulse window');
     });
 
     it('returns ok when a pulse report exists in the last 4 hours', async () => {
@@ -237,6 +276,9 @@ describe('health monitor', () => {
           }
           if (text.includes("type = 'pulse'")) {
             return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('FROM summaries')) {
+            return { rows: [{ count: '3' }] };
           }
           if (text.includes("type = 'daily'")) {
             return { rows: [{ count: '1' }] };
@@ -276,6 +318,57 @@ describe('health monitor', () => {
       };
       assert.equal(payload.embeds[0]?.title, 'Health Alert: missed_pulse');
       assert.equal(payload.embeds[0]?.description, 'No pulse report in last 4 hours');
+
+      resolve4Mock.mock.restore();
+      resolve6Mock.mock.restore();
+      fetchMock.mock.restore();
+    });
+
+    it('does not record a health event or alert when no pulse report exists but the window was quiet', async (t) => {
+      const insertedEvents: unknown[][] = [];
+      const pool = createMockPool({
+        queryFn: async (text: string, params?: unknown[]) => {
+          if (text.includes('INSERT INTO health_events')) {
+            insertedEvents.push([...(params ?? [])]);
+            return { rows: [], rowCount: 1 };
+          }
+          if (text.includes('SELECT 1')) {
+            return { rows: [{ '?column?': 1 }] };
+          }
+          if (text.includes("type = 'pulse'")) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('FROM summaries')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes("type = 'daily'")) {
+            return { rows: [{ count: '1' }] };
+          }
+          if (text.includes('COUNT(*)')) {
+            return { rows: [{ count: '0' }] };
+          }
+          if (text.includes('today_cost')) {
+            return { rows: [{ today_cost: '0', avg_cost: '0' }] };
+          }
+          return { rows: [] };
+        },
+      });
+
+      const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+      const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+        throw new Error('no AAAA record');
+      });
+      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+      const monitor = createHealthMonitor(
+        pool,
+        silentLog,
+        fakeConfig({ alertWebhookUrl: 'https://alerts.example.com/hook' }),
+      );
+      await monitor.check();
+
+      assert.equal(insertedEvents.length, 0, 'quiet window should not insert a missed pulse event');
+      assert.strictEqual(fetchMock.mock.callCount(), 0, 'quiet window should not trigger the alert webhook');
 
       resolve4Mock.mock.restore();
       resolve6Mock.mock.restore();
