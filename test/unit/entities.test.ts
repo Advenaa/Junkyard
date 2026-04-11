@@ -1,7 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Config } from '../../src/config.js';
+import type { Logger } from '../../src/logger.js';
 
-import { DisambiguatedEntitySchema, SOURCE_WEIGHTS, normalizeAlias } from '../../src/knowledge/entities.js';
+import {
+  createEntityManager,
+  DisambiguatedEntitySchema,
+  SOURCE_WEIGHTS,
+  normalizeAlias,
+  type ExtractedEntity,
+} from '../../src/knowledge/entities.js';
 
 // ── DisambiguatedEntitySchema (H-037) ──────────────────────────────────────
 
@@ -241,5 +249,92 @@ describe('Relevance delta formula', () => {
   it('returns 0 delta when mention count is 0', () => {
     const delta = Math.log(1 + 0) * SOURCE_WEIGHTS.news;
     assert.equal(delta, 0);
+  });
+
+  it('folds duplicate canonical entity IDs in the batch relevance update while preserving mention rows', async () => {
+    const calls: Array<{ sql: string; params: unknown[] }> = [];
+
+    async function query(
+      sql: string,
+      params: unknown[] = [],
+    ): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }> {
+      calls.push({ sql, params });
+
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        return { rows: [], rowCount: 0 };
+      }
+
+      if (sql.includes('FROM entity_aliases ea') && sql.includes('WHERE ea.alias = $1')) {
+        return {
+          rows: [{ entity_id: 'ent-btc', status: 'active' }],
+          rowCount: 1,
+        };
+      }
+
+      if (sql.includes('SELECT DISTINCT ea.alias, ea.entity_id, e.type, e.status')) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      if (sql.startsWith('INSERT INTO entity_aliases')) {
+        return { rows: [], rowCount: 0 };
+      }
+
+      if (sql.includes('SET relevance = entities.relevance + data.weight')) {
+        const ids = params[1] as string[];
+        return { rows: [], rowCount: ids.length };
+      }
+
+      if (sql.startsWith('INSERT INTO entity_mentions')) {
+        return { rows: [], rowCount: params.length / 8 };
+      }
+
+      throw new Error(`Unhandled SQL in test harness: ${sql}`);
+    }
+
+    const client = { query, release: () => {} };
+    const pool = {
+      connect: async () => client,
+      query,
+    };
+    const config = {
+      models: {
+        normalizer: 'openai-codex:gpt-5.4-mini',
+      },
+    } as Config;
+    const log: Logger = {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+      debug: () => {},
+      child: () => log,
+    } as unknown as Logger;
+    const llm = {
+      async call() {
+        throw new Error('LLM should not run in duplicate relevance fold test');
+      },
+    };
+    const manager = createEntityManager(pool as never, log, config, llm);
+    const entities: ExtractedEntity[] = [
+      { name: 'BTC', mentionCount: 4, sentiment: 0, aliases: [], type: 'token' },
+      { name: 'btc', mentionCount: 3, sentiment: 0, aliases: [], type: 'token' },
+    ];
+
+    await manager.resolveEntities(entities, 'discord', 'sum-btc-dupes', 'eng');
+
+    const updateCall = calls.find((call) => call.sql.includes('SET relevance = entities.relevance + data.weight'));
+    assert.ok(updateCall, 'expected a batch UPDATE for relevance');
+
+    const updateIds = updateCall.params[1] as string[];
+    const updateWeights = updateCall.params[2] as number[];
+    const sourceWeight = SOURCE_WEIGHTS.discord;
+    const expectedWeight = Math.log(1 + 4) * sourceWeight + Math.log(1 + 3) * sourceWeight;
+
+    assert.deepEqual(updateIds, ['ent-btc']);
+    assert.equal(updateWeights.length, 1);
+    assert.ok(Math.abs(updateWeights[0] - expectedWeight) < 1e-10);
+
+    const mentionCall = calls.find((call) => call.sql.startsWith('INSERT INTO entity_mentions'));
+    assert.ok(mentionCall, 'expected a batch INSERT for entity_mentions');
+    assert.equal(mentionCall.params.length / 8, 2);
   });
 });

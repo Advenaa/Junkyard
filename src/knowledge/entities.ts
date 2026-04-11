@@ -451,9 +451,6 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
       // Collect all alias tuples for batch insert
       const aliasTuples: { alias: string; entityId: string }[] = [];
-      // Collect entity IDs and relevance deltas for batch update
-      const updateIds: string[] = [];
-      const updateWeights: number[] = [];
       // Collect mention rows for batch insert
       const mentionRows: {
         id: string;
@@ -461,6 +458,11 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         sentiment: number;
         mentionCount: number;
       }[] = [];
+      // Aggregate weights by entity_id before the batch UPDATE so duplicate
+      // ExtractedEntity entries that normalize to the same canonical (e.g. "BTC"
+      // and "btc") don't trigger undefined UPDATE … FROM join behavior that
+      // silently drops one weight delta.
+      const weightById = new Map<string, number>();
 
       for (const entity of entities) {
         const entityId = entityIdMap.get(entity);
@@ -472,8 +474,8 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           aliasTuples.push({ alias: normalizedAlias, entityId });
         }
 
-        updateIds.push(entityId);
-        updateWeights.push(Math.log(1 + entity.mentionCount) * sourceWeight);
+        const weight = Math.log(1 + entity.mentionCount) * sourceWeight;
+        weightById.set(entityId, (weightById.get(entityId) ?? 0) + weight);
 
         if (reactivatedEntities.has(entity)) {
           continue;
@@ -486,6 +488,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           mentionCount: entity.mentionCount,
         });
       }
+
+      // Rebuild updateIds / updateWeights from the deduped map.
+      const updateIds = [...weightById.keys()];
+      const updateWeights = [...weightById.values()];
 
       // Batch alias INSERT (one multi-row query)
       if (aliasTuples.length > 0) {
