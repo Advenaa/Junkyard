@@ -5,6 +5,8 @@ import { ulid } from 'ulid';
 import { fetchValidated, validateUrl } from './url-validator.js';
 import { getAppConfig } from './db/queries.js';
 
+const READY_BACKLOG_THRESHOLD = 5000;
+
 export interface HealthCheckResult {
   name: string;
   status: 'ok' | 'warn' | 'critical';
@@ -25,6 +27,8 @@ export interface HealthMonitor {
 }
 
 export function createHealthMonitor(pool: Pool, log: Logger, config: Config): HealthMonitor {
+  let readyBacklogHighTicks = 0;
+
   // HM-001: Log confirmation that alert webhook is configured (URL already validated in config.ts)
   if (config.alertWebhookUrl) {
     log.info({ url: config.alertWebhookUrl }, 'Alert webhook URL configured');
@@ -325,6 +329,38 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
     }
   }
 
+  async function checkReadyBacklog(): Promise<HealthCheckResult> {
+    const { rows } = await pool.query<{ count: string }>(
+      `
+      SELECT COUNT(*) AS count
+      FROM items
+      WHERE status = 'ready'
+    `,
+    );
+    const count = parseInt(rows[0]?.count ?? '0', 10);
+
+    if (count > READY_BACKLOG_THRESHOLD) {
+      readyBacklogHighTicks += 1;
+
+      if (readyBacklogHighTicks >= 2) {
+        return {
+          name: 'ready_backlog',
+          status: 'critical',
+          message: `Ready-item backlog ${count} > ${READY_BACKLOG_THRESHOLD} for ${readyBacklogHighTicks} consecutive checks`,
+        };
+      }
+
+      return {
+        name: 'ready_backlog',
+        status: 'warn',
+        message: `Ready-item backlog ${count} > ${READY_BACKLOG_THRESHOLD} (first tick — will alert on next consecutive tick)`,
+      };
+    }
+
+    readyBacklogHighTicks = 0;
+    return { name: 'ready_backlog', status: 'ok' };
+  }
+
   async function insertEvent(event: HealthEvent): Promise<void> {
     const id = ulid();
     const now = Date.now();
@@ -339,6 +375,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
          WHERE category = $2
            AND acknowledged = false
            AND created_at > $7
+           AND (severity = $3 OR $3 = 'warn')
        )`,
       [id, event.category, event.severity, event.message, JSON.stringify(event.metadata), now, cutoff],
     );
@@ -429,6 +466,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       checkMissedDaily(),
       checkCostSpike(),
       checkEntityAliases(),
+      checkReadyBacklog(),
     ];
 
     const settled = await Promise.allSettled(dbDependentChecks);
@@ -441,6 +479,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       'missed_daily',
       'cost_spike',
       'entity_aliases',
+      'ready_backlog',
     ];
 
     const results: HealthCheckResult[] = [dbResult, checkDbPoolExhaustion()];
