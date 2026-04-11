@@ -550,7 +550,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         await client.query('COMMIT');
       }
 
-      if (entities.length > 0 && resolvedEntityIds.length === 0) {
+      if (entities.length > 0 && resolvedEntitiesById.size === 0) {
         log.warn(
           {
             inputNames: entities.map((entity) => entity.name),
