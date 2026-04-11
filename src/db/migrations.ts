@@ -898,6 +898,40 @@ const migrations: Migration[] = [
 
     await client.query(`DROP INDEX IF EXISTS idx_items_url`);
   },
+
+  // Migration 36: Enforce same-day alpha propagation dedup in the database (I-047)
+  async (client) => {
+    await client.query(`
+      ALTER TABLE alpha_propagation
+      ADD COLUMN IF NOT EXISTS first_mention_day DATE
+        GENERATED ALWAYS AS (
+          (to_timestamp(first_mention_time / 1000.0) AT TIME ZONE 'UTC')::date
+        ) STORED
+    `);
+
+    await client.query(`
+      DELETE FROM alpha_propagation ap
+      USING (
+        SELECT id
+        FROM (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY entity_id, tier, first_mention_day
+              ORDER BY first_mention_time ASC, created_at ASC, id ASC
+            ) AS row_num
+          FROM alpha_propagation
+        ) ranked
+        WHERE ranked.row_num > 1
+      ) duplicates
+      WHERE ap.id = duplicates.id
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_alpha_propagation_unique
+        ON alpha_propagation(entity_id, tier, first_mention_day)
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
