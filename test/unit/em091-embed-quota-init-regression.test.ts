@@ -17,6 +17,65 @@ function makeLogger() {
 }
 
 describe('EM-091 — embedding quota restore fail-closed', () => {
+  it('uses a single quota restore query for concurrent embed calls', async (t) => {
+    let embedCalls = 0;
+    t.mock.method(GoogleGenerativeAI.prototype, 'getGenerativeModel', () => ({
+      embedContent: async () => {
+        embedCalls += 1;
+        return { embedding: { values: new Array<number>(768).fill(0) } };
+      },
+      batchEmbedContents: async () => ({ embeddings: [] }),
+    }));
+
+    let countQueryCalls = 0;
+    let insertQueryCalls = 0;
+    let resolveCountQuery!: (value: { rows: { count: string }[] }) => void;
+    const countQuery = new Promise<{ rows: { count: string }[] }>((resolve) => {
+      resolveCountQuery = resolve;
+    });
+
+    const pool = {
+      query: async (sql: string) => {
+        if (sql.includes('SELECT COUNT(*) as count FROM llm_usage')) {
+          countQueryCalls += 1;
+          return countQuery;
+        }
+        if (sql.includes('INSERT INTO llm_usage')) {
+          insertQueryCalls += 1;
+          return { rows: [], rowCount: 1 };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      },
+    };
+
+    const embedder = createEmbedder(
+      { geminiApiKey: 'test-gemini-key', googleApiKey: null } as never,
+      pool as never,
+      makeLogger() as never,
+    );
+
+    const calls = [embedder.embed('first'), embedder.embed('second'), embedder.embed('third')];
+
+    await Promise.resolve();
+
+    assert.equal(countQueryCalls, 1, 'concurrent embeds should share one restore query');
+
+    resolveCountQuery({ rows: [{ count: '500' }] });
+
+    const results = await Promise.all(calls);
+
+    assert.equal(countQueryCalls, 1, 'quota restore should only hit the DB once');
+    assert.equal(insertQueryCalls, 3, 'each successful embed should still record usage');
+    assert.equal(embedCalls, 3, 'all embed calls should proceed after the shared restore completes');
+    for (const result of results) {
+      assert.notEqual(result, null, 'shared restore should unblock each waiting embed');
+    }
+    assert.deepEqual(embedder.getQuotaState(), {
+      dailyCount: 503,
+      initialized: true,
+    });
+  });
+
   it('keeps init retryable and saturates dailyCount when the restore query throws', async (t) => {
     let embedCalls = 0;
     t.mock.method(GoogleGenerativeAI.prototype, 'getGenerativeModel', () => ({
