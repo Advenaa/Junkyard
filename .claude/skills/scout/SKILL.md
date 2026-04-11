@@ -11,10 +11,11 @@ them to the board. Doesn't cook — just audits and reports.
 
 **Invocation**:
 
-- `/scout` — run the next scheduled audit type (rotates product → system → code)
+- `/scout` — run the next scheduled audit type (rotates product → system → code → runtime)
 - `/scout product` — force a product-completeness sweep
 - `/scout system` — force a system-level / integration sweep
 - `/scout code` — force a code-level sweep of a specific subsystem
+- `/scout runtime` — audit live runtime diagnostics through admin endpoints
 - `/scout diff` — audit just the last N commits (fastest, highest-yield)
 
 `$ARGUMENTS` may contain the audit type. If empty, read the next scheduled
@@ -101,6 +102,48 @@ git diff origin/main~10..origin/main
 Audit only the changed lines. New code has more bugs than mature code —
 the last 10 commits are where the bugs hide.
 
+### Runtime (`/scout runtime`)
+
+Use the live diagnostic endpoints to audit runtime health without SSH or
+direct database access.
+
+- Invocation: `/scout runtime`
+- `PODDERS_DIAG_BASE_URL`: default `http://localhost:3000` for dev;
+  use `https://podders.app` for prod
+- `PODDERS_DIAG_ADMIN_TOKEN`: the Bearer API key the existing admin gate
+  accepts; send it as `Authorization: Bearer $PODDERS_DIAG_ADMIN_TOKEN`
+- `/api/v1/diag/stuck-items`: returns stuck-item counts and the oldest
+  in-flight processing age
+- `/api/v1/diag/backpressure`: returns ready/processing queue depth and
+  oldest ready-item age
+- `/api/v1/diag/halted-sources`: returns sources currently halted with
+  halt reasons and timestamps
+- `/api/v1/diag/health-events`: returns recent `error` / `critical`
+  health events for repeated-failure detection
+
+| Endpoint | Signal | Severity |
+|---|---|---|
+| `stuck-items` | `stuckCount > 0` | p1 |
+| `backpressure` | `readyCount > 1000` OR `oldestReadyAgeMs > 3600000` | p1 |
+| `halted-sources` | any halted source | p1 per source |
+| `health-events` | any `critical` severity | p0 |
+| `health-events` | `error` severity with same category in last 24h > 5 | p2 |
+
+Per run, cap runtime findings the same way as any scout sweep:
+`1 p0, 3 p1, 8 p2`.
+
+Use the runtime fingerprint prefix:
+
+```markdown
+<!-- clanker-fingerprint:scout-runtime-<date>-<hash> -->
+```
+
+File runtime findings with:
+
+```bash
+gh issue create --label source:scout --label type:bug --label <severity>
+```
+
 ## Dedup mechanism
 
 Every issue created by `/scout` carries a hidden fingerprint in its body:
@@ -145,6 +188,7 @@ Determine the audit type:
 - **product** → pick the page/flow that hasn't been audited most recently
 - **system** → pick the pipeline stage least recently audited
 - **code** → pick the subsystem from the coverage-map rotation
+- **runtime** → query the diag endpoints against the configured base URL
 - **diff** → just use `git log origin/main~10..origin/main`
 
 ### Step 3: Read aggressively
@@ -212,7 +256,7 @@ Update `.clankerism/scout-state.md`:
 Tell the user:
 
 ```
-Sweep type: <product|system|code|diff>
+Sweep type: <product|system|code|runtime|diff>
 Scope: <what you audited>
 Findings: <N filed>, <M deduped via comment>, <K discarded as false positive>
 New issues: #<N1>, #<N2>, ...
