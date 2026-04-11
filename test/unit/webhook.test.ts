@@ -995,6 +995,52 @@ describe('deliver — idempotency guard', () => {
   });
 });
 
+describe('deliver — terminal failure context', () => {
+  it('logs the terminal webhook status and response detail after a client error', async (t) => {
+    const pool = mockPool([
+      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
+      { rows: [{ delivery_status: 'pending' }] },
+      { rowCount: 1 },
+    ]);
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      return new Response('webhook deleted remotely', { status: 404 });
+    });
+
+    const errorCalls: Array<{ payload: unknown; message?: string }> = [];
+    const log = {
+      ...silentLog,
+      error: (payload: unknown, message?: string) => {
+        errorCalls.push({ payload, message });
+      },
+    };
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, log as any, config);
+    const result = await deliver(FAKE_REPORT);
+
+    assert.strictEqual(result, false);
+    const terminalError = errorCalls.find((entry) => entry.message === 'webhook delivery failed after retries');
+    assert.ok(terminalError, 'Expected the terminal delivery failure to be logged');
+    assert.deepStrictEqual(terminalError.payload, {
+      reportId: FAKE_REPORT.id,
+      type: FAKE_REPORT.type,
+      failureReason: 'client_error',
+      status: 404,
+      responseDetail: 'webhook deleted remotely',
+      errorMessage: undefined,
+    });
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+});
+
 describe('deliver — circuit breaker', () => {
   it('halts after five consecutive failed deliveries, alerts once, and skips retryFailed while open', async (t) => {
     const pool = createDeliveryCircuitPool();
@@ -1158,6 +1204,96 @@ describe('deliver — circuit breaker', () => {
     dateNowMock.mock.restore();
     resolve4Mock.mock.restore();
     resolve6Mock.mock.restore();
+  });
+});
+
+describe('retryFailed — lookback window', () => {
+  it('retries failed dailies for 24h while leaving older pulses outside the retry window', async (t) => {
+    const now = 1_700_000_000_000;
+    const reports = [
+      {
+        id: 'daily-old',
+        type: 'daily',
+        body: VALID_REPORT_BODY,
+        date: '2026-04-01',
+        created_at: now - 3 * 60 * 60 * 1000,
+        delivery_status: 'failed',
+      },
+      {
+        id: 'pulse-old',
+        type: 'pulse',
+        body: VALID_REPORT_BODY,
+        date: '2026-04-01',
+        created_at: now - 3 * 60 * 60 * 1000,
+        delivery_status: 'failed',
+      },
+    ];
+
+    const calls: Array<{ text: string; values: unknown[] }> = [];
+    const pool = {
+      calls,
+      async query(text: string, values?: unknown[]) {
+        calls.push({ text, values: values ?? [] });
+
+        if (text.includes('SELECT value FROM app_config WHERE key = $1')) {
+          return { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }], rowCount: 1 };
+        }
+
+        if (text.includes('SELECT id, type, body, date FROM reports')) {
+          const [dailyCutoff, defaultCutoff] = (values ?? []) as [number, number];
+          const eligible = reports
+            .filter(
+              (report) =>
+                report.delivery_status === 'failed' &&
+                ((report.type === 'daily' && report.created_at > dailyCutoff) ||
+                  (report.type !== 'daily' && report.created_at > defaultCutoff)),
+            )
+            .map(({ id, type, body, date }) => ({ id, type, body, date }));
+          return { rows: eligible, rowCount: eligible.length };
+        }
+
+        if (text.includes("UPDATE reports SET delivery_status = 'pending'") && text.includes('RETURNING')) {
+          return { rows: [{ delivery_status: 'pending' }], rowCount: 1 };
+        }
+
+        if (text.includes('UPDATE reports SET delivery_status = $1')) {
+          const status = values?.[0] as string;
+          const reportId = values?.[2] as string;
+          const report = reports.find((entry) => entry.id === reportId);
+          if (report) {
+            report.delivery_status = status;
+          }
+          return { rows: [], rowCount: 1 };
+        }
+
+        return { rows: [], rowCount: 0 };
+      },
+    };
+
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+    const config = {} as any;
+    const { retryFailed } = createDelivery(pool as any, silentLog as any, config);
+    const retried = await retryFailed();
+
+    assert.strictEqual(retried, 1, 'Expected only the daily report to be retried');
+    const deliveredUpdates = pool.calls.filter(
+      (call) => call.text.includes('UPDATE reports SET delivery_status = $1') && call.values[0] === 'delivered',
+    );
+    assert.strictEqual(deliveredUpdates.length, 1);
+    assert.strictEqual(deliveredUpdates[0]!.values[2], 'daily-old');
+    assert.strictEqual(reports.find((report) => report.id === 'daily-old')!.delivery_status, 'delivered');
+    assert.strictEqual(reports.find((report) => report.id === 'pulse-old')!.delivery_status, 'failed');
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+    dateNowMock.mock.restore();
   });
 });
 

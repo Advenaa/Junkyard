@@ -83,6 +83,25 @@ const MAX_TOTAL_RETRY_MS = 120_000;
 const BACKOFF_MS = [2000, 8000, 32000];
 const MAX_CONSECUTIVE_DELIVERY_FAILURES = 5;
 const DELIVERY_CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000;
+const FAILED_DELIVERY_RETRY_LOOKBACK_MS = 60 * 60 * 1000;
+const FAILED_DAILY_RETRY_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+interface WebhookPostFailure {
+  ok: false;
+  reason:
+    | 'ssrf_validation_failed'
+    | 'retry_time_exceeded'
+    | 'rate_limited'
+    | 'client_error'
+    | 'server_error'
+    | 'unexpected_status'
+    | 'transport_error';
+  status?: number;
+  responseDetail?: string;
+  errorMessage?: string;
+}
+
+type WebhookPostResult = { ok: true } | WebhookPostFailure;
 
 export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -337,13 +356,14 @@ async function postWithRetry(
   payload: string,
   validation: UrlValidationResult,
   log: Logger,
-): Promise<boolean> {
+): Promise<WebhookPostResult> {
   let rateLimitCount = 0;
   const startTime = Date.now();
+  let lastFailure: WebhookPostFailure = { ok: false, reason: 'transport_error' };
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     if (Date.now() - startTime > MAX_TOTAL_RETRY_MS) {
       log.error({ elapsedMs: Date.now() - startTime }, 'webhook total retry time exceeded, giving up');
-      return false;
+      return { ok: false, reason: 'retry_time_exceeded' };
     }
     try {
       const { response } = await fetchValidated(
@@ -358,22 +378,26 @@ async function postWithRetry(
       );
       if (!response) {
         log.error({ webhookUrl, reason: validation.reason }, 'webhook POST blocked by SSRF validation');
-        return false;
+        return {
+          ok: false,
+          reason: 'ssrf_validation_failed',
+          responseDetail: validation.reason,
+        };
       }
 
       if (response.ok) {
         await response.body?.cancel().catch(() => undefined);
-        return true;
+        return { ok: true };
       }
 
       // Drain response body on all non-2xx paths to prevent socket leaks
-      await response.body?.cancel().catch(() => undefined);
+      const responseDetail = truncate((await response.text().catch(() => '')) || '', 200);
 
       if (response.status === 429) {
         rateLimitCount++;
         if (rateLimitCount >= MAX_RATE_LIMIT_RETRIES) {
           log.error({ rateLimitCount }, 'webhook rate limited too many times, giving up');
-          return false;
+          return { ok: false, reason: 'rate_limited', status: 429, responseDetail };
         }
         const retryAfterHeader = response.headers.get('Retry-After');
         const parsed = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
@@ -393,21 +417,27 @@ async function postWithRetry(
 
       if (response.status >= 400 && response.status < 500) {
         log.error(
-          { status: response.status, attempt: attempt + 1 },
+          { status: response.status, attempt: attempt + 1, responseDetail },
           'webhook POST failed with client error, not retrying',
         );
-        return false;
+        return { ok: false, reason: 'client_error', status: response.status, responseDetail };
       }
 
       if (response.status >= 500) {
-        log.warn({ status: response.status, attempt: attempt + 1 }, 'webhook POST failed with server error, retrying');
+        lastFailure = { ok: false, reason: 'server_error', status: response.status, responseDetail };
+        log.warn(
+          { status: response.status, attempt: attempt + 1, responseDetail },
+          'webhook POST failed with server error, retrying',
+        );
         await sleep(BACKOFF_MS[attempt] ?? 32000);
         continue;
       }
 
-      log.error({ status: response.status }, 'webhook POST returned unexpected status');
-      return false;
+      log.error({ status: response.status, responseDetail }, 'webhook POST returned unexpected status');
+      return { ok: false, reason: 'unexpected_status', status: response.status, responseDetail };
     } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      lastFailure = { ok: false, reason: 'transport_error', errorMessage };
       log.error({ err, attempt: attempt + 1 }, 'webhook POST threw an error');
       if (attempt < MAX_RETRIES - 1) {
         await sleep(BACKOFF_MS[attempt] ?? 32000);
@@ -415,7 +445,7 @@ async function postWithRetry(
     }
   }
 
-  return false;
+  return lastFailure;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -590,9 +620,9 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       allowed_mentions: { parse: [] },
     });
 
-    const success = await postWithRetry(webhookUrl, payload, validation, log);
+    const postResult = await postWithRetry(webhookUrl, payload, validation, log);
 
-    if (success) {
+    if (postResult.ok) {
       resetDeliveryFailures();
       log.info({ reportId: report.id, type: report.type }, 'webhook delivered');
       try {
@@ -607,7 +637,17 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     }
 
     await recordDeliveryFailure();
-    log.error({ reportId: report.id, type: report.type }, 'webhook delivery failed after retries');
+    log.error(
+      {
+        reportId: report.id,
+        type: report.type,
+        failureReason: postResult.reason,
+        status: postResult.status,
+        responseDetail: postResult.responseDetail,
+        errorMessage: postResult.errorMessage,
+      },
+      'webhook delivery failed after retries',
+    );
     await updateDeliveryStatus(pool, report.id, 'failed');
     return false;
   }
@@ -625,10 +665,13 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     const { rows } = await pool.query<{ id: string; type: string; body: string; date: string }>(
       `SELECT id, type, body, date FROM reports
        WHERE delivery_status = 'failed'
-         AND created_at > $1
+         AND (
+           (type = 'daily' AND created_at > $1)
+           OR (type != 'daily' AND created_at > $2)
+         )
        ORDER BY created_at ASC
        LIMIT 5`,
-      [Date.now() - 60 * 60 * 1000],
+      [Date.now() - FAILED_DAILY_RETRY_LOOKBACK_MS, Date.now() - FAILED_DELIVERY_RETRY_LOOKBACK_MS],
     );
 
     let retried = 0;
