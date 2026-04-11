@@ -142,6 +142,18 @@ function clampPreviewText(text: string, limit: number): string {
   return `${trimmed.slice(0, limit - 1).trimEnd()}…`;
 }
 
+export function getSummarySearchPreview(body: string): string {
+  const parsed = parseSummaryBody(body);
+  if (parsed && typeof parsed.summary === 'string') {
+    const summaryText = parsed.summary.trim();
+    if (summaryText.length > 0) {
+      return summaryText;
+    }
+  }
+
+  return clampPreviewText(body, 220);
+}
+
 export function getNarrativeSummaryPreview(body: string): string {
   const parsed = parseSummaryBody(body);
   const summaryText = parsed && typeof parsed.summary === 'string' ? parsed.summary : body;

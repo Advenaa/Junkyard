@@ -333,7 +333,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search supports report scope so report previews can be searched', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 2600);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 3000);
     assert.ok(
       handlerSlice.includes("scope: { type: 'string', enum: ['summary', 'report', 'all'] }"),
       'GET /api/v1/search must declare a scope filter for summary/report/all searches',
@@ -347,7 +347,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for event chain previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 4200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 4600);
     assert.ok(
       handlerSlice.includes('parseReportBody') && handlerSlice.includes("result_type: 'report'"),
       'GET /api/v1/search must attach report event chain previews to report search hits',
@@ -357,7 +357,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for market catalyst previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
     assert.ok(
       handlerSlice.includes('report.marketCatalysts'),
       'GET /api/v1/search should expose a market-catalyst preview on report hits when stored report bodies include one',
@@ -378,7 +378,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for narrative shift previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
     assert.ok(
       handlerSlice.includes('report.narrativeShifts'),
       'GET /api/v1/search should expose a narrative-shift preview when stored report bodies include one',
@@ -389,7 +389,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for first-mover previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
     assert.ok(
       handlerSlice.includes('report.firstMovers'),
       'GET /api/v1/search should expose a first-mover preview on report hits when stored report bodies include one',
@@ -400,7 +400,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for price alert previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
     assert.ok(
       handlerSlice.includes('report.priceAlerts'),
       'GET /api/v1/search should expose a price-alert preview on report hits when stored report bodies include one',
@@ -411,7 +411,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for macro alert previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
     assert.ok(
       handlerSlice.includes('report.macroAlerts'),
       'GET /api/v1/search should expose a macro alert preview on report hits when stored report bodies include one',
@@ -422,7 +422,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for unusual activity previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 5600);
     assert.ok(
       handlerSlice.includes('report.unusualActivity'),
       'GET /api/v1/search should expose an unusual-activity preview on report hits when stored report bodies include one',
@@ -433,7 +433,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search parses report bodies for macro regime previews', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6200);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 6600);
     assert.ok(
       handlerSlice.includes('report.macroRegime'),
       'GET /api/v1/search should expose a macro regime preview on report hits when stored report bodies include one',
@@ -452,7 +452,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search can attach active chain drilldowns to report hits', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 7000);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 7400);
     assert.ok(
       handlerSlice.includes('getRecentReportChainDrilldowns'),
       'GET /api/v1/search should load recent chain drilldowns for report hits when event chain text is present',
@@ -470,7 +470,7 @@ describe('toCamelCase — structural (server.ts source)', () => {
   it('GET /api/v1/search can expose exact hidden active chain counts beyond the preview cap', () => {
     const searchEndpoint = source.indexOf("'/api/v1/search'");
     assert.ok(searchEndpoint !== -1, 'search endpoint must exist');
-    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 7000);
+    const handlerSlice = source.slice(searchEndpoint, searchEndpoint + 7400);
     assert.ok(
       handlerSlice.includes('report.hiddenActiveChainCount'),
       'GET /api/v1/search should expose an exact hidden-chain count when extra active chains are omitted from report-hit previews',
