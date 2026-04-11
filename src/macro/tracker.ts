@@ -7,8 +7,8 @@ export interface MacroTracker {
   fetchAndStore(): Promise<{ fetched: number; stored: number }>;
 }
 
-export function createMacroTracker(pool: Pool, log: Logger, apiKey?: string): MacroTracker {
-  const fetcher = createFredMacroFetcher(log, apiKey);
+export function createMacroTracker(pool: Pool, log: Logger, apiKey?: string, onAuthFailure?: () => void): MacroTracker {
+  const fetcher = createFredMacroFetcher(log, apiKey, onAuthFailure);
 
   async function fetchAndStore(): Promise<{ fetched: number; stored: number }> {
     const snapshots = await fetcher.fetchLatest();

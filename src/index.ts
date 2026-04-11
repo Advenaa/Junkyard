@@ -34,6 +34,7 @@ import { createSeeder } from './knowledge/seed.js';
 import { createSentimentTracker, getLastCompletedDayRollup } from './knowledge/sentiment.js';
 import { createDivergenceTracker } from './knowledge/divergence.js';
 import { createCalendarTracker } from './knowledge/calendar.js';
+import { markFeatureKeyRejected } from './features.js';
 import {
   getSources,
   resetCrashed,
@@ -252,7 +253,9 @@ program
 
     // ── 0. Shared services ────────────────────────────────────────────
     const llm = createLLM(pool, log, config);
-    const embedder = createEmbedder(config, pool, log);
+    const embedder = createEmbedder(config, pool, log, () =>
+      markFeatureKeyRejected(config.disabledFeatures, 'embeddings', log),
+    );
     const vectorCache = createVectorCache(pool, log);
 
     // ── 2. Pipeline stages ────────────────────────────────────────────
@@ -308,8 +311,12 @@ program
     // ── 3. Ingest adapters ────────────────────────────────────────────
     const twitterAdapter = createTwitterAdapter(config, pool, log);
     const newsAdapter = createNewsAdapter(log);
-    const priceTracker = createPriceTracker(pool, log, config.coingeckoApiKey ?? undefined);
-    const macroTracker = createMacroTracker(pool, log, config.fredApiKey ?? undefined);
+    const priceTracker = createPriceTracker(pool, log, config.coingeckoApiKey ?? undefined, () =>
+      markFeatureKeyRejected(config.disabledFeatures, 'prices', log),
+    );
+    const macroTracker = createMacroTracker(pool, log, config.fredApiKey ?? undefined, () =>
+      markFeatureKeyRejected(config.disabledFeatures, 'macro', log),
+    );
     let currentDiscordTokens = initialDiscordTokens;
     const discordRestTokenHealth = new Map<string, DiscordRestTokenHealthSnapshot>();
     syncDiscordRestTokenHealth(discordRestTokenHealth, currentDiscordTokens);

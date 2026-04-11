@@ -111,7 +111,12 @@ export function ReportView() {
       .catch((err) => {
         if (cancelled) return;
         if (isFeatureDisabledError(err)) {
-          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          registerDisabledFeature({
+            feature: err.feature,
+            missingEnv: err.missingEnv,
+            disables: err.disables,
+            reason: err.reason,
+          });
         } else {
           setMacroOverviewState(null);
         }
@@ -136,7 +141,12 @@ export function ReportView() {
       .catch((err) => {
         if (cancelled) return;
         if (isFeatureDisabledError(err)) {
-          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          registerDisabledFeature({
+            feature: err.feature,
+            missingEnv: err.missingEnv,
+            disables: err.disables,
+            reason: err.reason,
+          });
         } else {
           setPriceWatchState(null);
         }
@@ -183,7 +193,12 @@ export function ReportView() {
       .catch((err) => {
         if (cancelled) return;
         if (isFeatureDisabledError(err)) {
-          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          registerDisabledFeature({
+            feature: err.feature,
+            missingEnv: err.missingEnv,
+            disables: err.disables,
+            reason: err.reason,
+          });
         } else {
           setNarrativesState(null);
         }

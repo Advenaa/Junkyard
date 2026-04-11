@@ -6,11 +6,13 @@ export interface User {
 }
 
 export type FeatureKey = 'embeddings' | 'prices' | 'macro';
+export type FeatureDisabledReason = 'missing_env' | 'auth_failed';
 
 export interface DisabledFeatureSummary {
   feature: FeatureKey;
   missingEnv: string;
   disables: string[];
+  reason?: FeatureDisabledReason;
 }
 
 export interface StatusSnapshot {
@@ -26,6 +28,7 @@ export interface FeatureDisabledBody {
   feature: FeatureKey;
   missingEnv: string;
   disables: string[];
+  reason?: FeatureDisabledReason;
 }
 
 export interface MacroRegime {

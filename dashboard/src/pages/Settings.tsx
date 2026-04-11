@@ -3126,7 +3126,12 @@ function PipelineTab() {
       .catch((err) => {
         if (cancelled) return;
         if (isFeatureDisabledError(err)) {
-          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          registerDisabledFeature({
+            feature: err.feature,
+            missingEnv: err.missingEnv,
+            disables: err.disables,
+            reason: err.reason,
+          });
           setMacroOverview(null);
           setMacroError(null);
         } else {
@@ -3180,7 +3185,12 @@ function PipelineTab() {
       .catch((err) => {
         if (cancelled) return;
         if (isFeatureDisabledError(err)) {
-          registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+          registerDisabledFeature({
+            feature: err.feature,
+            missingEnv: err.missingEnv,
+            disables: err.disables,
+            reason: err.reason,
+          });
           setNarrativeWatchlist(null);
           setNarrativeError(null);
         } else {
@@ -4358,7 +4368,12 @@ function EntitiesTab() {
       ? Promise.resolve(null)
       : fetchEntityPriceData(selectedEntity.id, 7).catch((err) => {
           if (isFeatureDisabledError(err)) {
-            registerDisabledFeature({ feature: err.feature, missingEnv: err.missingEnv, disables: err.disables });
+            registerDisabledFeature({
+              feature: err.feature,
+              missingEnv: err.missingEnv,
+              disables: err.disables,
+              reason: err.reason,
+            });
             return null;
           }
           if (!isApi404(err)) console.warn('fetchEntityPriceData failed', err);
@@ -4526,6 +4541,7 @@ function EntitiesTab() {
                   feature: err.feature,
                   missingEnv: err.missingEnv,
                   disables: err.disables,
+                  reason: err.reason,
                 });
                 return null;
               }

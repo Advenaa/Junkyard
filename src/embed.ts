@@ -72,7 +72,7 @@ function stripDiscordFormatting(text: string): string {
 
 // ── Retry wrapper ──────────────────────────────────────────────────────
 
-async function withRetry<T>(fn: () => Promise<T>, log: Logger): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, log: Logger, onAuthFailure?: () => void): Promise<T> {
   let lastError: unknown;
 
   // Initial attempt + 3 retries
@@ -83,6 +83,11 @@ async function withRetry<T>(fn: () => Promise<T>, log: Logger): Promise<T> {
       lastError = err;
 
       if (!isFetchError(err)) throw err;
+
+      if (err.status === 401 || err.status === 403) {
+        onAuthFailure?.();
+        throw err;
+      }
 
       if (err.status === 429) {
         // Google GenAI SDK does not expose Retry-After headers in error objects.
@@ -111,7 +116,7 @@ async function withRetry<T>(fn: () => Promise<T>, log: Logger): Promise<T> {
 
 // ── Public API ─────────────────────────────────────────────────────────
 
-export function createEmbedder(config: Config, pool: Pool, log: Logger) {
+export function createEmbedder(config: Config, pool: Pool, log: Logger, onAuthFailure?: () => void) {
   const geminiKey = config.geminiApiKey ?? config.googleApiKey;
   const available = Boolean(geminiKey);
   const genAI = available ? new GoogleGenerativeAI(geminiKey!) : null;
@@ -187,6 +192,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
             taskType,
           }),
         log,
+        onAuthFailure,
       );
     } catch (err) {
       dailyCount -= 1; // Refund on failure
@@ -247,6 +253,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
               })),
             }),
           log,
+          onAuthFailure,
         );
 
         chunksCompleted += 1;

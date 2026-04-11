@@ -71,7 +71,7 @@ function computeChange(latest: number, prior: FredObservation | null): number | 
   return priorValue === null ? null : latest - priorValue;
 }
 
-export function createFredMacroFetcher(log: Logger, apiKey?: string): MacroFetcher {
+export function createFredMacroFetcher(log: Logger, apiKey?: string, onAuthFailure?: () => void): MacroFetcher {
   async function fetchSeries(definition: { indicator: MacroIndicator; seriesId: string; label: string }) {
     const params = new URLSearchParams({
       series_id: definition.seriesId,
@@ -93,6 +93,9 @@ export function createFredMacroFetcher(log: Logger, apiKey?: string): MacroFetch
     });
 
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        onAuthFailure?.();
+      }
       const body = await response.text().catch(() => '');
       throw new Error(`FRED returned ${response.status}: ${body.slice(0, 200)}`);
     }
