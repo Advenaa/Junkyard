@@ -112,30 +112,33 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
   // ── Daily quota tracking (in-memory, resets each calendar day) ──────
   let dailyCount = 0;
   let dayStart = Date.now();
-
-  let initialized = false;
+  let initPromise: Promise<void> | null = null;
 
   async function initQuota(): Promise<void> {
-    if (initialized) return;
-    try {
-      const today = new Date().toISOString().slice(0, 10);
-      const { rows } = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) as count FROM llm_usage WHERE stage = 'embedding' AND created_at > $1`,
-        [new Date(today + 'T00:00:00Z').getTime()],
-      );
-      dailyCount = parseInt(rows[0]?.count ?? '0', 10);
-      initialized = true;
-      if (dailyCount > 0) {
-        log.info({ dailyCount }, 'Restored embedding quota from DB');
-      }
-    } catch {
-      dailyCount = DAILY_QUOTA_LIMIT;
-      log.warn({ dailyCount }, 'Could not restore embedding quota from DB, failing closed until retry succeeds');
+    if (!initPromise) {
+      initPromise = (async () => {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          const { rows } = await pool.query<{ count: string }>(
+            `SELECT COUNT(*) as count FROM llm_usage WHERE stage = 'embedding' AND created_at > $1`,
+            [new Date(today + 'T00:00:00Z').getTime()],
+          );
+          dailyCount = parseInt(rows[0]?.count ?? '0', 10);
+          if (dailyCount > 0) {
+            log.info({ dailyCount }, 'Restored embedding quota from DB');
+          }
+        } catch {
+          dailyCount = DAILY_QUOTA_LIMIT;
+          initPromise = null;
+          log.warn({ dailyCount }, 'Could not restore embedding quota from DB, failing closed until retry succeeds');
+        }
+      })();
     }
+    return initPromise;
   }
 
   function getQuotaState(): { dailyCount: number; initialized: boolean } {
-    return { dailyCount, initialized };
+    return { dailyCount, initialized: initPromise !== null };
   }
 
   function resetIfNewDay(): void {
@@ -145,7 +148,7 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger) {
     if (currentDay !== storedDay) {
       dailyCount = 0;
       dayStart = now;
-      initialized = false; // Re-init on new day
+      initPromise = null; // Re-init on new day
     }
   }
 
