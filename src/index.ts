@@ -30,7 +30,7 @@ import { createHealthMonitor } from './health.js';
 import { createBackup } from './ops/backup.js';
 import { createRetention } from './ops/retention.js';
 import { createSeeder } from './knowledge/seed.js';
-import { createSentimentTracker } from './knowledge/sentiment.js';
+import { createSentimentTracker, getLastCompletedDayRollup } from './knowledge/sentiment.js';
 import { createDivergenceTracker } from './knowledge/divergence.js';
 import { createCalendarTracker } from './knowledge/calendar.js';
 import {
@@ -529,8 +529,8 @@ program
       // Sentiment rollup: compute daily momentum before synthesis uses it
       try {
         const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-        const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
-        await sentimentTracker.runDaily(todayStr, timezone);
+        const { dateString: rollupDate } = getLastCompletedDayRollup(new Date(), timezone);
+        await sentimentTracker.runDaily(rollupDate, timezone);
       } catch (err: unknown) {
         log.error({ err }, 'sentiment rollup failed');
       }

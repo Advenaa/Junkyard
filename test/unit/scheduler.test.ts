@@ -449,6 +449,24 @@ describe('SD-005: onDaily runs dependency refresh before synthesis', () => {
       `macroTracker.fetchAndStore() (pos ${macroPos}) must come before synthesizer.runDaily() (pos ${synthPos})`,
     );
   });
+
+  it('rolls up the last completed local day before synthesis', () => {
+    const source = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
+
+    const onDailyStart = source.indexOf('async function onDaily()');
+    assert.ok(onDailyStart !== -1, 'onDaily function must exist in src/index.ts');
+
+    const onDailySlice = source.slice(onDailyStart, onDailyStart + 2200);
+
+    assert.ok(
+      onDailySlice.includes('getLastCompletedDayRollup(new Date(), timezone)'),
+      'onDaily must derive the last completed local day before calling sentimentTracker.runDaily()',
+    );
+    assert.ok(
+      onDailySlice.includes('sentimentTracker.runDaily(rollupDate, timezone)'),
+      'onDaily must pass the completed-day rollup date into sentimentTracker.runDaily()',
+    );
+  });
 });
 
 // ── Cron registration ──────────────────────────────────────────────────
