@@ -16,7 +16,11 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 - **GitHub Issues** (labeled `state:ready`, `p0`–`p3`, `type:*`, `source:*`) —
   source of truth for actionable findings and fixable tasks. Under Clankerism
   this replaced the old `.research-queue.md` / `.evolve-state.md` files.
-- `.clankerism/README.md` — 4-role model, label taxonomy, soft-brake
+- **GitHub PRs** labeled `queue:ready` / `queue:deferred` / `queue:blocked` — handoff point; blocked PRs can be resumed by `/build`
+  between builders and the serialized merge queue.
+- **Autonomous workflows** in `.github/workflows/clanker-queue.yml` and
+  `.github/workflows/clanker-verify.yml` — unattended publisher + smoke-check loop.
+- `.clankerism/README.md` — 5-role model, label taxonomy, soft-brake
   mechanism.
 - `.clankerism/lessons.md` — reusable build / test / research lessons.
   Append sparingly; delete stale entries.
@@ -34,12 +38,13 @@ Goal: either agent should be able to pick up the same task, on the same branch, 
 4. Make the smallest diff that fully solves the slice. Avoid drive-by refactors.
 5. Verify with `pnpm run build` and the narrowest relevant tests. If the change touches shared infrastructure or a bug fix with existing unit coverage, also run `pnpm test` when practical.
 6. If the task comes from a GitHub issue, follow the Clankerism consumer flow (full procedure in `AGENTS.md` / `CLAUDE.md` → "Clankerism Workflow"):
-   - Claim atomically by pushing `build/issue-<N>` to origin *before* starting work; if the push is rejected, another agent won the race — exit, don't retry under a different name.
-   - Flip `state:ready` → `state:in-progress` once the branch is on origin.
-   - Open the PR with a `Fixes #<N>` footer so GitHub auto-closes on merge.
-   - Watch CI synchronously with `gh run watch <run-id> --exit-status`, not `gh pr merge --auto` (auto-merge is unreliable without branch protection on this free-plan repo).
-   - On green: `gh pr merge --squash --delete-branch`, then `gh issue edit <N> --remove-label state:in-progress` to clear the stale label (GitHub does not strip it on auto-close).
-   - On a real blocker or red CI: flip to `state:blocked`, comment, exit. Do NOT push a "fix" commit onto the same branch.
+   - Claim atomically by pushing `build/issue-<N>` for fresh work or `repair/pr-<PR>` for blocked repairs *before* starting work; if the push is rejected, another agent won the race — exit, don't retry under a different name.
+   - Flip `state:ready` → `state:in-progress` once a fresh issue branch is on origin; flip `state:blocked` → `state:in-progress` once a blocked repair is claimed.
+   - Open or reuse the PR with `Fixes #<N>`, the issue's lock group, and the issue's write set.
+   - When the PR is truly ready, add `queue:ready` and stop. Builders no longer merge their own PRs.
+   - The queue waits for the GitHub `CI / build-and-test` check; if that check fails, the PR and linked issue are flipped back to blocked state.
+   - If the queue marks the PR `queue:deferred`, leave it alone until the older same-lock-group PR merges or closes.
+   - If the queue marks the PR `queue:blocked`, refresh it on latest `main`, fix the failing step, and re-queue it.
 7. Leave a clean handoff in the final report:
    - what changed
    - files touched
@@ -66,9 +71,10 @@ When resuming work started by the other agent:
 
 Prefer these slice sizes:
 
-- one `state:ready` GitHub issue
+- one `state:ready` GitHub issue or one `queue:blocked` PR repair
 - one feature slice that can be verified end-to-end
 - one narrowly scoped module fix
+- one lock group / write set that another builder can avoid touching
 
 Avoid these slice sizes:
 

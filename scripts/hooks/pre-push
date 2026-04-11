@@ -45,7 +45,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "║    1. Create a branch:  git checkout -b my-fix                ║"
     echo "║    2. Push the branch:  git push -u origin my-fix             ║"
     echo "║    3. Open a PR:        gh pr create                          ║"
-    echo "║    4. Merge after CI:   gh pr merge --squash                  ║"
+    echo "║    4. Hand off queue:   add label 'queue:ready'              ║"
     echo "║                                                                ║"
     echo "║  Emergency override (human only, documented in .clankerism):  ║"
     echo "║    CLANKERISM_ALLOW_MAIN=1 git push origin main               ║"

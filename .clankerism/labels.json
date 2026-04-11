@@ -1,23 +1,50 @@
 {
-  "schema_version": 1,
-  "description": "Clankerism label taxonomy. Every issue in the Clankerism queue carries exactly one state, one priority, one type, and one source label.",
-  "labels": [
-    { "name": "state:ready",       "color": "0E8A16", "description": "Available for a clanker to claim" },
-    { "name": "state:in-progress", "color": "FBCA04", "description": "A clanker has claimed this and opened a branch" },
-    { "name": "state:blocked",     "color": "D93F0B", "description": "Waiting on a user, external dep, or upstream fix" },
-    { "name": "state:stale",       "color": "C5DEF5", "description": "No movement for > staleness window — needs triage" },
-
-    { "name": "p0", "color": "B60205", "description": "Critical — drop everything" },
-    { "name": "p1", "color": "D93F0B", "description": "High — next in line" },
-    { "name": "p2", "color": "FBCA04", "description": "Medium — regular queue" },
-    { "name": "p3", "color": "0E8A16", "description": "Low / nice-to-have" },
-
-    { "name": "type:bug",      "color": "EE0701", "description": "Existing behavior is wrong" },
-    { "name": "type:refactor", "color": "5319E7", "description": "No behavior change — internal cleanup" },
-    { "name": "type:feature",  "color": "1D76DB", "description": "New capability" },
-
-    { "name": "source:scout",     "color": "BFD4F2", "description": "Discovered by the /scout clanker" },
-    { "name": "source:manual",    "color": "BFD4F2", "description": "Filed by a human" },
-    { "name": "source:migration", "color": "BFD4F2", "description": "Imported from legacy .evolve-state.md / .research-queue.md" }
+  "schema_version": 2,
+  "description": "Clankerism issue taxonomy plus optional operational labels used by the merge queue.",
+  "issue_axes": {
+    "state": [
+      { "name": "state:ready", "color": "0E8A16", "description": "Available for a clanker to claim" },
+      { "name": "state:in-progress", "color": "FBCA04", "description": "A clanker has claimed this and opened a branch" },
+      { "name": "state:blocked", "color": "D93F0B", "description": "Waiting on a user, external dep, or upstream fix" },
+      { "name": "state:stale", "color": "C5DEF5", "description": "No movement for > staleness window — needs triage" }
+    ],
+    "priority": [
+      { "name": "p0", "color": "B60205", "description": "Critical — drop everything" },
+      { "name": "p1", "color": "D93F0B", "description": "High — next in line" },
+      { "name": "p2", "color": "FBCA04", "description": "Medium — regular queue" },
+      { "name": "p3", "color": "0E8A16", "description": "Low / nice-to-have" }
+    ],
+    "type": [
+      { "name": "type:bug", "color": "EE0701", "description": "Existing behavior is wrong" },
+      { "name": "type:refactor", "color": "5319E7", "description": "No behavior change — internal cleanup" },
+      { "name": "type:feature", "color": "1D76DB", "description": "New capability" }
+    ],
+    "source": [
+      { "name": "source:scout", "color": "BFD4F2", "description": "Discovered by the /scout clanker" },
+      { "name": "source:manual", "color": "BFD4F2", "description": "Filed by a human" },
+      { "name": "source:migration", "color": "BFD4F2", "description": "Imported from legacy .evolve-state.md / .research-queue.md" }
+    ]
+  },
+  "operational_labels": [
+    {
+      "name": "queue:ready",
+      "color": "0052CC",
+      "description": "PR is ready for serialized merge-queue validation on latest main"
+    },
+    {
+      "name": "queue:active",
+      "color": "5319E7",
+      "description": "Queue runner is currently validating this PR"
+    },
+    {
+      "name": "queue:deferred",
+      "color": "FBCA04",
+      "description": "PR is ready, but waiting behind an older open PR in the same lock group"
+    },
+    {
+      "name": "queue:blocked",
+      "color": "B60205",
+      "description": "Queue failed or refused this PR; refresh/fix before re-queueing"
+    }
   ]
 }
