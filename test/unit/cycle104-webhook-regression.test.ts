@@ -107,10 +107,12 @@ describe('DL-016: postWithRetry has MAX_TOTAL_RETRY_MS circuit breaker', () => {
 
   it('checks elapsed time inside the retry loop', () => {
     // The elapsed check must be inside the for-loop body
-    const forLoopMatch = src.match(/for\s*\(let attempt.*?\{([\s\S]*?)\n\s*return false;\s*\n\}/);
-    assert.ok(forLoopMatch, 'retry for-loop must exist');
+    const postWithRetryMatch = src.match(
+      /async function postWithRetry[\s\S]*?for\s*\(let attempt.*?\{([\s\S]*?)\n\s*}\n\n\s*return lastFailure;/,
+    );
+    assert.ok(postWithRetryMatch, 'postWithRetry loop and terminal fallback must exist');
 
-    const loopBody = forLoopMatch[1]!;
+    const loopBody = postWithRetryMatch[1]!;
     assert.match(
       loopBody,
       /Date\.now\(\)\s*-\s*startTime\s*>\s*MAX_TOTAL_RETRY_MS/,
@@ -137,8 +139,8 @@ describe('DL-020: updateDeliveryStatus after successful POST is wrapped in try/c
 
   it('catch block logs error but does not re-throw', () => {
     // Find the success delivery section (indentation varies)
-    const successBlock = src.match(/if\s*\(success\)\s*\{([\s\S]*?)return true;/);
-    assert.ok(successBlock, 'success block must exist after postWithRetry');
+    const successBlock = src.match(/if\s*\(postResult\.ok\)\s*\{([\s\S]*?)return true;/);
+    assert.ok(successBlock, 'postResult.ok success block must exist after postWithRetry');
 
     const block = successBlock[1]!;
     // Must have catch
@@ -151,8 +153,8 @@ describe('DL-020: updateDeliveryStatus after successful POST is wrapped in try/c
 
   it('returns true after the try/catch, not inside the try block', () => {
     // The `return true` must come after the catch block closes
-    const successBlock = src.match(/if\s*\(success\)\s*\{([\s\S]*?)return true;/);
-    assert.ok(successBlock, 'success block must exist');
+    const successBlock = src.match(/if\s*\(postResult\.ok\)\s*\{([\s\S]*?)return true;/);
+    assert.ok(successBlock, 'postResult.ok success block must exist');
 
     const block = successBlock[1]!;
     // The try/catch must close before return true
