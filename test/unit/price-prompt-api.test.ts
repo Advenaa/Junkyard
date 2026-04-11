@@ -42,7 +42,7 @@ describe('MarketReportLLMSchema includes priceAlerts', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('synthesize.ts price context injection', () => {
-  const synth = readSrc('src/process/synthesize.ts');
+  const synth = readSrc('src/process/synthesize.ts') + '\n' + readSrc('src/process/synthesis-context.ts');
 
   it('imports getLatestPricesForEntities', () => {
     assert.ok(synth.includes('getLatestPricesForEntities'));

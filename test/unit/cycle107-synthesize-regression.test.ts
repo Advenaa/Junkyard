@@ -18,7 +18,7 @@ function readSrc(relPath: string): string {
   return readFileSync(path.join(ROOT, relPath), 'utf-8');
 }
 
-const src = readSrc('src/process/synthesize.ts');
+const src = readSrc('src/process/synthesize.ts') + '\n' + readSrc('src/process/synthesis-context.ts');
 
 // ===========================================================================
 // SY-006: Quiet-day report generation
