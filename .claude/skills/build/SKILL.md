@@ -35,21 +35,24 @@ Never picks its own work — it always takes the next ticket.
 
 ## Preflight
 
+The main checkout is a launchpad only. Every build runs in its own
+worktree at `<main>-worktrees/issue-<N>`. The main checkout is never
+modified, so parallel `/build` sessions can run without fighting.
+
 ```bash
-# 1. Hard stop if brake is on
+# 1. Run from the main checkout. This is the stable cwd we cd back to
+#    on errors and between ticks.
+MAIN="$(git rev-parse --show-toplevel)"
+cd "$MAIN"
+
+# 2. Hard stop if brake is on
 if [ -f .clankerism/PAUSED ]; then
   echo "PAUSED brake engaged — exiting"
   exit 0
 fi
 
-# 2. Must be on main, clean working tree
+# 3. Fetch main so the worktree branches off a fresh base
 git fetch origin main
-git checkout main
-git reset --hard origin/main
-if [ -n "$(git status --porcelain)" ]; then
-  echo "working tree not clean — exiting"
-  exit 1
-fi
 ```
 
 ## Step 1: Pick the issue
@@ -80,14 +83,27 @@ your contract — you are not done until every box is checked in reality.
 
 ## Step 2: Atomic branch claim
 
+Create a dedicated worktree for this issue, then push the new branch.
+The **push** is still the lock — if someone else pushed first, we
+release the worktree and exit.
+
 ```bash
 BRANCH="build/issue-$N"
-git checkout -b "$BRANCH"
+
+# Create the worktree. `claim` fails if the branch already exists
+# locally or on origin — that means a previous session crashed or
+# another clanker beat us. Either way, exit cleanly.
+WT=$(node scripts/worktree.mjs claim "issue-$N") || {
+  echo "worktree claim failed (branch may already exist) — exiting"
+  exit 0
+}
+cd "$WT"
+
 # The push IS the lock. If someone else pushed first, we lose.
 if ! git push -u origin "$BRANCH"; then
-  echo "branch already claimed by another clanker — exiting"
-  git checkout main
-  git branch -D "$BRANCH"
+  echo "branch already claimed by another clanker — releasing worktree and exiting"
+  cd "$MAIN"
+  node scripts/worktree.mjs release "issue-$N"
   exit 0
 fi
 ```
@@ -263,11 +279,24 @@ to sort it out. That is by design — one clanker, one swing.
 |-----------|-------------|
 | No ready issues in the queue | Exit with `no work` message |
 | `.clankerism/PAUSED` present | Exit immediately, log the brake |
-| Branch push rejected | Another clanker won the race — exit, delete local branch |
-| Issue names a file that doesn't exist | Comment on issue, flip to `state:blocked`, exit |
-| Local CI gate fails and you can't fix in-scope | Don't push. Comment on issue with details, flip to `state:blocked`, delete branch, exit |
+| Worktree `claim` fails (branch exists, disk full) | Log the error, exit — another clanker may hold the branch, or a previous crash left state behind (run `worktree.mjs gc`) |
+| Branch push rejected | Another clanker won the race — `cd "$MAIN"`, `node scripts/worktree.mjs release "issue-$N"`, exit |
+| Issue names a file that doesn't exist | Comment on issue, flip to `state:blocked`, exit (leave worktree — repair run may need it) |
+| Local CI gate fails and you can't fix in-scope | Don't push. Comment on issue with details, flip to `state:blocked`, exit (leave worktree — repair run may need it) |
 | Adversarial review finds a material gap | Loop back to Step 5 once. If still broken, `state:blocked` + exit |
 | `gh` auth expired | Exit with a clear message — human action required |
+
+## Worktree lifecycle
+
+- Every build runs in `<main-checkout>-worktrees/issue-<N>`.
+- The worktree **stays on disk until the PR merges**. `/queue` releases
+  it after a successful `gh pr merge`.
+- If the PR is flipped to `queue:blocked`, the worktree stays — a future
+  repair run (`node scripts/worktree.mjs resume "issue-$N"`) reattaches
+  and fixes it.
+- Orphan worktrees (crashed sessions, closed-without-merge issues) are
+  cleaned up by `node scripts/worktree.mjs gc`, which `/scout` runs once
+  per tick. Safe to run any time — idempotent.
 
 ## Things you will be tempted to do and must not
 

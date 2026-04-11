@@ -44,10 +44,19 @@ failures trip the circuit breaker (touch `.clankerism/PAUSED`, exit).
 
 ## Working directory
 
-This skill always operates in `/Users/advena/project/poddershub`. The
-first action of every tick is `cd /Users/advena/project/poddershub`. The
-codex:rescue subagent inherits Claude's cwd, so this `cd` is what gives
-Codex the right repo.
+The main checkout at `/Users/advena/project/poddershub` is a launchpad
+only. The first action of every tick is
+`cd /Users/advena/project/poddershub` — this is the stable cwd where
+preflight, sweeps, and label reads happen.
+
+Once the tick claims an issue, it creates a dedicated worktree at
+`/Users/advena/project/poddershub-worktrees/issue-<N>` and `cd`s into
+it. The codex:rescue subagent inherits Claude's cwd, so Codex runs in
+the worktree — not in main. Main checkout is never modified.
+
+After Codex returns, Claude verifies from the worktree cwd (Step 8).
+On the next tick, Step 1 `cd`s back to main so the loop is resilient
+to worktrees being released (by `/queue` on merge) between ticks.
 
 ---
 
@@ -105,11 +114,11 @@ Reconcile by case:
 
 | PR state | Action |
 |----------|--------|
-| Merged (`mergedAt` non-null) | `gh issue edit $N --remove-label state:in-progress`. Issue is auto-closed; this clears the stale label. |
-| Open, all checks `SUCCESS` | Mark `wait_for_in_flight = true`. Don't touch — the previous tick's Codex is still finishing. |
-| Open, any check `FAILURE` or `CANCELLED` | `gh issue comment $N --body "Sweep: prior CI failed. Flipping to state:blocked."`, then `gh issue edit $N --remove-label state:in-progress --add-label state:blocked`. |
-| No PR returned, branch exists on origin | `gh issue comment $N --body "Sweep: claimed but no PR opened. Re-queueing."`, `gh issue edit $N --remove-label state:in-progress --add-label state:ready`, `git push origin --delete build/issue-$N` (best-effort, ignore errors). |
-| No PR, no branch | `gh issue edit $N --remove-label state:in-progress --add-label state:ready`. |
+| Merged (`mergedAt` non-null) | `gh issue edit $N --remove-label state:in-progress`. Issue is auto-closed; this clears the stale label. Also run `node scripts/worktree.mjs release "issue-$N"` in case `/queue` didn't reach the cleanup step. |
+| Open, all checks `SUCCESS` | Mark `wait_for_in_flight = true`. Don't touch — the previous tick's Codex is still finishing. Leave the worktree alone. |
+| Open, any check `FAILURE` or `CANCELLED` | `gh issue comment $N --body "Sweep: prior CI failed. Flipping to state:blocked."`, then `gh issue edit $N --remove-label state:in-progress --add-label state:blocked`. **Leave the worktree** — a future repair run needs it. |
+| No PR returned, branch exists on origin | `gh issue comment $N --body "Sweep: claimed but no PR opened. Re-queueing."`, `gh issue edit $N --remove-label state:in-progress --add-label state:ready`, `git push origin --delete build/issue-$N` (best-effort, ignore errors), `node scripts/worktree.mjs release "issue-$N"` to drop the orphan. |
+| No PR, no branch | `gh issue edit $N --remove-label state:in-progress --add-label state:ready`. Also run `node scripts/worktree.mjs release "issue-$N"` in case an orphan dir remains. |
 
 If `wait_for_in_flight` is true after the sweep:
 1. Append tick record `outcome: "wait_in_flight"`.
@@ -118,16 +127,17 @@ If `wait_for_in_flight` is true after the sweep:
 
 ### Step 4 — Preflight
 
+The main checkout is a launchpad — we don't reset it. We only need a
+fresh `origin/main` so the worktree we're about to create is based on
+the current tip.
+
 ```bash
+cd /Users/advena/project/poddershub
 git fetch origin main
-git checkout main
-git reset --hard origin/main
-test -z "$(git status --porcelain)"
 ```
 
-If the working tree is not clean after the reset, something is very
-wrong. Append tick record `outcome: "preflight_dirty"`, send a Discord
-webhook, `ScheduleWakeup(600, "tree dirty, retrying", "/loop /build-codex")`.
+If `git fetch` fails, append tick record `outcome: "preflight_dirty"`,
+send a Discord webhook, `ScheduleWakeup(600, "fetch failed, retrying", "/loop /build-codex")`.
 
 ### Step 5 — Pick the next ready issue
 
@@ -163,21 +173,35 @@ prompt template in Step 7.
 
 ### Step 6 — Atomic branch claim
 
-The branch push IS the lock. If the push fails, another agent (or a
-stale ref) holds the branch — back off and try the next tick.
+Create a dedicated worktree for this issue, then push the branch. The
+push is still the lock. On lose: release the worktree and back off.
 
 ```bash
 BRANCH="build/issue-$N"
-git checkout -b "$BRANCH"
+
+# Create <main>-worktrees/issue-$N with build/issue-$N branched off
+# origin/main. Fails cleanly if the branch already exists (prior
+# session crashed, or the sweep missed it).
+WT=$(node scripts/worktree.mjs claim "issue-$N") || {
+  # Treat as branch_race_lost — another session probably holds it.
+  # Append tick record `outcome: "branch_race_lost"`.
+  # ScheduleWakeup(60, "branch race lost, retrying", "/loop /build-codex")
+  # Return.
+}
+cd "$WT"
+
 if ! git push -u origin "$BRANCH"; then
-  git checkout main
-  git branch -D "$BRANCH"
+  cd /Users/advena/project/poddershub
+  node scripts/worktree.mjs release "issue-$N"
   # Append tick record `outcome: "branch_race_lost"`.
   # ScheduleWakeup(60, "branch race lost, retrying", "/loop /build-codex")
   # Return.
 fi
 gh issue edit $N --remove-label state:ready --add-label state:in-progress
 ```
+
+Claude's cwd is now inside the worktree, so the codex:rescue subagent
+spawned in Step 7 inherits it and runs Codex there.
 
 Record the start timestamp now — Step 9 needs it for the duration field.
 
@@ -263,10 +287,13 @@ For any `hard_failure`, Claude itself runs the cleanup:
 ```bash
 gh issue comment $N --body "Loop verification: Codex run did not complete cleanly. Flipping to state:blocked for human triage. Tick: <ts>, duration: <ms>."
 gh issue edit $N --remove-label state:in-progress --add-label state:blocked
-git checkout main
-git branch -D "$BRANCH" 2>/dev/null || true
+cd /Users/advena/project/poddershub
 git push origin --delete "$BRANCH" 2>/dev/null || true
+node scripts/worktree.mjs release "issue-$N"
 ```
+
+The `cd` back to main is important — the worktree we're about to
+release is Claude's current cwd, and `release` will remove it.
 
 For `wait_in_flight` from Step 8 (PR open, CI green, but not yet
 merged), do not flip labels. Append tick record `outcome:

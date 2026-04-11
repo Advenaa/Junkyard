@@ -6,6 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { release as releaseWorktree } from './worktree.mjs';
+
 const execFileAsync = promisify(execFile);
 const QUEUE_READY = 'queue:ready';
 const QUEUE_ACTIVE = 'queue:active';
@@ -45,7 +47,7 @@ function parseArgs(argv) {
     loop: false,
     once: false,
     repo: null,
-    sleepMs: 60_000
+    sleepMs: 60_000,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -179,13 +181,27 @@ async function runQueueCycle(options) {
       '--remove-label',
       QUEUE_BLOCKED,
       '--remove-label',
-      QUEUE_DEFERRED
+      QUEUE_DEFERRED,
     ]);
 
     const issueNumber = parseIssueNumber(nextPr.headRefName);
 
     if (issueNumber !== null) {
-      await runGh(['issue', 'edit', String(issueNumber), '--repo', options.repo, '--remove-label', 'state:in-progress']);
+      await runGh([
+        'issue',
+        'edit',
+        String(issueNumber),
+        '--repo',
+        options.repo,
+        '--remove-label',
+        'state:in-progress',
+      ]);
+
+      try {
+        await releaseWorktree(`issue-${issueNumber}`);
+      } catch (error) {
+        console.warn(`Worktree release for issue-${issueNumber} failed: ${error.message}`);
+      }
     }
 
     console.log(`Merged PR #${nextPr.number}`);
@@ -202,15 +218,7 @@ async function runQueueCycle(options) {
 
 async function isPaused(repo) {
   try {
-    await runGh([
-      'variable',
-      'get',
-      'CLANKERISM_PAUSED',
-      '--repo',
-      repo,
-      '--json',
-      'value'
-    ]);
+    await runGh(['variable', 'get', 'CLANKERISM_PAUSED', '--repo', repo, '--json', 'value']);
     return true;
   } catch (error) {
     const stderr = typeof error?.stderr === 'string' ? error.stderr : '';
@@ -232,14 +240,16 @@ function validatePullRequestMetadata(pullRequest) {
   if (!isMeaningfulMetadata(pullRequest.lockGroup)) {
     return {
       ok: false,
-      summary: 'Queue blocked this PR because the `## Lock group` section is missing or still contains placeholder text.'
+      summary:
+        'Queue blocked this PR because the `## Lock group` section is missing or still contains placeholder text.',
     };
   }
 
   if (!isMeaningfulMetadata(pullRequest.writeSet)) {
     return {
       ok: false,
-      summary: 'Queue blocked this PR because the `## Write set` section is missing or still contains placeholder text.'
+      summary:
+        'Queue blocked this PR because the `## Write set` section is missing or still contains placeholder text.',
     };
   }
 
@@ -299,7 +309,7 @@ async function listOpenPullRequests(repo) {
     '--limit',
     '200',
     '--json',
-    'number,title,createdAt,isDraft,headRefName,url,isCrossRepository,labels,body'
+    'number,title,createdAt,isDraft,headRefName,url,isCrossRepository,labels,body',
   ]);
 
   const pullRequests = JSON.parse(stdout)
@@ -311,9 +321,7 @@ async function listOpenPullRequests(repo) {
 }
 
 function enrichPullRequest(pullRequest) {
-  const labelNames = Array.isArray(pullRequest.labels)
-    ? pullRequest.labels.map((label) => label.name)
-    : [];
+  const labelNames = Array.isArray(pullRequest.labels) ? pullRequest.labels.map((label) => label.name) : [];
   const body = typeof pullRequest.body === 'string' ? pullRequest.body : '';
   const lockGroup = extractMarkdownSection(body, 'Lock group');
   const writeSet = extractMarkdownSection(body, 'Write set');
@@ -324,7 +332,7 @@ function enrichPullRequest(pullRequest) {
     labelNames,
     lockGroup,
     lockGroupKey: normalizeLockGroup(lockGroup),
-    writeSet
+    writeSet,
   };
 }
 
@@ -345,7 +353,9 @@ async function syncDeferredLabels(options, pullRequests) {
       ? ` behind PR #${olderSibling.number} in lock group \`${pullRequest.lockGroup}\``
       : '';
 
-    console.log(`${options.dryRun ? '[dry-run] would ' : ''}${action} ${QUEUE_DEFERRED} on PR #${pullRequest.number}${reason}`);
+    console.log(
+      `${options.dryRun ? '[dry-run] would ' : ''}${action} ${QUEUE_DEFERRED} on PR #${pullRequest.number}${reason}`,
+    );
 
     if (options.dryRun) {
       continue;
@@ -358,7 +368,7 @@ async function syncDeferredLabels(options, pullRequests) {
       '--repo',
       options.repo,
       shouldBeDeferred ? '--add-label' : '--remove-label',
-      QUEUE_DEFERRED
+      QUEUE_DEFERRED,
     ]);
   }
 }
@@ -452,7 +462,7 @@ async function validateGitHubChecks(repo, pullRequestNumber) {
     '--repo',
     repo,
     '--json',
-    'statusCheckRollup'
+    'statusCheckRollup',
   ]);
   const { statusCheckRollup } = JSON.parse(stdout);
   const requiredCheck = Array.isArray(statusCheckRollup)
@@ -465,7 +475,7 @@ async function validateGitHubChecks(repo, pullRequestNumber) {
     return {
       ok: false,
       action: 'wait',
-      summary: `Queue is waiting for GitHub CI. Required check \`${REQUIRED_CI_WORKFLOW} / ${REQUIRED_CI_CHECK}\` has not appeared yet.`
+      summary: `Queue is waiting for GitHub CI. Required check \`${REQUIRED_CI_WORKFLOW} / ${REQUIRED_CI_CHECK}\` has not appeared yet.`,
     };
   }
 
@@ -476,7 +486,7 @@ async function validateGitHubChecks(repo, pullRequestNumber) {
     return {
       ok: false,
       action: 'wait',
-      summary: `Queue is waiting for GitHub CI. Required check \`${REQUIRED_CI_WORKFLOW} / ${REQUIRED_CI_CHECK}\` is currently ${status.toLowerCase() || 'pending'}.`
+      summary: `Queue is waiting for GitHub CI. Required check \`${REQUIRED_CI_WORKFLOW} / ${REQUIRED_CI_CHECK}\` is currently ${status.toLowerCase() || 'pending'}.`,
     };
   }
 
@@ -487,14 +497,12 @@ async function validateGitHubChecks(repo, pullRequestNumber) {
   return {
     ok: false,
     action: 'block',
-    summary: `Queue blocked this PR because GitHub CI failed. Required check \`${REQUIRED_CI_WORKFLOW} / ${REQUIRED_CI_CHECK}\` concluded with \`${conclusion.toLowerCase() || 'unknown'}\`.`
+    summary: `Queue blocked this PR because GitHub CI failed. Required check \`${REQUIRED_CI_WORKFLOW} / ${REQUIRED_CI_CHECK}\` concluded with \`${conclusion.toLowerCase() || 'unknown'}\`.`,
   };
 }
 
 function summarizeWaitingChecks(waitingChecks) {
-  const details = waitingChecks
-    .map(({ pullRequest, summary }) => `- PR #${pullRequest.number}: ${summary}`)
-    .join('\n');
+  const details = waitingChecks.map(({ pullRequest, summary }) => `- PR #${pullRequest.number}: ${summary}`).join('\n');
 
   return `Queue found ready PRs, but they are still waiting on GitHub CI.\n${details}`;
 }
@@ -513,7 +521,7 @@ async function movePullRequestToActive(repo, pullRequestNumber) {
     '--remove-label',
     QUEUE_READY,
     '--add-label',
-    QUEUE_ACTIVE
+    QUEUE_ACTIVE,
   ]);
 }
 
@@ -531,7 +539,8 @@ async function validatePullRequest(number) {
     } catch (error) {
       return {
         ok: false,
-        summary: 'Queue could not materialize the GitHub merge ref for this PR. Rebase or resolve merge conflicts, then re-queue it.'
+        summary:
+          'Queue could not materialize the GitHub merge ref for this PR. Rebase or resolve merge conflicts, then re-queue it.',
       };
     }
 
@@ -541,7 +550,7 @@ async function validatePullRequest(number) {
       ['corepack', ['pnpm', 'run', 'lint']],
       ['corepack', ['pnpm', 'run', 'format:check']],
       ['corepack', ['pnpm', 'test']],
-      ['corepack', ['pnpm', 'run', 'test:dashboard']]
+      ['corepack', ['pnpm', 'run', 'test:dashboard']],
     ];
 
     for (const [command, args] of commands) {
@@ -551,7 +560,7 @@ async function validatePullRequest(number) {
       } catch (error) {
         return {
           ok: false,
-          summary: summarizeFailure(command, args, error)
+          summary: summarizeFailure(command, args, error),
         };
       }
     }
@@ -585,7 +594,7 @@ async function markQueueBlocked(options, pullRequest, summary) {
     '--remove-label',
     QUEUE_ACTIVE,
     '--add-label',
-    QUEUE_BLOCKED
+    QUEUE_BLOCKED,
   ]);
 
   await runGh([
@@ -595,7 +604,7 @@ async function markQueueBlocked(options, pullRequest, summary) {
     '--repo',
     options.repo,
     '--body',
-    `Queue blocked this PR.\n\n${summary}`
+    `Queue blocked this PR.\n\n${summary}`,
   ]);
 
   const issueNumber = parseIssueNumber(pullRequest.headRefName);
@@ -610,7 +619,7 @@ async function markQueueBlocked(options, pullRequest, summary) {
       '--remove-label',
       'state:in-progress',
       '--add-label',
-      'state:blocked'
+      'state:blocked',
     ]);
   }
 }
@@ -662,7 +671,7 @@ async function runCommand(command, args, options = {}) {
   return execFileAsync(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
-    maxBuffer: 10 * 1024 * 1024
+    maxBuffer: 10 * 1024 * 1024,
   });
 }
 
