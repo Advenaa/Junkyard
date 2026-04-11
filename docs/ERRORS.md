@@ -170,3 +170,44 @@ Reports with `delivery_status = 'failed'` listed with date, type, and error reas
 6. Start Fastify server
 
 If any fatal error occurs in steps 1-2, the process exits with a clear error message. Steps 3-6 log but do not halt on non-fatal errors.
+
+## Decision: Error Log Persistence (Issue #32)
+
+PR #28 deliberately excluded a `/api/v1/diag/recent-errors` endpoint from the first batch of diagnostic endpoints because pino writes to stdout/stderr by default, and nothing in the process persists `error`/`fatal` entries in a form that SQL can query. Before adding the endpoint, we had to pick a persistence strategy. This section records the decision so any future reviver of the idea does not have to re-litigate it.
+
+### Options considered
+
+1. **Pino sink into a dedicated `error_log` table.** A custom pino transport inserts every `error`/`fatal` emission into a new table with a rolling retention window (e.g. 24–72h). The `recent-errors` endpoint becomes a thin `SELECT * FROM error_log WHERE created_at > $since`. Cheap at query time, but adds a write on the hottest code path in the project and a brand-new table whose retention policy and index layout must be maintained separately.
+2. **Reuse `health_events`.** Widen the health monitor (or add a second pino transport) so `error`/`fatal` emissions land in the existing `health_events` table with `category = 'error-log'`. No schema migration — `health_events` already has `severity`, `message`, `metadata JSONB`, and a partial `idx_health_events_unacked` index. Retention is already governed by the existing data-retention cron. `/api/v1/diag/health-events?sinceMs=...` already surfaces the data, so an explicit `/recent-errors` endpoint may be redundant.
+3. **File-based rotating log tail.** Write pino errors to a file with a rotation strategy (e.g. `logrotate` or `pino.destination` + size/time limits) and expose the last N lines via the endpoint. Closest to `tail -n 100` semantics but introduces a disk path, a rotation strategy, and a path-traversal surface we do not currently have.
+4. **External aggregator (Loki / Logtail / Better Stack / etc).** Out of scope — adds an infra dependency and a shared-secret to rotate. Rejected without further analysis.
+
+### Decision
+
+**Adopt Option 2: funnel pino `error`/`fatal` into `health_events` with `category = 'error-log'`.** Do not build a separate `/api/v1/diag/recent-errors` endpoint in the first pass — the existing `/api/v1/diag/health-events` filter is sufficient. Revisit only if UX in Settings demands a dedicated shape.
+
+### Rationale
+
+- **Zero schema churn.** `health_events` already models everything we need: `severity` (map pino `error` → `warn`, `fatal` → `critical`), `category` (a new literal, no enum to migrate — the column is `TEXT`), `message` (pino's `msg` field), `metadata` (pino's `mergingObject`, JSON-serializable by construction). The `idx_health_events_unacked` index already pays for filtered reads.
+- **Retention already owned.** The existing data-retention cron already trims `health_events` on a rolling window. Adding a parallel `error_log` table would mean re-implementing retention, and a second set of failure modes when that cron breaks.
+- **Endpoint already exists.** `GET /api/v1/diag/health-events?sinceMs=...` already surfaces the data shape a debugger needs. The only thing missing is a default category filter on the dashboard side — that is a client-side UX change, not a backend feature.
+- **Write path is cold, not hot.** Errors are, by definition, rare. The concern about "writing on the hottest code path" was about all log lines; for `error`/`fatal` only, the insert volume is negligible. A single INSERT-per-error is cheaper than the GC pressure of the pino formatter already in the hot path.
+- **Failure isolation.** If the DB write fails, we must not re-enter the logger and infinite-loop. The transport will catch its own errors, print them once to stderr, and drop the entry — mirroring how the existing DB-down alert path in `src/health.ts` bypasses DB inserts when the pool itself is the failing subsystem.
+
+### Non-goals
+
+- No new table, no migration. If Option 1 ever becomes necessary, it can be added in a later, separate decision.
+- No replacement for `process.stderr` as the primary log sink. Pino-to-stdout stays. This adds a **second** transport; it does not replace the first.
+- No alerting changes. Alert routing still lives in `src/health.ts`; this only changes where error entries are persisted for later inspection, not how the system reacts to them.
+
+### Implementation sketch (for the follow-up ticket)
+
+1. New file `src/logger-db-sink.ts` exporting `createErrorEventsTransport(pool, log)` — a pino transport (or a `pino.multistream` target) that filters on `level >= 50` (error/fatal) and performs `INSERT INTO health_events (id, category, severity, message, metadata, created_at) VALUES ($1, 'error-log', $2, $3, $4, $5)`.
+2. Wire the transport from `src/logger.ts` behind a feature check — it cannot be constructed until the pool exists, so the sink is attached during `src/index.ts` startup after `connectPool()` succeeds, not at module load.
+3. Swallow transport errors inside the sink itself. On failure, log once to stderr with a distinct marker like `LOGGER_DB_SINK_DROP` so production operators can see drops without creating a feedback loop.
+4. Add a dashboard filter in Settings → Diagnostics so `category = 'error-log'` entries render with their own badge instead of sharing the general health-events feed.
+5. Integration test: throw a controlled `error` from a request handler inside a test fixture and assert a row lands in `health_events` with `category = 'error-log'` and the expected `severity` / `message`.
+
+### Follow-up work
+
+A follow-up issue labelled `source:manual` is required to implement Option 2. This file closes issue #32 (design-only) by recording the decision. The follow-up should reference this section in the body so the implementation PR's reviewers have the decision context without re-deriving it.
