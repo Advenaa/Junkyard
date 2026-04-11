@@ -461,9 +461,7 @@ async function runDaily() {
     ? summaries.sort((a, b) => scoreForRanking(b) - scoreForRanking(a)).slice(0, 30)
     : summaries;
   
-  // Select raw exemplars: 7 by engagement + 3 reserved for RSS/news
-  // Ensures news/RSS voice is always represented even when Discord dominates engagement
-  const exemplars = selectExemplars(ranked, { engagement: 7, rssNews: 3 });
+  // Exemplar selection (7 engagement + 3 RSS) happens inline in the Stage 3 input assembler — see PIPELINE.md:680 for the code.
   
   // Narrative clustering — detect emerging themes from summary embeddings (Decision 05)
   // Clusters existing embeddings via k-means, names each cluster with one Haiku call.
