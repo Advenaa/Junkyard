@@ -12,6 +12,21 @@ const noopLog: Logger = {
   child: () => noopLog,
 } as unknown as Logger;
 
+function makeSpyLog() {
+  const warnings: unknown[][] = [];
+  const log: Logger = {
+    info: () => {},
+    warn: (...args: unknown[]) => {
+      warnings.push(args);
+    },
+    error: () => {},
+    debug: () => {},
+    child: () => log,
+  } as unknown as Logger;
+
+  return { log, warnings };
+}
+
 describe('createNewsAdapter', () => {
   let originalFetch: typeof globalThis.fetch;
   let restoreDnsMocks = () => {};
@@ -66,6 +81,34 @@ describe('createNewsAdapter', () => {
     assert.equal(result.fetchFailed, false);
   });
 
+  it('treats oversized HTML bodies as a non-failure and logs a warning', async () => {
+    globalThis.fetch = (async () => {
+      const body = new ReadableStream({
+        start(controller) {
+          const chunk = new Uint8Array(1024 * 1024);
+          for (let i = 0; i < 6; i++) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+    }) as typeof globalThis.fetch;
+
+    const { log, warnings } = makeSpyLog();
+    const adapter = createNewsAdapter(log);
+    const result = await adapter.extract('https://example.com/article');
+
+    assert.equal(result.item, null);
+    assert.equal(result.fetchFailed, false);
+    assert.equal(warnings.length, 1);
+    assert.deepEqual(warnings[0], [
+      { url: 'https://example.com/article' },
+      'news: body exceeded size limit mid-stream',
+    ]);
+  });
+
   it('returns a RawItem when Readability extracts article content', async () => {
     globalThis.fetch = (async () =>
       new Response(
@@ -98,5 +141,17 @@ describe('createNewsAdapter', () => {
     assert.equal(result.item?.sourceId, 'https://example.com/article');
     assert.equal(result.item?.url, 'https://example.com/article');
     assert.match(result.item?.content ?? '', /Bitcoin climbed/i);
+  });
+
+  it('treats network errors as fetch failures', async () => {
+    globalThis.fetch = (async () => {
+      throw new Error('socket hang up');
+    }) as typeof globalThis.fetch;
+
+    const adapter = createNewsAdapter(noopLog);
+    const result = await adapter.extract('https://example.com/article');
+
+    assert.equal(result.item, null);
+    assert.equal(result.fetchFailed, true);
   });
 });

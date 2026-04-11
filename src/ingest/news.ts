@@ -3,7 +3,7 @@ import { parseHTML } from 'linkedom';
 import { ulid } from 'ulid';
 import { fetchValidated } from '../url-validator.js';
 import type { Logger } from '../logger.js';
-import type { RawItem } from './rss.js';
+import { MAX_FEED_BYTES, readBodyLimited, type RawItem } from './rss.js';
 
 interface NewsAdapter {
   extract(url: string): Promise<{ item: RawItem | null; fetchFailed: boolean }>;
@@ -31,7 +31,11 @@ export function createNewsAdapter(log: Logger): NewsAdapter {
           return { item: null, fetchFailed: true };
         }
 
-        const html = await response.text();
+        const html = await readBodyLimited(response, MAX_FEED_BYTES);
+        if (html === null) {
+          log.warn({ url }, 'news: body exceeded size limit mid-stream');
+          return { item: null, fetchFailed: false };
+        }
         const { document } = parseHTML(html);
 
         const reader = new Readability(document);
