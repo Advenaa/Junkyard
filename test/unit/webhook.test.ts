@@ -10,6 +10,7 @@ import {
   enforceEmbedLimit,
   colorForType,
   createDelivery,
+  recoverStalePendingReports,
 } from '../../src/deliver/webhook.js';
 
 describe('truncate', () => {
@@ -1360,6 +1361,121 @@ describe('retryFailed — lookback window', () => {
     fetchMock.mock.restore();
     resolve4Mock.mock.restore();
     resolve6Mock.mock.restore();
+    dateNowMock.mock.restore();
+  });
+
+  it('retries stale pending reports while leaving fresh pending reports alone', async (t) => {
+    const now = 1_700_000_000_000;
+    const reports = [
+      {
+        id: 'pending-stale',
+        type: 'flash',
+        body: VALID_REPORT_BODY,
+        date: '2026-04-01',
+        created_at: now - 10 * 60 * 1000,
+        delivery_status: 'pending',
+      },
+      {
+        id: 'pending-fresh',
+        type: 'flash',
+        body: VALID_REPORT_BODY,
+        date: '2026-04-01',
+        created_at: now - 2 * 60 * 1000,
+        delivery_status: 'pending',
+      },
+      {
+        id: 'failed-normal',
+        type: 'flash',
+        body: VALID_REPORT_BODY,
+        date: '2026-04-01',
+        created_at: now - 10 * 60 * 1000,
+        delivery_status: 'failed',
+      },
+    ];
+
+    const pool = {
+      async query(text: string, values?: unknown[]) {
+        if (text.includes('SELECT value FROM app_config WHERE key = $1')) {
+          return { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }], rowCount: 1 };
+        }
+
+        if (text.includes('SELECT id, type, body, date FROM reports')) {
+          const [dailyCutoff, defaultCutoff, stalePendingCutoff] = (values ?? []) as [number, number, number];
+          const eligible = reports
+            .filter((report) => {
+              const statusOk =
+                report.delivery_status === 'failed' ||
+                (report.delivery_status === 'pending' && report.created_at < stalePendingCutoff);
+              const windowOk =
+                (report.type === 'daily' && report.created_at > dailyCutoff) ||
+                (report.type !== 'daily' && report.created_at > defaultCutoff);
+              return statusOk && windowOk;
+            })
+            .map(({ id, type, body, date }) => ({ id, type, body, date }));
+          return { rows: eligible, rowCount: eligible.length };
+        }
+
+        if (text.includes("UPDATE reports SET delivery_status = 'pending'") && text.includes('RETURNING')) {
+          return { rows: [{ delivery_status: 'pending' }], rowCount: 1 };
+        }
+
+        if (text.includes('UPDATE reports SET delivery_status = $1')) {
+          const status = values?.[0] as string;
+          const reportId = values?.[2] as string;
+          const report = reports.find((entry) => entry.id === reportId);
+          if (report) {
+            report.delivery_status = status;
+          }
+          return { rows: [], rowCount: 1 };
+        }
+
+        return { rows: [], rowCount: 0 };
+      },
+    };
+
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+
+    const config = {} as any;
+    const { retryFailed } = createDelivery(pool as any, silentLog as any, config);
+    const retried = await retryFailed();
+
+    assert.strictEqual(retried, 2);
+    assert.strictEqual(reports.find((report) => report.id === 'pending-stale')!.delivery_status, 'delivered');
+    assert.strictEqual(reports.find((report) => report.id === 'pending-fresh')!.delivery_status, 'pending');
+    assert.strictEqual(reports.find((report) => report.id === 'failed-normal')!.delivery_status, 'delivered');
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+    dateNowMock.mock.restore();
+  });
+});
+
+describe('recoverStalePendingReports', () => {
+  it('flips pending reports older than the stale threshold to failed', async (t) => {
+    const now = 1_700_000_000_000;
+    const queries: Array<{ text: string; values: unknown[] }> = [];
+    const pool = {
+      async query(text: string, values?: unknown[]) {
+        queries.push({ text, values: values ?? [] });
+        return { rows: [], rowCount: 2 };
+      },
+    };
+
+    const dateNowMock = t.mock.method(Date, 'now', () => now);
+    const recovered = await recoverStalePendingReports(pool as any, silentLog as any);
+
+    assert.strictEqual(recovered, 2);
+    assert.strictEqual(queries.length, 1);
+    assert.match(queries[0]!.text, /UPDATE reports SET delivery_status = 'failed'/);
+    assert.match(queries[0]!.text, /WHERE delivery_status = 'pending'/);
+    assert.deepStrictEqual(queries[0]!.values, [now - 5 * 60 * 1000]);
+
     dateNowMock.mock.restore();
   });
 });
