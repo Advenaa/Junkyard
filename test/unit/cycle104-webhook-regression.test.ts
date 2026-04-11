@@ -125,42 +125,30 @@ describe('DL-016: postWithRetry has MAX_TOTAL_RETRY_MS circuit breaker', () => {
 // DL-020: DB failure after POST doesn't cause duplicate delivery
 // ===========================================================================
 
-describe('DL-020: updateDeliveryStatus after successful POST is wrapped in try/catch', () => {
+describe('DL-020: successful POST + failed delivered-status persistence is reconciled without re-sending', () => {
   const src = readSrc('src/deliver/webhook.ts');
 
-  it('wraps updateDeliveryStatus("delivered") in try/catch', () => {
-    // After success path: try { await updateDeliveryStatus(..., 'delivered') } catch
+  it('tracks report IDs whose delivered status still needs reconciliation', () => {
     assert.match(
       src,
-      /try\s*\{\s*\n\s*await\s+updateDeliveryStatus\(pool,\s*report\.id,\s*'delivered'\)/,
-      'updateDeliveryStatus for delivered status must be inside a try block',
+      /const\s+pendingDeliveredStatusReportIds\s*=\s*new Set<string>\(\)/,
+      'createDelivery must track report IDs whose delivered status failed to persist after a successful POST',
     );
   });
 
-  it('catch block logs error but does not re-throw', () => {
-    // Find the success delivery section (indentation varies)
-    const successBlock = src.match(/if\s*\(postResult\.ok\)\s*\{([\s\S]*?)return true;/);
-    assert.ok(successBlock, 'postResult.ok success block must exist after postWithRetry');
-
-    const block = successBlock[1]!;
-    // Must have catch
-    assert.match(block, /catch\s*\(/, 'success path must have a catch clause');
-    // Must log error
-    assert.match(block, /log\.error/, 'catch block must log the error');
-    // Must NOT re-throw (the block ends with return true, not throw)
-    assert.ok(!block.includes('throw'), 'catch block must not re-throw — delivery should still return true');
+  it('adds the report ID to the reconciliation set when delivered-status persistence fails', () => {
+    assert.match(
+      src,
+      /pendingDeliveredStatusReportIds\.add\(report\.id\)/,
+      'the success path catch block must remember the report ID instead of silently returning success',
+    );
   });
 
-  it('returns true after the try/catch, not inside the try block', () => {
-    // The `return true` must come after the catch block closes
-    const successBlock = src.match(/if\s*\(postResult\.ok\)\s*\{([\s\S]*?)return true;/);
-    assert.ok(successBlock, 'postResult.ok success block must exist');
-
-    const block = successBlock[1]!;
-    // The try/catch must close before return true
-    const lastClosingBrace = block.lastIndexOf('}');
-    const catchIdx = block.lastIndexOf('catch');
-    assert.ok(catchIdx > 0, 'catch must exist in success block');
-    assert.ok(lastClosingBrace > catchIdx, 'catch block must close before return true');
+  it('retries only the status reconciliation before any future webhook POST for that report', () => {
+    assert.match(
+      src,
+      /if\s*\(pendingDeliveredStatusReportIds\.has\(report\.id\)\)\s*\{\s*return\s+reconcileDeliveredStatus\(report\.id\);?\s*\}/,
+      'deliver() must reconcile the delivered status before any future webhook POST when the first POST already succeeded',
+    );
   });
 });

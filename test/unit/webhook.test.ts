@@ -947,6 +947,73 @@ describe('deliver — idempotency guard', () => {
     resolve6Mock.mock.restore();
   });
 
+  it('reconciles delivered status without re-posting when the DB update fails after a successful POST', async (t) => {
+    const calls: Array<{ text: string; values: unknown[] }> = [];
+    let deliveredUpdateAttempts = 0;
+    const pool = {
+      calls,
+      async query(text: string, values?: unknown[]) {
+        calls.push({ text, values: values ?? [] });
+
+        if (text.includes('SELECT value FROM app_config WHERE key = $1')) {
+          return { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }], rowCount: 1 };
+        }
+
+        if (text.includes("UPDATE reports SET delivery_status = 'pending'") && text.includes('RETURNING')) {
+          return { rows: [{ delivery_status: 'pending' }], rowCount: 1 };
+        }
+
+        if (text.includes('UPDATE reports SET delivery_status = $1') && values?.[0] === 'delivered') {
+          deliveredUpdateAttempts++;
+          if (deliveredUpdateAttempts === 1) {
+            throw new Error('db write failed after webhook POST');
+          }
+          return { rows: [], rowCount: 1 };
+        }
+
+        return { rows: [], rowCount: 0 };
+      },
+    };
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      return new Response(null, { status: 200 });
+    });
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+
+    const firstAttempt = await deliver(FAKE_REPORT);
+    const secondAttempt = await deliver(FAKE_REPORT);
+
+    assert.strictEqual(
+      firstAttempt,
+      false,
+      'delivery must not report success when the delivered status fails to persist',
+    );
+    assert.strictEqual(secondAttempt, true, 'a later attempt should reconcile delivered status once the DB recovers');
+    assert.strictEqual(fetchMock.mock.callCount(), 1, 'status reconciliation must not send a duplicate webhook POST');
+    assert.strictEqual(resolve4Mock.mock.callCount(), 1, 'status reconciliation should not repeat DNS validation');
+    assert.strictEqual(resolve6Mock.mock.callCount(), 1, 'status reconciliation should not repeat IPv6 validation');
+
+    const claimQueries = calls.filter(
+      (call) => call.text.includes("UPDATE reports SET delivery_status = 'pending'") && call.text.includes('RETURNING'),
+    );
+    assert.strictEqual(claimQueries.length, 1, 'status reconciliation should not re-claim the report for another POST');
+
+    const deliveredUpdates = calls.filter(
+      (call) => call.text.includes('UPDATE reports SET delivery_status = $1') && call.values[0] === 'delivered',
+    );
+    assert.strictEqual(deliveredUpdates.length, 2, 'delivery should retry only the delivered-status persistence');
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
   it('reuses the original DNS validation across delivery retries', async (t) => {
     const pool = mockPool([
       { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },

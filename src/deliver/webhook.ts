@@ -465,6 +465,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
   let consecutiveDeliveryFailures = 0;
   let deliveryCircuitOpenUntil: number | null = null;
   let deliveryCircuitAlertSent = false;
+  const pendingDeliveredStatusReportIds = new Set<string>();
 
   function isDeliveryCircuitOpen(now = Date.now()): boolean {
     if (deliveryCircuitOpenUntil == null) {
@@ -569,7 +570,23 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     }
   }
 
+  async function reconcileDeliveredStatus(reportId: string): Promise<boolean> {
+    try {
+      await updateDeliveryStatus(pool, reportId, 'delivered');
+      pendingDeliveredStatusReportIds.delete(reportId);
+      log.info({ reportId }, 'reconciled delivered status after earlier successful POST');
+      return true;
+    } catch (err: unknown) {
+      log.error({ err, reportId }, 'failed to reconcile delivered status after earlier successful POST');
+      return false;
+    }
+  }
+
   async function deliver(report: Report): Promise<boolean> {
+    if (pendingDeliveredStatusReportIds.has(report.id)) {
+      return reconcileDeliveredStatus(report.id);
+    }
+
     let parsed: MarketReportParsed;
     try {
       parsed = JSON.parse(report.body) as MarketReportParsed;
@@ -627,13 +644,16 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       log.info({ reportId: report.id, type: report.type }, 'webhook delivered');
       try {
         await updateDeliveryStatus(pool, report.id, 'delivered');
+        pendingDeliveredStatusReportIds.delete(report.id);
+        return true;
       } catch (err: unknown) {
+        pendingDeliveredStatusReportIds.add(report.id);
         log.error(
           { err, reportId: report.id },
-          'failed to update delivery status after successful POST — will remain pending but not re-sending',
+          'failed to persist delivered status after successful POST — will retry status reconciliation without re-sending',
         );
+        return false;
       }
-      return true;
     }
 
     await recordDeliveryFailure();
