@@ -291,17 +291,19 @@ export function registerAdminRoutes({
         },
       },
     },
-    async (request) => {
+    async (request, reply) => {
       const { discordId, role } = request.body as { discordId: string; role: string };
       const now = Date.now();
       const existing = await pool.query<Pick<UserRow, 'role' | 'username'>>(
         `SELECT role, username FROM users WHERE discord_id = $1`,
         [discordId],
       );
+      if (existing.rows.length > 0) {
+        return reply.code(409).send({ error: 'User already exists' });
+      }
       const { rows } = await pool.query<UserRow>(
         `INSERT INTO users (discord_id, username, avatar, role, created_at, last_login_at)
          VALUES ($1, $2, NULL, $3, $4, NULL)
-         ON CONFLICT (discord_id) DO UPDATE SET role = EXCLUDED.role
          RETURNING *`,
         [discordId, 'Pending invite', role, now],
       );
@@ -311,7 +313,7 @@ export function registerAdminRoutes({
         targetDiscordId: discordId,
         targetUsername: rows[0]?.username ?? null,
         action: 'invite',
-        previousRole: existing.rows[0]?.role ?? null,
+        previousRole: null,
         newRole: role,
       });
       return toCamelCase<UserRow>(rows[0] as unknown as Record<string, unknown>);
