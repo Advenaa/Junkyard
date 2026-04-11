@@ -1121,7 +1121,10 @@ export function createPulse(
         'pulse',
         'Pulse synthesis',
       );
-      if (!report) return succeed(null);
+      if (!report) {
+        await recordPulseAbort(new Error('pulse LLM response failed schema validation after retry'));
+        return null;
+      }
 
       // Insert report
       const reportId = ulid();
