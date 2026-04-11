@@ -59,6 +59,18 @@ complete the core workflow end-to-end?
   prompt, dashboard, test) rather than one do-everything agent. Briefs must
   be precise enough that agents can run in parallel without stepping on
   each other.
+- **Upstream-broken main → hotfix, don't retry.** If attempt 1 fails on a
+  symbol or file outside your write-set (introduced by a recently-merged
+  sibling PR), do not "fix" it inside your diff. File a `p0` hotfix issue,
+  hand it to the queue, and emit `wait_main_broken` until it lands. Piling
+  more commits onto your own branch just hides the upstream break.
+  Precedent: tick `11`, #137 caught a dangling `resolvedEntityIds` from
+  PR #121 and shipped hotfix #142/PR #145 instead of touching its own diff.
+- **Contract split over rewrite.** When changing a shared signature would
+  cascade into every caller, keep the legacy surface and add a sibling
+  method. Precedent: #82 kept `resolveEntities(): Promise<string[]>` and
+  added `resolveEntitiesDetailed()` for the new metadata shape. A rewrite
+  would have reopened every Stage 1 caller.
 
 ---
 
@@ -74,6 +86,12 @@ complete the core workflow end-to-end?
 - **Don't mock the database in integration tests.** Mocked tests pass while
   the real migration fails. We've been burned by this — if it needs a DB,
   use the CI Postgres service.
+- **Sandbox write-path errors are environment, not code.** `EPERM` on
+  `.agents/`, `.git/index.lock` contention, DNS/gh-token failures inside
+  the codex sandbox are not bugs in the diff. Don't try to fix them by
+  editing source. Either mirror the artifacts post-gate (precedent: #30
+  `.agents/` mirrored from the claude side) or engage PAUSED and wait for a
+  human (precedent: #92, stash preserved, loop correctly refused to retry).
 
 ---
 

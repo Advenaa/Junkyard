@@ -503,6 +503,38 @@ git fetch origin main
 If `git fetch` fails, append tick record `outcome: "preflight_dirty"`,
 send a Discord webhook, `ScheduleWakeup(600, "fetch failed, retrying", "/loop /build-codex")`.
 
+**Main-broken short-circuit.** Before claiming any issue, check whether
+the most recent `loop-log.ndjson` entry was `wait_main_broken` with a
+hotfix PR that still hasn't merged. If it was, every fresh claim this
+tick will gate-fail on the same upstream bug — so skip the claim path
+entirely and wait for the hotfix to land:
+
+```bash
+LAST_OUTCOME=$(tail -n 20 .clankerism/loop-log.ndjson 2>/dev/null \
+  | jq -rc 'select(.outcome=="wait_main_broken") | .' \
+  | tail -n 1)
+if [ -n "$LAST_OUTCOME" ]; then
+  HOTFIX_PR=$(echo "$LAST_OUTCOME" | jq -r '.hotfix_pr // empty')
+  if [ -n "$HOTFIX_PR" ]; then
+    PR_STATE=$(gh pr view "$HOTFIX_PR" --json state --jq '.state' 2>/dev/null)
+    if [ "$PR_STATE" = "OPEN" ]; then
+      TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+      jq -nc --arg ts "$TS" --arg tick_id "$TICK_ID" \
+        --argjson hotfix_pr "$HOTFIX_PR" \
+        '{ts:$ts, tick_id:$tick_id, outcome:"wait_main_broken", hotfix_pr:$hotfix_pr, notes:"hotfix PR still open, skipping claim"}' \
+        >> .clankerism/loop-log.ndjson
+      # consecutive_failures unchanged (this is env, not a code failure)
+      ScheduleWakeup(1800, "main broken, waiting on hotfix PR #$HOTFIX_PR", "/loop /build-codex")
+      return
+    fi
+  fi
+fi
+```
+
+This check is cheap (one `gh pr view`) and prevents burning tick budget
+when main is known broken. Once the hotfix merges, the next tick falls
+through to the normal claim path.
+
 ### Step 5 — Pick the next issue (resume trumps claim)
 
 **Resume-first rule.** If Step 3 filled `resumable_issues[]`, the tick
@@ -754,6 +786,66 @@ while [ "$TICK_ATTEMPT" -le "$TICK_CAP" ]; do
     # Codex has given up. Don't burn more tick budget on the same issue.
     # Step 8 will classify this tick's outcome.
     break
+  fi
+
+  # --- Upstream-broken-main detection (gate_failed only). ---------------
+  # If Codex's failing file lives OUTSIDE this branch's diff, the break
+  # was introduced by a recently-merged sibling PR and is not this
+  # session's bug. Trying to "fix" it would pollute our own branch and
+  # burn the retry budget. File a p0 hotfix issue instead and stop.
+  #
+  # Precedent: tick 11 (#137 → hotfix #142/PR #145), where #137's
+  # attempt 1 failed on entities.ts(553) dangling resolvedEntityIds
+  # introduced by PR #121. The builder improvised a hotfix; formalized
+  # here so future ticks don't need to improvise.
+  if [ "$STATUS" = "gate_failed" ] && [ "$GATE_STEP" = "build" ]; then
+    # Extract the first referenced file path from the excerpt.
+    # TS errors look like: src/foo/bar.ts(553,34): error TS2552: ...
+    FAILING_FILE=$(echo "$EXCERPT" \
+      | grep -oE '(src|dashboard/src|test)/[A-Za-z0-9_./-]+\.(ts|tsx|js)' \
+      | head -n 1)
+    if [ -n "$FAILING_FILE" ]; then
+      DIFF_FILES=$(git -C "$WT" diff --name-only origin/main 2>/dev/null)
+      if ! echo "$DIFF_FILES" | grep -qxF "$FAILING_FILE"; then
+        # Upstream break confirmed — failing file is not in our diff.
+        STATUS=wait_main_broken
+        # File a p0 hotfix issue. Claude runs gh (Codex can't).
+        HOTFIX_BODY=$(cat <<EOF
+Main build is broken on \`$FAILING_FILE\` — surfaced by /build-codex
+while working on #$N (tick $TICK_ID, attempt $TICK_ATTEMPT).
+
+This file is not in the write-set of #$N, so the break was introduced
+by a recently-merged sibling PR. Filing as p0 hotfix to unblock every
+in-progress and ready issue.
+
+Excerpt:
+\`\`\`
+$EXCERPT
+\`\`\`
+
+- [ ] Identify the introducing commit (\`git log --oneline -- $FAILING_FILE\`)
+- [ ] Produce the smallest diff that makes \`pnpm run build\` green
+- [ ] Open PR with \`queue:ready\` so the merge queue picks it up
+EOF
+)
+        HOTFIX_PR_N=$(gh issue create \
+          --title "p0: main build broken on $FAILING_FILE (surfaced by #$N)" \
+          --body "$HOTFIX_BODY" \
+          --label "state:ready,p0,type:hotfix,source:clanker" \
+          --json number --jq '.number' 2>/dev/null)
+        # Overwrite last NDJSON attempt record with wait_main_broken outcome
+        # so Step 8 classifies correctly.
+        jq -nc \
+          --arg ts "$(date -u +%FT%TZ)" \
+          --arg tick_id "$TICK_ID" \
+          --argjson attempt "$GLOBAL_ATTEMPT" \
+          --arg failing_file "$FAILING_FILE" \
+          --argjson hotfix_pr "${HOTFIX_PR_N:-0}" \
+          '{ts:$ts, tick_id:$tick_id, attempt:$attempt, run:"build-codex", outcome:"wait_main_broken", gate_step:"build", failing_file:$failing_file, hotfix_pr:$hotfix_pr, terminal:false}' \
+          >> "$ATTEMPTS_FILE"
+        break
+      fi
+    fi
   fi
 
   # gate_failed — feed the excerpt back in for the next attempt.
@@ -1187,6 +1279,8 @@ exited early (Codex never reached `passing`), classify now:
 if [ -z "$CLASSIFICATION" ]; then
   if [ "$STATUS" = "hard_error" ]; then
     CLASSIFICATION=hard_failure
+  elif [ "$STATUS" = "wait_main_broken" ]; then
+    CLASSIFICATION=wait_main_broken
   else
     # Exhausted TICK_CAP with gate_failed every attempt.
     CLASSIFICATION=soft_failure
@@ -1210,6 +1304,7 @@ gh pr list --head "$BRANCH" --state all \
 | `handed_to_queue` (parallel-mode fork ran) | PR open with `queue:ready` label, issue still `state:in-progress` | Do NOT flip labels, do NOT release the worktree, do NOT delete the NDJSON. The `/queue` session will merge (or flip to `queue:blocked` → sweep picks up as repair) on its own cadence. Schedule next tick at the `clean_win` cadence so the loop can grab more work. |
 | `soft_failure` (budget/TICK_CAP) | Still `state:in-progress` | Comment "attempt budget exhausted after $TICK_ATTEMPT tick attempts, $PRIOR_FAILS prior runs", flip → `state:blocked` (but re-read labels first and skip if human already set `state:blocked`), append `terminal:true` marker to NDJSON, **leave** worktree + NDJSON for `/fix` |
 | `hard_failure` (hard_error, contract violation, fix-commit path failed) | Still `state:in-progress`, PR may or may not exist | Comment with Codex's last 200 chars of output, flip → `state:blocked` (race-guarded), append `terminal:true`, leave worktree + NDJSON |
+| `wait_main_broken` (Step 7 detected upstream break) | Still `state:in-progress` | **Do not** flip labels. **Do not** release the worktree or delete the NDJSON — this issue is resumable the moment the hotfix merges. Do not append `terminal:true`. The hotfix issue was already filed in Step 7. Leave everything intact so the next tick (after the Step 4 main-broken short-circuit clears) picks this issue back up via the resume path. |
 | PR open, all checks SUCCESS but not merged (anomaly) | Merge step never ran in 7.5 | `wait_in_flight` — log "anomaly: green CI but not merged", do not flip labels |
 | User already set `state:blocked` mid-run | any | Honor it — do not re-flip, classify as `soft_failure`, leave everything |
 
@@ -1255,6 +1350,7 @@ Step 9 schedules a 120s wakeup so the next tick can re-verify.
 | `soft_failure` | += 1 |
 | `hard_failure` | += 1 |
 | `wait_in_flight` | unchanged |
+| `wait_main_broken` | unchanged (upstream break is env, not our code — would unfairly trip the 3-failure circuit breaker) |
 | `queue_empty` | unchanged |
 | `preflight_dirty` | unchanged |
 | `branch_race_lost` | unchanged |
@@ -1401,6 +1497,7 @@ not abort the tick.
 | Cross-tick attempt budget exhausted (`PRIOR_FAILS >= 5`) | Sweep catches it first, comments "budget exhausted", flips to `state:blocked`, records `soft_failure`. If the sweep misses it, Step 6's 6a check catches it. |
 | Local tick retries exhausted (`TICK_CAP` Codex attempts all `gate_failed`) | Record `soft_failure`, flip `state:blocked` (race-guarded), append `terminal:true` to NDJSON, leave worktree + NDJSON, 180s cooldown. |
 | Codex's final message doesn't end with the 3-line `STATUS=...` contract | Treat as `hard_error` → `hard_failure`. Log the last 200 chars of Codex's output as the NDJSON excerpt. Do not retry within the tick — contract violation usually means a bug in the prompt or the Codex CLI, not a flake. |
+| Codex `gate_failed` on a file outside this branch's diff (upstream break introduced by a sibling PR) | `wait_main_broken`. Do NOT try to fix the upstream file. File a `p0 type:hotfix source:clanker` issue citing the failing file + excerpt, break out of the retry loop, leave the worktree + NDJSON intact for resume, skip label flips, schedule a 1800s wakeup. The next tick's Step 4 short-circuit will keep skipping claims until the hotfix merges. Precedent: tick 11 (#137 → hotfix #142/PR #145). |
 | Remote CI goes red on first try, local fix gate passes, pushed fix also goes red | `hard_failure`. No second fix commit. `state:blocked`, leave worktree + NDJSON. |
 | Remote CI red, Codex's fix attempt fails its own local gate | `hard_failure`. Do not push a broken fix. `state:blocked`, leave worktree + NDJSON. |
 | `gh run list` after fix push returns the old run ID for 30+ seconds | `hard_failure`. Log "CI run never materialized for fix commit". The workflow may have been skipped (paths filter, etc.) — human triage. |
