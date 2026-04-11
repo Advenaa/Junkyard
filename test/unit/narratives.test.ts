@@ -2,6 +2,9 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createNarrativeDetector, midnightEpoch, decrementDate } from '../../src/process/narratives.js';
 import type { Narrative } from '../../src/process/narratives.js';
+import { createPool } from '../../src/db/connection.js';
+import { runMigrations } from '../../src/db/migrations.js';
+import { getNarrativeDrilldownById } from '../../src/db/queries.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -382,6 +385,9 @@ describe('createNarrativeDetector', () => {
 
     // Should have inserted into DB
     assert.equal(inserts.length, narratives.length);
+    for (const params of inserts) {
+      assert.ok(Array.isArray(params[6]), 'summary_ids insert param should be a JS array');
+    }
   });
 
   it('narratives have correct signalStrength "new" when no prior narratives', async () => {
@@ -861,4 +867,110 @@ describe('decrementDate', () => {
   it('handles non-leap year Feb', () => {
     assert.strictEqual(decrementDate('2023-03-01'), '2023-02-28');
   });
+});
+
+describe('narrative TEXT[] round-trip with PostgreSQL', () => {
+  it(
+    'persists summaryIds as a PostgreSQL text[] and reads them back',
+    { skip: !process.env['DATABASE_URL'] },
+    async () => {
+      const databaseUrl = process.env['DATABASE_URL'];
+      assert.ok(databaseUrl, 'DATABASE_URL must be set when this test runs');
+
+      const pool = createPool(databaseUrl);
+      await runMigrations(pool);
+      const client = await pool.connect();
+
+      const runKey = `narrative-roundtrip-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const timezone = 'Asia/Jakarta';
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+      const yesterdayStr = decrementDate(todayStr);
+      const startOfDay = midnightEpoch(yesterdayStr, timezone);
+
+      const clusteredVectors = [
+        [1, 0, 0],
+        [0.99, 0.01, 0],
+        [0.98, 0.02, 0],
+        [0, 1, 0],
+        [0.01, 0.99, 0],
+        [0.02, 0.98, 0],
+        [0, 0, 1],
+        [0.01, 0, 0.99],
+        [0.02, 0, 0.98],
+      ];
+
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO app_config (key, value)
+           VALUES ('timezone', $1)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+          [timezone],
+        );
+
+        const expectedIds = new Set<string>();
+        for (let i = 0; i < clusteredVectors.length; i++) {
+          const summaryId = `${runKey}-summary-${i}`;
+          expectedIds.add(summaryId);
+          const createdAt = startOfDay + 60_000 + i * 1_000;
+
+          await client.query(
+            `INSERT INTO summaries (id, source, source_id, window_start, window_end, body, sentiment, urgency, item_count, created_at)
+             VALUES ($1, 'twitter', $2, $3, $4, $5, $6, 'routine', 1, $7)`,
+            [
+              summaryId,
+              `@${runKey}_${i}`,
+              createdAt - 30_000,
+              createdAt,
+              `Summary ${i} for ${runKey}`,
+              i % 2 === 0 ? 0.4 : -0.1,
+              createdAt,
+            ],
+          );
+
+          await client.query(
+            `INSERT INTO embeddings (id, target_type, target_id, model, dimensions, vector, created_at)
+             VALUES ($1, 'summary', $2, 'test-embedder', 3, $3, $4)`,
+            [`${runKey}-embedding-${i}`, summaryId, vectorToBuffer(clusteredVectors[i]), createdAt],
+          );
+        }
+
+        const detector = createNarrativeDetector(
+          client as never,
+          noopLog,
+          defaultConfig,
+          mockLlm(['Cluster Alpha', 'Cluster Beta', 'Cluster Gamma']),
+          enabledEmbedder,
+        );
+
+        const narratives = await detector.detectNarratives();
+        assert.ok(narratives.length >= 1, 'detectNarratives should insert at least one narrative');
+
+        const insertedNarrative = narratives[0];
+        const {
+          rows: [storedNarrative],
+        } = await client.query<{ summary_ids: string[] }>('SELECT summary_ids FROM narratives WHERE id = $1', [
+          insertedNarrative.id,
+        ]);
+
+        assert.ok(storedNarrative, 'narrative row should be inserted');
+        assert.deepEqual(storedNarrative.summary_ids, insertedNarrative.summaryIds);
+
+        const drilldown = await getNarrativeDrilldownById(client as never, insertedNarrative.id);
+        assert.ok(drilldown, 'drilldown should read the inserted narrative');
+        assert.deepEqual(
+          new Set(drilldown.summaries.map((summary) => summary.id)),
+          new Set(insertedNarrative.summaryIds),
+        );
+
+        for (const summaryId of insertedNarrative.summaryIds) {
+          assert.ok(expectedIds.has(summaryId), `narrative should only reference seeded summaries: ${summaryId}`);
+        }
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+        await pool.end();
+      }
+    },
+  );
 });
