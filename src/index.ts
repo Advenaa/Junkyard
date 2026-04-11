@@ -21,6 +21,7 @@ import { createAlphaTracker } from './knowledge/alpha-tracker.js';
 import { createDecayManager } from './knowledge/decay.js';
 import { createDelivery } from './deliver/webhook.js';
 import { createTwitterAdapter } from './ingest/twitter.js';
+import { createNewsAdapter } from './ingest/news.js';
 import { createPriceTracker } from './prices/tracker.js';
 import { createMacroTracker } from './macro/tracker.js';
 import { pollFeed } from './ingest/rss.js';
@@ -292,6 +293,7 @@ program
 
     // ── 3. Ingest adapters ────────────────────────────────────────────
     const twitterAdapter = createTwitterAdapter(config, pool, log);
+    const newsAdapter = createNewsAdapter(log);
     const priceTracker = createPriceTracker(pool, log, config.coingeckoApiKey ?? undefined);
     const macroTracker = createMacroTracker(pool, log, config.fredApiKey ?? undefined);
     let currentDiscordTokens = initialDiscordTokens;
@@ -401,8 +403,8 @@ program
                 }
               }
             } else if (src.source === 'news') {
-              // News adapter is URL-based extraction, not poll-based — skip in poll loop
-              return;
+              const item = await newsAdapter.extract(src.source_id);
+              items = item ? [item] : [];
             }
 
             // Normalize each item

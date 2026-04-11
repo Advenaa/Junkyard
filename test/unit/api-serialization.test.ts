@@ -312,6 +312,17 @@ describe('toCamelCase — structural (server.ts source)', () => {
     );
   });
 
+  it('GET /api/v1/reports parses body JSON for source-family metadata', () => {
+    const reportsEndpoint = source.indexOf("'/api/v1/reports'");
+    const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
+    const handlerSlice = source.slice(reportsEndpoint, reportIdEndpoint);
+    assert.ok(
+      handlerSlice.includes('report.sourceFamilies'),
+      'GET /api/v1/reports should expose source-family metadata when stored report bodies include it',
+    );
+    assert.match(handlerSlice, /parsed\?\.sourceFamilies\s*\?\?\s*parsed\?\.source_families/);
+  });
+
   it('GET /api/v1/reports selects body so previews can be derived', () => {
     const reportsEndpoint = source.indexOf("'/api/v1/reports'");
     const reportIdEndpoint = source.indexOf("'/api/v1/reports/:id'");
@@ -653,6 +664,16 @@ describe('CD-014 — reports/:id parses body JSON (server.ts source)', () => {
     assert.ok(
       handlerSlice.includes('extractReportEntityNames'),
       'reports/:id should derive chain drilldowns from parsed report entity names instead of brittle prompt-text matching',
+    );
+  });
+
+  it('extracts sourceFamilies from parsed body', () => {
+    const reportIdStart = source.indexOf("'/api/v1/reports/:id'");
+    const summariesStart = source.indexOf("'/api/v1/summaries/:id'");
+    const handlerSlice = source.slice(reportIdStart, summariesStart);
+    assert.ok(
+      handlerSlice.includes('report.sourceFamilies'),
+      'reports/:id must extract sourceFamilies from the parsed body',
     );
   });
 

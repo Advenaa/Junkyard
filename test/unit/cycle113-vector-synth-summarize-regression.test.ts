@@ -3,7 +3,7 @@
  *
  * VE-010: cosineSimilarity dimension guard
  * SD-013: Divergence uses trailing 24h window
- * IP-015: Entity resolution failure keeps summary
+ * IP-015: Entity resolution failure rolls back summary
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,46 +97,13 @@ describe('SD-013 — Divergence uses trailing 24h window', () => {
 });
 
 // ---------------------------------------------------------------------------
-// IP-015 — Entity resolution failure keeps summary
+// IP-015 — Entity resolution failure rolls back summary
 // ---------------------------------------------------------------------------
-describe('IP-015 — Entity resolution failure keeps summary', () => {
-  /** Extract the entity resolution try/catch block from summarize.ts. */
-  function extractEntityResolutionBlock(): string {
-    // Find the actual resolveEntities call (not the interface definition)
-    // The call site uses entityManager.resolveEntities(
-    const resolveIdx = summarizeSrc.indexOf('entityManager.resolveEntities(');
-    assert.notEqual(resolveIdx, -1, 'Could not locate entityManager.resolveEntities() call in summarize.ts');
+describe('IP-015 — Entity resolution failure rolls back summary', () => {
+  function extractSummaryTransactionCatch(): string {
+    const catchStart = summarizeSrc.indexOf('} catch (summaryErr: unknown) {');
+    assert.notEqual(catchStart, -1, 'Could not locate summary transaction catch block');
 
-    // Walk backwards to find the enclosing try
-    const beforeResolve = summarizeSrc.slice(0, resolveIdx);
-    const tryIdx = beforeResolve.lastIndexOf('try');
-    assert.notEqual(tryIdx, -1, 'Could not locate try block before resolveEntities');
-
-    // Walk forward from resolveEntities to find the OUTER catch block
-    // (skip inner try/catch pairs like the alpha tracker wrapper)
-    const afterResolve = summarizeSrc.slice(resolveIdx);
-    let catchSearchPos = 0;
-    let outerCatchIdx = -1;
-    let tryDepth = 0;
-    while (catchSearchPos < afterResolve.length) {
-      const nextTry = afterResolve.indexOf('try', catchSearchPos);
-      const nextCatch = afterResolve.indexOf('catch', catchSearchPos);
-      if (nextCatch === -1) break;
-      if (nextTry !== -1 && nextTry < nextCatch) {
-        tryDepth++;
-        catchSearchPos = nextTry + 3;
-      } else if (tryDepth > 0) {
-        tryDepth--;
-        catchSearchPos = nextCatch + 5;
-      } else {
-        outerCatchIdx = nextCatch;
-        break;
-      }
-    }
-    assert.notEqual(outerCatchIdx, -1, 'Could not locate catch block after resolveEntities');
-
-    // Extract from try to the end of the catch block
-    const catchStart = resolveIdx + outerCatchIdx;
     const catchBody = summarizeSrc.slice(catchStart);
     const braceOpen = catchBody.indexOf('{');
     let depth = 0;
@@ -150,35 +117,48 @@ describe('IP-015 — Entity resolution failure keeps summary', () => {
       }
     }
 
-    return summarizeSrc.slice(tryIdx, catchEnd);
+    return summarizeSrc.slice(catchStart, catchEnd);
   }
 
-  const block = extractEntityResolutionBlock();
+  const catchBlock = extractSummaryTransactionCatch();
 
-  it('resolveEntities is wrapped in a try/catch', () => {
-    assert.match(block, /try\s*\{/, 'resolveEntities must be wrapped in a try block');
-    assert.ok(block.includes('catch'), 'resolveEntities must have a catch block');
+  it('starts a transaction before inserting the summary', () => {
+    assert.ok(summarizeSrc.includes("await client.query('BEGIN')"), 'Summary path must begin a transaction');
+    assert.ok(
+      summarizeSrc.includes('await insertSummary(client, summaryRow)'),
+      'Summary insert must use the tx client',
+    );
   });
 
-  it('catch block logs a warning (not error)', () => {
-    // The catch block should use log.warn, not log.error
-    const catchSection = block.slice(block.indexOf('catch'));
-    assert.ok(catchSection.includes('log.warn'), 'Entity resolution catch block must log a warning via log.warn');
+  it('passes the shared client into resolveEntities', () => {
+    assert.match(
+      summarizeSrc,
+      /entityManager\.resolveEntities\([\s\S]*predominantLang,\s*client,\s*\)/,
+      'resolveEntities must run on the same client as insertSummary',
+    );
   });
 
-  it('catch block does NOT delete the summary', () => {
-    const catchSection = block.slice(block.indexOf('catch'));
-    assert.ok(!catchSection.includes('deleteSummary'), 'Entity resolution catch block must NOT call deleteSummary');
+  it('commits only after entity resolution completes', () => {
+    const resolveIdx = summarizeSrc.indexOf('entityManager.resolveEntities(');
+    const commitIdx = summarizeSrc.indexOf("await client.query('COMMIT')");
+    assert.ok(
+      resolveIdx !== -1 && commitIdx !== -1 && commitIdx > resolveIdx,
+      'COMMIT must happen after resolveEntities',
+    );
   });
 
-  it('catch block does NOT re-throw the error', () => {
-    const catchSection = block.slice(block.indexOf('catch'));
-    // Check there's no throw statement in the catch block
-    assert.ok(!catchSection.match(/\bthrow\b/), 'Entity resolution catch block must NOT re-throw the error');
+  it('catch block rolls back and re-throws', () => {
+    assert.ok(
+      catchBlock.includes("await client.query('ROLLBACK').catch(() => {});"),
+      'Summary transaction catch block must roll back',
+    );
+    assert.match(catchBlock, /\bthrow\s+summaryErr\b/, 'Summary transaction catch block must re-throw the error');
   });
 
-  it('log message mentions keeping the summary', () => {
-    const catchSection = block.slice(block.indexOf('catch'));
-    assert.ok(catchSection.includes('keeping summary'), 'Entity resolution warning must mention keeping the summary');
+  it('does not keep the old keep-summary warning path', () => {
+    assert.ok(
+      !summarizeSrc.includes('keeping summary without entities'),
+      'Entity resolution failure should no longer keep orphaned summaries',
+    );
   });
 });

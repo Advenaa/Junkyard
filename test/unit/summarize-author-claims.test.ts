@@ -49,75 +49,81 @@ function makePool(
   aliasRows: Array<{ id: string; lookup_key: string }> = [],
 ) {
   const calls: Array<{ text: string; values: unknown[] }> = [];
+  const query = async (text: string, values?: unknown[]) => {
+    calls.push({ text, values: values ?? [] });
+
+    if (text.includes("SET batch_id = $1, status = 'processing'")) {
+      return { rows: [], rowCount: items.length };
+    }
+    if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
+      return { rows: items, rowCount: items.length };
+    }
+    if (text.includes('INSERT INTO summaries')) {
+      return { rows: [], rowCount: 1 };
+    }
+    if (text.includes('INSERT INTO authors')) {
+      return {
+        rows: [
+          {
+            id: `author-${values?.[2] as string}`,
+            platform: values?.[1],
+            handle: values?.[2],
+            display_name: values?.[3] ?? null,
+            first_seen: values?.[4],
+            last_seen: values?.[4],
+            mention_count: 1,
+            credibility_score: null,
+            total_calls: 0,
+            correct_calls: 0,
+            created_at: values?.[5],
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (text.includes('SELECT id, LOWER(name) AS lookup_key')) {
+      return { rows: entityRows, rowCount: entityRows.length };
+    }
+    if (text.includes('SELECT DISTINCT ON (ea.alias)')) {
+      return { rows: aliasRows, rowCount: aliasRows.length };
+    }
+    if (text.includes('INSERT INTO author_calls')) {
+      return {
+        rows: [
+          {
+            id: values?.[0],
+            author_id: values?.[1],
+            entity_id: values?.[2],
+            claim_type: values?.[3],
+            claim_text: values?.[4],
+            confidence: values?.[5],
+            source_item_id: values?.[6] ?? null,
+            timestamp: values?.[7],
+            resolved: false,
+            outcome: null,
+            resolved_at: null,
+            created_at: values?.[8],
+          },
+        ],
+        rowCount: 1,
+      };
+    }
+    if (text.includes("UPDATE items SET status = 'processed'")) {
+      return { rows: [], rowCount: items.length };
+    }
+    if (text.includes('UPDATE items')) {
+      return { rows: [], rowCount: items.length };
+    }
+    return { rows: [], rowCount: 0 };
+  };
+
   return {
     calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-
-      if (text.includes("SET batch_id = $1, status = 'processing'")) {
-        return { rows: [], rowCount: items.length };
-      }
-      if (text.includes('SELECT') && text.includes('FROM items') && text.includes('batch_id')) {
-        return { rows: items, rowCount: items.length };
-      }
-      if (text.includes('INSERT INTO summaries')) {
-        return { rows: [], rowCount: 1 };
-      }
-      if (text.includes('INSERT INTO authors')) {
-        return {
-          rows: [
-            {
-              id: `author-${values?.[2] as string}`,
-              platform: values?.[1],
-              handle: values?.[2],
-              display_name: values?.[3] ?? null,
-              first_seen: values?.[4],
-              last_seen: values?.[4],
-              mention_count: 1,
-              credibility_score: null,
-              total_calls: 0,
-              correct_calls: 0,
-              created_at: values?.[5],
-            },
-          ],
-          rowCount: 1,
-        };
-      }
-      if (text.includes('SELECT id, LOWER(name) AS lookup_key')) {
-        return { rows: entityRows, rowCount: entityRows.length };
-      }
-      if (text.includes('SELECT DISTINCT ON (ea.alias)')) {
-        return { rows: aliasRows, rowCount: aliasRows.length };
-      }
-      if (text.includes('INSERT INTO author_calls')) {
-        return {
-          rows: [
-            {
-              id: values?.[0],
-              author_id: values?.[1],
-              entity_id: values?.[2],
-              claim_type: values?.[3],
-              claim_text: values?.[4],
-              confidence: values?.[5],
-              source_item_id: values?.[6] ?? null,
-              timestamp: values?.[7],
-              resolved: false,
-              outcome: null,
-              resolved_at: null,
-              created_at: values?.[8],
-            },
-          ],
-          rowCount: 1,
-        };
-      }
-      if (text.includes("UPDATE items SET status = 'processed'")) {
-        return { rows: [], rowCount: items.length };
-      }
-      if (text.includes('UPDATE items')) {
-        return { rows: [], rowCount: items.length };
-      }
-      return { rows: [], rowCount: 0 };
-    },
+    query,
+    connect: async () => ({
+      query,
+      release: () => {},
+    }),
   };
 }
 

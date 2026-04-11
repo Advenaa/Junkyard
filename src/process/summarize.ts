@@ -15,7 +15,7 @@ import {
   upsertAuthor,
 } from '../db/queries.js';
 import type { EntityRelationshipType, EventRow } from '../db/queries.js';
-import type { Pool } from '../db/connection.js';
+import type { Pool, PoolClient } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { normalizeAlias } from '../knowledge/entities.js';
@@ -43,6 +43,7 @@ interface EntityManager {
     source: string,
     summaryId: string,
     language?: string | null,
+    client?: PoolClient,
   ): Promise<string[]>;
 }
 
@@ -1197,9 +1198,7 @@ Rules:
         const sentiments = parsed.entities.map((e) => e.sentiment);
         const avgSentiment = sentiments.length > 0 ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length : null;
 
-        // g. Insert summary + resolve entities atomically
-        // Summary is inserted first (entity_mentions reference summary_id),
-        // but if entity resolution fails the summary is rolled back to prevent orphans.
+        // g. Insert summary + resolve entities atomically to avoid orphaned summaries.
         const summaryId = ulid();
         const summaryRow = {
           id: summaryId,
@@ -1214,10 +1213,13 @@ Rules:
           createdAt: Date.now(),
         };
 
-        await insertSummary(pool, summaryRow);
+        let resolvedEntityIds: string[] = [];
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await insertSummary(client, summaryRow);
 
-        if (parsed.entities.length > 0) {
-          try {
+          if (parsed.entities.length > 0) {
             // Determine predominant language of items in this chunk
             const langCounts = new Map<string, number>();
             for (const item of chunk) {
@@ -1226,29 +1228,29 @@ Rules:
             }
             const predominantLang = [...langCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
-            const resolvedEntityIds = await entityManager.resolveEntities(
+            resolvedEntityIds = await entityManager.resolveEntities(
               parsed.entities,
               source,
               summaryId,
               predominantLang,
+              client,
             );
+          }
 
-            // Track alpha propagation for resolved entities
-            if (alphaTracker && resolvedEntityIds.length > 0) {
-              try {
-                await alphaTracker.trackMentions(source, sourceId, resolvedEntityIds, windowEnd);
-              } catch (alphaErr: unknown) {
-                log.warn(
-                  { summaryId, err: alphaErr, source, sourceId },
-                  'Alpha propagation tracking failed, continuing',
-                );
-              }
-            }
-          } catch (entityErr: unknown) {
-            log.warn(
-              { summaryId, err: entityErr, source, sourceId, entityCount: parsed.entities.length },
-              'Entity resolution failed for summary, keeping summary without entities',
-            );
+          await client.query('COMMIT');
+        } catch (summaryErr: unknown) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw summaryErr;
+        } finally {
+          client.release();
+        }
+
+        // Track alpha propagation for resolved entities after the summary transaction commits.
+        if (alphaTracker && resolvedEntityIds.length > 0) {
+          try {
+            await alphaTracker.trackMentions(source, sourceId, resolvedEntityIds, windowEnd);
+          } catch (alphaErr: unknown) {
+            log.warn({ summaryId, err: alphaErr, source, sourceId }, 'Alpha propagation tracking failed, continuing');
           }
         }
 
