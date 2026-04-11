@@ -54,9 +54,14 @@ describe('NR-004: parseLabeledOutput handles skipped labels', () => {
 
 describe('NR-003: News source type handled in poll loop', () => {
   const indexSrc = readSrc('src/index.ts');
+  const newsSectionStart = indexSrc.indexOf("source === 'news'");
+  const newsSection = indexSrc.slice(newsSectionStart, newsSectionStart + 250);
 
   it('has explicit news source handling', () => {
     assert.ok(indexSrc.includes("source === 'news'"), 'Poll loop must explicitly handle news source type');
+    assert.ok(indexSrc.includes('createNewsAdapter(log)'), 'Poll loop must instantiate the news adapter');
+    assert.ok(newsSection.includes('newsAdapter.extract(src.source_id)'), 'News source must call the news adapter');
+    assert.ok(!newsSection.includes('skip in poll loop'), 'News source must not be a silent no-op');
   });
 });
 
