@@ -432,16 +432,13 @@ Pass all gates → INSERT as `ready`.
 
 ### Step 2.5: Stage 2 — Correlate
 
-**Files**: `src/process/correlate.ts`, `src/knowledge/trust.ts`
+**Files**: `src/process/correlate.ts`
 
 **Implementation**:
 1. **Correlation query**: SQL — entities in 2+ distinct sources within 24h
 2. **Flash trigger**: compute `weightedSum = sum(trust_weight)` across breaking sources. Fire if `>= 1.5` (NOT simple "2+ sources")
-3. **Trust weight auto-adjustment** (1h post-flash):
-   - Confirmed sources: `+0.05` (capped at `initial + 0.2`)
-   - Unconfirmed: `-0.03` (floored at `initial - 0.2`)
 
-**Verify**: Flash fires at weighted sum 1.5, not at 1.4. Trust adjustment stays within ±0.2 bounds.
+**Verify**: Flash fires at weighted sum 1.5, not at 1.4.
 
 **Depends on**: 2.4 (summaries + entity mentions in DB).
 
@@ -945,7 +942,6 @@ src/process/narratives.ts       # k-means narrative clustering
 src/deliver/webhook.ts          # Discord webhook delivery
 src/knowledge/entities.ts       # Entity resolution (3 tiers)
 src/knowledge/aliases.ts        # Alias lookup + insert
-src/knowledge/trust.ts          # Trust weight adjustment
 src/scheduler.ts                # Cron + mutex + crash recovery
 src/health.ts                   # 7-check health monitor
 ```
