@@ -1,0 +1,58 @@
+name: Clanker Queue
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - ready_for_review
+
+concurrency:
+  group: clanker-queue
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  queue:
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install queue runner dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run one queue cycle
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/clanker-queue.mjs --once --repo "${GITHUB_REPOSITORY}"

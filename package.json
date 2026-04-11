@@ -15,6 +15,13 @@
   },
   "scripts": {
     "build": "tsc && corepack pnpm --dir dashboard build",
+    "clanker:labels": "node scripts/clanker-sync-labels.mjs",
+    "clanker:pause": "node scripts/clanker-brake.mjs pause",
+    "clanker:queue": "node scripts/clanker-queue.mjs --once",
+    "clanker:queue:loop": "node scripts/clanker-queue.mjs --loop",
+    "clanker:resume": "node scripts/clanker-brake.mjs resume",
+    "clanker:status": "node scripts/clanker-brake.mjs status",
+    "clanker:verify": "node scripts/clanker-verify.mjs",
     "dev": "tsx watch src/index.ts -- run",
     "start": "node dist/index.js run",
     "test": "node --import tsx/esm --test test/unit/*.test.ts",

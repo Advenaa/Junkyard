@@ -105,31 +105,46 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for full schema, API contract, and buil
 
 ## Clankerism Workflow
 
-Work is queued as **GitHub Issues** labeled `state:ready | p0–p3 | type:* | source:*`. See `.clankerism/README.md` for the full taxonomy, the 4-role model (`/scout` produces, `/build` consumes, `/fix` triages, `/verify` regression-checks), and the safety model. When you consume a ready issue — whether via the Claude Code `/build` skill or procedurally from Codex — follow this exact flow:
+Work is queued as **GitHub Issues** labeled `state:ready | p0–p3 | type:* | source:*`. See `.clankerism/README.md` for the full taxonomy, the 5-role model (`/scout` produces, `/build` opens or repairs PRs, `/queue` merges serially, `/verify` smoke-checks, `/fix` triages fires), and the safety model. When you run as a builder — whether via a skill or procedurally from Codex — follow this exact flow:
 
 1. **Check the soft brake.** If `.clankerism/PAUSED` exists, exit immediately with a one-line status.
-2. **Claim atomically.** The push of `build/issue-<N>` IS the lock. If origin rejects it, another agent won the race — exit gracefully, do not retry under a different name.
+   The remote repo variable `CLANKERISM_PAUSED` is also authoritative for unattended queue/verify runs.
+2. **Claim atomically.** Fresh work is locked by the push of `build/issue-<N>`. Blocked repairs are locked by the push of `repair/pr-<PR>`. If origin rejects the relevant lock branch, another agent won the race — exit gracefully, do not retry under a different name.
    ```bash
    git checkout -b build/issue-<N>
    git push -u origin build/issue-<N>
    gh issue edit <N> --remove-label state:ready --add-label state:in-progress
    ```
+   For blocked repairs, work on the existing `build/issue-<N>` branch after claiming the repair lock, and move the issue `state:blocked` → `state:in-progress`.
 3. **Implement the smallest diff** that fully solves the issue. Verify locally with `pnpm run build`, `pnpm run lint`, `pnpm run format:check`, and the narrowest relevant tests. Avoid drive-by refactors.
-4. **Open the PR** with a `Fixes #<N>` footer so GitHub auto-closes the issue on merge.
-5. **Watch CI synchronously.** Do NOT use `gh pr merge --auto` — it is unreliable on this free-plan repo (no branch protection means `--auto` either fires immediately or refuses to arm):
-   ```bash
-   gh run watch <run-id> --exit-status
-   ```
-6. **On green CI**, merge and explicitly clear the state label. GitHub auto-closes the issue via the `Fixes #N` footer, but the `state:in-progress` label does NOT clear on its own — closed issues accept label edits, so strip it explicitly:
-   ```bash
-   gh pr merge <pr> --squash --delete-branch
-   gh issue edit <N> --remove-label state:in-progress
-   ```
-7. **On red CI**, do NOT push a "fix" commit onto the same branch. Comment on the issue, flip it to `state:blocked`, exit. A human or `/fix` run will triage.
+4. **Open or reuse the PR** with:
+   - `Fixes #<N>`
+   - the issue's `Lock group`
+   - the issue's `Write set`
+5. **Hand off to the queue.** When the PR is genuinely ready for serialized merge, add `queue:ready` and stop. Builders do **not** merge their own PRs anymore.
+   If an older open PR already occupies the same lock group, the queue may add `queue:deferred` and wait.
+6. **If the queue blocks the PR,** the linked issue flips to `state:blocked`. A future builder run may claim a `repair/pr-<PR>` lock, refresh the existing branch, fix the failing step, and re-add `queue:ready`.
+
+When you are running the dedicated queue session, use:
+
+```bash
+pnpm run clanker:queue:loop
+```
+
+That runner scans open PRs by lock group, marks younger siblings `queue:deferred`, waits for the standard GitHub `CI / build-and-test` check to pass, re-tests GitHub's synthetic merge ref on top of the latest `main`, merges on success, and marks the PR `queue:blocked` plus the linked issue `state:blocked` on failure.
+
+Repo-side autonomy now exists for the boring parts:
+
+- `.github/workflows/clanker-queue.yml` runs the serialized queue automatically
+  on PR activity, CI completion, and a fallback schedule
+- `.github/workflows/clanker-verify.yml` runs the lightweight smoke verifier after successful `main` CI runs and on a canary schedule
+- `pnpm run clanker:pause` / `clanker:resume` control the remote brake those workflows respect
+
+Autonomous builders should still stop at `queue:ready`.
 
 ### Safety model (no GitHub Pro)
 
-The repo is private on the free GitHub plan, so branch protection is unavailable. Enforcement lives in `scripts/hooks/pre-push`, auto-installed on every `pnpm install` via the `postinstall` script. The hook:
+The repo is private on the free GitHub plan, so branch protection is unavailable. Enforcement lives in `scripts/hooks/pre-push`, the issue-branch lock, and the dedicated queue runner. The hook:
 
 - Rejects any push to `main` (override: `CLANKERISM_ALLOW_MAIN=1`, logged to `.clankerism/override-log.txt`)
 - Rejects any non-fast-forward push anywhere (override: `CLANKERISM_ALLOW_FORCE=1`, never honored on main)
@@ -139,6 +154,9 @@ Never bypass the hook with `--no-verify`. Never set both overrides at once.
 ### Hard rules
 
 - **One issue per session.** No "bundled" PRs combining multiple issues.
+- **Builders stop at `queue:ready`.** Only the queue session merges to `main`.
+- **Do not strip `queue:deferred` by hand.** Either wait for the older sibling PR to clear or close/re-scope one of the PRs.
+- **Release repair locks.** If you claimed `repair/pr-<PR>`, delete that remote lock branch before you exit.
 - **Never modify `.clankerism/scout-state.md`.** That file belongs to `/scout`.
 - **Never amend a published commit or force-push a branch with an open PR.**
 - **Never self-assign work.** Clankers consume what `/scout` or humans produce.

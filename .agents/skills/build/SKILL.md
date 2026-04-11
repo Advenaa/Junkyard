@@ -1,18 +1,22 @@
 ---
 name: build
-description: Claim one ready issue from the Clankerism queue, ship a PR that resolves it, and auto-merge on green CI. This is the consumer half of Clankerism.
+description: Claim one ready issue or resume one queue:blocked PR from the Clankerism queue, ship the fix, and hand it to the serialized queue. This is the consumer half of Clankerism.
 ---
 
 # /build — Clankerism Consumer
 
-The line cook of the Clankerism kitchen. Pulls one `state:ready` issue off
-the queue, cooks it, plates it as a PR, and walks away. Never batches issues.
-Never picks its own work — it always takes the next ticket.
+The line cook of the Clankerism kitchen. `/build` does one of two things:
+
+- claims one fresh `state:ready` issue and plates it as a PR
+- resumes one open `queue:blocked` PR and hands it back to `/queue`
+
+Never batches issues. Never picks its own work — it always takes the next
+claimable ticket.
 
 **Invocation**:
 
-- `/build` — claim the next highest-priority ready issue
-- `/build <N>` — claim a specific issue by number
+- `/build` — claim the next highest-priority repairable blocked PR or ready issue
+- `/build <N>` — work a specific issue number, either as a fresh claim or a blocked repair
 
 `$ARGUMENTS` may contain the issue number.
 
@@ -20,68 +24,82 @@ Never picks its own work — it always takes the next ticket.
 
 1. **One issue per run.** If you finish early, exit — don't start a second.
 2. **One PR per run.** No "bundled" PRs combining multiple issues.
-3. **Claim atomically.** The only lock is pushing `build/issue-$N` to origin.
+3. **Claim atomically.** Fresh work is locked by pushing `build/issue-$N` to
+   origin. Blocked repairs are locked by pushing `repair/pr-$PR` to origin.
    If the push is rejected, another clanker got there first — exit gracefully,
    do NOT retry with a different name.
 4. **Check the PAUSED brake.** If `.clankerism/PAUSED` exists, exit immediately
-   with a one-line status.
+   with a one-line status. The remote `CLANKERISM_PAUSED` repo variable is
+   also authoritative for unattended runs.
 5. **Never force-push to main.** Never amend a published commit. Never
    disable hooks (`--no-verify`, `--no-gpg-sign`).
 6. **Never modify `.clankerism/scout-state.md`.** That file belongs to
    `/scout`.
-7. **If CI fails after PR open, do NOT push a "fix" commit onto the same
-   branch.** Instead: comment on the issue, flip to `state:blocked`, let a
-   human triage. We don't let clankers chase their own tails.
+7. **Builders never merge.** Builders stop at `queue:ready`. Only `/queue`
+   is allowed to merge to `main`.
+8. **If the queue blocks the PR, do NOT fight it in the same run.** Leave it
+   for a fresh `/build` repair run, `/fix`, or a human.
+9. **Always release the repair lock branch.** If you claimed `repair/pr-$PR`,
+   delete that remote lock branch before you exit, whether the repair worked or
+   not.
 
 ## Preflight
 
 ```bash
 # 1. Hard stop if brake is on
-if [ -f .clankerism/PAUSED ]; then
+if ! corepack pnpm run clanker:status -- --exit-code-if-paused; then
   echo "PAUSED brake engaged — exiting"
   exit 0
 fi
 
 # 2. Must be on main, clean working tree
 git fetch origin main
-git checkout main
-git reset --hard origin/main
 if [ -n "$(git status --porcelain)" ]; then
   echo "working tree not clean — exiting"
   exit 1
 fi
+git checkout main
+git pull --ff-only origin main
 ```
 
-## Step 1: Pick the issue
+## Step 1: Pick the work item
 
-If `$ARGUMENTS` is a number, use that issue. Otherwise, ask `gh` for the
-highest-priority `state:ready` issue, walking `p0 → p1 → p2 → p3`:
+There are two valid targets:
+
+- **Fresh issue**: open issue labeled `state:ready`
+- **Blocked repair**: open PR labeled `queue:blocked` whose head branch is
+  `build/issue-$N`
+
+If `$ARGUMENTS` is a number:
+
+1. Prefer the open blocked PR for `build/issue-$N` if one exists.
+2. Otherwise, use the open `state:ready` issue `#N`.
+3. If neither exists, exit cleanly.
+
+If `$ARGUMENTS` is empty, walk priorities `p0 → p1 → p2 → p3`. For each
+priority:
+
+1. Look for the oldest open `queue:blocked` PR whose linked issue has that
+   priority and whose repair lock is still claimable.
+2. If none are claimable, look for the oldest open `state:ready` issue with
+   that priority.
+3. Stop on the first claimable target.
+
+If there is no claimable blocked PR and no ready issue, exit with `no work`.
+
+Once you have `N`, read the issue body in full via `gh issue view $N --json
+title,body,labels`. Extract the acceptance criteria (`- [ ]` checkboxes in the
+body). Those are your contract — you are not done until every box is checked in
+reality.
+
+## Step 2: Atomic claim
+
+### Fresh issue
 
 ```bash
-for prio in p0 p1 p2 p3; do
-  N=$(gh issue list \
-        --state open \
-        --label "state:ready" \
-        --label "$prio" \
-        --limit 1 \
-        --json number --jq '.[0].number')
-  if [ -n "$N" ]; then break; fi
-done
-
-if [ -z "$N" ]; then
-  echo "no ready issues — exiting"
-  exit 0
-fi
-```
-
-Read the issue body in full via `gh issue view $N --json title,body,labels`.
-Extract the acceptance criteria (`- [ ]` checkboxes in the body). Those are
-your contract — you are not done until every box is checked in reality.
-
-## Step 2: Atomic branch claim
-
-```bash
+MODE="fresh"
 BRANCH="build/issue-$N"
+
 git checkout -b "$BRANCH"
 # The push IS the lock. If someone else pushed first, we lose.
 if ! git push -u origin "$BRANCH"; then
@@ -90,13 +108,38 @@ if ! git push -u origin "$BRANCH"; then
   git branch -D "$BRANCH"
   exit 0
 fi
-```
 
-Immediately after the push succeeds, flip the issue label:
-
-```bash
 gh issue edit $N \
   --remove-label state:ready \
+  --add-label state:in-progress
+```
+
+### Blocked repair
+
+Assume the blocked PR number is `$PR`, and its head branch is
+`build/issue-$N`.
+
+```bash
+MODE="repair"
+BRANCH="build/issue-$N"
+LOCK_BRANCH="repair/pr-$PR"
+
+git fetch origin "$BRANCH"
+git checkout -B "$LOCK_BRANCH" "origin/$BRANCH"
+
+# The repair lock is a separate remote branch. If it already exists,
+# another builder is already repairing this PR.
+if ! git push -u origin "$LOCK_BRANCH"; then
+  echo "repair already claimed by another clanker — exiting"
+  git checkout main
+  git branch -D "$LOCK_BRANCH"
+  exit 0
+fi
+
+git checkout -B "$BRANCH" "origin/$BRANCH"
+
+gh issue edit $N \
+  --remove-label state:blocked \
   --add-label state:in-progress
 ```
 
@@ -136,11 +179,11 @@ Run the full local CI gate, in this order. If ANY step fails, do not paper
 over it — fix the root cause:
 
 ```bash
-npm run build          # tsc + vite dashboard
-npm run lint           # 0 errors
-npm run format:check   # all files formatted
-npm test               # backend unit tests
-npm run test:dashboard # dashboard vitest
+pnpm run build          # tsc + vite dashboard
+pnpm run lint           # 0 errors
+pnpm run format:check   # all files formatted
+pnpm test               # backend unit tests
+pnpm run test:dashboard # dashboard vitest
 ```
 
 If your change touches integration paths, also mention in the PR body that
@@ -178,17 +221,21 @@ Fixes #<N>
 Co-Authored-By: Claude Opus 4.6 (1M context) <noreply@anthropic.com>
 ```
 
-`git push` to the already-upstream branch.
-
-## Step 9: Open the PR and watch CI
-
-Because this repo is on the free GitHub plan (no branch protection /
-rulesets), `gh pr merge --auto` is unreliable — it may either merge
-immediately or refuse to arm. Instead, the clanker watches the CI run
-synchronously and merges manually on green.
+Push to the already-upstream work branch:
 
 ```bash
-# 1. Open the PR
+git push origin "$BRANCH"
+```
+
+## Step 9: Hand off to `/queue`
+
+Because this repo now uses a serialized merge queue, the builder does not
+watch CI to completion and does not merge manually. The builder opens or
+reuses the PR, marks it ready for the queue, and exits.
+
+### Fresh issue
+
+```bash
 PR_URL=$(gh pr create \
   --base main \
   --head "$BRANCH" \
@@ -197,75 +244,75 @@ PR_URL=$(gh pr create \
 ## Summary
 <1–3 bullets>
 
-## Acceptance
-<copy the issue checklist, marked off where done>
-
-## Test plan
-- [x] npm run build
-- [x] npm run lint
-- [x] npm run format:check
-- [x] npm test
-- [x] npm run test:dashboard
-- [ ] integration (CI only)
-
+## Linked issue
 Fixes #$N
+
+## Lock group
+<copy from issue>
+
+## Write set
+<copy from issue>
+
+## Validation
+- [x] pnpm run build
+- [x] pnpm run lint
+- [x] pnpm run format:check
+- [x] pnpm test
+- [x] pnpm run test:dashboard
+- [ ] integration (CI / queue only)
+
+## Queue checklist
+- [x] Branch is ready for serialized merge
+- [x] This PR does not knowingly overlap an older open PR in the same lock group
+- [x] Add `queue:ready` only when the PR is genuinely ready for the queue
 EOF
 )")
 
-PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
-
-# 2. Find the CI run for this push
-sleep 5  # give GitHub a moment to register the run
-RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')
-if [ -z "$RUN_ID" ]; then
-  echo "no CI run found for $BRANCH — human triage required"
-  gh issue comment "$N" --body "/build: no CI run detected after push. Human triage needed."
-  gh issue edit "$N" --remove-label state:in-progress --add-label state:blocked
-  exit 1
-fi
-
-# 3. Block until CI finishes. Exit code reflects CI result.
-if ! gh run watch "$RUN_ID" --exit-status; then
-  echo "CI red — NOT merging. PR stays open for human review."
-  gh issue comment "$N" --body "/build: CI failed on run $RUN_ID. PR #$PR_NUMBER stays open for triage."
-  gh issue edit "$N" --remove-label state:in-progress --add-label state:blocked
-  exit 1
-fi
-
-# 4. CI green — merge. Squash so main history stays clean.
-gh pr merge "$PR_NUMBER" --squash --delete-branch
-
-# 5. GitHub auto-closes the issue via "Fixes #N", but the state label
-#    does NOT clear on its own. Remove state:in-progress explicitly so
-#    the closed issue doesn't show a misleading WIP label in queries.
-gh issue edit "$N" --remove-label state:in-progress
+gh pr edit "$PR_URL" --remove-label queue:blocked --add-label queue:ready
 ```
 
-If the merge succeeds, GitHub's "Fixes #N" in the commit message closes
-the issue automatically and the deploy job fires. The clanker then
-strips the stale `state:in-progress` label (closed issues accept label
-edits). The clanker's work is done.
+### Blocked repair
+
+Use the existing PR. Do **not** open a replacement PR unless the branch is
+hopelessly wedged and a human explicitly decides to supersede it.
+
+```bash
+gh pr edit "$PR" --remove-label queue:blocked --add-label queue:ready
+```
+
+If you claimed a repair lock, release it after the handoff:
+
+```bash
+git push origin --delete "$LOCK_BRANCH"
+```
+
+`/queue` will retest the GitHub merge ref on top of the newest `main`,
+merge on green, and clear `state:in-progress` on the linked issue when the
+branch is named `build/issue-$N`. If an older open PR already occupies the
+same lock group, `/queue` may add `queue:deferred` and wait instead of racing
+the merge.
 
 ## Step 10: Exit cleanly
 
 Exit. The PR will either:
 
-- **Go green in CI** → auto-merges → deploy ships it → issue auto-closes.
-- **Fail CI** → a human sees it. Do NOT push more commits trying to fix it
-  from this same skill run.
+- **Pass queue validation** → `/queue` merges it → deploy ships it → issue auto-closes.
+- **Wait behind an older sibling** → `/queue` adds `queue:deferred` until the same-lock-group lane is clear.
+- **Fail queue validation** → `/queue` flips it to `queue:blocked` and leaves a comment.
 
-If the PR fails CI after you exit, a future run of `/fix` or a human gets
-to sort it out. That is by design — one clanker, one swing.
+If the queue blocks the PR after you exit, a future `/build` repair run,
+`/fix`, or a human gets to sort it out.
 
 ## Failure modes + what to do
 
 | Situation | What you do |
 |-----------|-------------|
-| No ready issues in the queue | Exit with `no work` message |
+| No ready issues and no claimable blocked PRs | Exit with `no work` message |
 | `.clankerism/PAUSED` present | Exit immediately, log the brake |
-| Branch push rejected | Another clanker won the race — exit, delete local branch |
+| Fresh issue branch push rejected | Another clanker won the race — exit, delete local branch |
+| Repair lock push rejected | Another clanker is already repairing that blocked PR — skip or exit |
 | Issue names a file that doesn't exist | Comment on issue, flip to `state:blocked`, exit |
-| Local CI gate fails and you can't fix in-scope | Don't push. Comment on issue with details, flip to `state:blocked`, delete branch, exit |
+| Local CI gate fails and you can't fix in-scope | Leave or restore `queue:blocked`, flip the issue to `state:blocked`, delete the repair lock if one exists, exit |
 | Adversarial review finds a material gap | Loop back to Step 5 once. If still broken, `state:blocked` + exit |
 | `gh` auth expired | Exit with a clear message — human action required |
 
@@ -274,7 +321,8 @@ to sort it out. That is by design — one clanker, one swing.
 - **Claim two issues because they're "related"**. No. One run, one issue.
 - **Modify an unrelated file because you noticed a typo**. No. File a new
   issue via `/scout` if it matters.
-- **Push a follow-up commit to fix CI**. No. `state:blocked`, exit.
+- **Hot-patch a queue-blocked PR in the same run that just got blocked**. No.
+  Exit and let a fresh repair run claim it cleanly.
 - **Re-use a branch name another clanker already pushed to**. Never. The
   branch name IS the lock.
 - **Create the issue yourself if none exist**. That is `/scout`'s job.
