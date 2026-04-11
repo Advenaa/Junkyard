@@ -68,7 +68,7 @@ export async function pollFeed(
   feedUrl: string,
   lastId: string | null,
   log: Logger,
-): Promise<{ items: RawItem[]; lastId: string | null }> {
+): Promise<{ items: RawItem[]; lastId: string | null; fetchFailed: boolean }> {
   try {
     const parser = new RssParser();
 
@@ -85,12 +85,12 @@ export async function pollFeed(
     const contentLength = Number(feedResponse.headers.get('content-length') ?? 0);
     if (contentLength > MAX_FEED_BYTES) {
       log.warn({ feedUrl, contentLength }, 'Feed too large, skipping');
-      return { items: [], lastId };
+      return { items: [], lastId, fetchFailed: false };
     }
     const feedXml = await feedResponse.text();
     if (feedXml.length > MAX_FEED_BYTES) {
       log.warn({ feedUrl, size: feedXml.length }, 'Feed body exceeded size limit');
-      return { items: [], lastId };
+      return { items: [], lastId, fetchFailed: false };
     }
     const feed = await parser.parseString(feedXml);
 
@@ -209,10 +209,10 @@ export async function pollFeed(
 
     const newestGuid = filtered.length > 0 ? filtered[filtered.length - 1]!._guid : lastId;
 
-    return { items, lastId: newestGuid };
+    return { items, lastId: newestGuid, fetchFailed: false };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     log.error({ feedUrl, error: message }, 'Failed to poll RSS feed');
-    return { items: [], lastId };
+    return { items: [], lastId, fetchFailed: true };
   }
 }

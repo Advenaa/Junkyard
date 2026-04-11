@@ -59,8 +59,8 @@ describe('RS-010: RSS feed body capped at 5 MB', () => {
   });
 
   it('returns early with empty items when feed is too large', () => {
-    // Both checks should return { items: [], lastId }
-    const matches = src.match(/return\s*\{\s*items\s*:\s*\[\]\s*,\s*lastId\s*\}/g);
+    // Both checks should return { items: [], lastId, fetchFailed: false }
+    const matches = src.match(/return\s*\{\s*items\s*:\s*\[\]\s*,\s*lastId\s*,\s*fetchFailed\s*:\s*false\s*\}/g);
     assert.ok(matches && matches.length >= 2, 'Must have at least 2 early returns with empty items for size checks');
   });
 });

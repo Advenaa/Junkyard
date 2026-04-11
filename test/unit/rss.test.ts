@@ -151,6 +151,7 @@ describe('pollFeed', () => {
     const result = await pollFeed('https://example.com/feed.xml', null, noopLog);
 
     assert.equal(result.items.length, 2);
+    assert.equal(result.fetchFailed, false);
     assert.equal(result.items[0]!.content, item1.contentSnippet);
     assert.equal(result.items[0]!.author, 'Alice');
     assert.equal(result.items[0]!.source, 'rss');
@@ -261,6 +262,7 @@ describe('pollFeed', () => {
 
     assert.equal(result.items.length, 0);
     assert.equal(result.lastId, 'prev-id'); // preserves previous lastId
+    assert.equal(result.fetchFailed, true);
     assert.ok(errors.length > 0, 'error should have been logged');
   });
 
