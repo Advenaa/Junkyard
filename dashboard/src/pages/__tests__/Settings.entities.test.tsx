@@ -257,6 +257,20 @@ describe('Settings entity relationships', () => {
         });
       }
 
+      const priceMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/price$/);
+      if (priceMatch && method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            latest: null,
+            history: [],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
       const competitorsMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/competitors$/);
       if (competitorsMatch && method === 'GET') {
         const entityId = competitorsMatch[1];

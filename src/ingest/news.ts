@@ -6,12 +6,12 @@ import type { Logger } from '../logger.js';
 import type { RawItem } from './rss.js';
 
 interface NewsAdapter {
-  extract(url: string): Promise<RawItem | null>;
+  extract(url: string): Promise<{ item: RawItem | null; fetchFailed: boolean }>;
 }
 
 export function createNewsAdapter(log: Logger): NewsAdapter {
   return {
-    async extract(url: string): Promise<RawItem | null> {
+    async extract(url: string): Promise<{ item: RawItem | null; fetchFailed: boolean }> {
       try {
         const { response, validation } = await fetchValidated(url, {
           signal: AbortSignal.timeout(10_000),
@@ -23,12 +23,12 @@ export function createNewsAdapter(log: Logger): NewsAdapter {
 
         if (!response) {
           log.warn({ url, reason: validation.reason }, 'news: URL rejected');
-          return null;
+          return { item: null, fetchFailed: true };
         }
 
         if (!response.ok) {
           log.warn({ url, status: response.status }, 'news: fetch failed');
-          return null;
+          return { item: null, fetchFailed: true };
         }
 
         const html = await response.text();
@@ -39,27 +39,30 @@ export function createNewsAdapter(log: Logger): NewsAdapter {
 
         if (!article || !article.textContent?.trim()) {
           log.warn({ url }, 'news: extraction returned empty content');
-          return null;
+          return { item: null, fetchFailed: false };
         }
 
         return {
-          id: ulid(),
-          source: 'news',
-          sourceId: url,
-          author: article.byline ?? 'Unknown',
-          content: article.textContent ?? '',
-          timestamp: Date.now(),
-          url,
-          engagement: 0,
-          metadata: {
-            title: article.title,
-            siteName: article.siteName,
-            excerpt: article.excerpt,
+          item: {
+            id: ulid(),
+            source: 'news',
+            sourceId: url,
+            author: article.byline ?? 'Unknown',
+            content: article.textContent ?? '',
+            timestamp: Date.now(),
+            url,
+            engagement: 0,
+            metadata: {
+              title: article.title,
+              siteName: article.siteName,
+              excerpt: article.excerpt,
+            },
           },
+          fetchFailed: false,
         };
       } catch (err: unknown) {
         log.warn({ url, err }, 'news: extraction error');
-        return null;
+        return { item: null, fetchFailed: true };
       }
     },
   };
