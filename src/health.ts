@@ -15,7 +15,7 @@ export interface HealthCheckResult {
 
 export interface HealthEvent {
   category: string;
-  severity: 'warn' | 'critical';
+  severity: 'warn' | 'error' | 'critical';
   message: string;
   metadata: Record<string, unknown>;
 }
