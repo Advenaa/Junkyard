@@ -422,3 +422,12 @@ export interface EntityRelationshipSecondDegreeGroup {
   relatedEntityName: string;
   nodes: EntityRelationshipGraphNode[];
 }
+
+export interface SourceActivityBucket {
+  hour: string;
+  itemCount: number;
+}
+
+export interface SourceActivityResponse {
+  buckets: SourceActivityBucket[];
+}
