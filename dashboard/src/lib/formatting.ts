@@ -1,3 +1,5 @@
+import type { NarrativeSignalStrength } from './types';
+
 // Shared dashboard formatting helpers. Every date/time string the dashboard
 // renders should route through one of these helpers so that format strings
 // live in exactly one place — changing "Apr 11 2026, 09:42" everywhere
@@ -83,8 +85,6 @@ export function sentimentTextColor(sentiment: number): string {
   if (sentiment <= -0.3) return 'text-accent-red';
   return 'text-text-secondary';
 }
-
-export type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
 
 /**
  * "Emerging", "Fading", etc. Matches the signal-strength vocabulary used by

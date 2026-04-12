@@ -1,6 +1,36 @@
-import type { MacroRegime, MacroRegimeHistory, Report, ReportChainDrilldown } from '../../lib/types';
+import type {
+  MacroRegime,
+  MacroRegimeHistory,
+  Report,
+  ReportChainDrilldown,
+  MacroBias,
+  MacroSignal,
+  MacroIndicator,
+  NarrativeSignalStrength,
+  MacroOverviewEntry,
+  MacroOverview,
+  UnusualActivityEntry,
+  UnusualActivityOverview,
+  NarrativeWatchlistEntry,
+  NarrativeWatchlistOverview,
+} from '../../lib/types';
 
-export type { MacroRegime, MacroRegimeHistory, Report, ReportChainDrilldown };
+export type {
+  MacroRegime,
+  MacroRegimeHistory,
+  Report,
+  ReportChainDrilldown,
+  MacroBias,
+  MacroSignal,
+  MacroIndicator,
+  NarrativeSignalStrength,
+  MacroOverviewEntry,
+  MacroOverview,
+  UnusualActivityEntry,
+  UnusualActivityOverview,
+  NarrativeWatchlistEntry,
+  NarrativeWatchlistOverview,
+};
 
 export interface EntitySentiment {
   name: string;
@@ -13,32 +43,11 @@ export interface Section {
   body: string;
 }
 
-export type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
-export type MacroBias = 'risk-on' | 'risk-off' | 'mixed';
-export type MacroSignal = 'risk-on' | 'risk-off' | 'neutral';
-export type MacroIndicator = 'vix' | 'dxy' | 'us10y' | 'spx' | 'gold';
 export type PriceContrarianSignal = 'price-up-sentiment-down' | 'price-down-sentiment-up';
 export type SourceTier = 'alpha' | 'influencer' | 'general' | 'mainstream';
 export type CalendarEventCategory = 'macro' | 'unlock' | 'expiry' | 'governance' | 'launch' | 'legal' | 'custom';
 export type CalendarEventRecurrence = 'daily' | 'weekly' | 'monthly' | 'quarterly' | null;
 export type RegionalSentimentTone = 'bullish' | 'bearish' | 'neutral' | 'insufficient';
-
-export interface MacroOverviewEntry {
-  indicator: MacroIndicator;
-  label: string;
-  value: number;
-  change1d: number | null;
-  change7d: number | null;
-  date: string;
-  signal: MacroSignal;
-  narrative: string;
-}
-
-export interface MacroOverview {
-  overallBias: MacroBias;
-  latestDate: string | null;
-  entries: MacroOverviewEntry[];
-}
 
 export interface PriceWatchEntry {
   entityId: string;
@@ -57,43 +66,6 @@ export interface PriceWatchEntry {
 export interface PriceWatchOverview {
   latestTimestamp: number | null;
   entries: PriceWatchEntry[];
-}
-
-export interface NarrativeWatchlistEntry {
-  id: string;
-  name: string;
-  date: string;
-  memberCount: number;
-  avgSentiment: number | null;
-  signalStrength: NarrativeSignalStrength;
-}
-
-export interface NarrativeWatchlistOverview {
-  latestDate: string | null;
-  entries: NarrativeWatchlistEntry[];
-}
-
-export interface UnusualActivityEntry {
-  entityId: string;
-  entityName: string;
-  date: string;
-  mentionCount: number;
-  baselineMentionCount: number | null;
-  baselinePeakMentionCount: number | null;
-  baselineDays: number;
-  avgSentiment: number | null;
-  momentum: number | null;
-  spikeRatio: number | null;
-  relevanceScore: number | null;
-  lowRelevance: boolean;
-  duplicateClusterSize: number | null;
-  duplicateAuthorCount: number | null;
-  duplicateSourceCount: number | null;
-}
-
-export interface UnusualActivityOverview {
-  latestDate: string | null;
-  entries: UnusualActivityEntry[];
 }
 
 export interface FirstMoverWatchlistEntry {

@@ -79,3 +79,65 @@ export interface ReportChainDrilldown {
   latestEventType: string;
   latestEventDescription: string;
 }
+
+export type MacroBias = 'risk-on' | 'risk-off' | 'mixed';
+
+export type MacroSignal = 'risk-on' | 'risk-off' | 'neutral';
+
+export type MacroIndicator = 'vix' | 'dxy' | 'us10y' | 'spx' | 'gold';
+
+export type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
+
+export interface MacroOverviewEntry {
+  indicator: MacroIndicator;
+  label: string;
+  value: number;
+  change1d: number | null;
+  change7d: number | null;
+  date: string;
+  signal: MacroSignal;
+  narrative: string;
+}
+
+export interface MacroOverview {
+  overallBias: MacroBias;
+  latestDate: string | null;
+  entries: MacroOverviewEntry[];
+}
+
+export interface UnusualActivityEntry {
+  entityId: string;
+  entityName: string;
+  date: string;
+  mentionCount: number;
+  baselineMentionCount: number | null;
+  baselinePeakMentionCount: number | null;
+  baselineDays: number;
+  avgSentiment: number | null;
+  momentum: number | null;
+  spikeRatio: number | null;
+  relevanceScore: number | null;
+  lowRelevance: boolean;
+  duplicateClusterSize: number | null;
+  duplicateAuthorCount: number | null;
+  duplicateSourceCount: number | null;
+}
+
+export interface UnusualActivityOverview {
+  latestDate: string | null;
+  entries: UnusualActivityEntry[];
+}
+
+export interface NarrativeWatchlistEntry {
+  id: string;
+  name: string;
+  date: string;
+  memberCount: number;
+  avgSentiment: number | null;
+  signalStrength: NarrativeSignalStrength;
+}
+
+export interface NarrativeWatchlistOverview {
+  latestDate: string | null;
+  entries: NarrativeWatchlistEntry[];
+}
