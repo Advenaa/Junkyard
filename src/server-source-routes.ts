@@ -1,8 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from './db/connection.js';
 import { getAllSourcesWithState, insertSource, type SourceRow, updateSourceTier } from './db/queries.js';
+import { pollFeed } from './ingest/rss.js';
 import { getSourceTargetFromRequest, toCamelCase } from './server-route-helpers.js';
 import { validateUrl } from './url-validator.js';
+
+const pollRateLimit = new Map<string, number>();
 
 type RoutePreHandler = (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 
@@ -276,6 +279,113 @@ export function registerSourceRoutes({ app, authPreHandler, requireAdmin, pool }
       },
     },
     patchSourceHandler,
+  );
+
+  app.post(
+    '/api/v1/sources/:source/:sourceId/poll',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: sourceParamsWithIdSchema,
+      },
+    },
+    async (request, reply) => {
+      const { source, sourceId } = request.params as { source: string; sourceId: string };
+      const key = `${source}:${sourceId}`;
+      const now = Date.now();
+      const lastPoll = pollRateLimit.get(key);
+      if (lastPoll && now - lastPoll < 60_000) {
+        const retryAfter = Math.ceil((60_000 - (now - lastPoll)) / 1000);
+        return reply.code(429).send({
+          error: `Rate limited. Try again in ${retryAfter}s.`,
+          retryAfter,
+        });
+      }
+
+      const { rowCount } = await pool.query(
+        `UPDATE source_state SET last_fetched_at = 0
+       WHERE source = $1 AND source_id = $2 AND status != 'disabled'`,
+        [source, sourceId],
+      );
+      if (rowCount === 0) {
+        return reply.code(404).send({ error: 'Source not found or disabled' });
+      }
+
+      pollRateLimit.set(key, now);
+      return reply.code(202).send({ message: 'Poll scheduled. Source will be fetched on next scheduler tick.' });
+    },
+  );
+
+  app.post(
+    '/api/v1/sources/:source/:sourceId/retry',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: sourceParamsWithIdSchema,
+      },
+    },
+    async (request, reply) => {
+      const { source, sourceId } = request.params as { source: string; sourceId: string };
+
+      const { rows } = await pool.query<{ status: string }>(
+        `SELECT status FROM source_state WHERE source = $1 AND source_id = $2`,
+        [source, sourceId],
+      );
+      if (rows.length === 0) {
+        return reply.code(404).send({ error: 'Source not found' });
+      }
+      if (rows[0].status !== 'halted') {
+        return reply.code(409).send({ error: 'Source is not halted' });
+      }
+
+      await pool.query(
+        `UPDATE source_state
+       SET status = 'active', error_count = 0, last_error = NULL,
+           next_retry_at = NULL, last_fetched_at = 0
+       WHERE source = $1 AND source_id = $2`,
+        [source, sourceId],
+      );
+
+      return { message: 'Source unhalted and poll scheduled.', status: 'active' };
+    },
+  );
+
+  app.post(
+    '/api/v1/sources/:source/:sourceId/test',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: sourceParamsWithIdSchema,
+      },
+    },
+    async (request, reply) => {
+      const { source, sourceId } = request.params as { source: string; sourceId: string };
+
+      if (source !== 'rss') {
+        return reply.code(501).send({
+          error: `Test/preview not yet supported for ${source} sources. Currently available for RSS only.`,
+        });
+      }
+
+      try {
+        const result = await pollFeed(sourceId, null, request.log as Parameters<typeof pollFeed>[2]);
+        if (result.fetchFailed) {
+          return reply.code(502).send({ error: 'Feed fetch failed. Check the URL and try again.' });
+        }
+        return {
+          preview: result.items.slice(0, 3).map((item) => ({
+            author: item.author,
+            content: item.content.slice(0, 500),
+            timestamp: item.timestamp,
+            url: item.url ?? null,
+          })),
+          totalItems: result.items.length,
+        };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        return reply.code(502).send({ error: `Feed test failed: ${message}` });
+      }
+    },
   );
 
   const deleteSourceHandler = async (request: FastifyRequest, reply: FastifyReply) => {

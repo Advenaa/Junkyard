@@ -72,6 +72,8 @@ import {
   fetchUserAuditEventsData,
   fetchAccessRequestsData,
   revokeUserSession,
+  pollSourceNow,
+  retrySource,
 } from './api.js';
 import {
   getEntityStatusBadgeClasses,
@@ -150,6 +152,8 @@ export default function SourcesTab() {
   const [editingPollKey, setEditingPollKey] = useState<string | null>(null);
   const [editPollValue, setEditPollValue] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
+  const [pollingKey, setPollingKey] = useState<string | null>(null);
+  const [retryingKey, setRetryingKey] = useState<string | null>(null);
   const [tokens, setTokens] = useState<DiscordManagedToken[]>([]);
   const [tokensLoading, setTokensLoading] = useState(true);
   const [tokensError, setTokensError] = useState<string | null>(null);
@@ -530,6 +534,41 @@ export default function SourcesTab() {
       } else {
         setError(`Failed to toggle source "${getSourceDisplayName(s)}".`);
       }
+    }
+  };
+  const handlePollNow = async (s: Source) => {
+    const key = `${s.source}-${s.sourceId}`;
+    setPollingKey(key);
+    setError(null);
+    try {
+      await pollSourceNow(s.source, s.sourceId);
+    } catch (err: unknown) {
+      if (isApiError(err) && err.status === 429) {
+        setError(`Rate limited. Wait before polling "${getSourceDisplayName(s)}" again.`);
+      } else {
+        setError(`Failed to trigger poll for "${getSourceDisplayName(s)}".`);
+      }
+    } finally {
+      setPollingKey(null);
+    }
+  };
+  const handleRetry = async (s: Source) => {
+    const key = `${s.source}-${s.sourceId}`;
+    setRetryingKey(key);
+    setError(null);
+    try {
+      await retrySource(s.source, s.sourceId);
+      setSources((prev) =>
+        prev.map((src) =>
+          src.source === s.source && src.sourceId === s.sourceId
+            ? { ...src, stateStatus: 'active', errorCount: 0, lastError: null }
+            : src,
+        ),
+      );
+    } catch {
+      setError(`Failed to retry "${getSourceDisplayName(s)}".`);
+    } finally {
+      setRetryingKey(null);
     }
   };
   const confirmDelete = async () => {
@@ -1332,6 +1371,26 @@ export default function SourcesTab() {
                     <td className="px-4 py-3">{renderSparkline(activityMap[`${s.source}-${s.sourceId}`] ?? [])}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handlePollNow(s)}
+                          disabled={pollingKey === `${s.source}-${s.sourceId}` || !isActive}
+                          className="text-text-secondary hover:text-accent text-xs font-mono transition-colors disabled:opacity-40"
+                          title="Trigger immediate poll"
+                        >
+                          {pollingKey === `${s.source}-${s.sourceId}` ? '...' : 'Poll'}
+                        </button>
+                        {s.stateStatus === 'halted' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetry(s)}
+                            disabled={retryingKey === `${s.source}-${s.sourceId}`}
+                            className="text-yellow-400 hover:text-yellow-300 text-xs font-mono transition-colors disabled:opacity-40"
+                            title="Clear halt state and retry"
+                          >
+                            {retryingKey === `${s.source}-${s.sourceId}` ? '...' : 'Retry'}
+                          </button>
+                        )}
                         <button
                           onClick={() => setDeleteTarget(s)}
                           className="text-accent-red/70 hover:text-accent-red text-xs font-mono transition-colors"
