@@ -145,6 +145,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
       const entityIdMap = new Map<ExtractedEntity, string>();
       const resolvedEntitiesById = new Map<string, ResolvedEntity>();
       const reactivatedEntities = new Set<ExtractedEntity>();
+      let aliasHits = 0;
+      let contextHits = 0;
+      let llmDisambiguations = 0;
+      let unresolved = 0;
 
       const rememberResolvedEntity = (
         entity: ExtractedEntity,
@@ -171,6 +175,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
       for (const entity of entities) {
         const canonical = normalizeAlias(entity.name);
         if (!canonical) {
+          unresolved++;
           log.debug({ rawName: entity.name }, 'Entity name normalizes to empty, skipping');
           continue;
         }
@@ -200,6 +205,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           }
           resolvedIds.push(row.entity_id);
           rememberResolvedEntity(entity, row.entity_id);
+          aliasHits++;
           continue;
         }
 
@@ -265,6 +271,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             }
             resolvedIds.push(match.entityId);
             rememberResolvedEntity(entity, match.entityId);
+            contextHits++;
             log.info({ name: canonical, entityId: match.entityId }, `Tier 2 resolved: ${canonical}`);
           } else {
             stillUnresolved.push(entity);
@@ -342,6 +349,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
           for (const item of disambiguated) {
             const matchedEntity = stillUnresolved.find((e) => normalizeAlias(e.name) === normalizeAlias(item.name));
             if (!matchedEntity) continue;
+            const alreadyResolved = entityIdMap.has(matchedEntity);
 
             // Create new entity
             const newId = ulid();
@@ -358,6 +366,9 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             const entityId = upsertResult.rows[0].id;
             resolvedIds.push(entityId);
             rememberResolvedEntity(matchedEntity, entityId);
+            if (!alreadyResolved) {
+              llmDisambiguations++;
+            }
 
             // Save context-aware alias for self-improving lookup
             await client.query(
@@ -390,6 +401,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
             const entityId = upsertResult.rows[0].id;
             rememberResolvedEntity(entity, entityId, { disambiguationFailed: true });
+            unresolved++;
 
             await client.query(
               `INSERT INTO entity_aliases (alias, context_key, entity_id)
@@ -420,6 +432,7 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
             const entityId = upsertResult.rows[0].id;
             rememberResolvedEntity(entity, entityId, { disambiguationFailed: true });
+            unresolved++;
 
             await client.query(
               `INSERT INTO entity_aliases (alias, context_key, entity_id)
@@ -568,7 +581,19 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         );
       }
 
-      log.info({ count: entities.length, source, summaryId }, `Resolved ${entities.length} entities from ${source}`);
+      log.info(
+        {
+          event: 'entity_resolution',
+          source,
+          summaryId,
+          totalNames: entities.length,
+          aliasHits,
+          contextHits,
+          llmDisambiguations,
+          unresolved,
+        },
+        'entity resolution batch',
+      );
 
       return [...resolvedEntitiesById.values()];
     } catch (err) {

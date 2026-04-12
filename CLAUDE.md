@@ -215,6 +215,7 @@ New to the repo? Start with [PRODUCT.md](./PRODUCT.md) to understand why this ex
 - [docs/DISCORD.md](./docs/DISCORD.md) — Discord REST polling, token rotation, CDN guardrails, discovery helpers
 - [docs/DASHBOARD.md](./docs/DASHBOARD.md) — wireframes, component inventory, dark theme spec
 - [docs/ERRORS.md](./docs/ERRORS.md) — error taxonomy, circuit breakers, logging levels, recovery
+- [docs/METRICS.md](./docs/METRICS.md) — structured pino metrics events for chunking, entity resolution, and LLM budget usage
 - [docs/SCHEDULER.md](./docs/SCHEDULER.md) — startup sequence, job table, mutex, call chain, shutdown
 - [docs/ENTITIES.md](./docs/ENTITIES.md) — resolution algorithm, CoinGecko seeding, decay, pruning, merging
 - [docs/TWITTER.md](./docs/TWITTER.md) — twitterapi.io REST API, data mapping, zod schema, polling, cost model
