@@ -135,11 +135,11 @@ describe('EL-011: CoinGecko seed uses context_key for non-top-100 symbol aliases
   const src = readSrc('src/knowledge/seed.ts');
 
   it('symbol alias INSERT includes context_key column', () => {
-    // The batch alias INSERT must include context_key
+    // The batch alias INSERT must still include context_key even after alias metadata columns were added.
     assert.match(
       src,
-      /INSERT\s+INTO\s+entity_aliases\s*\(\s*alias\s*,\s*context_key\s*,\s*entity_id\s*\)/i,
-      'entity_aliases INSERT must include context_key column',
+      /INSERT\s+INTO\s+entity_aliases\s*\(\s*id\s*,\s*entity_id\s*,\s*alias\s*,\s*context_key\s*,\s*origin\s*,\s*created_at\s*\)/i,
+      'entity_aliases INSERT must include id, entity_id, alias, context_key, origin, and created_at columns',
     );
   });
 
@@ -163,9 +163,12 @@ describe('EL-011: CoinGecko seed uses context_key for non-top-100 symbol aliases
       'symbolContextKey variable must exist and be used for symbol alias insertion',
     );
 
-    // Verify it appears in the alias values push
-    const pushIdx = src.indexOf('aliasValues.push(symbolAlias, symbolContextKey');
-    assert.ok(pushIdx !== -1, 'symbolContextKey must be pushed into aliasValues alongside the symbol alias');
+    // Verify symbolAlias and symbolContextKey appear together in an aliasValues.push call
+    assert.match(
+      src,
+      /aliasValues\.push\(.*symbolAlias,\s*symbolContextKey/,
+      'symbolContextKey must be pushed into aliasValues alongside the symbol alias',
+    );
   });
 });
 

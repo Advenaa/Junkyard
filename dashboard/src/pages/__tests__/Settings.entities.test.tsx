@@ -39,6 +39,7 @@ type RelationshipType =
   | 'partnered_with'
   | 'regulated_by';
 type RelationshipSource = 'llm_inferred' | 'manual' | 'coingecko';
+type AliasOrigin = 'seed' | 'llm' | 'manual' | 'unknown';
 
 interface MockEntityRelationship {
   id: string;
@@ -54,6 +55,14 @@ interface MockEntityRelationship {
   untilAt: number | null;
   createdAt: number;
   updatedAt: number;
+}
+
+interface MockEntityAlias {
+  id: string;
+  entityId: string;
+  alias: string;
+  origin: AliasOrigin;
+  createdAt: number;
 }
 
 interface CreateRelationshipPayload {
@@ -127,6 +136,11 @@ function createEntitySearchFetchMock(knownEntities: MockEntitySuggestion[]) {
         return matchesQuery && matchesStatus;
       });
       return jsonResponse({ entities });
+    }
+
+    const aliasesMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/aliases$/);
+    if (aliasesMatch && method === 'GET') {
+      return jsonResponse({ aliases: [] });
     }
 
     throw new Error(`Unhandled fetch ${method} ${path}${requestUrl.search}`);
@@ -329,6 +343,29 @@ describe('Settings entity relationships', () => {
         updatedAt: Date.UTC(2026, 3, 6, 9, 0, 0),
       },
     ];
+    const aliases: MockEntityAlias[] = [
+      {
+        id: 'alias-1',
+        entityId: 'ent-eth',
+        alias: 'eth',
+        origin: 'seed',
+        createdAt: Date.UTC(2026, 2, 20, 0, 0, 0),
+      },
+      {
+        id: 'alias-2',
+        entityId: 'ent-eth',
+        alias: 'ether',
+        origin: 'manual',
+        createdAt: Date.UTC(2026, 3, 6, 12, 0, 0),
+      },
+      {
+        id: 'alias-3',
+        entityId: 'ent-arb',
+        alias: 'arbitrum one',
+        origin: 'llm',
+        createdAt: Date.UTC(2026, 3, 3, 11, 0, 0),
+      },
+    ];
     const graphOnlyRelationships: MockEntityRelationship[] = [
       {
         id: 'rel-graph-1',
@@ -445,6 +482,54 @@ describe('Settings entity relationships', () => {
         });
       }
 
+      const aliasesMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/aliases$/);
+      if (aliasesMatch && method === 'GET') {
+        const entityId = aliasesMatch[1];
+        return new Response(
+          JSON.stringify({
+            aliases: aliases.filter((alias) => alias.entityId === entityId),
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        );
+      }
+
+      if (aliasesMatch && method === 'POST') {
+        const entityId = aliasesMatch[1];
+        const payload = JSON.parse(String(init?.body ?? '{}')) as { alias?: string };
+        const createdAlias: MockEntityAlias = {
+          id: `alias-${aliases.length + 1}`,
+          entityId,
+          alias: payload.alias ?? '',
+          origin: 'manual',
+          createdAt: Date.UTC(2026, 3, 7, 10, 0, 0),
+        };
+        aliases.push(createdAlias);
+        return new Response(JSON.stringify({ alias: createdAlias }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const aliasDeleteMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/aliases\/([^/]+)$/);
+      if (aliasDeleteMatch && method === 'DELETE') {
+        const [, entityId, aliasId] = aliasDeleteMatch;
+        const index = aliases.findIndex((alias) => alias.entityId === entityId && alias.id === aliasId);
+        if (index === -1) {
+          return new Response(JSON.stringify({ error: 'Alias not found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        const [deletedAlias] = aliases.splice(index, 1);
+        return new Response(JSON.stringify({ alias: deletedAlias }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       const relationshipsMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/relationships$/);
       if (relationshipsMatch && method === 'GET') {
         const entityId = relationshipsMatch[1];
@@ -551,10 +636,27 @@ describe('Settings entity relationships', () => {
       '/summaries/summary-rel-2',
     );
     expect(screen.getByText(/Since /i)).toBeInTheDocument();
+    const aliasList = await screen.findByLabelText('Entity aliases');
+    expect(within(aliasList).getByText('eth')).toBeInTheDocument();
+    expect(within(aliasList).getByText('ether')).toBeInTheDocument();
+    expect(within(aliasList).getByText('Seed')).toBeInTheDocument();
+    expect(within(aliasList).getByText('Manual')).toBeInTheDocument();
     const coverageCard = screen.getByText('Coverage').parentElement;
     expect(coverageCard).not.toBeNull();
     expect(coverageCard!).toHaveTextContent('1 competitor');
     expect(coverageCard!).toHaveTextContent('2 total relationships');
+
+    await user.type(screen.getByPlaceholderText('Add alias'), 'eth mainnet');
+    await user.click(screen.getByRole('button', { name: 'Add Alias' }));
+
+    await screen.findByRole('button', { name: 'Delete alias eth mainnet' });
+    expect(screen.getByText('eth mainnet')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Delete alias eth mainnet' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Delete alias eth mainnet' })).not.toBeInTheDocument();
+    });
 
     await user.click(screen.getByRole('button', { name: 'Focus Arbitrum relationship list' }));
     expect(screen.getByText('Focused Connection')).toBeInTheDocument();

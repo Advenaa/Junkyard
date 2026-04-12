@@ -361,10 +361,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
 
             // Save context-aware alias for self-improving lookup
             await client.query(
-              `INSERT INTO entity_aliases (alias, context_key, entity_id)
-               VALUES ($1, $2, $3)
+              `INSERT INTO entity_aliases (id, entity_id, alias, context_key, origin, created_at)
+               VALUES ($1, $2, $3, $4, 'llm', $5)
                ON CONFLICT (alias, context_key) DO NOTHING`,
-              [canonical, item.context_key, entityId],
+              [ulid(), entityId, canonical, item.context_key, now],
             );
 
             log.info({ name: canonical, entityId, contextKey: item.context_key }, `Tier 3 resolved: ${canonical}`);
@@ -392,10 +392,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             rememberResolvedEntity(entity, entityId, { disambiguationFailed: true });
 
             await client.query(
-              `INSERT INTO entity_aliases (alias, context_key, entity_id)
-               VALUES ($1, '', $2)
+              `INSERT INTO entity_aliases (id, entity_id, alias, context_key, origin, created_at)
+               VALUES ($1, $2, $3, '', 'llm', $4)
                ON CONFLICT (alias, context_key) DO NOTHING`,
-              [canonical, entityId],
+              [ulid(), entityId, canonical, now],
             );
 
             log.info({ name: canonical, entityId }, `Tier 3 fallback (partial LLM response): ${canonical}`);
@@ -422,10 +422,10 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
             rememberResolvedEntity(entity, entityId, { disambiguationFailed: true });
 
             await client.query(
-              `INSERT INTO entity_aliases (alias, context_key, entity_id)
-               VALUES ($1, '', $2)
+              `INSERT INTO entity_aliases (id, entity_id, alias, context_key, origin, created_at)
+               VALUES ($1, $2, $3, '', 'llm', $4)
                ON CONFLICT (alias, context_key) DO NOTHING`,
-              [canonical, entityId],
+              [ulid(), entityId, canonical, now],
             );
           }
         }
@@ -498,12 +498,14 @@ export function createEntityManager(pool: Pool, log: Logger, config: Config, llm
         const aliasValues: string[] = [];
         const aliasParams: unknown[] = [];
         for (let i = 0; i < aliasTuples.length; i++) {
-          const offset = i * 3;
-          aliasValues.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
-          aliasParams.push(aliasTuples[i].alias, '', aliasTuples[i].entityId);
+          const offset = i * 6;
+          aliasValues.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`,
+          );
+          aliasParams.push(ulid(), aliasTuples[i].entityId, aliasTuples[i].alias, '', 'llm', now);
         }
         await client.query(
-          `INSERT INTO entity_aliases (alias, context_key, entity_id)
+          `INSERT INTO entity_aliases (id, entity_id, alias, context_key, origin, created_at)
            VALUES ${aliasValues.join(', ')}
            ON CONFLICT (alias, context_key) DO NOTHING`,
           aliasParams,

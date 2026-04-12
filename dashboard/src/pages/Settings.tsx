@@ -276,6 +276,16 @@ interface EntitySuggestion {
   lastSeen: number;
 }
 
+type EntityAliasOrigin = 'seed' | 'llm' | 'manual' | 'unknown';
+
+interface EntityAlias {
+  id: string;
+  entityId: string;
+  alias: string;
+  origin: EntityAliasOrigin;
+  createdAt: number;
+}
+
 type EntityRelationshipType =
   | 'competes_with'
   | 'built_on'
@@ -514,6 +524,11 @@ async function fetchEntitySuggestionsData(
 
   const res = await apiFetch<{ entities: EntitySuggestion[] }>(`/entities/search?${params.toString()}`);
   return res.entities;
+}
+
+async function fetchEntityAliasesData(entityId: string): Promise<EntityAlias[]> {
+  const res = await apiFetch<{ aliases: EntityAlias[] }>(`/entities/${entityId}/aliases`);
+  return res.aliases;
 }
 
 async function fetchEntityRelationshipsData(entityId: string): Promise<EntityRelationship[]> {
@@ -810,6 +825,13 @@ const ENTITY_RELATIONSHIP_SOURCE_STYLES: Record<EntityRelationshipSource, string
   coingecko: 'bg-background border border-border text-text-secondary',
 };
 
+const ENTITY_ALIAS_ORIGIN_STYLES: Record<EntityAliasOrigin, string> = {
+  seed: 'bg-background border border-border text-text-secondary',
+  llm: 'bg-accent/10 border border-accent/20 text-accent',
+  manual: 'bg-accent-green/10 border border-accent-green/20 text-accent-green',
+  unknown: 'bg-yellow-500/15 border border-yellow-500/25 text-yellow-300',
+};
+
 const ENTITY_RELATIONSHIP_GRAPH_STYLES: Record<
   EntityRelationshipType,
   {
@@ -914,6 +936,14 @@ function formatRelativeTime(dateValue: number | null): string {
   return `${days}d ago`;
 }
 
+function formatDateLabel(dateValue: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(dateValue);
+}
+
 function formatCountdown(futureMs: number): string {
   const diff = futureMs - Date.now();
   if (diff <= 0) return 'imminently';
@@ -995,6 +1025,19 @@ function formatCalendarRecurrence(recurrenceRule: CalendarEvent['recurrenceRule'
 
 function formatEntityRelationshipType(type: EntityRelationshipType): string {
   return ENTITY_RELATIONSHIP_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
+}
+
+function formatEntityAliasOrigin(origin: EntityAliasOrigin): string {
+  switch (origin) {
+    case 'seed':
+      return 'Seed';
+    case 'llm':
+      return 'LLM';
+    case 'manual':
+      return 'Manual';
+    case 'unknown':
+      return 'Unknown';
+  }
 }
 
 function formatEntityRelationshipSource(source: EntityRelationshipSource): string {
@@ -4253,11 +4296,15 @@ function EntitiesTab() {
   const [entitySuggestionsLoading, setEntitySuggestionsLoading] = useState(false);
   const [selectedEntity, setSelectedEntity] = useState<EntitySuggestion | null>(null);
   const [statusFilter, setStatusFilter] = useState<'active' | 'archived' | 'all'>('all');
+  const [aliases, setAliases] = useState<EntityAlias[]>([]);
   const [relationships, setRelationships] = useState<EntityRelationship[]>([]);
   const [competitors, setCompetitors] = useState<EntityRelationship[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [aliasDraft, setAliasDraft] = useState('');
+  const [savingAlias, setSavingAlias] = useState(false);
+  const [removingAliasId, setRemovingAliasId] = useState<string | null>(null);
   const [relatedEntityQuery, setRelatedEntityQuery] = useState('');
   const [relatedEntitySuggestions, setRelatedEntitySuggestions] = useState<EntitySuggestion[]>([]);
   const [relatedEntitySuggestionsLoading, setRelatedEntitySuggestionsLoading] = useState(false);
@@ -4348,6 +4395,10 @@ function EntitiesTab() {
 
   useEffect(() => {
     if (!selectedEntity) {
+      setAliases([]);
+      setAliasDraft('');
+      setSavingAlias(false);
+      setRemovingAliasId(null);
       setRelationships([]);
       setCompetitors([]);
       setRelationshipGraph(null);
@@ -4381,22 +4432,34 @@ function EntitiesTab() {
         });
 
     Promise.all([
+      fetchEntityAliasesData(selectedEntity.id),
       fetchEntityRelationshipsData(selectedEntity.id),
       fetchEntityCompetitorsData(selectedEntity.id),
       fetchEntityRelationshipGraphData(selectedEntity.id),
       pricePromise,
       fetchAlphaPropagation(selectedEntity.id, 7),
     ])
-      .then(([nextRelationships, nextCompetitors, nextRelationshipGraph, nextPriceData, nextAlphaPropagation]) => {
-        if (cancelled) return;
-        setRelationships(nextRelationships);
-        setCompetitors(nextCompetitors);
-        setRelationshipGraph(nextRelationshipGraph);
-        setPriceData(nextPriceData);
-        setAlphaPropagation(nextAlphaPropagation);
-      })
+      .then(
+        ([
+          nextAliases,
+          nextRelationships,
+          nextCompetitors,
+          nextRelationshipGraph,
+          nextPriceData,
+          nextAlphaPropagation,
+        ]) => {
+          if (cancelled) return;
+          setAliases(nextAliases);
+          setRelationships(nextRelationships);
+          setCompetitors(nextCompetitors);
+          setRelationshipGraph(nextRelationshipGraph);
+          setPriceData(nextPriceData);
+          setAlphaPropagation(nextAlphaPropagation);
+        },
+      )
       .catch(() => {
         if (cancelled) return;
+        setAliases([]);
         setRelationships([]);
         setCompetitors([]);
         setRelationshipGraph(null);
@@ -4522,6 +4585,7 @@ function EntitiesTab() {
     setDetailsError(null);
     try {
       const [
+        nextAliases,
         nextRelationships,
         nextCompetitors,
         nextRelationshipGraph,
@@ -4529,6 +4593,7 @@ function EntitiesTab() {
         nextPriceData,
         nextAlphaPropagation,
       ] = await Promise.all([
+        fetchEntityAliasesData(selectedEntity.id),
         fetchEntityRelationshipsData(selectedEntity.id),
         fetchEntityCompetitorsData(selectedEntity.id),
         fetchEntityRelationshipGraphData(selectedEntity.id),
@@ -4550,6 +4615,7 @@ function EntitiesTab() {
             }),
         fetchAlphaPropagation(selectedEntity.id, 7),
       ]);
+      setAliases(nextAliases);
       setRelationships(nextRelationships);
       setCompetitors(nextCompetitors);
       setRelationshipGraph(nextRelationshipGraph);
@@ -4557,6 +4623,7 @@ function EntitiesTab() {
       setPriceData(nextPriceData);
       setAlphaPropagation(nextAlphaPropagation);
     } catch {
+      setAliases([]);
       setRelationshipGraph(null);
       setDivergence(null);
       setPriceData(null);
@@ -4572,8 +4639,10 @@ function EntitiesTab() {
     setEntityQuery(entity.name);
     setEntitySuggestions([]);
     setFocusedRelationshipEntityId(null);
+    setAliases([]);
     setDetailsError(null);
     setActionError(null);
+    setAliasDraft('');
     setSelectedRelatedEntity(null);
     setRelatedEntityQuery('');
     setEntityAuthors([]);
@@ -4657,6 +4726,55 @@ function EntitiesTab() {
       setActionError('Failed to remove relationship.');
     } finally {
       setRemovingRelationshipId(null);
+    }
+  }
+
+  async function handleAddAlias(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    if (!selectedEntity) return;
+
+    const alias = aliasDraft.trim();
+    if (!alias) {
+      setActionError('Alias cannot be empty.');
+      return;
+    }
+
+    setSavingAlias(true);
+    setActionError(null);
+    try {
+      const { alias: createdAlias } = await apiFetch<{ alias: EntityAlias }>(`/entities/${selectedEntity.id}/aliases`, {
+        method: 'POST',
+        body: JSON.stringify({ alias }),
+      });
+      setAliases((current) =>
+        [...current, createdAlias].sort((a, b) => a.createdAt - b.createdAt || a.alias.localeCompare(b.alias)),
+      );
+      setAliasDraft('');
+    } catch (err) {
+      if (isApiError(err) && err.status === 409) {
+        setActionError('Alias already exists for this entity.');
+      } else {
+        setActionError('Failed to add alias.');
+      }
+    } finally {
+      setSavingAlias(false);
+    }
+  }
+
+  async function handleRemoveAlias(aliasId: string): Promise<void> {
+    if (!selectedEntity) return;
+
+    setRemovingAliasId(aliasId);
+    setActionError(null);
+    try {
+      const { alias } = await apiFetch<{ alias: EntityAlias }>(`/entities/${selectedEntity.id}/aliases/${aliasId}`, {
+        method: 'DELETE',
+      });
+      setAliases((current) => current.filter((entry) => entry.id !== alias.id));
+    } catch {
+      setActionError('Failed to remove alias.');
+    } finally {
+      setRemovingAliasId(null);
     }
   }
 
@@ -4802,6 +4920,80 @@ function EntitiesTab() {
                 <br />
                 {relationships.length} total relationship{relationships.length !== 1 ? 's' : ''}
               </div>
+            </div>
+          </div>
+
+          <div className="bg-surface border border-border rounded-lg overflow-hidden">
+            <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Aliases</h3>
+                <p className="text-text-secondary/70 text-sm font-body mt-1">
+                  Lookup aliases saved for this entity, including seeded, inferred, and manual entries.
+                </p>
+              </div>
+              <div className="text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                {aliases.length} alias{aliases.length !== 1 ? 'es' : ''}
+              </div>
+            </div>
+            <div className="p-4 space-y-3">
+              {isAdmin && (
+                <form onSubmit={handleAddAlias} className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={aliasDraft}
+                    onChange={(e) => setAliasDraft(e.target.value)}
+                    placeholder="Add alias"
+                    className="flex-1 bg-background border border-border rounded-lg px-3 py-2 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+                  />
+                  <button
+                    type="submit"
+                    disabled={savingAlias}
+                    className="px-3 py-2 rounded-lg bg-accent text-background text-sm font-mono uppercase tracking-wide disabled:opacity-50"
+                  >
+                    {savingAlias ? 'Saving...' : 'Add Alias'}
+                  </button>
+                </form>
+              )}
+
+              {detailsLoading ? (
+                <div className="text-text-secondary text-sm font-body">Loading aliases...</div>
+              ) : aliases.length === 0 ? (
+                <EmptyState title="No aliases saved" description="This entity only has its canonical name right now." />
+              ) : (
+                <div
+                  className="divide-y divide-border rounded-lg border border-border bg-background"
+                  aria-label="Entity aliases"
+                >
+                  {aliases.map((alias) => (
+                    <div key={alias.id} className="px-3 py-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-text-primary text-sm font-body break-all">{alias.alias}</div>
+                        <div className="flex items-center gap-2 flex-wrap mt-1">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${ENTITY_ALIAS_ORIGIN_STYLES[alias.origin]}`}
+                          >
+                            {formatEntityAliasOrigin(alias.origin)}
+                          </span>
+                          <span className="text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                            Created {formatDateLabel(alias.createdAt)}
+                          </span>
+                        </div>
+                      </div>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAlias(alias.id)}
+                          disabled={removingAliasId === alias.id}
+                          aria-label={`Delete alias ${alias.alias}`}
+                          className="shrink-0 h-8 w-8 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-surface-raised disabled:opacity-50"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

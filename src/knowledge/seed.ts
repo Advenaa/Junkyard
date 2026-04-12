@@ -235,24 +235,28 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
 
         for (const alias of plainAliases) {
           if (!alias) continue;
-          const offset = aliasIdx * 3;
-          aliasPlaceholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
-          aliasValues.push(alias, '', entityId);
+          const offset = aliasIdx * 6;
+          aliasPlaceholders.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`,
+          );
+          aliasValues.push(ulid(), entityId, alias, '', 'seed', now);
           aliasIdx++;
         }
 
         // Insert symbol alias separately with its context_key
         if (symbolAlias && !plainAliases.has(symbolAlias)) {
-          const offset = aliasIdx * 3;
-          aliasPlaceholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`);
-          aliasValues.push(symbolAlias, symbolContextKey, entityId);
+          const offset = aliasIdx * 6;
+          aliasPlaceholders.push(
+            `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`,
+          );
+          aliasValues.push(ulid(), entityId, symbolAlias, symbolContextKey, 'seed', now);
           aliasIdx++;
         }
       }
 
       if (aliasPlaceholders.length > 0) {
         await pool.query(
-          `INSERT INTO entity_aliases (alias, context_key, entity_id)
+          `INSERT INTO entity_aliases (id, entity_id, alias, context_key, origin, created_at)
            VALUES ${aliasPlaceholders.join(', ')}
            ON CONFLICT (alias, context_key) DO NOTHING`,
           aliasValues,
@@ -292,10 +296,10 @@ export function createSeeder(pool: Pool, log: Logger): Seeder {
 
       for (const alias of entity.aliases) {
         await pool.query(
-          `INSERT INTO entity_aliases (alias, context_key, entity_id)
-           VALUES ($1, '', $2)
+          `INSERT INTO entity_aliases (id, entity_id, alias, context_key, origin, created_at)
+           VALUES ($1, $2, $3, '', 'seed', $4)
            ON CONFLICT (alias, context_key) DO NOTHING`,
-          [normalizeAlias(alias), entityId],
+          [ulid(), entityId, normalizeAlias(alias), now],
         );
       }
 

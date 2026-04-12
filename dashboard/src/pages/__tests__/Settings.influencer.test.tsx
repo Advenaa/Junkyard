@@ -149,6 +149,11 @@ function buildFetchMock(
       return jsonResponse({ entities });
     }
 
+    const aliasesMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/aliases$/);
+    if (aliasesMatch && method === 'GET') {
+      return jsonResponse({ aliases: [] });
+    }
+
     const relationshipsMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/relationships$/);
     if (relationshipsMatch && method === 'GET') {
       return jsonResponse({ relationships: [] });
