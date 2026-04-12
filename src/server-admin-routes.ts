@@ -32,7 +32,7 @@ import type { SchedulerDiagnostics } from './scheduler.js';
 type RoutePreHandler = (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 
 interface SessionManagerLike {
-  create(discordId: string, ip: string, userAgent: string): Promise<string>;
+  create(discordId: string, ip: string, userAgent: string, maxSessions?: number): Promise<string>;
   delete(sessionId: string): Promise<void>;
   deleteByManagementId(discordId: string, managementId: string): Promise<boolean>;
   deleteAllForUser(discordId: string): Promise<number>;
@@ -1074,6 +1074,7 @@ export function registerAdminRoutes({
 
   // --- POST /api/v1/auth/devtools-session ---
   const DEVTOOLS_DISCORD_ID = '0';
+  const MAX_DEVTOOLS_SESSIONS = 50;
   const DEVTOOLS_USERNAME = 'devtools';
 
   app.post('/api/v1/auth/devtools-session', { preHandler: [authPreHandler, requireAdmin] }, async (request, reply) => {
@@ -1088,7 +1089,7 @@ export function registerAdminRoutes({
 
     const ip = request.ip;
     const userAgent = (request.headers['user-agent'] as string) ?? 'devtools/verify';
-    const sessionId = await sessionManager.create(DEVTOOLS_DISCORD_ID, ip, userAgent);
+    const sessionId = await sessionManager.create(DEVTOOLS_DISCORD_ID, ip, userAgent, MAX_DEVTOOLS_SESSIONS);
 
     reply.setCookie('podders_session', sessionId, {
       httpOnly: true,
