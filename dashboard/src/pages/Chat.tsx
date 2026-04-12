@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react';
-import { apiFetch } from '../lib/api';
+import { apiFetch, isApiError, isRateLimitError } from '../lib/api';
 import { ChatPanel } from '../components/ChatPanel';
 import { ChatMessage } from '../components/ChatMessage';
 import type { ChatSource } from '../components/ChatSources';
@@ -29,13 +29,11 @@ function parseErrorMessage(err: unknown): string {
   if (err instanceof TypeError && err.message === 'Failed to fetch') {
     return 'Network error. Check your connection.';
   }
-  if (err instanceof Error) {
-    const match = err.message.match(/API (\d+):/);
-    if (match) {
-      const status = Number(match[1]);
-      if (status === 429) return "You're sending messages too quickly. Please wait a moment.";
-      if (status >= 500) return 'The server encountered an error. Try again.';
-    }
+  if (isRateLimitError(err)) {
+    return "You're sending messages too quickly. Please wait a moment.";
+  }
+  if (isApiError(err) && err.status >= 500) {
+    return 'The server encountered an error. Try again.';
   }
   return 'Something went wrong. Please try again.';
 }

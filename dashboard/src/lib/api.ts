@@ -43,8 +43,33 @@ export class ApiError extends Error {
   }
 }
 
+export class RateLimitError extends ApiError {
+  readonly retryAfter: number | null;
+
+  constructor(statusText: string, detail: string | null, retryAfter: number | null) {
+    super(429, statusText, detail);
+    this.name = 'RateLimitError';
+    this.retryAfter = retryAfter;
+  }
+}
+
+export class AuthExpiredError extends ApiError {
+  constructor(statusText: string, detail: string | null) {
+    super(401, statusText, detail);
+    this.name = 'AuthExpiredError';
+  }
+}
+
 export function isApiError(err: unknown): err is ApiError {
   return err instanceof ApiError;
+}
+
+export function isRateLimitError(err: unknown): err is RateLimitError {
+  return err instanceof RateLimitError;
+}
+
+export function isAuthExpiredError(err: unknown): err is AuthExpiredError {
+  return err instanceof AuthExpiredError;
 }
 
 async function extractErrorDetail(res: Response): Promise<string | null> {
@@ -81,7 +106,12 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
       authRedirect.toLogin();
     }
     const detail = await extractErrorDetail(res);
-    throw new ApiError(res.status, res.statusText, detail);
+    throw new AuthExpiredError(res.statusText, detail);
+  }
+  if (res.status === 429) {
+    const retryAfter = res.headers.get('Retry-After');
+    const detail = await extractErrorDetail(res);
+    throw new RateLimitError(res.statusText, detail, retryAfter ? Number(retryAfter) : null);
   }
   if (res.status === 503) {
     const parsed = await res

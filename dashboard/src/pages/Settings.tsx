@@ -470,7 +470,7 @@ async function fetchMacroOverviewData(): Promise<MacroOverview | null> {
   try {
     return await apiFetch<MacroOverview>('/macro');
   } catch (err: unknown) {
-    if (err instanceof Error && err.message.includes('404')) {
+    if (isApiError(err) && err.status === 404) {
       return null;
     }
     throw err;
@@ -1768,7 +1768,7 @@ function SourcesTab() {
       setSources((prev) => [...prev, newSource]);
       setModalOpen(false);
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('409')) {
+      if (isApiError(err) && err.status === 409) {
         setAddError('Source already exists.');
       } else if (err instanceof Error) {
         setAddError(err.message);
@@ -1828,7 +1828,7 @@ function SourcesTab() {
       setProxyTokenTarget(null);
       setTokenProxyUrl('');
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('400')) {
+      if (isApiError(err) && err.status === 400) {
         setTokenActionError('Proxy URL must be a valid http:// or https:// proxy endpoint.');
       } else {
         setTokenActionError(`Failed to update proxy for "${proxyTokenTarget.label ?? proxyTokenTarget.maskedToken}".`);
@@ -1874,7 +1874,7 @@ function SourcesTab() {
         ),
       );
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('409')) {
+      if (isApiError(err) && err.status === 409) {
         setError(`Cannot re-enable "${getSourceDisplayName(s)}" — source is halted. Fix the underlying issue first.`);
       } else {
         setError(`Failed to toggle source "${getSourceDisplayName(s)}".`);
@@ -3409,7 +3409,7 @@ function PipelineTab() {
       await reloadCalendarEvents();
       setCalendarModalOpen(false);
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('400')) {
+      if (isApiError(err) && err.status === 400) {
         setCalendarActionError(
           'Calendar events must be scheduled in the future, and linked entities must match a known Podders entity or alias.',
         );
@@ -5990,7 +5990,7 @@ function UsersTab() {
       await reloadUsersAuditAndRequests();
       setInviteModalOpen(false);
     } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('400')) {
+      if (isApiError(err) && err.status === 400) {
         setError('Discord IDs must be 17-20 digits.');
       } else {
         setError('Failed to invite user.');
