@@ -11,7 +11,19 @@ export interface SessionManager {
   ): Promise<{ discordId: string; role: string; refreshed: boolean } | null>;
   delete(sessionId: string): Promise<void>;
   deleteAllForUser(discordId: string): Promise<number>;
+  listForUser(discordId: string): Promise<SessionInfo[]>;
   cleanupExpired(): Promise<number>;
+}
+
+export interface SessionInfo {
+  id: string;
+  discordId: string;
+  createdAt: number;
+  expiresAt: number;
+  lastRefreshedAt: number;
+  ipAddress: string | null;
+  userAgent: string | null;
+  normalizedUA: string | null;
 }
 
 export const MAX_SESSIONS_PER_USER = 5;
@@ -217,6 +229,39 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         log.info({ discordId, count }, 'Purged all sessions for user');
       }
       return count;
+    },
+
+    async listForUser(discordId: string): Promise<SessionInfo[]> {
+      const { rows } = await pool.query<{
+        id: string;
+        discord_id: string;
+        created_at: string;
+        expires_at: string;
+        last_refreshed_at: string;
+        ip_address: string | null;
+        user_agent: string | null;
+      }>(
+        `SELECT id, discord_id, created_at, expires_at, last_refreshed_at, ip_address, user_agent
+         FROM sessions
+         WHERE discord_id = $1 AND expires_at > $2
+         ORDER BY last_refreshed_at DESC`,
+        [discordId, Date.now()],
+      );
+
+      return rows.map((row) => ({
+        id: row.id,
+        discordId: row.discord_id,
+        createdAt: Number(row.created_at),
+        expiresAt: Number(row.expires_at),
+        lastRefreshedAt: Number(row.last_refreshed_at),
+        ipAddress: row.ip_address,
+        userAgent: row.user_agent,
+        normalizedUA: row.user_agent
+          ? row.user_agent.includes('/') && !row.user_agent.includes(' ')
+            ? row.user_agent
+            : normalizeUA(row.user_agent)
+          : null,
+      }));
     },
 
     async cleanupExpired(): Promise<number> {
