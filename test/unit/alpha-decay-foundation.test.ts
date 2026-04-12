@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -61,7 +62,7 @@ describe('Migration 28: source tiers + alpha propagation', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('SourceRow includes tier', () => {
-  const queries = readSrc('src/db/queries.ts');
+  const queries = readQueriesSource();
 
   it('SourceRow interface has tier field', () => {
     // SourceRow should contain tier: string
@@ -70,7 +71,7 @@ describe('SourceRow includes tier', () => {
 });
 
 describe('Alpha propagation queries', () => {
-  const queries = readSrc('src/db/queries.ts');
+  const queries = readQueriesSource();
 
   it('exports AlphaPropagationRow interface', () => {
     assert.match(queries, /export\s+interface\s+AlphaPropagationRow/);

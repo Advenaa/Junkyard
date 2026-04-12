@@ -10,10 +10,10 @@
  */
 import { describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { resolve, dirname } from 'node:path';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -105,14 +105,12 @@ describe('toCamelCase — unit', () => {
 // 2. Structural tests — verify toCamelCase exists and is applied in server.ts
 // ---------------------------------------------------------------------------
 
-const QUERIES_SRC = resolve(__dirname, '../../src/db/queries.ts');
-
 let source: string;
 let queriesSource: string;
 
 before(async () => {
   source = readServerSource();
-  queriesSource = await readFile(QUERIES_SRC, 'utf-8');
+  queriesSource = readQueriesSource();
 });
 
 describe('toCamelCase — structural (server.ts source)', () => {

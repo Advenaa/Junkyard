@@ -13,12 +13,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { encryptToken, decryptToken, getEncryptionKey } from '../../src/crypto/token-encrypt.js';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 
 const encryptSrc = readFileSync(resolve(ROOT, 'src/crypto/token-encrypt.ts'), 'utf-8');
 const migrationsSrc = readFileSync(resolve(ROOT, 'src/db/migrations.ts'), 'utf-8');
-const queriesSrc = readFileSync(resolve(ROOT, 'src/db/queries.ts'), 'utf-8');
+const queriesSrc = readQueriesSource();
 const serverSrc = readServerSource();
 
 // ==========================================================================

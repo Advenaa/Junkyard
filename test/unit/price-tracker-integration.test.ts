@@ -13,6 +13,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { readQueriesSource } from './helpers/queries-source.js';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function readSrc(relPath: string): string {
@@ -44,7 +46,7 @@ describe('Config: coingeckoApiKey', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Query: getActiveTokensWithCoinGeckoIds', () => {
-  const queries = readSrc('src/db/queries.ts');
+  const queries = readQueriesSource();
 
   it('exports getActiveTokensWithCoinGeckoIds function', () => {
     assert.match(queries, /export\s+async\s+function\s+getActiveTokensWithCoinGeckoIds/);

@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { insertAlphaPropagation } from '../../src/db/queries.js';
 import { createAlphaTracker } from '../../src/knowledge/alpha-tracker.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -164,7 +165,7 @@ describe('Alpha tracker module shape (src/knowledge/alpha-tracker.ts)', () => {
 
 describe('Alpha propagation DB-level dedup structure', () => {
   const migrations = readSrc('src/db/migrations.ts');
-  const queries = readSrc('src/db/queries.ts');
+  const queries = readQueriesSource();
 
   it('adds a generated first_mention_day column', () => {
     assert.match(migrations, /ADD COLUMN IF NOT EXISTS first_mention_day DATE[\s\S]*GENERATED ALWAYS AS/i);
