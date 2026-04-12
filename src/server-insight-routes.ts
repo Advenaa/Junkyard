@@ -58,7 +58,7 @@ export function registerInsightRoutes({
     const macroContext = buildMacroContext(snapshots);
 
     if (macroContext.entries.length === 0) {
-      return reply.code(404).send({ error: 'No macro data available yet' });
+      return { overallBias: 'mixed' as const, latestDate: null, entries: [] };
     }
 
     const latestDate = macroContext.entries.reduce(
