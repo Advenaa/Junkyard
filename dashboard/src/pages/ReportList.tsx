@@ -208,7 +208,7 @@ export function ReportList() {
   }, [statusReady, embeddingsDisabled, registerDisabledFeature]);
 
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
-  const visibleReports = filter === 'bookmarked' ? reports.filter((report) => bookmarkedIds.has(report.id)) : reports;
+  const visibleReports = reports;
 
   const handleBookmarkToggle = useCallback((reportId: string, isBookmarked: boolean) => {
     setBookmarkedIds((prev) => {

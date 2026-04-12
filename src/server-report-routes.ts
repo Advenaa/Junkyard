@@ -41,6 +41,7 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
     } = request.query as { limit?: string; offset?: string; type?: string; bookmarked?: string };
     const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
     const offset = Math.max(parseInt(rawOffset ?? '0', 10) || 0, 0);
+    const bookmarkedOnly = bookmarked === 'true';
     const params: unknown[] = [limit, offset];
     const conditions: string[] = [];
     let joinClause = '';
@@ -48,13 +49,14 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
       params.push(type);
       conditions.push(`reports.type = $${params.length}`);
     }
-    if (bookmarked === 'true') {
+    if (bookmarkedOnly) {
       params.push(request.user!.discordId);
       joinClause = `INNER JOIN bookmarks ON bookmarks.report_id = reports.id AND bookmarks.user_id = $${params.length}`;
     }
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderByClause = bookmarkedOnly ? 'bookmarks.created_at DESC' : 'reports.created_at DESC';
     const { rows: reports } = await pool.query<ReportRow>(
-      `SELECT reports.id, reports.date, reports.type, reports.tldr, reports.sentiment, reports.delivery_status, reports.created_at, reports.body FROM reports ${joinClause} ${whereClause} ORDER BY reports.created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT reports.id, reports.date, reports.type, reports.tldr, reports.sentiment, reports.delivery_status, reports.created_at, reports.body FROM reports ${joinClause} ${whereClause} ORDER BY ${orderByClause} LIMIT $1 OFFSET $2`,
       params,
     );
     const countParams: unknown[] = [];
@@ -64,7 +66,7 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
       countParams.push(type);
       countConditions.push(`reports.type = $${countParams.length}`);
     }
-    if (bookmarked === 'true') {
+    if (bookmarkedOnly) {
       countParams.push(request.user!.discordId);
       countJoin = `INNER JOIN bookmarks ON bookmarks.report_id = reports.id AND bookmarks.user_id = $${countParams.length}`;
     }
