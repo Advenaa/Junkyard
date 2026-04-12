@@ -6,36 +6,7 @@ import {
   type ReportChainToggleAction,
 } from './reportChains';
 
-export interface ReportPreviewStateApi {
-  previewBodyOverrides: Record<string, string>;
-  leadChainLabelOverrides: Record<string, string>;
-  leadChainHrefOverrides: Record<string, string>;
-  focusedReportHrefOverrides: Record<string, string>;
-  visibleChainCountOverrides: Record<string, number>;
-  storyChipActionOverrides: Record<string, ReportChainToggleAction>;
-  storyChipToggleRequests: Record<string, number>;
-  refreshChipActionOverrides: Record<string, ReportChainRefreshAction>;
-  refreshChipRequests: Record<string, number>;
-  updateReportPreviewBody(reportId: string, fallbackBody: string, nextBody: string | null): void;
-  updateLeadChainLabel(reportId: string, fallbackLabel: string | null, nextLabel: string | null): void;
-  updateLeadChainHref(reportId: string, fallbackHref: string | null, nextHref: string | null): void;
-  updateFocusedReportHref(reportId: string, fallbackHref: string | null, nextHref: string | null): void;
-  updateVisibleChainCount(reportId: string, fallbackCount: number, nextCount: number): void;
-  updateStoryChipAction(
-    reportId: string,
-    fallbackAction: ReportChainToggleAction,
-    nextAction: ReportChainToggleAction,
-  ): void;
-  requestStoryChipToggle(reportId: string): void;
-  updateRefreshChipAction(
-    reportId: string,
-    fallbackAction: ReportChainRefreshAction,
-    nextAction: ReportChainRefreshAction,
-  ): void;
-  requestRefreshChip(reportId: string): void;
-}
-
-export function useReportPreviewState(): ReportPreviewStateApi {
+export function useReportPreviewState() {
   const [previewBodyOverrides, setPreviewBodyOverrides] = useState<Record<string, string>>({});
   const [leadChainLabelOverrides, setLeadChainLabelOverrides] = useState<Record<string, string>>({});
   const [leadChainHrefOverrides, setLeadChainHrefOverrides] = useState<Record<string, string>>({});
