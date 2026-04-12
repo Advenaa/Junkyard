@@ -149,4 +149,245 @@ describe('useAsyncData', () => {
     unmount();
     expect((capturedSignal as AbortSignal | null)?.aborted).toBe(true);
   });
+
+  it('retry() re-runs the loader after failure and clears error on success', async () => {
+    const first = createDeferred<string>();
+    const second = createDeferred<string>();
+    let callCount = 0;
+
+    const { result } = renderHook(() =>
+      useAsyncData(() => {
+        callCount++;
+        return callCount === 1 ? first.promise : second.promise;
+      }, []),
+    );
+
+    await act(async () => {
+      first.reject(new Error('boom'));
+      await first.promise.catch(() => {});
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.error).toBe('boom');
+    expect(result.current.retryCount).toBe(0);
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    expect(result.current.loading).toBe(true);
+    expect(result.current.retryCount).toBe(1);
+
+    await act(async () => {
+      second.resolve('recovered');
+      await second.promise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.data).toBe('recovered');
+    expect(result.current.error).toBeNull();
+    expect(result.current.retryCount).toBe(0);
+  });
+
+  it('retry() is a no-op while loading', async () => {
+    const first = createDeferred<string>();
+    const second = createDeferred<string>();
+    let callCount = 0;
+
+    const { result } = renderHook(() =>
+      useAsyncData(() => {
+        callCount++;
+        return callCount === 1 ? first.promise : second.promise;
+      }, []),
+    );
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    expect(callCount).toBe(1);
+    expect(result.current.retryCount).toBe(0);
+
+    await act(async () => {
+      first.reject(new Error('boom'));
+      await first.promise.catch(() => {});
+    });
+
+    await waitFor(() => {
+      expect(result.current.error).toBe('boom');
+    });
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.retryCount).toBe(1);
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.retryCount).toBe(1);
+
+    await act(async () => {
+      second.resolve('ok');
+      await second.promise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toBe('ok');
+    });
+  });
+
+  it('retry() is a no-op when there is no error', async () => {
+    let callCount = 0;
+    const { result } = renderHook(() =>
+      useAsyncData(async () => {
+        callCount++;
+        return 'ok';
+      }, []),
+    );
+
+    await waitFor(() => {
+      expect(result.current.data).toBe('ok');
+    });
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    expect(callCount).toBe(1);
+    expect(result.current.retryCount).toBe(0);
+    expect(result.current.error).toBeNull();
+  });
+
+  it('retryCount resets on successful load', async () => {
+    const first = createDeferred<string>();
+    const second = createDeferred<string>();
+    const third = createDeferred<string>();
+    let callCount = 0;
+
+    const { result } = renderHook(() =>
+      useAsyncData(() => {
+        callCount++;
+        if (callCount === 1) return first.promise;
+        if (callCount === 2) return second.promise;
+        return third.promise;
+      }, []),
+    );
+
+    await act(async () => {
+      first.reject(new Error('boom'));
+      await first.promise.catch(() => {});
+    });
+
+    await waitFor(() => {
+      expect(result.current.error).toBe('boom');
+    });
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    await act(async () => {
+      second.resolve('recovered');
+      await second.promise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.retryCount).toBe(0);
+    });
+
+    await act(async () => {
+      result.current.refresh();
+    });
+
+    await act(async () => {
+      third.resolve('fresh');
+      await third.promise;
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toBe('fresh');
+    });
+    expect(result.current.retryCount).toBe(0);
+  });
+
+  it('retry() stops after 3 consecutive failures', async () => {
+    const attempts = [
+      createDeferred<string>(),
+      createDeferred<string>(),
+      createDeferred<string>(),
+      createDeferred<string>(),
+    ];
+    let callCount = 0;
+
+    const { result } = renderHook(() =>
+      useAsyncData(() => {
+        const next = attempts[callCount];
+        callCount++;
+        return next.promise;
+      }, []),
+    );
+
+    await act(async () => {
+      attempts[0].reject(new Error('boom-1'));
+      await attempts[0].promise.catch(() => {});
+    });
+
+    await waitFor(() => {
+      expect(result.current.error).toBe('boom-1');
+    });
+
+    await act(async () => {
+      result.current.retry();
+    });
+    await act(async () => {
+      attempts[1].reject(new Error('boom-2'));
+      await attempts[1].promise.catch(() => {});
+    });
+    await waitFor(() => {
+      expect(result.current.error).toBe('boom-2');
+    });
+    expect(result.current.retryCount).toBe(1);
+
+    await act(async () => {
+      result.current.retry();
+    });
+    await act(async () => {
+      attempts[2].reject(new Error('boom-3'));
+      await attempts[2].promise.catch(() => {});
+    });
+    await waitFor(() => {
+      expect(result.current.error).toBe('boom-3');
+    });
+    expect(result.current.retryCount).toBe(2);
+
+    await act(async () => {
+      result.current.retry();
+    });
+    await act(async () => {
+      attempts[3].reject(new Error('boom-4'));
+      await attempts[3].promise.catch(() => {});
+    });
+    await waitFor(() => {
+      expect(result.current.error).toBe('boom-4');
+    });
+    expect(result.current.retryCount).toBe(3);
+    expect(callCount).toBe(4);
+
+    await act(async () => {
+      result.current.retry();
+    });
+
+    expect(result.current.retryCount).toBe(3);
+    expect(result.current.error).toBe('boom-4');
+    expect(callCount).toBe(4);
+  });
 });

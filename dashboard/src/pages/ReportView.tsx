@@ -3,8 +3,8 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch, isApiError, isFeatureDisabledError } from '../lib/api';
 import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegime';
 import { buildFocusedReportHref, buildSummaryChainHref } from '../lib/reportChains';
+import { DataShell } from '../components/DataShell';
 import { TypeBadge } from '../components/TypeBadge';
-import { EmptyState } from '../components/EmptyState';
 import { useStatus } from '../components/StatusProvider';
 import type {
   AlphaWatchOverview,
@@ -305,360 +305,370 @@ export function ReportView() {
   const calendarEntries = useMemo(() => calendarEvents?.slice(0, CALENDAR_PREVIEW_LIMIT) ?? [], [calendarEvents]);
   const loading = loadedKey !== requestKey;
 
-  if (loading) {
-    return <div className="p-6 text-text-secondary font-body">Loading...</div>;
-  }
-
-  if (error) {
-    return <div className="p-6 text-accent-red font-body">Error: {error}</div>;
-  }
-
-  if (!report) {
-    return (
-      <div className="p-6">
-        <EmptyState title="Report not found" description="This report may have been removed or the link is stale." />
-      </div>
-    );
-  }
-
-  const focusedChainId = searchParams.get('chain');
-  const allChains = report.chainDrilldowns ?? [];
-  const focusedChain = focusedChainId ? (allChains.find((chain) => chain.rootId === focusedChainId) ?? null) : null;
-  const orderedChains = focusedChain
-    ? [focusedChain, ...allChains.filter((chain) => chain.rootId !== focusedChain.rootId)]
-    : allChains;
-
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <TypeBadge type={report.type} />
-          <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Report</span>
-        </div>
-        <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
-      </div>
+    <DataShell
+      loading={loading}
+      error={error ? `Error: ${error}` : null}
+      data={report}
+      skeleton={<div className="p-6 text-text-secondary font-body">Loading...</div>}
+      emptyTitle="Report not found"
+      emptyDescription="This report may have been removed or the link is stale."
+    >
+      {(loadedReport) => {
+        const report = loadedReport;
+        const focusedChainId = searchParams.get('chain');
+        const allChains = report.chainDrilldowns ?? [];
+        const focusedChain = focusedChainId
+          ? (allChains.find((chain) => chain.rootId === focusedChainId) ?? null)
+          : null;
+        const orderedChains = focusedChain
+          ? [focusedChain, ...allChains.filter((chain) => chain.rootId !== focusedChain.rootId)]
+          : allChains;
 
-      {/* TL;DR Hero */}
-      <blockquote className="font-heading text-xl leading-relaxed text-text-primary border-l-2 border-accent pl-6 py-2">
-        {report.tldr}
-      </blockquote>
-
-      <MacroSection
-        macroDisabled={macroDisabled}
-        disabledMacro={disabledMacro}
-        macroOverview={macroOverview}
-        macroEntries={macroEntries}
-      />
-
-      <PriceWatchSection
-        pricesDisabled={pricesDisabled}
-        disabledPrices={disabledPrices}
-        priceWatch={priceWatch}
-        priceEntries={priceEntries}
-      />
-
-      <NarrativeSection
-        embeddingsDisabled={embeddingsDisabled}
-        disabledEmbeddings={disabledEmbeddings}
-        narratives={narratives}
-        narrativeEntries={narrativeEntries}
-      />
-
-      <UnusualActivitySection unusualActivity={unusualActivity} unusualEntries={unusualEntries} />
-
-      <RegionalDivergenceSection
-        regionalDivergences={regionalDivergences}
-        regionalDivergenceEntries={regionalDivergenceEntries}
-      />
-
-      <FirstMoverSection firstMoverWatchlist={firstMoverWatchlist} firstMoverEntries={firstMoverEntries} />
-
-      <AlphaWatchSection alphaWatch={alphaWatch} alphaWatchEntries={alphaWatchEntries} />
-
-      <CalendarSection calendarEvents={calendarEvents} calendarEntries={calendarEntries} />
-
-      {report.macroRegime && (
-        <div className="bg-surface border border-border rounded-lg p-4">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="space-y-2">
-              <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Macro Regime</h2>
-              <p className="text-text-primary text-sm font-body leading-relaxed">{report.macroRegime.rationale}</p>
-              {report.macroRegimeHistory && report.macroRegimeHistory.streakDays > 0 && (
-                <p className="text-text-secondary text-xs font-mono uppercase tracking-wide">
-                  Day {report.macroRegimeHistory.streakDays} of current daily regime | since{' '}
-                  {formatDate(report.macroRegimeHistory.regimeStartedAt)}
-                  {report.macroRegimeHistory.previousClassification
-                    ? ` | previous ${formatMacroRegimeLabel(report.macroRegimeHistory.previousClassification)}`
-                    : ''}
-                </p>
-              )}
+        return (
+          <div className="p-6 max-w-4xl mx-auto space-y-8">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <TypeBadge type={report.type} />
+                <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Report</span>
+              </div>
+              <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
             </div>
-            <div className="flex flex-col items-end gap-2">
-              <span
-                className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${macroRegimeToneClasses(report.macroRegime.classification)}`}
-              >
-                {formatMacroRegimeLabel(report.macroRegime.classification)}
-              </span>
-              <span className="text-[11px] font-mono uppercase tracking-wide text-text-secondary">
-                {Math.round(report.macroRegime.confidence * 100)}% confidence
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {report.marketCatalysts && report.marketCatalysts.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Market Catalysts</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.marketCatalysts.map((catalyst, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {catalyst}
+            {/* TL;DR Hero */}
+            <blockquote className="font-heading text-xl leading-relaxed text-text-primary border-l-2 border-accent pl-6 py-2">
+              {report.tldr}
+            </blockquote>
+
+            <MacroSection
+              macroDisabled={macroDisabled}
+              disabledMacro={disabledMacro}
+              macroOverview={macroOverview}
+              macroEntries={macroEntries}
+            />
+
+            <PriceWatchSection
+              pricesDisabled={pricesDisabled}
+              disabledPrices={disabledPrices}
+              priceWatch={priceWatch}
+              priceEntries={priceEntries}
+            />
+
+            <NarrativeSection
+              embeddingsDisabled={embeddingsDisabled}
+              disabledEmbeddings={disabledEmbeddings}
+              narratives={narratives}
+              narrativeEntries={narrativeEntries}
+            />
+
+            <UnusualActivitySection unusualActivity={unusualActivity} unusualEntries={unusualEntries} />
+
+            <RegionalDivergenceSection
+              regionalDivergences={regionalDivergences}
+              regionalDivergenceEntries={regionalDivergenceEntries}
+            />
+
+            <FirstMoverSection firstMoverWatchlist={firstMoverWatchlist} firstMoverEntries={firstMoverEntries} />
+
+            <AlphaWatchSection alphaWatch={alphaWatch} alphaWatchEntries={alphaWatchEntries} />
+
+            <CalendarSection calendarEvents={calendarEvents} calendarEntries={calendarEntries} />
+
+            {report.macroRegime && (
+              <div className="bg-surface border border-border rounded-lg p-4">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div className="space-y-2">
+                    <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Macro Regime</h2>
+                    <p className="text-text-primary text-sm font-body leading-relaxed">
+                      {report.macroRegime.rationale}
+                    </p>
+                    {report.macroRegimeHistory && report.macroRegimeHistory.streakDays > 0 && (
+                      <p className="text-text-secondary text-xs font-mono uppercase tracking-wide">
+                        Day {report.macroRegimeHistory.streakDays} of current daily regime | since{' '}
+                        {formatDate(report.macroRegimeHistory.regimeStartedAt)}
+                        {report.macroRegimeHistory.previousClassification
+                          ? ` | previous ${formatMacroRegimeLabel(report.macroRegimeHistory.previousClassification)}`
+                          : ''}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <span
+                      className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-wide ${macroRegimeToneClasses(report.macroRegime.classification)}`}
+                    >
+                      {formatMacroRegimeLabel(report.macroRegime.classification)}
+                    </span>
+                    <span className="text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                      {Math.round(report.macroRegime.confidence * 100)}% confidence
+                    </span>
+                  </div>
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.regionalDivergence && report.regionalDivergence.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-            Cross-Language Signals
-          </h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.regionalDivergence.map((entry, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {entry}
+            {report.marketCatalysts && report.marketCatalysts.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
+                  Market Catalysts
+                </h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.marketCatalysts.map((catalyst, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {catalyst}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.narrativeShifts && report.narrativeShifts.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Narrative Shifts</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.narrativeShifts.map((entry, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {entry}
+            {report.regionalDivergence && report.regionalDivergence.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
+                  Cross-Language Signals
+                </h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.regionalDivergence.map((entry, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {entry}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.firstMovers && report.firstMovers.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">First Movers</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.firstMovers.map((entry, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {entry}
+            {report.narrativeShifts && report.narrativeShifts.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
+                  Narrative Shifts
+                </h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.narrativeShifts.map((entry, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {entry}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.alphaSignals && report.alphaSignals.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Alpha Signals</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.alphaSignals.map((signal, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {signal}
+            {report.firstMovers && report.firstMovers.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">First Movers</h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.firstMovers.map((entry, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {entry}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.newProjects && report.newProjects.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">New Projects</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.newProjects.map((project, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                <span className="font-semibold">{project.name}</span>
-                <span className="text-text-secondary"> — </span>
-                {project.description}
+            {report.alphaSignals && report.alphaSignals.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Alpha Signals</h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.alphaSignals.map((signal, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {signal}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.priceAlerts && report.priceAlerts.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Price Alerts</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.priceAlerts.map((alert, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {alert}
+            {report.newProjects && report.newProjects.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">New Projects</h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.newProjects.map((project, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      <span className="font-semibold">{project.name}</span>
+                      <span className="text-text-secondary"> — </span>
+                      {project.description}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.unusualActivity && report.unusualActivity.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Unusual Activity</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.unusualActivity.map((alert, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {alert}
+            {report.priceAlerts && report.priceAlerts.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Price Alerts</h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.priceAlerts.map((alert, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {alert}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.macroAlerts && report.macroAlerts.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Macro Alerts</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.macroAlerts.map((alert, i) => (
-              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
-                {alert}
+            {report.unusualActivity && report.unusualActivity.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
+                  Unusual Activity
+                </h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.unusualActivity.map((alert, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {alert}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {report.eventChains && report.eventChains.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Event Chains</h2>
-          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {report.eventChains.map((chain, i) => (
-              <div
-                key={`${i}:${chain}`}
-                className="px-4 py-3 space-y-1 text-sm font-body leading-relaxed text-text-primary"
-              >
-                <div>{chain}</div>
+            {report.macroAlerts && report.macroAlerts.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Macro Alerts</h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.macroAlerts.map((alert, i) => (
+                    <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                      {alert}
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+            )}
 
-      {allChains.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-            <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Chain Drilldowns</h2>
-            {focusedChain && (
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
-                  Focused chain | {focusedChain.entityName} | {focusedChain.latestEventType}
-                </span>
-                <Link
-                  to={`/reports/${report.id}`}
-                  className="text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
-                >
-                  Show all chains
-                </Link>
+            {report.eventChains && report.eventChains.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Event Chains</h2>
+                <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+                  {report.eventChains.map((chain, i) => (
+                    <div
+                      key={`${i}:${chain}`}
+                      className="px-4 py-3 space-y-1 text-sm font-body leading-relaxed text-text-primary"
+                    >
+                      <div>{chain}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {allChains.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
+                  <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Chain Drilldowns</h2>
+                  {focusedChain && (
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
+                        Focused chain | {focusedChain.entityName} | {focusedChain.latestEventType}
+                      </span>
+                      <Link
+                        to={`/reports/${report.id}`}
+                        className="text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
+                      >
+                        Show all chains
+                      </Link>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {orderedChains.map((chain) => {
+                    const isFocused = focusedChain?.rootId === chain.rootId;
+
+                    return (
+                      <div
+                        key={chain.rootId}
+                        className={`bg-surface border rounded-lg p-4 space-y-2 ${
+                          isFocused ? 'border-accent/60 bg-accent/5' : 'border-border'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="text-sm font-body text-text-primary">{chain.entityName}</div>
+                            <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
+                              {chain.eventCount} linked event{chain.eventCount !== 1 ? 's' : ''} |{' '}
+                              {chain.eventTypes.join(' -> ')}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            {isFocused ? (
+                              <span className="text-[10px] font-mono uppercase tracking-wider text-accent">
+                                Focused chain
+                              </span>
+                            ) : allChains.length > 1 ? (
+                              <Link
+                                to={buildFocusedReportHref(report.id, chain.rootId)}
+                                className="text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
+                              >
+                                Focus chain
+                              </Link>
+                            ) : null}
+                            <Link
+                              to={buildSummaryChainHref(chain.latestSummaryId, chain.rootId)}
+                              className="text-xs font-mono uppercase tracking-wider text-accent hover:underline"
+                            >
+                              Open latest linked summary
+                            </Link>
+                          </div>
+                        </div>
+                        <div className="text-xs font-body text-text-secondary leading-relaxed">
+                          {formatRange(chain.firstEventTime, chain.latestEventTime)}
+                        </div>
+                        <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
+                          Latest event | {chain.latestEventType} | {formatDateTime(chain.latestEventTime)}
+                        </div>
+                        <div className="text-sm font-body text-text-primary leading-relaxed">
+                          {chain.latestEventDescription}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Key Events */}
+            {report.keyEvents && report.keyEvents.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Key Events</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {report.keyEvents.map((event, i) => (
+                    <div
+                      key={i}
+                      className="bg-surface border border-border rounded-lg p-4 text-sm font-body text-text-primary leading-relaxed"
+                    >
+                      {event}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Entity Sentiment */}
+            {report.entitySentiment && report.entitySentiment.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
+                  Entity Sentiment
+                </h2>
+                <div className="bg-surface border border-border rounded-lg p-4">
+                  {report.entitySentiment.map((entity) => (
+                    <SentimentBar key={entity.name} entity={entity} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Collapsible Sections */}
+            {report.sections && report.sections.length > 0 && (
+              <div>
+                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Sections</h2>
+                <div className="space-y-2">
+                  {report.sections.map((section) => (
+                    <CollapsibleSection key={section.title} section={section} />
+                  ))}
+                </div>
               </div>
             )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {orderedChains.map((chain) => {
-              const isFocused = focusedChain?.rootId === chain.rootId;
-
-              return (
-                <div
-                  key={chain.rootId}
-                  className={`bg-surface border rounded-lg p-4 space-y-2 ${
-                    isFocused ? 'border-accent/60 bg-accent/5' : 'border-border'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <div className="text-sm font-body text-text-primary">{chain.entityName}</div>
-                      <div className="text-[10px] font-mono uppercase tracking-wider text-text-secondary">
-                        {chain.eventCount} linked event{chain.eventCount !== 1 ? 's' : ''} |{' '}
-                        {chain.eventTypes.join(' -> ')}
-                      </div>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      {isFocused ? (
-                        <span className="text-[10px] font-mono uppercase tracking-wider text-accent">
-                          Focused chain
-                        </span>
-                      ) : allChains.length > 1 ? (
-                        <Link
-                          to={buildFocusedReportHref(report.id, chain.rootId)}
-                          className="text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
-                        >
-                          Focus chain
-                        </Link>
-                      ) : null}
-                      <Link
-                        to={buildSummaryChainHref(chain.latestSummaryId, chain.rootId)}
-                        className="text-xs font-mono uppercase tracking-wider text-accent hover:underline"
-                      >
-                        Open latest linked summary
-                      </Link>
-                    </div>
-                  </div>
-                  <div className="text-xs font-body text-text-secondary leading-relaxed">
-                    {formatRange(chain.firstEventTime, chain.latestEventTime)}
-                  </div>
-                  <div className="text-xs font-mono uppercase tracking-wider text-text-secondary">
-                    Latest event | {chain.latestEventType} | {formatDateTime(chain.latestEventTime)}
-                  </div>
-                  <div className="text-sm font-body text-text-primary leading-relaxed">
-                    {chain.latestEventDescription}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Key Events */}
-      {report.keyEvents && report.keyEvents.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Key Events</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {report.keyEvents.map((event, i) => (
-              <div
-                key={i}
-                className="bg-surface border border-border rounded-lg p-4 text-sm font-body text-text-primary leading-relaxed"
-              >
-                {event}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Entity Sentiment */}
-      {report.entitySentiment && report.entitySentiment.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Entity Sentiment</h2>
-          <div className="bg-surface border border-border rounded-lg p-4">
-            {report.entitySentiment.map((entity) => (
-              <SentimentBar key={entity.name} entity={entity} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Collapsible Sections */}
-      {report.sections && report.sections.length > 0 && (
-        <div>
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Sections</h2>
-          <div className="space-y-2">
-            {report.sections.map((section) => (
-              <CollapsibleSection key={section.title} section={section} />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+        );
+      }}
+    </DataShell>
   );
 }

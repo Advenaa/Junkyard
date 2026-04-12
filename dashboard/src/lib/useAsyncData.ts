@@ -23,6 +23,8 @@ export interface UseAsyncDataResult<T> {
   error: string | null;
   /** Trigger a fresh load that replaces `data`/`error` when it settles. */
   refresh: () => void;
+  retry: () => void;
+  retryCount: number;
 }
 
 /**
@@ -44,6 +46,7 @@ export function useAsyncData<T>(loader: (signal: AbortSignal) => Promise<T>, dep
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState<number>(0);
 
   // Sequence counter defends against "load A starts, load B starts, load A
   // resolves last" — AbortController handles fetch cancellation, but a
@@ -54,11 +57,19 @@ export function useAsyncData<T>(loader: (signal: AbortSignal) => Promise<T>, dep
   // caller deps through the indirection, so the rule is disabled one line
   // below where `useEffect` actually reads the array.
   const loaderRef = useRef(loader);
+  const loadingRef = useRef(loading);
+  const errorRef = useRef(error);
+  const retryCountRef = useRef(retryCount);
   loaderRef.current = loader;
+  loadingRef.current = loading;
+  errorRef.current = error;
+  retryCountRef.current = retryCount;
 
   const runLoad = useCallback(() => {
     const mySeq = ++sequenceRef.current;
     const controller = new AbortController();
+    loadingRef.current = true;
+    errorRef.current = null;
     setLoading(true);
     setError(null);
 
@@ -66,7 +77,11 @@ export function useAsyncData<T>(loader: (signal: AbortSignal) => Promise<T>, dep
       .current(controller.signal)
       .then((value) => {
         if (controller.signal.aborted || mySeq !== sequenceRef.current) return;
+        loadingRef.current = false;
+        errorRef.current = null;
+        retryCountRef.current = 0;
         setData(value);
+        setRetryCount(0);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -75,6 +90,8 @@ export function useAsyncData<T>(loader: (signal: AbortSignal) => Promise<T>, dep
         // DOMException from an aborted fetch surfaces as `AbortError` —
         // treat it as a silent cancellation, not a real load failure.
         if (err instanceof DOMException && err.name === 'AbortError') return;
+        loadingRef.current = false;
+        errorRef.current = message;
         setError(message);
         setLoading(false);
       });
@@ -83,6 +100,8 @@ export function useAsyncData<T>(loader: (signal: AbortSignal) => Promise<T>, dep
   }, []);
 
   useEffect(() => {
+    retryCountRef.current = 0;
+    setRetryCount(0);
     const controller = runLoad();
     return () => {
       sequenceRef.current++;
@@ -95,5 +114,16 @@ export function useAsyncData<T>(loader: (signal: AbortSignal) => Promise<T>, dep
     runLoad();
   }, [runLoad]);
 
-  return { data, loading, error, refresh };
+  const retry = useCallback(() => {
+    if (loadingRef.current || errorRef.current === null || retryCountRef.current >= 3) {
+      return;
+    }
+
+    const nextRetryCount = retryCountRef.current + 1;
+    retryCountRef.current = nextRetryCount;
+    setRetryCount(nextRetryCount);
+    runLoad();
+  }, [runLoad]);
+
+  return { data, loading, error, refresh, retry, retryCount };
 }
