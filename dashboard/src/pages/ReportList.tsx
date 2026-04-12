@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router';
 import { apiFetch, isFeatureDisabledError } from '../lib/api';
 import type { Report } from '../lib/types';
@@ -87,11 +87,20 @@ export function ReportList() {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const latestReportsRequestRef = useRef(0);
 
   const fetchReports = useCallback(
-    async (offset: number, append: boolean) => {
+    async (offset: number, append: boolean, isCancelled: () => boolean = () => false) => {
+      const requestId = append ? latestReportsRequestRef.current : latestReportsRequestRef.current + 1;
+      if (!append) {
+        latestReportsRequestRef.current = requestId;
+      }
       const typeParam = filter !== 'all' ? `&type=${filter}` : '';
       const res = await apiFetch<{ reports: Report[] }>(`/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}`);
+      if (isCancelled() || requestId !== latestReportsRequestRef.current) {
+        return;
+      }
       if (append) {
         setReports((prev) => [...prev, ...res.reports]);
       } else {
@@ -103,12 +112,26 @@ export function ReportList() {
   );
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
+    setLoadingMore(false);
     setError(null);
-    fetchReports(0, false)
-      .catch(() => setError('Failed to load reports. Please try again.'))
-      .finally(() => setLoading(false));
-  }, [fetchReports]);
+    fetchReports(0, false, () => cancelled)
+      .catch(() => {
+        if (!cancelled) {
+          setError('Failed to load reports. Please try again.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchReports, retryNonce]);
 
   useEffect(() => {
     if (!statusReady) return;
@@ -146,13 +169,18 @@ export function ReportList() {
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
 
   const loadMore = async () => {
+    const requestId = latestReportsRequestRef.current;
     setLoadingMore(true);
     try {
-      await fetchReports(reports.length, true);
+      await fetchReports(reports.length, true, () => requestId !== latestReportsRequestRef.current);
     } catch {
-      setError('Failed to load more reports. Please try again.');
+      if (requestId === latestReportsRequestRef.current) {
+        setError('Failed to load more reports. Please try again.');
+      }
     } finally {
-      setLoadingMore(false);
+      if (requestId === latestReportsRequestRef.current) {
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -361,9 +389,7 @@ export function ReportList() {
             onClick={() => {
               setError(null);
               setLoading(true);
-              fetchReports(0, false)
-                .catch(() => setError('Failed to load reports. Please try again.'))
-                .finally(() => setLoading(false));
+              setRetryNonce((prev) => prev + 1);
             }}
             className="mt-2 text-sm underline"
           >
