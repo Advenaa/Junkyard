@@ -74,6 +74,7 @@ import {
   revokeUserSession,
   pollSourceNow,
   retrySource,
+  testSource,
 } from './api.js';
 import {
   getEntityStatusBadgeClasses,
@@ -140,6 +141,13 @@ export default function SourcesTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
+  const [rssPreview, setRssPreview] = useState<{
+    items: Array<{ author: string; content: string; timestamp: number; url: string | null }>;
+    totalItems: number;
+  } | null>(null);
+  const [testingFeed, setTestingFeed] = useState(false);
+  const [testError, setTestError] = useState<string | null>(null);
   const [addSource, setAddSource] = useState('discord');
   const [addSourceId, setAddSourceId] = useState('');
   const [addLabel, setAddLabel] = useState('');
@@ -312,13 +320,16 @@ export default function SourcesTab() {
     setBrowseOpen(false);
     setBrowseError(null);
   };
-  const openModal = () => {
+  const openWizard = () => {
+    setWizardStep(0);
     setAddSource('discord');
     setAddSourceId('');
     setAddLabel('');
     setAddPollInterval(300);
     setNewTier('general');
     setAddError(null);
+    setRssPreview(null);
+    setTestError(null);
     resetBrowseState();
     setModalOpen(true);
   };
@@ -332,6 +343,11 @@ export default function SourcesTab() {
   const handleSourceTypeChange = (value: string) => {
     setAddSource(value);
     resetBrowseState();
+    setAddSourceId('');
+    setAddLabel('');
+    setAddPollInterval(300);
+    setNewTier('general');
+    setAddError(null);
     if (value === 'twitter' && twitterApiKeyConfigured === null) {
       apiFetch<PipelineStatus>('/status')
         .then((status) => setTwitterApiKeyConfigured(status.twitterApiKeyConfigured ?? true))
@@ -439,6 +455,24 @@ export default function SourcesTab() {
       }
     } finally {
       setAdding(false);
+    }
+  };
+  const handleTestFeed = async () => {
+    if (!addSourceId.trim()) return;
+    setTestingFeed(true);
+    setTestError(null);
+    setRssPreview(null);
+    try {
+      const result = await testSource('rss', addSourceId.trim());
+      setRssPreview({ items: result.preview, totalItems: result.totalItems });
+    } catch (err: unknown) {
+      if (isApiError(err)) {
+        setTestError(err.message ?? 'Feed test failed');
+      } else {
+        setTestError('Feed test failed. Check the URL and try again.');
+      }
+    } finally {
+      setTestingFeed(false);
     }
   };
   const handleAddToken = async (e: React.FormEvent) => {
@@ -658,7 +692,7 @@ export default function SourcesTab() {
   };
   const addSourceButton = (
     <button
-      onClick={openModal}
+      onClick={openWizard}
       className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity"
     >
       Add Source
@@ -672,216 +706,301 @@ export default function SourcesTab() {
       Add Token
     </button>
   );
+  const sourceTypes = [
+    { value: 'discord', label: 'Discord', desc: 'Monitor channels from Discord servers' },
+    { value: 'twitter', label: 'Twitter / X', desc: 'Follow users or track search queries' },
+    { value: 'rss', label: 'RSS Feed', desc: 'Subscribe to any RSS or Atom feed' },
+    { value: 'news', label: 'News Article', desc: 'Extract and track a single article page' },
+  ];
   const addSourceModal = (
-    <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Source">
-      <form onSubmit={handleAddSource} className="space-y-4">
-        {addError && <p className="text-red-400 text-sm font-body">{addError}</p>}
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Source Type</label>
+    <Modal
+      open={modalOpen}
+      onClose={() => setModalOpen(false)}
+      title={
+        wizardStep === 0 ? 'Add Source' : `Add ${sourceTypes.find((t) => t.value === addSource)?.label ?? 'Source'}`
+      }
+    >
+      {wizardStep === 0 ? (
+        <div className="space-y-3">
           <select
             value={addSource}
-            onChange={(e) => handleSourceTypeChange(e.target.value)}
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+            onChange={(e) => {
+              handleSourceTypeChange(e.target.value);
+              setRssPreview(null);
+              setTestError(null);
+              setWizardStep(1);
+            }}
+            className="sr-only"
           >
             <option value="discord">discord</option>
             <option value="twitter">twitter</option>
             <option value="rss">rss</option>
             <option value="news">news</option>
           </select>
+          {sourceTypes.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              onClick={() => {
+                handleSourceTypeChange(t.value);
+                setRssPreview(null);
+                setTestError(null);
+                setWizardStep(1);
+              }}
+              className="w-full text-left px-4 py-3 bg-surface-raised border border-border rounded-lg hover:border-accent transition-colors group"
+            >
+              <div className="text-text-primary text-sm font-body group-hover:text-accent transition-colors">
+                {t.label}
+              </div>
+              <div className="text-text-secondary text-xs font-body mt-0.5">{t.desc}</div>
+            </button>
+          ))}
         </div>
+      ) : (
+        <form onSubmit={handleAddSource} className="space-y-4">
+          {addError && <p className="text-red-400 text-sm font-body">{addError}</p>}
 
-        {addSource === 'twitter' && twitterApiKeyConfigured === false && (
-          <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-4 py-3 text-yellow-400 text-sm font-body">
-            Twitter API key (TWITTERAPI_KEY) is not configured in .env. Twitter sources will not poll until a key is
-            set.
-          </div>
-        )}
+          {addSource === 'twitter' && twitterApiKeyConfigured === false && (
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-4 py-3 text-yellow-400 text-sm font-body">
+              Twitter API key (TWITTERAPI_KEY) is not configured. Twitter sources will not poll until a key is set.
+            </div>
+          )}
 
-        {addSource === 'discord' && (
-          <div className="space-y-1.5">
-            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Browse Channels</label>
-            {!browseOpen ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setBrowseOpen(true);
-                  fetchGuilds();
-                }}
-                className="w-full px-4 py-2.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors text-left"
-              >
-                Browse Servers...
-              </button>
-            ) : (
-              <div className="bg-surface-raised border border-border rounded-lg overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-                  {selectedGuild ? (
+          {addSource === 'discord' && (
+            <div className="space-y-1.5">
+              <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Browse Channels</label>
+              {!browseOpen ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBrowseOpen(true);
+                    fetchGuilds();
+                  }}
+                  className="w-full px-4 py-2.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors text-left"
+                >
+                  Browse Servers...
+                </button>
+              ) : (
+                <div className="bg-surface-raised border border-border rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+                    {selectedGuild ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedGuild(null);
+                          setChannels([]);
+                          setBrowseError(null);
+                        }}
+                        className="text-accent text-sm font-body hover:opacity-80 transition-opacity"
+                      >
+                        &larr; {selectedGuild.name}
+                      </button>
+                    ) : (
+                      <span className="text-text-secondary text-sm font-body">Select a server</span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelectedGuild(null);
-                        setChannels([]);
-                        setBrowseError(null);
-                      }}
-                      className="text-accent text-sm font-body hover:opacity-80 transition-opacity"
+                      onClick={() => setBrowseOpen(false)}
+                      className="text-text-secondary hover:text-text-primary text-sm transition-colors"
                     >
-                      &larr; {selectedGuild.name}
+                      &times;
                     </button>
-                  ) : (
-                    <span className="text-text-secondary text-sm font-body">Select a server</span>
+                  </div>
+                  {browseLoading && (
+                    <div className="px-4 py-6 text-center text-text-secondary text-sm font-body">Loading...</div>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setBrowseOpen(false)}
-                    className="text-text-secondary hover:text-text-primary text-sm transition-colors"
-                  >
-                    &times;
-                  </button>
+                  {browseError && !browseLoading && (
+                    <div className="px-4 py-4 text-red-400 text-sm font-body">{browseError}</div>
+                  )}
+                  {!browseLoading && !browseError && !selectedGuild && guilds.length > 0 && (
+                    <div className="max-h-[200px] overflow-y-auto">
+                      {guilds.map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => fetchChannels(g)}
+                          className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
+                        >
+                          {g.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!browseLoading && !browseError && selectedGuild && channels.length > 0 && (
+                    <div className="max-h-[200px] overflow-y-auto">
+                      {channels.map((ch) => (
+                        <button
+                          key={ch.id}
+                          type="button"
+                          onClick={() => selectChannel(ch)}
+                          className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
+                        >
+                          <span className="text-text-secondary">#</span>
+                          {ch.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
+              )}
+            </div>
+          )}
 
-                {browseLoading && (
-                  <div className="px-4 py-6 text-center text-text-secondary text-sm font-body">Loading...</div>
+          <div className="space-y-1.5">
+            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+              {addSource === 'twitter' ? 'Handle or Query' : 'Source ID'}
+            </label>
+            <input
+              type="text"
+              required
+              value={addSourceId}
+              onChange={(e) => {
+                setAddSourceId(e.target.value);
+                setRssPreview(null);
+                setTestError(null);
+              }}
+              placeholder={
+                addSource === 'rss'
+                  ? 'https://example.com/feed.xml'
+                  : addSource === 'discord'
+                    ? 'Channel ID'
+                    : addSource === 'twitter'
+                      ? '@username or search query (e.g. "ethereum OR defi")'
+                      : 'https://example.com/articles/some-article'
+              }
+              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+            />
+            {addSource === 'twitter' && (
+              <>
+                {addSourceId.startsWith('@') && /[^a-zA-Z0-9_@]/.test(addSourceId) && (
+                  <p className="text-red-400 text-xs font-body mt-1">
+                    Twitter handles can only contain letters, numbers, and underscores.
+                  </p>
                 )}
-
-                {browseError && !browseLoading && (
-                  <div className="px-4 py-4 text-red-400 text-sm font-body">{browseError}</div>
-                )}
-
-                {!browseLoading && !browseError && !selectedGuild && guilds.length > 0 && (
-                  <div className="max-h-[200px] overflow-y-auto">
-                    {guilds.map((g) => (
-                      <button
-                        key={g.id}
-                        type="button"
-                        onClick={() => fetchChannels(g)}
-                        className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
-                      >
-                        {g.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {!browseLoading && !browseError && selectedGuild && channels.length > 0 && (
-                  <div className="max-h-[200px] overflow-y-auto">
-                    {channels.map((ch) => (
-                      <button
-                        key={ch.id}
-                        type="button"
-                        onClick={() => selectChannel(ch)}
-                        className="w-full text-left px-4 py-2.5 text-text-primary text-sm font-body hover:bg-background transition-colors border-b border-border last:border-b-0"
-                      >
-                        <span className="text-text-secondary">#</span>
-                        {ch.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                <p className="text-text-secondary text-xs font-body mt-1">
+                  Use @handle for a user timeline, or any search query. Supports: from:user, &quot;exact phrase&quot;,
+                  OR, -exclude
+                </p>
+              </>
+            )}
+            {addSource === 'news' && (
+              <p className="text-text-secondary text-xs font-body mt-1">
+                Enter the full URL of a single article. Podders refetches the page on each poll and extracts the
+                readable body via Readability.
+              </p>
             )}
           </div>
-        )}
 
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Source ID</label>
-          <input
-            type="text"
-            required
-            value={addSourceId}
-            onChange={(e) => setAddSourceId(e.target.value)}
-            placeholder={
-              addSource === 'rss'
-                ? 'https://example.com/feed.xml'
-                : addSource === 'discord'
-                  ? 'Channel ID'
-                  : addSource === 'twitter'
-                    ? '@username or search query (e.g. "ethereum OR defi")'
-                    : 'https://example.com/articles/some-article'
-            }
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
-          />
-          {addSource === 'twitter' && (
-            <>
-              {addSourceId.startsWith('@') && /[^a-zA-Z0-9_@]/.test(addSourceId) && (
-                <p className="text-red-400 text-xs font-body mt-1">
-                  Twitter handles can only contain letters, numbers, and underscores.
-                </p>
+          {addSource === 'rss' && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleTestFeed}
+                disabled={testingFeed || !addSourceId.trim()}
+                className="px-3 py-1.5 bg-surface-raised border border-border rounded-lg text-text-secondary text-xs font-mono hover:text-accent hover:border-accent transition-colors disabled:opacity-40"
+              >
+                {testingFeed ? 'Testing...' : 'Test Feed'}
+              </button>
+              {testError && <p className="text-red-400 text-xs font-body">{testError}</p>}
+              {rssPreview && (
+                <div className="bg-surface-raised border border-border rounded-lg p-3 space-y-2">
+                  <p className="text-accent-green text-xs font-mono">
+                    Feed valid {String.fromCharCode(8212)} {rssPreview.totalItems} item
+                    {rssPreview.totalItems !== 1 ? 's' : ''} found
+                  </p>
+                  {rssPreview.items.slice(0, 3).map((item, i) => (
+                    <div
+                      key={i}
+                      className="text-xs font-body text-text-secondary border-t border-border pt-1.5 first:border-t-0 first:pt-0"
+                    >
+                      <div className="text-text-primary truncate">
+                        {item.content.slice(0, 120)}
+                        {item.content.length > 120 ? '...' : ''}
+                      </div>
+                      <div className="flex gap-2 mt-0.5 text-text-secondary/70">
+                        {item.author && <span>by {item.author}</span>}
+                        <span>{new Date(item.timestamp).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
-              <p className="text-text-secondary text-xs font-body mt-1">
-                Use @handle for a user timeline, or any search query. Supports: from:user, &quot;exact phrase&quot;, OR,
-                -exclude
-              </p>
-            </>
+            </div>
           )}
-          {addSource === 'news' && (
-            <p className="text-text-secondary text-xs font-body mt-1">
-              Enter the full URL of a single article. Podders refetches the page on each poll and extracts the readable
-              body via Readability.
-            </p>
-          )}
-        </div>
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-            Label <span className="normal-case text-text-secondary/60">(optional)</span>
-          </label>
-          <input
-            type="text"
-            value={addLabel}
-            onChange={(e) => setAddLabel(e.target.value)}
-            placeholder="Display name"
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Poll Interval</label>
-          <select
-            value={addPollInterval}
-            onChange={(e) => setAddPollInterval(Number(e.target.value))}
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
-          >
-            <option value={60}>1 minute</option>
-            <option value={300}>5 minutes</option>
-            <option value={600}>10 minutes</option>
-            <option value={900}>15 minutes</option>
-            <option value={1800}>30 minutes</option>
-            <option value={3600}>1 hour</option>
-            <option value={7200}>2 hours</option>
-            <option value={14400}>4 hours</option>
-            <option value={43200}>12 hours</option>
-            <option value={86400}>24 hours</option>
-          </select>
-        </div>
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
-            Tier <span className="normal-case text-text-secondary/60">(optional)</span>
-          </label>
-          <select
-            value={newTier}
-            onChange={(e) => setNewTier(e.target.value)}
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
-          >
-            <option value="general">General</option>
-            <option value="alpha">Alpha</option>
-            <option value="influencer">Influencer</option>
-            <option value="mainstream">Mainstream</option>
-          </select>
-        </div>
-        <div className="flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={() => setModalOpen(false)}
-            className="px-4 py-2 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={adding || !addSourceId.trim()}
-            className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {adding ? 'Adding...' : 'Add Source'}
-          </button>
-        </div>
-      </form>
+
+          <div className="space-y-1.5">
+            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+              Label <span className="normal-case text-text-secondary/60">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={addLabel}
+              onChange={(e) => setAddLabel(e.target.value)}
+              placeholder="Display name"
+              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Poll Interval</label>
+            <select
+              value={addPollInterval}
+              onChange={(e) => setAddPollInterval(Number(e.target.value))}
+              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+            >
+              <option value={60}>1 minute</option>
+              <option value={300}>5 minutes</option>
+              <option value={600}>10 minutes</option>
+              <option value={900}>15 minutes</option>
+              <option value={1800}>30 minutes</option>
+              <option value={3600}>1 hour</option>
+              <option value={7200}>2 hours</option>
+              <option value={14400}>4 hours</option>
+              <option value={43200}>12 hours</option>
+              <option value={86400}>24 hours</option>
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">
+              Tier <span className="normal-case text-text-secondary/60">(optional)</span>
+            </label>
+            <select
+              value={newTier}
+              onChange={(e) => setNewTier(e.target.value)}
+              className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+            >
+              <option value="general">General</option>
+              <option value="alpha">Alpha</option>
+              <option value="influencer">Influencer</option>
+              <option value="mainstream">Mainstream</option>
+            </select>
+          </div>
+          <div className="flex justify-between pt-2">
+            <button
+              type="button"
+              onClick={() => setWizardStep(0)}
+              className="px-4 py-2 text-text-secondary text-sm font-body hover:text-text-primary transition-colors"
+            >
+              &larr; Back
+            </button>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="px-4 py-2 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={adding || !addSourceId.trim()}
+                className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {adding ? 'Adding...' : 'Add Source'}
+              </button>
+            </div>
+          </div>
+        </form>
+      )}
     </Modal>
   );
   const deleteSourceModal = (
