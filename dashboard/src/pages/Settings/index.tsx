@@ -6,7 +6,10 @@ import { useStatus } from '../../components/StatusProvider.js';
 import { FeatureDisabledCard } from '../../components/FeatureDisabledCard.js';
 import { StatusBadge } from '../../components/StatusBadge.js';
 import { EmptyState } from '../../components/EmptyState.js';
+import { FormField } from '../../components/FormField.js';
 import { Modal } from '../../components/Modal.js';
+import { ModalForm } from '../../components/ModalForm.js';
+import { useFormFields } from '../../lib/useFormFields.js';
 import type {
   EntitySuggestion,
   EntityRelationshipGraphData,
@@ -4845,6 +4848,11 @@ function EntitiesTab() {
 /* ── Users Tab ── */
 
 function UsersTab() {
+  type InviteFormValues = {
+    discordId: string;
+    role: UserRecord['role'];
+  };
+
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
@@ -4854,8 +4862,7 @@ function UsersTab() {
   const [requestsError, setRequestsError] = useState<string | null>(null);
   const [auditError, setAuditError] = useState<string | null>(null);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
-  const [inviteDiscordId, setInviteDiscordId] = useState('');
-  const [inviteRole, setInviteRole] = useState<UserRecord['role']>('viewer');
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSaving, setInviteSaving] = useState(false);
   const [requestRoleDrafts, setRequestRoleDrafts] = useState<Record<string, 'viewer' | 'admin'>>({});
   const [requestMutatingId, setRequestMutatingId] = useState<string | null>(null);
@@ -4863,6 +4870,12 @@ function UsersTab() {
   const [userSessions, setUserSessions] = useState<SessionInfo[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const inviteForm = useFormFields<InviteFormValues>({
+    defaults: {
+      discordId: '',
+      role: 'viewer',
+    },
+  });
 
   const reloadUsersAuditAndRequests = async () => {
     const [usersResult, requestsResult, auditResult] = await Promise.allSettled([
@@ -4905,10 +4918,16 @@ function UsersTab() {
   }, []);
 
   const openInviteModal = () => {
-    setInviteDiscordId('');
-    setInviteRole('viewer');
     setError(null);
+    setInviteError(null);
+    inviteForm.reset();
     setInviteModalOpen(true);
+  };
+
+  const closeInviteModal = () => {
+    setInviteModalOpen(false);
+    setInviteError(null);
+    inviteForm.reset();
   };
 
   const toggleUserSessions = async (discordId: string) => {
@@ -4952,25 +4971,25 @@ function UsersTab() {
     }
   };
 
-  const inviteUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedDiscordId = inviteDiscordId.trim();
+  const handleInviteUser = async () => {
+    const trimmedDiscordId = inviteForm.values.discordId.trim();
     if (!trimmedDiscordId) return;
 
     setInviteSaving(true);
     setError(null);
+    setInviteError(null);
     try {
       await apiFetch<UserRecord>('/users/invite', {
         method: 'POST',
-        body: JSON.stringify({ discordId: trimmedDiscordId, role: inviteRole }),
+        body: JSON.stringify({ discordId: trimmedDiscordId, role: inviteForm.values.role }),
       });
       await reloadUsersAuditAndRequests();
-      setInviteModalOpen(false);
+      closeInviteModal();
     } catch (err: unknown) {
       if (isApiError(err) && err.status === 400) {
-        setError('Discord IDs must be 17-20 digits.');
+        setInviteError('Discord IDs must be 17-20 digits.');
       } else {
-        setError('Failed to invite user.');
+        setInviteError('Failed to invite user.');
       }
     } finally {
       setInviteSaving(false);
@@ -5008,52 +5027,44 @@ function UsersTab() {
   }
 
   const inviteModal = (
-    <Modal open={inviteModalOpen} onClose={() => setInviteModalOpen(false)} title="Invite User">
-      <form onSubmit={inviteUser} className="space-y-4">
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Discord ID</label>
+    <ModalForm
+      open={inviteModalOpen}
+      onClose={closeInviteModal}
+      title="Invite User"
+      submitLabel="Invite User"
+      submittingLabel="Inviting..."
+      submitting={inviteSaving}
+      submitDisabled={!inviteForm.values.discordId.trim()}
+      error={inviteError}
+      onSubmit={handleInviteUser}
+    >
+      <FormField label="Discord ID" error={inviteForm.errors.discordId ?? null}>
+        <>
           <input
             type="text"
             required
-            value={inviteDiscordId}
-            onChange={(e) => setInviteDiscordId(e.target.value)}
+            value={inviteForm.values.discordId}
+            onChange={(e) => inviteForm.setValue('discordId', e.target.value)}
             placeholder="123456789012345678"
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-mono placeholder:text-[#555566] focus:outline-none focus:border-accent"
+            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
           />
           <p className="text-xs text-text-secondary/70 font-body">
             Pre-authorize this Discord account before the user signs in for the first time.
           </p>
-        </div>
-        <div className="space-y-1.5">
-          <label className="font-mono text-xs uppercase tracking-wider text-text-secondary">Starting Role</label>
-          <select
-            value={inviteRole}
-            onChange={(e) => setInviteRole(e.target.value as UserRecord['role'])}
-            className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
-          >
-            <option value="viewer">viewer</option>
-            <option value="admin">admin</option>
-            <option value="blocked">blocked</option>
-          </select>
-        </div>
-        <div className="flex justify-end gap-3 pt-2">
-          <button
-            type="button"
-            onClick={() => setInviteModalOpen(false)}
-            className="px-4 py-2 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={inviteSaving || !inviteDiscordId.trim()}
-            className="px-4 py-2 bg-accent text-white rounded-lg text-sm font-body hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {inviteSaving ? 'Inviting...' : 'Invite User'}
-          </button>
-        </div>
-      </form>
-    </Modal>
+        </>
+      </FormField>
+      <FormField label="Starting Role">
+        <select
+          value={inviteForm.values.role}
+          onChange={(e) => inviteForm.setValue('role', e.target.value as UserRecord['role'])}
+          className="w-full bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body focus:outline-none focus:border-accent"
+        >
+          <option value="viewer">viewer</option>
+          <option value="admin">admin</option>
+          <option value="blocked">blocked</option>
+        </select>
+      </FormField>
+    </ModalForm>
   );
 
   return (
