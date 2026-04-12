@@ -975,6 +975,19 @@ const migrations: Migration[] = [
     await client.query(`ALTER TABLE entity_aliases ALTER COLUMN created_at SET NOT NULL`);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_aliases_id ON entity_aliases(id)`);
   },
+
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS bookmarks (
+        id TEXT NOT NULL PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(discord_id) ON DELETE CASCADE,
+        report_id TEXT NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+        created_at BIGINT NOT NULL,
+        CONSTRAINT bookmarks_user_report_unique UNIQUE (user_id, report_id)
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks(user_id)`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

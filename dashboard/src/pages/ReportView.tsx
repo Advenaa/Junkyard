@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch, isApiError, isFeatureDisabledError } from '../lib/api';
 import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegime';
 import { buildFocusedReportHref, buildSummaryChainHref } from '../lib/reportChains';
+import { BookmarkButton } from '../components/BookmarkButton';
 import { DataShell } from '../components/DataShell';
 import { TypeBadge } from '../components/TypeBadge';
 import { useStatus } from '../components/StatusProvider';
@@ -48,6 +49,7 @@ export function ReportView() {
   const disabledPrices = getDisabledFeature('prices');
   const disabledEmbeddings = getDisabledFeature('embeddings');
   const [report, setReport] = useState<FullReport | null>(null);
+  const [bookmarked, setBookmarked] = useState(false);
   const [macroOverviewState, setMacroOverviewState] = useState<MacroOverview | null>(null);
   const [priceWatchState, setPriceWatchState] = useState<PriceWatchOverview | null>(null);
   const [narrativesState, setNarrativesState] = useState<NarrativeWatchlistOverview | null>(null);
@@ -58,6 +60,9 @@ export function ReportView() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventSnapshotEntry[] | null>(null);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [shareConfirm, setShareConfirm] = useState(false);
+  const exportDropdownRef = useRef<HTMLDivElement>(null);
   const macroOverview = macroDisabled ? null : macroOverviewState;
   const priceWatch = pricesDisabled ? null : priceWatchState;
   const narratives = embeddingsDisabled ? null : narrativesState;
@@ -96,6 +101,27 @@ export function ReportView() {
       cancelled = true;
     };
   }, [id, requestKey]);
+
+  useEffect(() => {
+    if (!report) return;
+    let cancelled = false;
+
+    apiFetch<{ reportIds: string[] }>('/bookmarks')
+      .then((res) => {
+        if (!cancelled) {
+          setBookmarked(res.reportIds.includes(report.id));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBookmarked(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [report]);
 
   useEffect(() => {
     if (!statusReady) return;
@@ -289,6 +315,17 @@ export function ReportView() {
     };
   }, []);
 
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const macroEntries = useMemo(() => macroOverview?.entries.slice(0, MACRO_PREVIEW_LIMIT) ?? [], [macroOverview]);
   const priceEntries = useMemo(() => priceWatch?.entries.slice(0, PRICE_WATCH_PREVIEW_LIMIT) ?? [], [priceWatch]);
   const narrativeEntries = useMemo(() => narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [], [narratives]);
@@ -304,6 +341,26 @@ export function ReportView() {
   const alphaWatchEntries = useMemo(() => alphaWatch?.entries ?? [], [alphaWatch]);
   const calendarEntries = useMemo(() => calendarEvents?.slice(0, CALENDAR_PREVIEW_LIMIT) ?? [], [calendarEvents]);
   const loading = loadedKey !== requestKey;
+
+  const handleExport = (format: 'md' | 'json') => {
+    setExportOpen(false);
+    const reportId = report?.id;
+    if (!reportId) return;
+    const url = `/api/v1/reports/${reportId}/export?format=${format}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `report-${reportId}.${format === 'md' ? 'md' : 'json'}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleShare = () => {
+    void navigator.clipboard.writeText(window.location.href).then(() => {
+      setShareConfirm(true);
+      setTimeout(() => setShareConfirm(false), 2000);
+    });
+  };
 
   return (
     <DataShell
@@ -332,8 +389,57 @@ export function ReportView() {
               <div className="flex items-center gap-3">
                 <TypeBadge type={report.type} />
                 <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Report</span>
+                <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
               </div>
-              <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
+              <div className="flex items-center gap-2">
+                <div className="relative" ref={exportDropdownRef}>
+                  <button
+                    type="button"
+                    onClick={() => setExportOpen((prev) => !prev)}
+                    className="px-3 py-1.5 rounded-lg border border-border text-text-secondary text-xs font-mono uppercase tracking-wider hover:text-text-primary hover:border-text-secondary transition-colors"
+                  >
+                    Export
+                  </button>
+                  {exportOpen && (
+                    <div className="absolute right-0 top-full mt-1 bg-surface border border-border rounded-lg shadow-lg z-10 min-w-[120px]">
+                      <button
+                        type="button"
+                        onClick={() => handleExport('md')}
+                        className="w-full text-left px-4 py-2 text-xs font-mono text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors rounded-t-lg"
+                      >
+                        Markdown
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleExport('json')}
+                        className="w-full text-left px-4 py-2 text-xs font-mono text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors rounded-b-lg"
+                      >
+                        JSON
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleShare}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-mono uppercase tracking-wider transition-colors ${
+                    shareConfirm
+                      ? 'border-accent-green text-accent-green'
+                      : 'border-border text-text-secondary hover:text-text-primary hover:border-text-secondary'
+                  }`}
+                >
+                  {shareConfirm ? 'Copied!' : 'Share'}
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <BookmarkButton
+                  reportId={report.id}
+                  bookmarked={bookmarked}
+                  onToggle={(_reportId, isBookmarked) => setBookmarked(isBookmarked)}
+                  size="md"
+                />
+                <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
+              </div>
             </div>
 
             {/* TL;DR Hero */}
