@@ -188,6 +188,39 @@ describe('buildFields', () => {
     );
   });
 
+  it('builds new projects field with name and description formatting', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      firstMovers: [],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [{ name: 'CoolDAO', description: 'A new DAO on Arbitrum' }],
+    };
+    const fields = buildFields(parsed);
+    assert.strictEqual(fields.length, 1);
+    assert.strictEqual(fields[0]!.name, 'New Projects');
+    assert.ok(fields[0]!.value.includes('> **CoolDAO** — A new DAO on Arbitrum'));
+  });
+
+  it('omits new projects field when there are no entries', () => {
+    const parsed = {
+      tldr: 'test',
+      keyEvents: [],
+      eventChains: [],
+      unusualActivity: [],
+      macroAlerts: [],
+      entitySentiment: [],
+      sections: [],
+      newProjects: [],
+    };
+    const fields = buildFields(parsed);
+    assert.ok(fields.every((field) => field.name !== 'New Projects'));
+  });
+
   it('builds price alerts field with bullet formatting', () => {
     const parsed = {
       tldr: 'test',

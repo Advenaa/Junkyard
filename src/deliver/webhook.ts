@@ -207,6 +207,16 @@ export function buildFields(parsed: MarketReportParsed): DiscordField[] {
     });
   }
 
+  const newProjects = parsed.newProjects ?? parsed.new_projects ?? [];
+  if (newProjects.length > 0) {
+    const bulleted = newProjects.map(({ name, description }) => `> **${name}** — ${description}`).join('\n');
+    fields.push({
+      name: 'New Projects',
+      value: truncate(bulleted, 1024),
+      inline: false,
+    });
+  }
+
   const priceAlerts = parsed.priceAlerts ?? parsed.price_alerts ?? [];
   if (priceAlerts.length > 0) {
     const bulleted = priceAlerts.map((alert) => `> ${alert}`).join('\n');
