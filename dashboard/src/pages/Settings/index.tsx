@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useAuth } from '../../components/AuthProvider.js';
 import type { Tab } from './types.js';
 
@@ -166,10 +166,13 @@ export function Settings() {
     () => getRequestedTab(visibleTabs) ?? visibleTabs[0]?.key ?? 'pipeline',
   );
 
-  const requestedTab = getRequestedTab(visibleTabs);
-  if (requestedTab && requestedTab !== activeTab) {
-    setActiveTab(requestedTab);
-  } else if (!visibleTabs.some((tab) => tab.key === activeTab)) {
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('tab')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  if (!visibleTabs.some((tab) => tab.key === activeTab)) {
     setActiveTab(visibleTabs[0]?.key ?? 'pipeline');
   }
 
