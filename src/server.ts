@@ -17,6 +17,7 @@ import { registerAdminRoutes } from './server-admin-routes.js';
 import { registerBookmarkRoutes } from './server-bookmark-routes.js';
 import { registerCalendarRoutes } from './server-calendar-routes.js';
 import { registerEntityRoutes } from './server-entity-routes.js';
+import { registerFeedbackRoutes } from './server-feedback-routes.js';
 import { registerInsightRoutes } from './server-insight-routes.js';
 import { registerReportRoutes } from './server-report-routes.js';
 import {
@@ -99,6 +100,7 @@ export async function createServer(
 
   registerReportRoutes({ app, authPreHandler, pool });
   registerBookmarkRoutes({ app, authPreHandler, pool });
+  registerFeedbackRoutes({ app, authPreHandler, requireAdmin, pool });
   registerSourceRoutes({ app, authPreHandler, requireAdmin, pool });
   registerSearchRoutes({ app, authPreHandler, chatHandler, config, pool });
 

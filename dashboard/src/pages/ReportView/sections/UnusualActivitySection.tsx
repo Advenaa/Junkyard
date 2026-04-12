@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { EntityLink } from '../../../components/EntityLink';
 import type { UnusualActivityEntry, UnusualActivityOverview } from '../types';
 import {
   formatSignedFixed,
@@ -45,7 +46,9 @@ export const UnusualActivitySection = memo(function UnusualActivitySection({
         {unusualEntries.map((entry) => (
           <div key={entry.entityId} className="rounded-lg border border-border bg-background p-3 space-y-3">
             <div className="flex items-start justify-between gap-3">
-              <h3 className="text-text-primary text-sm font-body leading-snug">{entry.entityName}</h3>
+              <h3 className="text-sm font-body leading-snug">
+                <EntityLink entityId={entry.entityId} displayName={entry.entityName} />
+              </h3>
               <span
                 className={`px-2 py-0.5 rounded text-[11px] font-mono uppercase tracking-wide ${unusualActivityBadgeClasses(entry)}`}
               >

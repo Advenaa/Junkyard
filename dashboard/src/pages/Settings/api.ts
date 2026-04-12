@@ -1,5 +1,7 @@
 import type {
   Source,
+  SourceActivityBucket,
+  SourceActivityResponse,
   DiscordManagedToken,
   DiscordTokenHealthState,
   UserRecord,
@@ -12,6 +14,7 @@ import type {
   DiagStuckItems,
   DiagHaltedSources,
   DiagHealthEvents,
+  SchedulerDiagnostics,
   UnusualActivityOverview,
   NarrativeWatchlistOverview,
   NarrativeDrilldown,
@@ -25,6 +28,7 @@ import type {
   EntityAuthor,
   AuthorProfileData,
   SessionInfo,
+  FeedbackItem,
 } from './types.js';
 import { apiFetch, isApiError } from '../../lib/api.js';
 
@@ -55,6 +59,13 @@ export async function testSource(
   return apiFetch(`/sources/${encodeURIComponent(source)}/${encodeURIComponent(sourceId)}/test`, {
     method: 'POST',
   });
+}
+
+export async function fetchSourceActivity(source: string, sourceId: string): Promise<SourceActivityBucket[]> {
+  const res = await apiFetch<SourceActivityResponse>(
+    `/sources/${encodeURIComponent(source)}/${encodeURIComponent(sourceId)}/activity`,
+  );
+  return res.buckets;
 }
 
 export async function fetchDiscordTokensData(): Promise<DiscordManagedToken[]> {
@@ -125,6 +136,10 @@ export async function fetchDiagHaltedSources(): Promise<DiagHaltedSources> {
 
 export async function fetchDiagHealthEvents(limit = 10): Promise<DiagHealthEvents> {
   return apiFetch<DiagHealthEvents>(`/diag/health-events?limit=${limit}`);
+}
+
+export async function fetchSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
+  return apiFetch<SchedulerDiagnostics>('/diag/scheduler');
 }
 
 export async function fetchUnusualActivityOverviewData(): Promise<UnusualActivityOverview> {
@@ -200,4 +215,16 @@ export async function fetchEntityAuthorsData(entityId: string): Promise<EntityAu
 
 export async function fetchAuthorProfileData(authorId: string): Promise<AuthorProfileData> {
   return apiFetch<AuthorProfileData>(`/authors/${authorId}?callLimit=20`);
+}
+
+export async function fetchFeedbackList(status?: string): Promise<{ feedback: FeedbackItem[]; total: number }> {
+  const params = status ? `?status=${status}` : '';
+  return apiFetch(`/feedback${params}`);
+}
+
+export async function updateFeedbackStatus(id: string, status: string): Promise<void> {
+  await apiFetch(`/feedback/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
 }

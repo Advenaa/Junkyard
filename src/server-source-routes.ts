@@ -428,4 +428,43 @@ export function registerSourceRoutes({ app, authPreHandler, requireAdmin, pool }
     },
     deleteSourceHandler,
   );
+
+  app.get(
+    '/api/v1/sources/:source/:sourceId/activity',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['source', 'sourceId'],
+          properties: {
+            source: { type: 'string', enum: ['discord', 'twitter', 'rss', 'news'] },
+            sourceId: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const { source, sourceId } = request.params as { source: string; sourceId: string };
+      const sinceMs = Date.now() - 24 * 60 * 60 * 1000;
+
+      const { rows } = await pool.query<{ hour: string; item_count: string }>(
+        `SELECT
+           to_char(to_timestamp(created_at / 1000.0) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:00:00"Z"') AS hour,
+           COUNT(*)::text AS item_count
+         FROM items
+         WHERE source = $1 AND source_id = $2 AND created_at >= $3
+         GROUP BY hour
+         ORDER BY hour`,
+        [source, sourceId, sinceMs],
+      );
+
+      return {
+        buckets: rows.map((r) => ({
+          hour: r.hour,
+          itemCount: parseInt(r.item_count, 10),
+        })),
+      };
+    },
+  );
 }

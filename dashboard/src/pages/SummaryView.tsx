@@ -4,6 +4,7 @@ import { apiFetch, isApiError } from '../lib/api';
 import { formatDateTime, formatDateTimeRange, sentimentTextColor } from '../lib/formatting';
 import { Badge } from '../components/Badge';
 import { DataShell } from '../components/DataShell';
+import { FlagButton } from '../components/FlagButton';
 
 interface SummaryEntity {
   name: string;
@@ -11,6 +12,7 @@ interface SummaryEntity {
   type: string;
   mentionCount: number;
   sentiment: number;
+  entityMentionId?: string | null;
 }
 
 interface SummaryEvent {
@@ -175,7 +177,10 @@ export function SummaryView() {
                 />
                 <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Summary</span>
               </div>
-              <span className="font-mono text-xs text-text-secondary">{formatDateTime(summary.createdAt)}</span>
+              <div className="flex items-center gap-3">
+                <FlagButton targetType="summary" targetId={id!} />
+                <span className="font-mono text-xs text-text-secondary">{formatDateTime(summary.createdAt)}</span>
+              </div>
             </div>
 
             <blockquote className="font-heading text-xl leading-relaxed text-text-primary border-l-2 border-accent pl-6 py-2">
@@ -249,9 +254,14 @@ export function SummaryView() {
                           {entity.aliases.length > 0 && ` | aliases: ${entity.aliases.join(', ')}`}
                         </div>
                       </div>
-                      <div className={`text-xs font-mono ${sentimentTextColor(entity.sentiment)}`}>
-                        {entity.sentiment > 0 ? '+' : ''}
-                        {entity.sentiment.toFixed(2)}
+                      <div className="flex items-center gap-3">
+                        {entity.entityMentionId ? (
+                          <FlagButton targetType="entity_mention" targetId={entity.entityMentionId} />
+                        ) : null}
+                        <div className={`text-xs font-mono ${sentimentTextColor(entity.sentiment)}`}>
+                          {entity.sentiment > 0 ? '+' : ''}
+                          {entity.sentiment.toFixed(2)}
+                        </div>
                       </div>
                     </div>
                   ))}

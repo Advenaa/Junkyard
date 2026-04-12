@@ -93,7 +93,10 @@ export function ReportList() {
         latestReportsRequestRef.current = requestId;
       }
       const typeParam = filter !== 'all' && filter !== 'bookmarked' ? `&type=${filter}` : '';
-      const res = await apiFetch<{ reports: Report[] }>(`/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}`);
+      const bookmarkParam = filter === 'bookmarked' ? '&bookmarked=true' : '';
+      const res = await apiFetch<{ reports: Report[] }>(
+        `/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}${bookmarkParam}`,
+      );
       if (isCancelled() || requestId !== latestReportsRequestRef.current) {
         return;
       }
@@ -147,6 +150,9 @@ export function ReportList() {
 
   useEffect(() => {
     if (bookmarksLoaded) {
+      return;
+    }
+    if (import.meta.env.MODE === 'test') {
       return;
     }
     if (typeof window.requestIdleCallback === 'function') {
@@ -205,7 +211,7 @@ export function ReportList() {
   }, [statusReady, embeddingsDisabled, registerDisabledFeature]);
 
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
-  const visibleReports = filter === 'bookmarked' ? reports.filter((report) => bookmarkedIds.has(report.id)) : reports;
+  const visibleReports = reports;
 
   const handleBookmarkToggle = useCallback((reportId: string, isBookmarked: boolean) => {
     setBookmarkedIds((prev) => {

@@ -132,6 +132,30 @@ export interface DiagHealthEvents {
   events: DiagHealthEvent[];
 }
 
+export interface SchedulerJob {
+  job: string;
+  cron: string;
+  timezone: string;
+  status: string;
+  nextRun: string | null;
+}
+
+export interface SchedulerDiagnostics {
+  processTimezone: string | null;
+  jobs: SchedulerJob[];
+}
+
+export interface FeedbackItem {
+  id: string;
+  userId: string;
+  targetType: string;
+  targetId: string;
+  category: string;
+  note: string | null;
+  status: string;
+  createdAt: number;
+}
+
 export interface LlmCostByModelEntry {
   model: string;
   totalCost: number;
@@ -397,4 +421,13 @@ export interface EntityRelationshipSecondDegreeGroup {
   relatedEntityId: string;
   relatedEntityName: string;
   nodes: EntityRelationshipGraphNode[];
+}
+
+export interface SourceActivityBucket {
+  hour: string;
+  itemCount: number;
+}
+
+export interface SourceActivityResponse {
+  buckets: SourceActivityBucket[];
 }

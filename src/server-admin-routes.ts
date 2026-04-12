@@ -1087,9 +1087,31 @@ export function registerAdminRoutes({
       [DEVTOOLS_DISCORD_ID, DEVTOOLS_USERNAME, now],
     );
 
-    const ip = request.ip;
-    const userAgent = (request.headers['user-agent'] as string) ?? 'devtools/verify';
-    const sessionId = await sessionManager.create(DEVTOOLS_DISCORD_ID, ip, userAgent, MAX_DEVTOOLS_SESSIONS);
+    const { rows: existing } = await pool.query<{ id: string }>(
+      `SELECT id FROM sessions
+       WHERE discord_id = $1 AND expires_at > $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [DEVTOOLS_DISCORD_ID, now],
+    );
+
+    let sessionId: string;
+
+    if (existing.length > 0) {
+      sessionId = existing[0].id;
+      const newExpiresAt = now + 30 * 24 * 60 * 60 * 1000;
+      await pool.query(`UPDATE sessions SET expires_at = $1, last_refreshed_at = $2 WHERE id = $3`, [
+        newExpiresAt,
+        now,
+        sessionId,
+      ]);
+      log.info('Devtools session reused via API key exchange');
+    } else {
+      const ip = request.ip;
+      const userAgent = (request.headers['user-agent'] as string) ?? 'devtools/verify';
+      sessionId = await sessionManager.create(DEVTOOLS_DISCORD_ID, ip, userAgent, MAX_DEVTOOLS_SESSIONS);
+      log.info('Devtools session created via API key exchange');
+    }
 
     reply.setCookie('podders_session', sessionId, {
       httpOnly: true,
@@ -1099,8 +1121,6 @@ export function registerAdminRoutes({
       path: '/',
       maxAge: 30 * 24 * 60 * 60,
     });
-
-    log.info('Devtools session created via API key exchange');
 
     return { podders_session: sessionId };
   });
