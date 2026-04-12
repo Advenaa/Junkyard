@@ -390,13 +390,12 @@ describe('ReportView', () => {
 
     await screen.findByText('Chain Drilldowns');
     expect(screen.getByText('Focused chain | Ethereum | legal')).toBeInTheDocument();
-    expect(screen.getByText('Focused chain summary')).toBeInTheDocument();
     const chainSummaries = screen.getAllByText(/chain:/);
     expect(chainSummaries[0]).toHaveTextContent(
-      'Ethereum legal chain: the court timeline kept traders watching follow-through risk.',
+      'Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.',
     );
     expect(chainSummaries[1]).toHaveTextContent(
-      'Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.',
+      'Ethereum legal chain: the court timeline kept traders watching follow-through risk.',
     );
     expect(screen.getByRole('link', { name: 'Show all chains' })).toHaveAttribute('href', '/reports/report-1');
     expect(screen.getByRole('link', { name: 'Focus chain' })).toHaveAttribute(
@@ -408,5 +407,145 @@ describe('ReportView', () => {
     expect(summaryLinks[0]).toHaveAttribute('href', '/summaries/summary-12?chain=chain-root-2');
     expect(summaryLinks[1]).toHaveAttribute('href', '/summaries/summary-9?chain=chain-root-1');
     expect(screen.getByText('Focused chain')).toBeInTheDocument();
+  });
+
+  it('does not relabel event chains when a chain is focused (regression for #190)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const path = new URL(url, 'http://localhost').pathname;
+
+        if (path === '/api/v1/narratives') {
+          return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/macro') {
+          return new Response(JSON.stringify({ error: 'No macro data available yet' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/price-watch') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/unusual-activity') {
+          return new Response(JSON.stringify({ latestDate: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/divergence') {
+          return new Response(JSON.stringify({ divergences: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/first-movers') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/alpha-watch') {
+          return new Response(JSON.stringify({ latestTimestamp: null, entries: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/calendar-events') {
+          return new Response(JSON.stringify({ events: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (path === '/api/v1/reports/report-1') {
+          return new Response(
+            JSON.stringify({
+              report: {
+                id: 'report-1',
+                date: '2026-04-06',
+                type: 'daily',
+                tldr: 'Macro risk is elevated ahead of a dense catalyst window.',
+                sentiment: 0.4,
+                deliveryStatus: 'delivered',
+                createdAt: Date.now(),
+                body: '{}',
+                keyEvents: ['BTC broke higher on ETF flow chatter.'],
+                marketCatalysts: [],
+                eventChains: [
+                  'Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.',
+                  'Ethereum legal chain: the court timeline kept traders watching follow-through risk.',
+                ],
+                chainDrilldowns: [
+                  {
+                    rootId: 'chain-root-eth',
+                    entityName: 'Ethereum',
+                    eventCount: 2,
+                    firstEventTime: Date.UTC(2026, 3, 5, 11, 0, 0),
+                    latestEventTime: Date.UTC(2026, 3, 6, 10, 0, 0),
+                    eventTypes: ['legal', 'governance'],
+                    latestSummaryId: 'summary-12',
+                    latestEventType: 'legal',
+                    latestEventDescription: 'Legal follow-through kept traders watching Ethereum headlines.',
+                  },
+                  {
+                    rootId: 'chain-root-btc',
+                    entityName: 'Bitcoin',
+                    eventCount: 3,
+                    firstEventTime: Date.UTC(2026, 3, 4, 8, 0, 0),
+                    latestEventTime: Date.UTC(2026, 3, 6, 9, 30, 0),
+                    eventTypes: ['exploit', 'audit', 'governance'],
+                    latestSummaryId: 'summary-9',
+                    latestEventType: 'governance',
+                    latestEventDescription: 'Governance follow-through kept the remediation timeline active.',
+                  },
+                ],
+                entitySentiment: [],
+                sections: [],
+              },
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            },
+          );
+        }
+
+        throw new Error(`Unhandled fetch ${path}`);
+      }),
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/reports/report-1?chain=chain-root-eth']}>
+        <Routes>
+          <Route path="/reports/:id" element={<ReportView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Chain Drilldowns');
+    expect(screen.queryByText('Focused chain summary')).not.toBeInTheDocument();
+    const chainSummaries = screen.getAllByText(/chain:/);
+    expect(chainSummaries[0]).toHaveTextContent(
+      'Bitcoin exploit chain: audit follow-up kept traders focused on remediation progress.',
+    );
+    expect(chainSummaries[1]).toHaveTextContent(
+      'Ethereum legal chain: the court timeline kept traders watching follow-through risk.',
+    );
+    expect(screen.getByText('Focused chain | Ethereum | legal')).toBeInTheDocument();
   });
 });
