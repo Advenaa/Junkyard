@@ -375,7 +375,7 @@ export function ReportList() {
       {/* Report Cards */}
       {loading ? (
         <div className="text-text-secondary font-body">Loading...</div>
-      ) : reports.length === 0 ? (
+      ) : reports.length === 0 && !error ? (
         <EmptyState
           title="No reports yet"
           description="Your first report will generate after sources are configured and the daily digest runs."
