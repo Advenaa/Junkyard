@@ -50,6 +50,13 @@ interface SearchResponse {
   results: SearchResult[];
 }
 
+interface RecentSearch {
+  query: string;
+  scope: SearchScope;
+  days: number;
+  timestamp: number;
+}
+
 const DAYS_OPTIONS = [
   { label: '7 days', value: 7 },
   { label: '14 days', value: 14 },
@@ -88,7 +95,15 @@ export function Search() {
   const [query, setQuery] = useState('');
   const [days, setDays] = useState(30);
   const [scope, setScope] = useState<SearchScope>('all');
-  const [results, setResults] = useState<SearchResult[]>([]);
+  const [mode, setMode] = useState<'keyword' | 'semantic'>('keyword');
+  const [results, setResults] = useState<SearchResult[] | null>(null);
+  const [recentSearches, setRecentSearches] = useState<RecentSearch[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('podders-recent-searches') ?? '[]');
+    } catch {
+      return [];
+    }
+  });
   const {
     previewBodyOverrides,
     leadChainLabelOverrides,
@@ -124,9 +139,16 @@ export function Search() {
 
     try {
       const data = await apiFetch<SearchResponse>(
-        `/search?q=${encodeURIComponent(q)}&limit=20&days=${days}&mode=keyword&scope=${scope}`,
+        `/search?q=${encodeURIComponent(q)}&limit=20&days=${days}&mode=${mode}&scope=${scope}`,
       );
       setResults(data.results);
+      const newRecent: RecentSearch = { query: q, scope, days, timestamp: Date.now() };
+      setRecentSearches((prev) => {
+        const filtered = prev.filter((r) => r.query !== q);
+        const updated = [newRecent, ...filtered].slice(0, 5);
+        localStorage.setItem('podders-recent-searches', JSON.stringify(updated));
+        return updated;
+      });
     } catch {
       setError('Search failed. Please try again.');
       setResults([]);
@@ -144,12 +166,20 @@ export function Search() {
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            const nextQuery = e.target.value;
+            setQuery(nextQuery);
+            if (!nextQuery.trim()) {
+              setResults(null);
+              setSearched(false);
+              setError(null);
+            }
+          }}
           placeholder={
-            scope === 'report'
-              ? 'Search reports...'
-              : scope === 'summary'
-                ? 'Search summaries...'
+            scope === 'summary'
+              ? 'Search summaries...'
+              : scope === 'report'
+                ? 'Search reports...'
                 : 'Search summaries and reports...'
           }
           className="flex-1 bg-background border border-border rounded-lg px-4 py-2.5 text-text-primary text-sm font-body placeholder:text-[#555566] focus:outline-none focus:border-accent"
@@ -176,6 +206,27 @@ export function Search() {
             </option>
           ))}
         </select>
+        <div className="flex items-center rounded-lg border border-border overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setMode('keyword')}
+            className={`px-3 py-1.5 text-xs font-mono transition-colors ${
+              mode === 'keyword' ? 'bg-accent text-white' : 'bg-surface text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Keyword
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('semantic')}
+            className={`px-3 py-1.5 text-xs font-mono transition-colors ${
+              mode === 'semantic' ? 'bg-accent text-white' : 'bg-surface text-text-secondary hover:text-text-primary'
+            }`}
+            title="Finds conceptually similar results, not just exact matches"
+          >
+            Semantic
+          </button>
+        </div>
         <button
           type="submit"
           disabled={loading || !query.trim()}
@@ -192,12 +243,47 @@ export function Search() {
         </div>
       )}
 
+      {!query.trim() && recentSearches.length > 0 && !results && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-text-secondary text-xs font-mono uppercase tracking-wider">Recent Searches</h3>
+            <button
+              type="button"
+              onClick={() => {
+                setRecentSearches([]);
+                localStorage.removeItem('podders-recent-searches');
+              }}
+              className="text-text-secondary hover:text-accent text-xs font-mono transition-colors"
+            >
+              Clear
+            </button>
+          </div>
+          {recentSearches.map((recent) => (
+            <button
+              key={recent.timestamp}
+              type="button"
+              onClick={() => {
+                setQuery(recent.query);
+                setScope(recent.scope);
+                setDays(recent.days);
+              }}
+              className="block w-full text-left px-3 py-2 rounded-lg border border-border bg-surface hover:border-accent/30 transition-colors"
+            >
+              <span className="text-text-primary text-sm font-body">{recent.query}</span>
+              <span className="text-text-secondary text-xs font-mono ml-2">
+                {recent.scope} · {recent.days}d
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Results */}
       <DataShell
         loading={loading}
         error={null}
-        data={results}
-        isEmpty={(data) => searched && data.length === 0}
+        data={results ?? []}
+        isEmpty={(data) => searched && query.trim() !== '' && data.length === 0}
         emptyTitle="No results found"
         emptyDescription="Try different keywords or a wider time range."
       >
