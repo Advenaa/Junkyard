@@ -25,7 +25,13 @@ interface ReportSummary {
   createdAt: number;
   headline?: string;
   tldr?: string;
-  macroRegime?: string;
+  macroRegime?:
+    | string
+    | {
+        classification: string;
+        confidence: number;
+        rationale: string;
+      };
   macroConfidence?: number;
   narrativeShifts?: string[];
   keyEvents?: string[];
@@ -34,32 +40,41 @@ interface ReportSummary {
 interface PriceWatchEntry {
   entityId: string;
   entityName: string;
-  price: number;
-  change24h: number;
-  sentiment: number;
-  previousSentiment?: number;
-  priceHistory: { x: number; y: number }[];
+  priceUsd: number;
+  priceChange24h: number | null;
+  priceChange7d?: number | null;
+  volume24h?: number | null;
+  marketCap?: number | null;
+  avgSentiment: number | null;
+  momentum?: number | null;
+  contrarianSignal?: string | null;
 }
 
 interface FirstMoverEntry {
   entityId: string;
   entityName: string;
-  authorName: string;
+  handle: string;
+  displayName: string | null;
   platform: string;
-  detectedAt: number;
+  timestamp: number;
 }
 
 interface AlphaWatchEntry {
   entityId: string;
   entityName: string;
-  tier: string;
-  propagationSummary?: string;
+  firstSignalTier: string;
+  latestTier: string;
+  tierCount: number;
+  sourceCount: number;
+  propagationLagMs: number | null;
 }
 
 interface UnusualActivityEntry {
   entityId: string;
   entityName: string;
-  description: string;
+  mentionCount: number;
+  spikeRatio: number | null;
+  avgSentiment: number | null;
 }
 
 interface FetchState<T> {
@@ -137,6 +152,12 @@ function formatConfidence(value?: number): string | null {
   return `${Math.round(Math.min(100, Math.max(0, percent)))}% confidence`;
 }
 
+function extractRegimeString(regime: ReportSummary['macroRegime']): string | undefined {
+  if (!regime) return undefined;
+  if (typeof regime === 'string') return regime;
+  return regime.classification;
+}
+
 function formatMacroRegime(regime?: string): string {
   if (!regime) {
     return 'Unclear';
@@ -167,7 +188,11 @@ function macroRegimeClass(regime?: string): string {
   }
 }
 
-function changeBadgeClass(change24h: number): string {
+function changeBadgeClass(change24h: number | null | undefined): string {
+  if (change24h == null || Number.isNaN(change24h)) {
+    return 'bg-surface-raised text-text-secondary';
+  }
+
   if (change24h > 0) {
     return 'bg-accent-green/15 text-accent-green';
   }
@@ -179,7 +204,11 @@ function changeBadgeClass(change24h: number): string {
   return 'bg-surface-raised text-text-secondary';
 }
 
-function formatChange(change24h: number): string {
+function formatChange(change24h: number | null | undefined): string {
+  if (change24h == null || Number.isNaN(change24h)) {
+    return '—';
+  }
+
   return `${change24h > 0 ? '+' : ''}${change24h.toFixed(1)}%`;
 }
 
@@ -202,6 +231,22 @@ function truncateText(value: string, max = 120): string {
   return `${value.slice(0, max - 1)}…`;
 }
 
+function unusualActivityDescription(entry: UnusualActivityEntry): string {
+  if (entry.spikeRatio == null || Number.isNaN(entry.spikeRatio)) {
+    return `${entry.mentionCount} mentions`;
+  }
+
+  return `${entry.mentionCount} mentions (${entry.spikeRatio.toFixed(1)}× spike)`;
+}
+
+function sentimentPreviousValue(entry: PriceWatchEntry): number | undefined {
+  if (entry.avgSentiment == null || entry.momentum == null || Number.isNaN(entry.momentum)) {
+    return undefined;
+  }
+
+  return entry.avgSentiment - entry.momentum;
+}
+
 export function Dashboard() {
   const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
 
@@ -214,6 +259,10 @@ export function Dashboard() {
   const unusual = useFetch<{ entries: UnusualActivityEntry[] }>('/unusual-activity');
 
   const report = reports.data?.reports[0] ?? null;
+  const macroRegime = extractRegimeString(report?.macroRegime);
+  const macroConfidence =
+    report?.macroConfidence ??
+    (report?.macroRegime != null && typeof report.macroRegime !== 'string' ? report.macroRegime.confidence : undefined);
   const changes = [...(report?.keyEvents ?? []), ...(report?.narrativeShifts ?? [])];
   const showAllChanges = report != null && expandedReportId === report.id;
   const visibleChanges = showAllChanges ? changes : changes.slice(0, 3);
@@ -255,14 +304,12 @@ export function Dashboard() {
             </blockquote>
             <div className="flex flex-wrap items-center gap-3">
               <span
-                className={`inline-flex rounded-full px-3 py-1 text-sm font-medium ${macroRegimeClass(report.macroRegime)}`}
+                className={`inline-flex rounded-full px-3 py-1 text-sm font-medium ${macroRegimeClass(macroRegime)}`}
               >
-                {formatMacroRegime(report.macroRegime)}
+                {formatMacroRegime(macroRegime)}
               </span>
-              {formatConfidence(report.macroConfidence) ? (
-                <span className="text-sm font-mono text-text-secondary">
-                  {formatConfidence(report.macroConfidence)}
-                </span>
+              {formatConfidence(macroConfidence) ? (
+                <span className="text-sm font-mono text-text-secondary">{formatConfidence(macroConfidence)}</span>
               ) : null}
             </div>
           </div>
@@ -336,24 +383,30 @@ export function Dashboard() {
                     <div className="text-base font-medium text-text-primary">
                       <EntityLink entityId={entry.entityId} name={entry.entityName} />
                     </div>
-                    <div className="font-mono text-lg text-text-primary">{formatCurrency(entry.price)}</div>
+                    <div className="font-mono text-lg text-text-primary">{formatCurrency(entry.priceUsd)}</div>
                   </div>
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-mono ${changeBadgeClass(entry.change24h)}`}>
-                    {formatChange(entry.change24h)}
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-mono ${changeBadgeClass(entry.priceChange24h)}`}
+                  >
+                    {formatChange(entry.priceChange24h)}
                   </span>
                 </div>
                 <div className="overflow-x-auto">
                   <Sparkline
                     variant="line"
-                    data={entry.priceHistory}
+                    data={[]}
                     width={240}
                     height={52}
-                    color={entry.change24h >= 0 ? 'var(--color-accent-green)' : 'var(--color-accent-red)'}
+                    color={
+                      entry.priceChange24h != null && entry.priceChange24h < 0
+                        ? 'var(--color-accent-red)'
+                        : 'var(--color-accent-green)'
+                    }
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-mono uppercase tracking-wide text-text-secondary">Sentiment</span>
-                  <SentimentIndicator value={entry.sentiment} previous={entry.previousSentiment} />
+                  <SentimentIndicator value={entry.avgSentiment ?? 0} previous={sentimentPreviousValue(entry)} />
                 </div>
               </article>
             ))}
@@ -376,16 +429,16 @@ export function Dashboard() {
               <div className="space-y-3">
                 {(firstMovers.data?.entries ?? []).slice(0, 3).map((entry) => (
                   <article
-                    key={`${entry.entityId}-${entry.detectedAt}`}
+                    key={`${entry.entityId}-${entry.timestamp}`}
                     className="space-y-2 border-b border-border pb-3 last:border-b-0 last:pb-0"
                   >
                     <div className="text-sm font-medium text-text-primary">
                       <EntityLink entityId={entry.entityId} name={entry.entityName} />
                     </div>
-                    <div className="text-sm text-text-secondary">{entry.authorName}</div>
+                    <div className="text-sm text-text-secondary">{entry.displayName ?? entry.handle}</div>
                     <div className="flex items-center gap-2 text-xs font-mono text-text-secondary">
                       <span className="rounded-full bg-surface-raised px-2 py-0.5">{entry.platform}</span>
-                      <span>{timeAgo(entry.detectedAt)}</span>
+                      <span>{timeAgo(entry.timestamp)}</span>
                     </div>
                   </article>
                 ))}
@@ -404,7 +457,7 @@ export function Dashboard() {
               <div className="space-y-3">
                 {(alphaWatch.data?.entries ?? []).slice(0, 3).map((entry) => (
                   <article
-                    key={`${entry.entityId}-${entry.tier}`}
+                    key={`${entry.entityId}-${entry.latestTier}`}
                     className="space-y-2 border-b border-border pb-3 last:border-b-0 last:pb-0"
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -412,12 +465,10 @@ export function Dashboard() {
                         <EntityLink entityId={entry.entityId} name={entry.entityName} />
                       </div>
                       <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs font-mono text-text-secondary">
-                        {entry.tier}
+                        {entry.latestTier}
                       </span>
                     </div>
-                    <p className="text-sm text-text-secondary">
-                      {entry.propagationSummary ?? 'Propagation summary unavailable.'}
-                    </p>
+                    <p className="text-sm text-text-secondary">{`${entry.tierCount} tiers across ${entry.sourceCount} sources`}</p>
                   </article>
                 ))}
               </div>
@@ -435,13 +486,13 @@ export function Dashboard() {
               <div className="space-y-3">
                 {(unusual.data?.entries ?? []).slice(0, 3).map((entry) => (
                   <article
-                    key={`${entry.entityId}-${entry.description}`}
+                    key={`${entry.entityId}-${entry.mentionCount}-${entry.spikeRatio ?? 'none'}`}
                     className="space-y-2 border-b border-border pb-3 last:border-b-0 last:pb-0"
                   >
                     <div className="text-sm font-medium text-text-primary">
                       <EntityLink entityId={entry.entityId} name={entry.entityName} />
                     </div>
-                    <p className="text-sm text-text-secondary">{truncateText(entry.description)}</p>
+                    <p className="text-sm text-text-secondary">{truncateText(unusualActivityDescription(entry))}</p>
                   </article>
                 ))}
               </div>
