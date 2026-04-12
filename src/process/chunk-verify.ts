@@ -1,4 +1,4 @@
-import type { ChunkSummary } from './schemas.js';
+import type { AuthorClaim, ChunkSummary } from './schemas.js';
 import type { Logger } from '../logger.js';
 import { normalizeAlias } from '../knowledge/entities.js';
 
@@ -114,4 +114,77 @@ export function verifyRelationships(parsed: ChunkSummary, log: Logger, source: s
   });
 
   return { ...parsed, relationships: verified };
+}
+
+export function verifyAuthorClaims<T extends { author: string }>(
+  parsed: ChunkSummary,
+  chunk: T[],
+  log: Logger,
+  source: string,
+  sourceId: string,
+): ChunkSummary {
+  const validEntityKeys = new Set<string>();
+  for (const entity of parsed.entities) {
+    const canonical = normalizeAlias(entity.name);
+    if (canonical) validEntityKeys.add(canonical);
+    for (const alias of entity.aliases) {
+      const normalizedAlias = normalizeAlias(alias);
+      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
+    }
+  }
+
+  const chunkAuthors = new Set(chunk.map((item) => item.author.trim().toLowerCase()).filter(Boolean));
+
+  const seen = new Set<string>();
+  const verified: AuthorClaim[] = [];
+
+  for (const claim of parsed.authorClaims) {
+    const authorHandle = claim.authorHandle.trim().toLowerCase();
+    const entityName = normalizeAlias(claim.entityName);
+    const claimText = claim.claimText.trim();
+    const valid =
+      authorHandle !== '' &&
+      claimText !== '' &&
+      entityName !== '' &&
+      chunkAuthors.has(authorHandle) &&
+      validEntityKeys.has(entityName);
+
+    if (!valid) {
+      log.info(
+        {
+          authorHandle: claim.authorHandle,
+          entityName: claim.entityName,
+          claimType: claim.claimType,
+          source,
+          sourceId,
+        },
+        'Dropped author claim without verified author/entity match',
+      );
+      continue;
+    }
+
+    const dedupeKey = `${authorHandle}\0${entityName}\0${claim.claimType}\0${claimText.toLowerCase()}`;
+    if (seen.has(dedupeKey)) {
+      log.info(
+        {
+          authorHandle: claim.authorHandle,
+          entityName: claim.entityName,
+          claimType: claim.claimType,
+          source,
+          sourceId,
+        },
+        'Dropped duplicate verified author claim',
+      );
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    verified.push({
+      ...claim,
+      authorHandle,
+      claimText,
+    });
+  }
+
+  return { ...parsed, authorClaims: verified };
 }
