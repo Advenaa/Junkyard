@@ -93,7 +93,10 @@ export function ReportList() {
         latestReportsRequestRef.current = requestId;
       }
       const typeParam = filter !== 'all' && filter !== 'bookmarked' ? `&type=${filter}` : '';
-      const res = await apiFetch<{ reports: Report[] }>(`/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}`);
+      const bookmarkParam = filter === 'bookmarked' ? '&bookmarked=true' : '';
+      const res = await apiFetch<{ reports: Report[] }>(
+        `/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}${bookmarkParam}`,
+      );
       if (isCancelled() || requestId !== latestReportsRequestRef.current) {
         return;
       }
