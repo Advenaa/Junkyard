@@ -27,6 +27,13 @@ const config = {
   },
 } as Config;
 
+function wrapWithNonce(content: string): { wrapped: string; nonce: string } {
+  return {
+    wrapped: content,
+    nonce: 'test-nonce',
+  };
+}
+
 function makeMockDb() {
   async function query(sql: string, params: unknown[] = []): Promise<{ rows: QueryResultRow[]; rowCount: number }> {
     if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
@@ -136,6 +143,7 @@ describe('Tier 3 disambiguation fallback tracking', () => {
     const { pool } = makeMockDb();
     const { entries, logger } = makeLogCapture();
     const manager = createEntityManager(pool as never, logger, config, {
+      wrapWithNonce,
       async call() {
         return {
           content: '{not valid json',
@@ -163,6 +171,7 @@ describe('Tier 3 disambiguation fallback tracking', () => {
     const { pool } = makeMockDb();
     const { entries, logger } = makeLogCapture();
     const manager = createEntityManager(pool as never, logger, config, {
+      wrapWithNonce,
       async call() {
         return {
           content: JSON.stringify([{ name: 'FTX', type: 'company' }]),
@@ -190,6 +199,7 @@ describe('Tier 3 disambiguation fallback tracking', () => {
     const { pool } = makeMockDb();
     const { entries, logger } = makeLogCapture();
     const manager = createEntityManager(pool as never, logger, config, {
+      wrapWithNonce,
       async call() {
         throw new Error('tier3 exploded');
       },
@@ -213,6 +223,7 @@ describe('Tier 3 disambiguation fallback tracking', () => {
     const { pool } = makeMockDb();
     const { entries, logger } = makeLogCapture();
     const manager = createEntityManager(pool as never, logger, config, {
+      wrapWithNonce,
       async call() {
         return {
           content: JSON.stringify([{ name: 'Ethereum', type: 'token', context_key: 'l1' }]),
@@ -250,6 +261,7 @@ describe('Tier 3 disambiguation fallback tracking', () => {
     const { pool } = makeMockDb();
     const { entries, logger } = makeLogCapture();
     const manager = createEntityManager(pool as never, logger, config, {
+      wrapWithNonce,
       async call() {
         return {
           content: JSON.stringify([
