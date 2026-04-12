@@ -4,6 +4,7 @@ import type {
   EventChainRow,
   EventRow,
   ReportChainDrilldownRow,
+  SummaryEntityMentionRow,
   SummaryEventWithChainRow,
   SummaryRow,
 } from './types.js';
@@ -46,6 +47,22 @@ export async function getSummariesByTimeWindow(pool: Pool, start: number, end: n
 export async function getSummaryById(pool: Pool, id: string): Promise<SummaryRow | null> {
   const { rows } = await pool.query<SummaryRow>(`SELECT * FROM summaries WHERE id = $1 LIMIT 1`, [id]);
   return rows[0] ?? null;
+}
+
+export async function getSummaryEntityMentions(pool: Pool, summaryId: string): Promise<SummaryEntityMentionRow[]> {
+  const { rows } = await pool.query<SummaryEntityMentionRow>(
+    `SELECT em.id,
+            e.name AS entity_name,
+            e.type AS entity_type,
+            em.mention_count,
+            em.sentiment
+       FROM entity_mentions em
+       JOIN entities e ON e.id = em.entity_id
+      WHERE em.summary_id = $1
+      ORDER BY em.mention_count DESC, e.name ASC`,
+    [summaryId],
+  );
+  return rows;
 }
 
 export async function insertEvents(

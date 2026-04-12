@@ -4,8 +4,10 @@ import {
   getMacroRegimeHistoryByReport,
   getRecentReportChainDrilldowns,
   getSummaryById,
+  getSummaryEntityMentions,
   getSummaryEventsWithChainContext,
   type ReportRow,
+  type SummaryEntityMentionRow,
 } from './db/queries.js';
 import {
   extractMacroRegime,
@@ -31,33 +33,106 @@ interface ReportRouteDeps {
   pool: Pool;
 }
 
+function serializePersistedSummaryEntities(mentions: SummaryEntityMentionRow[]): Array<{
+  name: string;
+  aliases: string[];
+  type: string;
+  mentionCount: number;
+  sentiment: number;
+  entityMentionId: string;
+}> {
+  return mentions.map((mention) => ({
+    name: mention.entity_name,
+    aliases: [],
+    type: mention.entity_type,
+    mentionCount: mention.mention_count,
+    sentiment: mention.sentiment ?? 0,
+    entityMentionId: mention.id,
+  }));
+}
+
+function mergeSummaryEntitiesWithMentions(
+  parsedEntities: Array<Record<string, unknown>>,
+  persistedMentions: SummaryEntityMentionRow[],
+): Array<Record<string, unknown>> {
+  if (persistedMentions.length === 0) {
+    return parsedEntities;
+  }
+
+  const unmatchedMentions = [...persistedMentions];
+  const enrichedEntities = parsedEntities.map((entity) => {
+    const aliases = Array.isArray(entity.aliases)
+      ? entity.aliases.filter((alias): alias is string => typeof alias === 'string')
+      : [];
+    const entityKeys = new Set(
+      [entity.name, ...aliases]
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    );
+    const matchIndex = unmatchedMentions.findIndex((mention) =>
+      entityKeys.has(mention.entity_name.trim().toLowerCase()),
+    );
+
+    if (matchIndex === -1) {
+      return entity;
+    }
+
+    const [match] = unmatchedMentions.splice(matchIndex, 1);
+    return {
+      ...entity,
+      entityMentionId: match.id,
+      mentionCount: match.mention_count,
+      sentiment: match.sentiment ?? 0,
+      type: match.entity_type,
+    };
+  });
+
+  return [...enrichedEntities, ...serializePersistedSummaryEntities(unmatchedMentions)];
+}
+
 export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteDeps): void {
   app.get('/api/v1/reports', { preHandler: [authPreHandler] }, async (request) => {
     const {
       limit: rawLimit,
       offset: rawOffset,
       type,
-    } = request.query as { limit?: string; offset?: string; type?: string };
+      bookmarked,
+    } = request.query as { limit?: string; offset?: string; type?: string; bookmarked?: string };
     const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
     const offset = Math.max(parseInt(rawOffset ?? '0', 10) || 0, 0);
+    const bookmarkedOnly = bookmarked === 'true';
     const params: unknown[] = [limit, offset];
-    let whereClause = '';
+    const conditions: string[] = [];
+    let joinClause = '';
     if (type) {
       params.push(type);
-      whereClause = `WHERE type = $${params.length}`;
+      conditions.push(`reports.type = $${params.length}`);
     }
+    if (bookmarkedOnly) {
+      params.push(request.user!.discordId);
+      joinClause = `INNER JOIN bookmarks ON bookmarks.report_id = reports.id AND bookmarks.user_id = $${params.length}`;
+    }
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderByClause = bookmarkedOnly ? 'bookmarks.created_at DESC' : 'reports.created_at DESC';
     const { rows: reports } = await pool.query<ReportRow>(
-      `SELECT id, date, type, tldr, sentiment, delivery_status, created_at, body FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT reports.id, reports.date, reports.type, reports.tldr, reports.sentiment, reports.delivery_status, reports.created_at, reports.body FROM reports ${joinClause} ${whereClause} ORDER BY ${orderByClause} LIMIT $1 OFFSET $2`,
       params,
     );
     const countParams: unknown[] = [];
-    let countWhere = '';
+    const countConditions: string[] = [];
+    let countJoin = '';
     if (type) {
       countParams.push(type);
-      countWhere = `WHERE type = $1`;
+      countConditions.push(`reports.type = $${countParams.length}`);
     }
+    if (bookmarkedOnly) {
+      countParams.push(request.user!.discordId);
+      countJoin = `INNER JOIN bookmarks ON bookmarks.report_id = reports.id AND bookmarks.user_id = $${countParams.length}`;
+    }
+    const countWhere = countConditions.length > 0 ? `WHERE ${countConditions.join(' AND ')}` : '';
     const { rows: countRows } = await pool.query<{ count: string }>(
-      `SELECT COUNT(*) AS count FROM reports ${countWhere}`,
+      `SELECT COUNT(*) AS count FROM reports ${countJoin} ${countWhere}`,
       countParams,
     );
     return {
@@ -399,6 +474,7 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
       return reply.code(404).send({ error: 'Summary not found' });
     }
 
+    const persistedEntityMentions = await getSummaryEntityMentions(pool, id);
     const persistedSummaryEvents = serializeSummaryEventRows(await getSummaryEventsWithChainContext(pool, id));
     const summary = toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>);
     if (typeof row.body === 'string') {
@@ -407,14 +483,17 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
         summary.text = typeof parsed.summary === 'string' ? parsed.summary : row.body;
         summary.confidence = typeof parsed.confidence === 'number' ? parsed.confidence : null;
         summary.keyEvents = extractStringArrayField(parsed.keyEvents ?? parsed.key_events, 5);
-        summary.entities = extractSummaryEntities(parsed.entities);
+        summary.entities = mergeSummaryEntitiesWithMentions(
+          extractSummaryEntities(parsed.entities),
+          persistedEntityMentions,
+        );
         summary.events =
           persistedSummaryEvents.length > 0 ? persistedSummaryEvents : extractSummaryEvents(parsed.events);
       } else {
         summary.text = row.body;
         summary.confidence = null;
         summary.keyEvents = [];
-        summary.entities = [];
+        summary.entities = serializePersistedSummaryEntities(persistedEntityMentions);
         summary.events = persistedSummaryEvents;
       }
     }

@@ -1,10 +1,88 @@
-import { useState } from 'react';
-import { Link, NavLink } from 'react-router';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Link, NavLink, useNavigate } from 'react-router';
 import { useAuth } from './AuthProvider';
+import { apiFetch } from '../lib/api';
 
 export function Header() {
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<
+    Array<{ id: string; name: string; matchedAlias: string | null; status: string }>
+  >([]);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const doSearch = useCallback(async (q: string) => {
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearchOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+    try {
+      const res = await apiFetch<{
+        entities: Array<{ id: string; name: string; matchedAlias: string | null; status: string }>;
+      }>(`/entities/search?q=${encodeURIComponent(q)}&limit=8`);
+      setSearchResults(res.entities);
+      setSearchOpen(true);
+      setActiveIndex(-1);
+    } catch {
+      setSearchResults([]);
+      setSearchOpen(false);
+      setActiveIndex(-1);
+    }
+  }, []);
+
+  const handleSearchInput = (value: string) => {
+    setSearchQuery(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      void doSearch(value);
+    }, 300);
+  };
+
+  const selectResult = (entityId: string) => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    navigate(`/entities/${entityId}`);
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!searchOpen || searchResults.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev < searchResults.length - 1 ? prev + 1 : 0));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev > 0 ? prev - 1 : searchResults.length - 1));
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault();
+      selectResult(searchResults[activeIndex].id);
+    } else if (e.key === 'Escape') {
+      setSearchOpen(false);
+    }
+  };
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   return (
     <header className="border-b border-border bg-surface px-6 py-3">
@@ -55,6 +133,57 @@ export function Header() {
           >
             Settings
           </NavLink>
+          {/* Entity search */}
+          <div className="relative" ref={searchRef}>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => handleSearchInput(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              onFocus={() => {
+                if (searchQuery.length >= 2) setSearchOpen(true);
+              }}
+              placeholder="Search entities..."
+              className="w-40 lg:w-56 bg-background border border-border rounded-lg px-3 py-1.5 text-sm text-text-primary placeholder:text-text-secondary/50 focus:outline-none focus:border-accent transition-colors"
+            />
+            {searchOpen && searchResults.length > 0 && (
+              <div className="absolute top-full mt-1 left-0 right-0 bg-surface border border-border rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
+                {searchResults.map((entity, i) => (
+                  <button
+                    key={entity.id}
+                    type="button"
+                    onClick={() => selectResult(entity.id)}
+                    className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 text-sm transition-colors ${
+                      i === activeIndex
+                        ? 'bg-surface-raised text-text-primary'
+                        : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-text-primary truncate">{entity.name}</div>
+                      {entity.matchedAlias && (
+                        <div className="text-xs text-text-secondary/70 truncate">aka {entity.matchedAlias}</div>
+                      )}
+                    </div>
+                    <span
+                      className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide ${
+                        entity.status === 'active'
+                          ? 'bg-accent-green/15 text-accent-green'
+                          : 'bg-border/50 text-text-secondary'
+                      }`}
+                    >
+                      {entity.status}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {searchOpen && searchResults.length === 0 && searchQuery.length >= 2 && (
+              <div className="absolute top-full mt-1 left-0 right-0 bg-surface border border-border rounded-lg shadow-lg z-50 px-3 py-3 text-sm text-text-secondary">
+                No entities found
+              </div>
+            )}
+          </div>
           {user && (
             <>
               <span className="text-text-secondary text-sm">{user.username}</span>

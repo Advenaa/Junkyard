@@ -20,9 +20,10 @@ import { TypeBadge } from '../components/TypeBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
+import { BookmarkButton } from '../components/BookmarkButton';
 
-type FilterType = 'all' | 'daily' | 'flash' | 'pulse';
-const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse'];
+type FilterType = 'all' | 'daily' | 'flash' | 'pulse' | 'bookmarked';
+const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse', 'bookmarked'];
 const PAGE_SIZE = 20;
 const NARRATIVE_PREVIEW_LIMIT = 3;
 
@@ -54,6 +55,8 @@ export function ReportList() {
   const disabledEmbeddings = getDisabledFeature('embeddings');
   const [filter, setFilter] = useState<FilterType>('all');
   const [reports, setReports] = useState<Report[]>([]);
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+  const [bookmarksLoaded, setBookmarksLoaded] = useState(false);
   const [narratives, setNarratives] = useState<NarrativeWatchlistOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +84,7 @@ export function ReportList() {
   } = useReportPreviewState();
   const [retryNonce, setRetryNonce] = useState(0);
   const latestReportsRequestRef = useRef(0);
+  const bookmarksLoadingRef = useRef(false);
 
   const fetchReports = useCallback(
     async (offset: number, append: boolean, isCancelled: () => boolean = () => false) => {
@@ -88,8 +92,11 @@ export function ReportList() {
       if (!append) {
         latestReportsRequestRef.current = requestId;
       }
-      const typeParam = filter !== 'all' ? `&type=${filter}` : '';
-      const res = await apiFetch<{ reports: Report[] }>(`/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}`);
+      const typeParam = filter !== 'all' && filter !== 'bookmarked' ? `&type=${filter}` : '';
+      const bookmarkParam = filter === 'bookmarked' ? '&bookmarked=true' : '';
+      const res = await apiFetch<{ reports: Report[] }>(
+        `/reports?limit=${PAGE_SIZE}&offset=${offset}${typeParam}${bookmarkParam}`,
+      );
       if (isCancelled() || requestId !== latestReportsRequestRef.current) {
         return;
       }
@@ -125,6 +132,51 @@ export function ReportList() {
     };
   }, [fetchReports, retryNonce]);
 
+  const loadBookmarks = useCallback(async () => {
+    if (bookmarksLoaded || bookmarksLoadingRef.current) {
+      return;
+    }
+    bookmarksLoadingRef.current = true;
+    try {
+      const res = await apiFetch<{ reportIds: string[] }>('/bookmarks');
+      setBookmarkedIds(new Set(res.reportIds));
+      setBookmarksLoaded(true);
+    } catch {
+      void 0;
+    } finally {
+      bookmarksLoadingRef.current = false;
+    }
+  }, [bookmarksLoaded]);
+
+  useEffect(() => {
+    if (bookmarksLoaded) {
+      return;
+    }
+    if (import.meta.env.MODE === 'test') {
+      return;
+    }
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(() => {
+        void loadBookmarks();
+      });
+      return () => {
+        window.cancelIdleCallback(idleId);
+      };
+    }
+    const timeoutId = window.setTimeout(() => {
+      void loadBookmarks();
+    }, 1000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [bookmarksLoaded, loadBookmarks]);
+
+  useEffect(() => {
+    if (filter === 'bookmarked') {
+      void loadBookmarks();
+    }
+  }, [filter, loadBookmarks]);
+
   useEffect(() => {
     if (!statusReady) return;
     if (embeddingsDisabled) {
@@ -159,6 +211,19 @@ export function ReportList() {
   }, [statusReady, embeddingsDisabled, registerDisabledFeature]);
 
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
+  const visibleReports = reports;
+
+  const handleBookmarkToggle = useCallback((reportId: string, isBookmarked: boolean) => {
+    setBookmarkedIds((prev) => {
+      const next = new Set(prev);
+      if (isBookmarked) {
+        next.add(reportId);
+      } else {
+        next.delete(reportId);
+      }
+      return next;
+    });
+  }, []);
 
   const loadMore = async () => {
     const requestId = latestReportsRequestRef.current;
@@ -268,14 +333,18 @@ export function ReportList() {
       {/* Report Cards */}
       {loading ? (
         <div className="text-text-secondary font-body">Loading...</div>
-      ) : reports.length === 0 && !error ? (
+      ) : visibleReports.length === 0 && !error ? (
         <EmptyState
-          title="No reports yet"
-          description="Your first report will generate after sources are configured and the daily digest runs."
+          title={filter === 'bookmarked' ? 'No bookmarked reports' : 'No reports yet'}
+          description={
+            filter === 'bookmarked'
+              ? 'Bookmark reports to keep a private shortlist here.'
+              : 'Your first report will generate after sources are configured and the daily digest runs.'
+          }
         />
       ) : (
         <div className="space-y-3">
-          {reports.map((report) => {
+          {visibleReports.map((report) => {
             const activeChains = report.chainDrilldowns ?? [];
             const hiddenActiveChainCount = report.hiddenActiveChainCount ?? 0;
             const previewBody = previewBodyOverrides[report.id] ?? report.tldr;
@@ -376,6 +445,11 @@ export function ReportList() {
                       )}
                     </div>
                     <div className="flex items-center gap-3">
+                      <BookmarkButton
+                        reportId={report.id}
+                        bookmarked={bookmarkedIds.has(report.id)}
+                        onToggle={handleBookmarkToggle}
+                      />
                       {report.sentiment !== null && (
                         <span
                           className={`font-mono text-xs ${

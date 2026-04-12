@@ -132,6 +132,17 @@ export interface DiagHealthEvents {
   events: DiagHealthEvent[];
 }
 
+export interface FeedbackItem {
+  id: string;
+  userId: string;
+  targetType: string;
+  targetId: string;
+  category: string;
+  note: string | null;
+  status: string;
+  createdAt: number;
+}
+
 export interface LlmCostByModelEntry {
   model: string;
   totalCost: number;
