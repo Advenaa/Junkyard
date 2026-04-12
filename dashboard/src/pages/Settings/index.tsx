@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useAuth } from '../../components/AuthProvider.js';
 import type { Tab } from './types.js';
 
@@ -166,17 +166,12 @@ export function Settings() {
     () => getRequestedTab(visibleTabs) ?? visibleTabs[0]?.key ?? 'pipeline',
   );
 
-  useEffect(() => {
-    const requestedTab = getRequestedTab(visibleTabs);
-    if (requestedTab && requestedTab !== activeTab) {
-      setActiveTab(requestedTab);
-      return;
-    }
-
-    if (!visibleTabs.some((tab) => tab.key === activeTab)) {
-      setActiveTab(visibleTabs[0]?.key ?? 'pipeline');
-    }
-  }, [activeTab, visibleTabs]);
+  const requestedTab = getRequestedTab(visibleTabs);
+  if (requestedTab && requestedTab !== activeTab) {
+    setActiveTab(requestedTab);
+  } else if (!visibleTabs.some((tab) => tab.key === activeTab)) {
+    setActiveTab(visibleTabs[0]?.key ?? 'pipeline');
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
