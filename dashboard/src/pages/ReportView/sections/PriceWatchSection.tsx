@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { EntityLink } from '../../../components/EntityLink';
 import type { DisabledFeatureSummary } from '../../../lib/types';
 import { FeatureDisabledCard } from '../../../components/FeatureDisabledCard';
 import type { PriceWatchEntry, PriceWatchOverview } from '../types';
@@ -60,7 +61,9 @@ export const PriceWatchSection = memo(function PriceWatchSection({
               <div key={entry.entityId} className="rounded-lg border border-border bg-background p-3 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
-                    <h3 className="text-text-primary text-sm font-body leading-snug">{entry.entityName}</h3>
+                    <h3 className="text-sm font-body leading-snug">
+                      <EntityLink entityId={entry.entityId} displayName={entry.entityName} />
+                    </h3>
                     <p className="text-text-primary text-lg font-mono">${formatPriceValue(entry.priceUsd)}</p>
                   </div>
                   <span

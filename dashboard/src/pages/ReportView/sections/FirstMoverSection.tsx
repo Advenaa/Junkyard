@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { EntityLink } from '../../../components/EntityLink';
 import type { FirstMoverWatchlistEntry, FirstMoverWatchlistOverview } from '../types';
 import { FIRST_MOVER_PREVIEW_LIMIT } from '../types';
 import {
@@ -54,7 +55,9 @@ export const FirstMoverSection = memo(function FirstMoverSection({
           >
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1">
-                <h3 className="text-text-primary text-sm font-body leading-snug">{entry.entityName}</h3>
+                <h3 className="text-sm font-body leading-snug">
+                  <EntityLink entityId={entry.entityId} displayName={entry.entityName} />
+                </h3>
                 <p className="text-text-secondary/70 text-sm font-body leading-relaxed">
                   First tracked by {formatFirstMoverAuthor(entry)}.
                 </p>
