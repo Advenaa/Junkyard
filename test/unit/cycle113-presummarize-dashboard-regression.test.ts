@@ -6,6 +6,11 @@ const preSummarizeSrc = readFileSync(new URL('../../src/pre-summarize/index.ts',
 
 const settingsSrc = [
   'dashboard/src/pages/Settings/index.tsx',
+  'dashboard/src/pages/Settings/SourcesTab.tsx',
+  'dashboard/src/pages/Settings/DeliveryTab.tsx',
+  'dashboard/src/pages/Settings/PipelineTab.tsx',
+  'dashboard/src/pages/Settings/EntitiesTab.tsx',
+  'dashboard/src/pages/Settings/UsersTab.tsx',
   'dashboard/src/pages/Settings/types.ts',
   'dashboard/src/pages/Settings/api.ts',
   'dashboard/src/pages/Settings/formatters.ts',

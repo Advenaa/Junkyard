@@ -235,6 +235,11 @@ describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
 describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => {
   const src = [
     readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/SourcesTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/DeliveryTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/PipelineTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/EntitiesTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/UsersTab.tsx'),
     readSrc('dashboard/src/pages/Settings/types.ts'),
     readSrc('dashboard/src/pages/Settings/api.ts'),
     readSrc('dashboard/src/pages/Settings/formatters.ts'),

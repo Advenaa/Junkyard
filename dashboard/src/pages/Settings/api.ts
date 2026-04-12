@@ -26,6 +26,7 @@ import type {
   EntityAuthor,
   AuthorProfileData,
   SessionInfo,
+  FeedbackItem,
 } from './types.js';
 import { apiFetch, isApiError } from '../../lib/api.js';
 
@@ -181,4 +182,16 @@ export async function fetchEntityAuthorsData(entityId: string): Promise<EntityAu
 
 export async function fetchAuthorProfileData(authorId: string): Promise<AuthorProfileData> {
   return apiFetch<AuthorProfileData>(`/authors/${authorId}?callLimit=20`);
+}
+
+export async function fetchFeedbackList(status?: string): Promise<{ feedback: FeedbackItem[]; total: number }> {
+  const params = status ? `?status=${status}` : '';
+  return apiFetch(`/feedback${params}`);
+}
+
+export async function updateFeedbackStatus(id: string, status: string): Promise<void> {
+  await apiFetch(`/feedback/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
 }
