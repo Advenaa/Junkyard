@@ -3,16 +3,41 @@ import assert from 'node:assert/strict';
 import { createChatHandler } from '../../src/chat/handler.js';
 import type { Embedder } from '../../src/chat/tools.js';
 import type { SearchResult, VectorCache } from '../../src/vector-cache.js';
+import type { Config } from '../../src/config.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 const noopLog = {
   info() {},
   debug() {},
   warn() {},
   error() {},
+  fatal() {},
   child() {
     return noopLog;
   },
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
+const testConfig = {
+  models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' },
+} as unknown as Config;
+
+type ChatLlmParams = {
+  stage: string;
+  messages?: Array<{ role: string; content: string }>;
+};
+
+type ChatLlmResult = {
+  content: string;
+  usage?: { input_tokens: number; output_tokens: number };
+};
+
+type ChatLlm = {
+  call: (params: ChatLlmParams) => Promise<ChatLlmResult>;
+  wrapWithNonce: (content: string) => { wrapped: string; nonce: string };
+  sanitizeForPrompt: (content: string) => string;
+};
 
 function stubVectorCache(results: SearchResult[]): VectorCache {
   return {
@@ -101,10 +126,10 @@ describe('createChatHandler sources', () => {
 
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
     let chatCall = 0;
-    const llm = {
+    const llm: ChatLlm = {
       async call(params: { stage: string }) {
         if (params.stage === 'chat' && chatCall === 0) {
           chatCall++;
@@ -124,12 +149,12 @@ describe('createChatHandler sources', () => {
       sanitizeForPrompt(content: string) {
         return content;
       },
-    } as any;
+    };
 
     const handler = createChatHandler(
       pool,
-      noopLog,
-      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
+      logger,
+      testConfig,
       llm,
       stubVectorCache([{ targetId: 'report-1', score: 0.91 }]),
       stubEmbedder,
@@ -167,10 +192,10 @@ describe('createChatHandler sources', () => {
           ],
         };
       },
-    } as any;
+    } as unknown as Pool;
 
     let chatCall = 0;
-    const llm = {
+    const llm: ChatLlm = {
       async call(params: { stage: string }) {
         if (params.stage === 'chat' && chatCall === 0) {
           chatCall++;
@@ -189,16 +214,9 @@ describe('createChatHandler sources', () => {
       sanitizeForPrompt(content: string) {
         return content;
       },
-    } as any;
+    };
 
-    const handler = createChatHandler(
-      pool,
-      noopLog,
-      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
-      llm,
-      stubVectorCache([]),
-      stubEmbedder,
-    );
+    const handler = createChatHandler(pool, logger, testConfig, llm, stubVectorCache([]), stubEmbedder);
 
     const result = await handler.handle('Show me the original governance reply', 'conv-2', 'user-2');
 
@@ -259,10 +277,10 @@ describe('createChatHandler sources', () => {
 
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
     let chatCall = 0;
-    const llm = {
+    const llm: ChatLlm = {
       async call(params: { stage: string }) {
         if (params.stage === 'chat' && chatCall === 0) {
           chatCall++;
@@ -282,12 +300,12 @@ describe('createChatHandler sources', () => {
       sanitizeForPrompt(content: string) {
         return content;
       },
-    } as any;
+    };
 
     const handler = createChatHandler(
       pool,
-      noopLog,
-      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
+      logger,
+      testConfig,
       llm,
       stubVectorCache([{ targetId: 'summary-1', score: 0.87 }]),
       stubEmbedder,
@@ -334,9 +352,9 @@ describe('createChatHandler sources', () => {
 
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const llm = {
+    const llm: ChatLlm = {
       async call() {
         return {
           content: 'final answer',
@@ -349,16 +367,9 @@ describe('createChatHandler sources', () => {
       sanitizeForPrompt(content: string) {
         return content;
       },
-    } as any;
+    };
 
-    const handler = createChatHandler(
-      pool,
-      noopLog,
-      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
-      llm,
-      stubVectorCache([]),
-      stubEmbedder,
-    );
+    const handler = createChatHandler(pool, logger, testConfig, llm, stubVectorCache([]), stubEmbedder);
 
     await handler.handle(query, 'conv-usage', 'user-usage');
 
@@ -398,11 +409,11 @@ describe('createChatHandler sources', () => {
 
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
     const chatMessages: Array<Array<{ role: string; content: string }>> = [];
     let nonceCounter = 0;
-    const llm = {
+    const llm: ChatLlm = {
       async call(params: { stage: string; messages: Array<{ role: string; content: string }> }) {
         if (params.stage === 'chat') {
           chatMessages.push(params.messages);
@@ -431,12 +442,12 @@ describe('createChatHandler sources', () => {
       sanitizeForPrompt(content: string) {
         return content;
       },
-    } as any;
+    };
 
     const handler = createChatHandler(
       pool,
-      noopLog,
-      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
+      logger,
+      testConfig,
       llm,
       stubVectorCache([{ targetId: 'report-attack', score: 0.91 }]),
       stubEmbedder,

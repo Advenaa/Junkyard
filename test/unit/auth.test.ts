@@ -348,7 +348,7 @@ describe('createSessionManager', () => {
 
       // At least 2 calls: SELECT + UPDATE. May also have cleanup query.
       assert.ok(pool.calls.length >= 2);
-      const updateCall = pool.calls.find((c: any) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
+      const updateCall = pool.calls.find((c) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
       assert.ok(updateCall, 'should trigger sliding refresh UPDATE');
       assert.ok(updateCall.text.includes('expires_at'), 'AU-026: sliding refresh should also extend expires_at');
       assert.ok(result, 'validate should return a session');
@@ -376,7 +376,7 @@ describe('createSessionManager', () => {
       const result = await mgr.validate('fresh-session', '127.0.0.1', 'TestAgent');
 
       // No UPDATE for refresh — only SELECT (and possibly cleanup)
-      const hasRefresh = pool.calls.some((c: any) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
+      const hasRefresh = pool.calls.some((c) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
       assert.ok(!hasRefresh, 'should NOT trigger sliding refresh when fresh');
       assert.ok(result, 'validate should return a session');
       assert.strictEqual(result.refreshed, false, 'refreshed flag should be false on fresh path');

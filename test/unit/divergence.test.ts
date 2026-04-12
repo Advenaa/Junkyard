@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createDivergenceTracker } from '../../src/knowledge/divergence.js';
 import type { DivergenceEntry, Direction } from '../../src/knowledge/divergence.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger, MockQueryResult } from '../helpers/mock-types.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────────
 
@@ -12,7 +15,8 @@ const noopLog = {
   debug: () => {},
   fatal: () => {},
   child: () => noopLog,
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 // ── Mock pool helpers ───────────────────────────────────────────────────
 
@@ -25,7 +29,10 @@ interface QueryCall {
  * Build a mock pool whose query() returns rows via queryHandler.
  * All queries are recorded in `calls`.
  */
-function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows: any[]; rowCount?: number }) {
+function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => MockQueryResult): {
+  pool: Pool;
+  calls: QueryCall[];
+} {
   const calls: QueryCall[] = [];
 
   const pool = {
@@ -42,7 +49,7 @@ function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows:
     },
   };
 
-  return { pool, calls };
+  return { pool: pool as unknown as Pool, calls };
 }
 
 // ── 1. getDivergence ────────────────────────────────────────────────────
@@ -50,7 +57,7 @@ function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows:
 describe('getDivergence', () => {
   it('returns empty array when no mentions exist', async () => {
     const { pool } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
     const result = await tracker.getDivergence(0, Date.now());
     assert.deepEqual(result, []);
   });
@@ -70,7 +77,7 @@ describe('getDivergence', () => {
       ],
     }));
 
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
     const result = await tracker.getDivergence(0, Date.now());
 
     assert.equal(result.length, 1);
@@ -85,7 +92,7 @@ describe('getDivergence', () => {
     // The SQL HAVING clause does this filtering, so we verify the query
     // passes minMentions to getRegionalDivergence correctly.
     const { pool, calls } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
 
     await tracker.getDivergence(1000, 2000, 5);
 
@@ -100,7 +107,7 @@ describe('getDivergence', () => {
 
   it('only returns entities with divergence > 0.3 (via SQL WHERE clause)', async () => {
     const { pool, calls } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
 
     await tracker.getDivergence(1000, 2000);
 
@@ -124,7 +131,7 @@ describe('getDivergence', () => {
       ],
     }));
 
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
     const result = await tracker.getDivergence(0, Date.now());
 
     assert.equal(result[0].direction, 'eng-bullish');
@@ -145,7 +152,7 @@ describe('getDivergence', () => {
       ],
     }));
 
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
     const result = await tracker.getDivergence(0, Date.now());
 
     assert.equal(result[0].direction, 'ind-bullish');
@@ -205,7 +212,7 @@ describe('Direction classification', () => {
 describe('Integration with entity_mentions language column', () => {
   it('query includes language grouping (GROUP BY language)', async () => {
     const { pool, calls } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
 
     await tracker.getDivergence(0, Date.now());
 
@@ -217,7 +224,7 @@ describe('Integration with entity_mentions language column', () => {
 
   it('query excludes NULL language rows via IN clause', async () => {
     const { pool, calls } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
 
     await tracker.getDivergence(0, Date.now());
 
@@ -231,7 +238,7 @@ describe('Integration with entity_mentions language column', () => {
 
   it('query filters NULL sentiment rows', async () => {
     const { pool, calls } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
 
     await tracker.getDivergence(0, Date.now());
 
@@ -242,7 +249,7 @@ describe('Integration with entity_mentions language column', () => {
 
   it('passes startTime and endTime as query parameters', async () => {
     const { pool, calls } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createDivergenceTracker(pool as any, noopLog);
+    const tracker = createDivergenceTracker(pool, logger);
 
     const start = 1000;
     const end = 2000;

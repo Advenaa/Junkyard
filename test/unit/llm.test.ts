@@ -919,7 +919,7 @@ describe('call — timeout errors', () => {
       callCount++;
       if (callCount === 1) {
         const err = new Error('connect ETIMEDOUT');
-        (err as any).code = 'ETIMEDOUT';
+        (err as unknown as Record<string, unknown>).code = 'ETIMEDOUT';
         throw err;
       }
       return makeResponse('ok');

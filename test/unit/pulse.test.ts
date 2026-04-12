@@ -2,6 +2,10 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPulse } from '../../src/process/pulse.js';
 import { MarketReportLLMSchema } from '../../src/process/schemas.js';
+import type { Config } from '../../src/config.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────
 
@@ -12,11 +16,26 @@ const noopLog = {
   debug: () => {},
   fatal: () => {},
   child: () => noopLog,
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 const baseConfig = {
   models: { normalizer: 'haiku-test', chunk: 'haiku-test', thinkalot: 'sonnet-test' },
-} as any;
+} as unknown as Config;
+
+type PulseRows = Record<string, unknown>[];
+type PulseLlmParams = {
+  model: string;
+  system: string;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  maxTokens: number;
+  stage: string;
+};
+
+type PulseLlm = {
+  call: (params: PulseLlmParams) => Promise<{ content: string }>;
+  wrapWithNonce: (content: string) => { wrapped: string; nonce: string };
+};
 
 const mockSentimentTracker = {
   getMomentumContext: async (_ids: string[]) => [],
@@ -73,19 +92,19 @@ function makeSummaryRow(overrides: Record<string, unknown> = {}) {
 /** Build a mock pool that returns configurable query results. */
 function makePool(
   opts: {
-    summaries?: any[];
-    priorPulse?: any[];
-    existingPulse?: any[];
-    appConfig?: any[];
-    entityRows?: any[];
-    narratives?: any[];
-    macroSnapshots?: any[];
-    eventSentimentShift?: any[];
-    eventChains?: any[];
+    summaries?: PulseRows;
+    priorPulse?: PulseRows;
+    existingPulse?: PulseRows;
+    appConfig?: PulseRows;
+    entityRows?: PulseRows;
+    narratives?: PulseRows;
+    macroSnapshots?: PulseRows;
+    eventSentimentShift?: PulseRows;
+    eventChains?: PulseRows;
   } = {},
-) {
+): Pool {
   return {
-    query: async (sql: string, _params?: any[]) => {
+    query: async (sql: string, _params?: unknown[]) => {
       // getSummariesByTimeWindow: SELECT * FROM summaries WHERE created_at >= $1 ...
       if (sql.includes('FROM summaries')) {
         return { rows: opts.summaries ?? [] };
@@ -147,10 +166,10 @@ function makePool(
       }
       return { rows: [] };
     },
-  } as any;
+  } as unknown as Pool;
 }
 
-function makeLlm(reportOverrides: Record<string, unknown> = {}) {
+function makeLlm(reportOverrides: Record<string, unknown> = {}): PulseLlm {
   const report = { ...makeValidReport(), ...reportOverrides };
   return {
     call: async () => ({ content: JSON.stringify(report) }),
@@ -529,7 +548,7 @@ describe('pulse', { concurrency: 1 }, () => {
           },
         ],
       });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
 
       const result = await runPulse();
       assert.equal(result?.type, 'pulse');
@@ -540,8 +559,8 @@ describe('pulse', { concurrency: 1 }, () => {
 
     it('passes correct maxTokens to LLM based on summary count', async () => {
       let capturedMaxTokens = 0;
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMaxTokens = params.maxTokens;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -551,7 +570,7 @@ describe('pulse', { concurrency: 1 }, () => {
       // 2 summaries, routine = 500 tokens (PL-004: raised from 300)
       const rows = [makeSummaryRow({ id: 's1' }), makeSummaryRow({ id: 's2' })];
       const pool = makePool({ summaries: rows });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
       assert.equal(capturedMaxTokens, 500);
     });
@@ -564,8 +583,8 @@ describe('pulse', { concurrency: 1 }, () => {
   describe('runPulse — activity scaling', () => {
     async function runWithSummaries(count: number, urgency = 'routine') {
       let capturedMaxTokens = 0;
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMaxTokens = params.maxTokens;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -574,7 +593,7 @@ describe('pulse', { concurrency: 1 }, () => {
 
       const rows = Array.from({ length: count }, (_, i) => makeSummaryRow({ id: `s${i}`, urgency }));
       const pool = makePool({ summaries: rows });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
       return capturedMaxTokens;
     }
@@ -612,8 +631,8 @@ describe('pulse', { concurrency: 1 }, () => {
   describe('runPulse — prior pulse handling', () => {
     it('includes prior pulse tldr in the LLM prompt', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -628,15 +647,15 @@ describe('pulse', { concurrency: 1 }, () => {
         summaries: [makeSummaryRow()],
         priorPulse: [{ body: priorBody }],
       });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
       assert.ok(capturedMessage.includes('Markets were bullish earlier.'));
     });
 
     it('works correctly when no prior pulse exists', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -644,7 +663,7 @@ describe('pulse', { concurrency: 1 }, () => {
       };
 
       const pool = makePool({ summaries: [makeSummaryRow()], priorPulse: [] });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
       assert.ok(!capturedMessage.includes('prior_pulse_tldr'));
     });
@@ -657,8 +676,8 @@ describe('pulse', { concurrency: 1 }, () => {
   describe('runPulse — sentiment drift', () => {
     it('includes drift flags in prompt when entity sentiment shifts > 0.4', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -679,7 +698,7 @@ describe('pulse', { concurrency: 1 }, () => {
         summaries: [makeSummaryRow({ body: summaryBody })],
         priorPulse: [{ body: priorBody }],
       });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
       assert.ok(capturedMessage.includes('sentiment_drift'));
       assert.ok(capturedMessage.includes('Bitcoin'));
@@ -687,8 +706,8 @@ describe('pulse', { concurrency: 1 }, () => {
 
     it('does not include drift flags when sentiment change is small', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -705,7 +724,7 @@ describe('pulse', { concurrency: 1 }, () => {
         summaries: [makeSummaryRow()],
         priorPulse: [{ body: priorBody }],
       });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
       assert.ok(!capturedMessage.includes('sentiment_drift'));
     });
@@ -718,8 +737,8 @@ describe('pulse', { concurrency: 1 }, () => {
   describe('runPulse — summary cap at 50', () => {
     it('caps summaries to 50 when more are returned from DB', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -735,7 +754,7 @@ describe('pulse', { concurrency: 1 }, () => {
         }),
       );
       const pool = makePool({ summaries: rows });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
 
       // The oldest 10 (indices 0-9) should be trimmed; newest 50 (indices 10-59) kept
@@ -747,8 +766,8 @@ describe('pulse', { concurrency: 1 }, () => {
 
     it('includes all summaries when count is under the cap', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -762,7 +781,7 @@ describe('pulse', { concurrency: 1 }, () => {
         }),
       );
       const pool = makePool({ summaries: rows });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
 
       // All 10 should be present
@@ -773,8 +792,8 @@ describe('pulse', { concurrency: 1 }, () => {
 
     it('includes exactly 50 summaries when given exactly 50', async () => {
       let capturedMessage = '';
-      const llm = {
-        call: async (params: any) => {
+      const llm: PulseLlm = {
+        call: async (params: PulseLlmParams) => {
           capturedMessage = params.messages[0].content;
           return { content: JSON.stringify(makeValidReport()) };
         },
@@ -788,7 +807,7 @@ describe('pulse', { concurrency: 1 }, () => {
         }),
       );
       const pool = makePool({ summaries: rows });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       await runPulse();
 
       // All 50 should be present (no trimming at boundary)
@@ -816,7 +835,7 @@ describe('pulse', { concurrency: 1 }, () => {
       };
 
       const pool = makePool({ summaries: [makeSummaryRow()] });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       const result = await runPulse();
       assert.ok(result !== null);
       assert.equal(callCount, 2);
@@ -852,7 +871,7 @@ describe('pulse', { concurrency: 1 }, () => {
       };
 
       const pool = makePool({ summaries: [makeSummaryRow()] });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       const result = await runPulse();
       assert.ok(result !== null);
       assert.equal(callCount, 2);
@@ -890,7 +909,7 @@ describe('pulse', { concurrency: 1 }, () => {
       };
 
       const pool = makePool({ summaries: [makeSummaryRow()] });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       const result = await runPulse();
       assert.ok(result !== null);
       assert.equal(callCount, 2);
@@ -905,7 +924,7 @@ describe('pulse', { concurrency: 1 }, () => {
       };
 
       const pool = makePool({ summaries: [makeSummaryRow()] });
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       const result = await runPulse();
       assert.equal(result, null);
     });
@@ -928,7 +947,7 @@ describe('pulse', { concurrency: 1 }, () => {
         wrapWithNonce: (content: string) => ({ wrapped: content, nonce: 'n' }),
       };
 
-      const { runPulse } = createPulse(pool, noopLog, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
+      const { runPulse } = createPulse(pool, logger, baseConfig, llm, mockSentimentTracker, mockDivergenceTracker);
       const result = await runPulse();
 
       assert.equal(result, null);

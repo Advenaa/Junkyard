@@ -11,6 +11,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
 
 const vectorCacheSrc = readFileSync(new URL('../../src/vector-cache.ts', import.meta.url), 'utf-8');
 
@@ -78,7 +80,7 @@ describe('VE-003 — async DB fallback for search', () => {
       child: () => mockLog,
     };
 
-    const cache = createVectorCache(mockPool as any, mockLog as any);
+    const cache = createVectorCache(mockPool as unknown as Pool, mockLog as unknown as Logger);
 
     // Insert a vector that will match our query
     const dims = 768;

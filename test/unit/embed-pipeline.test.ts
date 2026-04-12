@@ -1,18 +1,22 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createEmbedPipeline } from '../../src/embed-pipeline.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
 // ---------------------------------------------------------------------------
 
-function makePool(rows: Record<string, unknown>[] = []) {
+type EmbedderResult = { vector: Float32Array; dimensions: number; model: string };
+
+function makePool(rows: Record<string, unknown>[] = []): Pool {
   return {
     query: async () => ({ rows }),
-  } as any;
+  } as unknown as Pool;
 }
 
-function makeLogger(): any {
+function makeLogger(): Logger & { calls: Record<string, unknown[][]> } {
   const calls: Record<string, unknown[][]> = {};
   return new Proxy(
     {},
@@ -26,13 +30,13 @@ function makeLogger(): any {
         };
       },
     },
-  );
+  ) as Logger & { calls: Record<string, unknown[][]> };
 }
 
 function makeEmbedder(
   overrides: Partial<{
     isAvailable: () => boolean;
-    embedBatch: (texts: string[]) => Promise<any[]>;
+    embedBatch: (texts: string[]) => Promise<EmbedderResult[]>;
     prepareText: (text: string, type: string) => string;
     vectorToBytes: (v: Float32Array) => Buffer;
   }> = {},
@@ -51,7 +55,7 @@ function makeEmbedder(
   };
 }
 
-function makeCache(): any {
+function makeCache(): { update: () => void } {
   return { update: () => {} };
 }
 
@@ -76,7 +80,7 @@ describe('embed-pipeline overlap guard', () => {
         }
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
     const pipeline = createEmbedPipeline(slowPool, makeLogger(), makeEmbedder(), makeCache());
 
@@ -101,7 +105,7 @@ describe('embed-pipeline overlap guard', () => {
         }
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
     const pipeline = createEmbedPipeline(pool, makeLogger(), makeEmbedder(), makeCache());
 
@@ -135,7 +139,7 @@ describe('embed-pipeline overlap guard', () => {
         }
         return { rows: [] };
       },
-    } as any;
+    } as unknown as Pool;
 
     const pipeline = createEmbedPipeline(pool, makeLogger(), embedder, makeCache());
 

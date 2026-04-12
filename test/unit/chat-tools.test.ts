@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { createChatTools } from '../../src/chat/tools.js';
 import type { ChatTool, Embedder, LLM } from '../../src/chat/tools.js';
 import type { VectorCache, SearchResult } from '../../src/vector-cache.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 // ── Stubs ──────────────────────────────────────────────────────────────
 
@@ -11,31 +14,35 @@ const noopLog = {
   debug() {},
   warn() {},
   error() {},
+  fatal() {},
   child() {
     return noopLog;
   },
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 /** Creates a stub pool whose query() returns the given rows. */
-function stubPool(rows: any[] = []) {
+function stubPool(rows: Record<string, unknown>[] = []): Pool {
   return {
     query: async () => ({ rows }),
-  } as any;
+  } as unknown as Pool;
 }
 
 /** Creates a stub pool that records calls and returns rows per call index. */
-function recordingPool(callResults: any[][]) {
+function recordingPool(
+  callResults: Record<string, unknown>[][],
+): Pool & { calls: Array<{ text: string; params: unknown[] }> } {
   let callIndex = 0;
-  const calls: { text: string; params: any[] }[] = [];
+  const calls: Array<{ text: string; params: unknown[] }> = [];
   return {
     calls,
-    query: async (text: string, params: any[]) => {
+    query: async (text: string, params: unknown[]) => {
       calls.push({ text, params });
       const rows = callResults[callIndex] ?? [];
       callIndex++;
       return { rows };
     },
-  } as any;
+  } as unknown as Pool & { calls: Array<{ text: string; params: unknown[] }> };
 }
 
 function stubEmbedder(vector: Float32Array | null = new Float32Array([1, 0, 0])): Embedder {
@@ -86,18 +93,18 @@ function toolByName(tools: ChatTool[], name: string): ChatTool {
 
 describe('createChatTools', () => {
   it('returns exactly 3 tools', () => {
-    const tools = createChatTools(stubPool(), noopLog, stubVectorCache(), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(), logger, stubVectorCache(), stubEmbedder(), stubLlm());
     assert.equal(tools.length, 3);
   });
 
   it('returns tools with correct names', () => {
-    const tools = createChatTools(stubPool(), noopLog, stubVectorCache(), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(), logger, stubVectorCache(), stubEmbedder(), stubLlm());
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, ['keyword_search', 'read_raw', 'semantic_search']);
   });
 
   it('each tool has a non-empty description', () => {
-    const tools = createChatTools(stubPool(), noopLog, stubVectorCache(), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(), logger, stubVectorCache(), stubEmbedder(), stubLlm());
     for (const tool of tools) {
       assert.ok(tool.description.length > 0, `${tool.name} has empty description`);
     }
@@ -116,7 +123,7 @@ describe('semantic_search', () => {
       { id: 'sum-001', body: 'Bitcoin rallied 5%', created_at: '2026-04-01' },
       { id: 'sum-002', body: 'ETH gas fees dropped', created_at: '2026-04-02' },
     ];
-    const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(dbRows), logger, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     const result = await search.execute({ query: 'bitcoin price' });
@@ -130,7 +137,7 @@ describe('semantic_search', () => {
   });
 
   it('returns error when query is missing', async () => {
-    const tools = createChatTools(stubPool(), noopLog, stubVectorCache(), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(), logger, stubVectorCache(), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     const result = await search.execute({});
@@ -138,7 +145,7 @@ describe('semantic_search', () => {
   });
 
   it('returns error when embedding service is unavailable', async () => {
-    const tools = createChatTools(stubPool(), noopLog, stubVectorCache(), stubEmbedder(null), stubLlm());
+    const tools = createChatTools(stubPool(), logger, stubVectorCache(), stubEmbedder(null), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     const result = await search.execute({ query: 'test' });
@@ -146,7 +153,7 @@ describe('semantic_search', () => {
   });
 
   it('returns "No results found." when vector cache returns empty', async () => {
-    const tools = createChatTools(stubPool(), noopLog, stubVectorCache([]), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(), logger, stubVectorCache([]), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     const result = await search.execute({ query: 'obscure topic' });
@@ -164,7 +171,7 @@ describe('semantic_search', () => {
         { id: 'id-b', body: 'content b', created_at: '2026-01-02' },
       ],
     ]);
-    const tools = createChatTools(pool, noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
+    const tools = createChatTools(pool, logger, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     await search.execute({ query: 'test' });
@@ -191,7 +198,7 @@ describe('semantic_search', () => {
 
     const vectorResults: SearchResult[] = [{ targetId: 'sum-1', score: 0.9 }];
     const dbRows = [{ id: 'sum-1', body: 'content', created_at: '2026-01-01' }];
-    const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), embedder, stubLlm());
+    const tools = createChatTools(stubPool(dbRows), logger, stubVectorCache(vectorResults), embedder, stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     await search.execute({ query: 'bitcoin price' });
@@ -215,7 +222,7 @@ describe('semantic_search', () => {
   it('wraps content in nonce-tagged search_result blocks', async () => {
     const vectorResults: SearchResult[] = [{ targetId: 'sum-x', score: 0.9 }];
     const dbRows = [{ id: 'sum-x', body: 'Some content', created_at: '2026-01-01' }];
-    const tools = createChatTools(stubPool(dbRows), noopLog, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
+    const tools = createChatTools(stubPool(dbRows), logger, stubVectorCache(vectorResults), stubEmbedder(), stubLlm());
     const search = toolByName(tools, 'semantic_search');
 
     const result = await search.execute({ query: 'test' });

@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { cosineSimilarity, evict, MAX_VECTORS, createVectorCache } from '../../src/vector-cache.js';
 import type { VectorCache } from '../../src/vector-cache.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -19,14 +22,15 @@ const noopLog = {
   child() {
     return noopLog;
   },
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 /** Stub pool — only needed for load() which we skip in unit tests. */
-const stubPool = {} as any;
+const stubPool = {} as unknown as Pool;
 
 /** Create a VectorCache for testing (skipping load). */
 function makeCache(): VectorCache {
-  return createVectorCache(stubPool, noopLog);
+  return createVectorCache(stubPool, logger);
 }
 
 // ── cosineSimilarity ────────────────────────────────────────────────────
@@ -229,9 +233,9 @@ describe('VectorCache (unit, no pool)', () => {
       query: async () => ({
         rows: [{ target_id: 'valid-12', vector: buf }],
       }),
-    } as any;
+    } as unknown as Pool;
 
-    const cache = createVectorCache(mockPool, log);
+    const cache = createVectorCache(mockPool, log as unknown as Logger);
     await cache.load();
 
     assert.equal(cache.getSize().summaries, 1);
@@ -254,9 +258,9 @@ describe('VectorCache (unit, no pool)', () => {
       query: async () => ({
         rows: [{ target_id: 'corrupt-5', vector: buf }],
       }),
-    } as any;
+    } as unknown as Pool;
 
-    const cache = createVectorCache(mockPool, log);
+    const cache = createVectorCache(mockPool, log as unknown as Logger);
     await cache.load();
 
     assert.equal(cache.getSize().summaries, 0);
@@ -279,9 +283,9 @@ describe('VectorCache (unit, no pool)', () => {
       query: async () => ({
         rows: [{ target_id: 'empty-0', vector: buf }],
       }),
-    } as any;
+    } as unknown as Pool;
 
-    const cache = createVectorCache(mockPool, log);
+    const cache = createVectorCache(mockPool, log as unknown as Logger);
     await cache.load();
 
     assert.equal(cache.getSize().summaries, 0);
@@ -306,9 +310,9 @@ describe('VectorCache (unit, no pool)', () => {
       query: async () => ({
         rows: [{ target_id: 'embed-768', vector: buf }],
       }),
-    } as any;
+    } as unknown as Pool;
 
-    const cache = createVectorCache(mockPool, log);
+    const cache = createVectorCache(mockPool, log as unknown as Logger);
     await cache.load();
 
     assert.equal(cache.getSize().summaries, 1);
@@ -338,9 +342,9 @@ describe('VectorCache (unit, no pool)', () => {
           { target_id: 'ok-768', vector: good768 },
         ],
       }),
-    } as any;
+    } as unknown as Pool;
 
-    const cache = createVectorCache(mockPool, log);
+    const cache = createVectorCache(mockPool, log as unknown as Logger);
     await cache.load();
 
     // 2 valid vectors loaded per type (summary + report both query same mock)

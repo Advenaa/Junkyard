@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { shouldSkip, parseLabeledOutput, createPreSummarizer } from '../../src/pre-summarize/index.js';
+import type { Config } from '../../src/config.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────
 
@@ -11,7 +15,8 @@ const noopLog = {
   debug: () => {},
   fatal: () => {},
   child: () => noopLog,
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 const mockConfig = {
   models: {
@@ -19,7 +24,21 @@ const mockConfig = {
     chunk: 'claude-haiku-4-5-20251001',
     thinkalot: 'claude-haiku-4-5-20251001',
   },
-} as any;
+} as unknown as Config;
+
+type PreSummarizerLlmParams = {
+  model: string;
+  system: string;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  maxTokens: number;
+  stage: string;
+};
+
+type PreSummarizerLlm = {
+  call: (params: PreSummarizerLlmParams) => Promise<{ content: string }>;
+  sanitizeForPrompt: (content: string) => string;
+  wrapWithNonce: (content: string) => { wrapped: string; nonce: string };
+};
 
 function longContent(len = 7000): string {
   return 'a'.repeat(len);
@@ -133,15 +152,15 @@ describe('createPreSummarizer.run()', () => {
   it('returns 0 when no eligible items from DB', async () => {
     const mockPool = {
       query: async () => ({ rows: [], rowCount: 0 }),
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
+    const mockLlm: PreSummarizerLlm = {
       call: async () => ({ content: '' }),
       sanitizeForPrompt: (s: string) => s,
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     const result = await ps.run();
     assert.equal(result, 0);
   });
@@ -154,15 +173,15 @@ describe('createPreSummarizer.run()', () => {
         ],
         rowCount: 1,
       }),
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
+    const mockLlm: PreSummarizerLlm = {
       call: async () => ({ content: '' }),
       sanitizeForPrompt: (s: string) => s,
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     const result = await ps.run();
     assert.equal(result, 0);
   });
@@ -181,10 +200,10 @@ describe('createPreSummarizer.run()', () => {
         }
         return { rows: [], rowCount: 0 };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
-      call: async (params: any) => {
+    const mockLlm: PreSummarizerLlm = {
+      call: async (params: PreSummarizerLlmParams) => {
         capturedModel = params.model;
         return { content: '[1] Summarized text' };
       },
@@ -192,7 +211,7 @@ describe('createPreSummarizer.run()', () => {
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     await ps.run();
 
     assert.equal(capturedModel, 'claude-haiku-4-5-20251001');
@@ -212,10 +231,10 @@ describe('createPreSummarizer.run()', () => {
         }
         return { rows: [], rowCount: 0 };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
-      call: async (params: any) => {
+    const mockLlm: PreSummarizerLlm = {
+      call: async (params: PreSummarizerLlmParams) => {
         capturedContent = params.messages[0].content;
         return { content: '[1] Summarized' };
       },
@@ -223,7 +242,7 @@ describe('createPreSummarizer.run()', () => {
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     await ps.run();
 
     assert.ok(capturedContent.includes('<nonce>'), 'LLM content must include nonce wrapping');
@@ -244,10 +263,10 @@ describe('createPreSummarizer.run()', () => {
         }
         return { rows: [], rowCount: 0 };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
-      call: async (params: any) => {
+    const mockLlm: PreSummarizerLlm = {
+      call: async (params: PreSummarizerLlmParams) => {
         capturedSystem = params.system;
         return { content: '[1] Summarized' };
       },
@@ -255,7 +274,7 @@ describe('createPreSummarizer.run()', () => {
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     await ps.run();
 
     assert.ok(
@@ -275,15 +294,15 @@ describe('createPreSummarizer.run()', () => {
         }
         return { rows: [], rowCount: 0 };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
+    const mockLlm: PreSummarizerLlm = {
       call: async () => ({ content: '' }),
       sanitizeForPrompt: (s: string) => s,
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     await ps.run();
 
     assert.ok(
@@ -307,9 +326,9 @@ describe('createPreSummarizer.run()', () => {
         }
         return { rows: [], rowCount: 0 };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
+    const mockLlm: PreSummarizerLlm = {
       call: async () => {
         throw new Error('llm failed');
       },
@@ -317,7 +336,7 @@ describe('createPreSummarizer.run()', () => {
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     await ps.run();
 
     assert.ok(
@@ -351,15 +370,15 @@ describe('createPreSummarizer.run()', () => {
         }
         return { rows: [], rowCount: 0 };
       },
-    } as any;
+    } as unknown as Pool;
 
-    const mockLlm = {
+    const mockLlm: PreSummarizerLlm = {
       call: async () => ({ content: '[1] First summary [2] Second summary' }),
       sanitizeForPrompt: (s: string) => s,
       wrapWithNonce: (s: string) => ({ wrapped: `<nonce>${s}</nonce>`, nonce: 'testnonce' }),
     };
 
-    const ps = createPreSummarizer(mockPool, noopLog, mockConfig, mockLlm);
+    const ps = createPreSummarizer(mockPool, logger, mockConfig, mockLlm);
     const result = await ps.run();
 
     assert.equal(result, 2);

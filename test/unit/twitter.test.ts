@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Config } from '../../src/config.js';
+import type { Pool } from '../../src/db/connection.js';
 import type { Logger } from '../../src/logger.js';
 import { createTwitterAdapter } from '../../src/ingest/twitter.js';
 
@@ -10,7 +11,9 @@ import { createTwitterAdapter } from '../../src/ingest/twitter.js';
 
 const mockPool = {
   query: async () => ({ rows: [] }),
-} as any;
+} as unknown as Pool;
+
+type FetchInput = string | URL | Request;
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -214,7 +217,7 @@ describe('Twitter adapter', () => {
   describe('buildUrl via fetch inspection', () => {
     it('builds user timeline URL for @handle sourceId', async () => {
       let capturedUrl = '';
-      globalThis.fetch = (input: any) => {
+      globalThis.fetch = (input: FetchInput) => {
         capturedUrl = typeof input === 'string' ? input : input.url;
         return mockFetchResponse({ tweets: [], has_next_page: false });
       };
@@ -230,7 +233,7 @@ describe('Twitter adapter', () => {
 
     it('builds search URL for non-handle sourceId', async () => {
       let capturedUrl = '';
-      globalThis.fetch = (input: any) => {
+      globalThis.fetch = (input: FetchInput) => {
         capturedUrl = typeof input === 'string' ? input : input.url;
         return mockFetchResponse({ tweets: [], has_next_page: false });
       };
@@ -317,7 +320,7 @@ describe('Twitter adapter', () => {
     it('passes cursor to subsequent page requests', async () => {
       const capturedUrls: string[] = [];
       let callCount = 0;
-      globalThis.fetch = (input: any) => {
+      globalThis.fetch = (input: FetchInput) => {
         capturedUrls.push(typeof input === 'string' ? input : input.url);
         callCount++;
         if (callCount === 1) {
@@ -388,7 +391,7 @@ describe('Twitter adapter', () => {
   // -------------------------------------------------------------------------
   describe('poll respects 429 rate limiting', () => {
     /** Mock pool that tracks next_retry_at (rate limit backoff) per source. */
-    function makeRateLimitAwarePool() {
+    function makeRateLimitAwarePool(): Pool {
       const retryAt = new Map<string, number>();
       return {
         query: async (sql: string, params?: unknown[]) => {
@@ -404,7 +407,7 @@ describe('Twitter adapter', () => {
           }
           return { rows: [] };
         },
-      } as any;
+      } as unknown as Pool;
     }
 
     it('does not crash on 429 and returns empty', async () => {
@@ -449,7 +452,7 @@ describe('Twitter adapter', () => {
   // -------------------------------------------------------------------------
   describe('poll handles 401 (API key revoked)', () => {
     /** Mock pool that tracks halted state via source_state writes */
-    function makeHaltAwarePool() {
+    function makeHaltAwarePool(): Pool {
       let halted = false;
       return {
         query: async (sql: string) => {
@@ -465,7 +468,7 @@ describe('Twitter adapter', () => {
           }
           return { rows: [] };
         },
-      } as any;
+      } as unknown as Pool;
     }
 
     it('does not crash on 401 and returns empty', async () => {
@@ -519,7 +522,18 @@ describe('Twitter adapter', () => {
   // -------------------------------------------------------------------------
   describe('llm_usage cost tracking', () => {
     /** Mock pool that captures every INSERT INTO llm_usage call. */
-    function makeUsageCapturingPool() {
+    function makeUsageCapturingPool(): {
+      pool: Pool;
+      inserts: Array<{
+        id: string;
+        stage: string;
+        model: string;
+        inputTokens: number;
+        outputTokens: number;
+        costUsd: number;
+        createdAt: number;
+      }>;
+    } {
       const inserts: Array<{
         id: string;
         stage: string;
@@ -546,7 +560,7 @@ describe('Twitter adapter', () => {
           }
           return { rows: [] };
         },
-      } as any;
+      } as unknown as Pool;
       return { pool, inserts };
     }
 
@@ -665,7 +679,7 @@ describe('Twitter adapter', () => {
           }
           return { rows: [] };
         },
-      } as any;
+      } as unknown as Pool;
 
       const log = makeLogger();
       const adapter = createTwitterAdapter(makeConfig(), flakyPool, log);
