@@ -31,6 +31,7 @@ import type { SchedulerDiagnostics } from './scheduler.js';
 type RoutePreHandler = (request: FastifyRequest, reply: FastifyReply) => void | Promise<void>;
 
 interface SessionManagerLike {
+  create(discordId: string, ip: string, userAgent: string): Promise<string>;
   deleteAllForUser(discordId: string): Promise<number>;
 }
 
@@ -1013,4 +1014,36 @@ export function registerAdminRoutes({
       }
     },
   );
+
+  // --- POST /api/v1/auth/devtools-session ---
+  const DEVTOOLS_DISCORD_ID = '0';
+  const DEVTOOLS_USERNAME = 'devtools';
+
+  app.post('/api/v1/auth/devtools-session', { preHandler: [authPreHandler, requireAdmin] }, async (request, reply) => {
+    const now = Date.now();
+
+    await pool.query(
+      `INSERT INTO users (discord_id, username, avatar, role, created_at, last_login_at)
+         VALUES ($1, $2, NULL, 'admin', $3, $3)
+         ON CONFLICT (discord_id) DO UPDATE SET last_login_at = $3`,
+      [DEVTOOLS_DISCORD_ID, DEVTOOLS_USERNAME, now],
+    );
+
+    const ip = request.ip;
+    const userAgent = (request.headers['user-agent'] as string) ?? 'devtools/verify';
+    const sessionId = await sessionManager.create(DEVTOOLS_DISCORD_ID, ip, userAgent);
+
+    reply.setCookie('podders_session', sessionId, {
+      httpOnly: true,
+      signed: true,
+      secure: config.publicUrl?.startsWith('https') ?? false,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 30 * 24 * 60 * 60,
+    });
+
+    log.info('Devtools session created via API key exchange');
+
+    return { podders_session: sessionId };
+  });
 }
