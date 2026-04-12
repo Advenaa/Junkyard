@@ -15,9 +15,8 @@ interface StatusData {
 }
 
 interface HealthData {
-  overall: 'ok' | 'degraded' | 'error';
-  db: string;
-  services: Record<string, string>;
+  status: 'ok' | 'degraded' | 'error';
+  checks: unknown[] | Record<string, unknown>;
 }
 
 interface ReportSummary {
@@ -25,7 +24,7 @@ interface ReportSummary {
   type: string;
   createdAt: number;
   headline?: string;
-  thesis?: string;
+  tldr?: string;
   macroRegime?: string;
   macroConfidence?: number;
   narrativeShifts?: string[];
@@ -184,8 +183,8 @@ function formatChange(change24h: number): string {
   return `${change24h > 0 ? '+' : ''}${change24h.toFixed(1)}%`;
 }
 
-function healthDotClass(overall: HealthData['overall']): string {
-  switch (overall) {
+function healthDotClass(status: HealthData['status']): string {
+  switch (status) {
     case 'ok':
       return 'bg-accent-green';
     case 'degraded':
@@ -231,9 +230,9 @@ export function Dashboard() {
           <div className="flex items-center gap-4 text-xs font-mono text-text-secondary">
             <span className="flex items-center gap-2">
               <span
-                className={`h-2 w-2 rounded-full ${healthDotClass(health.data.overall)}`}
-                aria-label={`System health: ${health.data.overall}`}
-                title={`System health: ${health.data.overall}`}
+                className={`h-2 w-2 rounded-full ${healthDotClass(health.data.status)}`}
+                aria-label={`System health: ${health.data.status}`}
+                title={`System health: ${health.data.status}`}
               />
               health
             </span>
@@ -252,7 +251,7 @@ export function Dashboard() {
         ) : report ? (
           <div className="space-y-4">
             <blockquote className="border-l-4 border-accent pl-4 italic text-lg text-text-primary">
-              {report.thesis ?? 'No thesis available yet.'}
+              {report.tldr ?? 'No thesis available yet.'}
             </blockquote>
             <div className="flex flex-wrap items-center gap-3">
               <span

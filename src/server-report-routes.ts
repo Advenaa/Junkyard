@@ -141,6 +141,10 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
           const report = toCamelCase<Record<string, unknown>>(r as unknown as Record<string, unknown>);
           if (typeof r.body === 'string') {
             const parsed = parseReportBody(r.body);
+            const keyEvents = extractStringArrayField(parsed?.keyEvents ?? parsed?.key_events, 1);
+            if (keyEvents.length > 0) {
+              report.keyEvents = keyEvents;
+            }
             const marketCatalysts = extractStringArrayField(parsed?.marketCatalysts ?? parsed?.market_catalysts, 1);
             if (marketCatalysts.length > 0) {
               report.marketCatalysts = marketCatalysts;
@@ -187,6 +191,10 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
               if (macroRegimeHistory) {
                 report.macroRegimeHistory = macroRegimeHistory;
               }
+            }
+            const macroConfidence = parsed?.macroConfidence ?? parsed?.macro_confidence;
+            if (typeof macroConfidence === 'number' && Number.isFinite(macroConfidence)) {
+              report.macroConfidence = macroConfidence;
             }
             const eventChains = extractStringArrayField(parsed?.eventChains ?? parsed?.event_chains, 1);
             if (eventChains.length > 0) {
@@ -241,6 +249,10 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
         report.sections = (parsed.sections ?? []) as unknown[];
         report.sourceFamilies = (parsed.sourceFamilies ?? parsed.source_families ?? []) as unknown[];
         report.newProjects = (parsed.newProjects ?? parsed.new_projects ?? []) as unknown[];
+        const macroConfidence = parsed.macroConfidence ?? parsed.macro_confidence;
+        if (typeof macroConfidence === 'number' && Number.isFinite(macroConfidence)) {
+          report.macroConfidence = macroConfidence;
+        }
         const macroRegime = extractMacroRegime(parsed.macroRegime ?? parsed.macro_regime);
         if (macroRegime) {
           report.macroRegime = macroRegime;

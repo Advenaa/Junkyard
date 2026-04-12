@@ -20,11 +20,8 @@ function buildDashboardResponses() {
       costToday: 12.345,
     },
     '/health': {
-      overall: 'ok' as const,
-      db: 'ok',
-      services: {
-        twitter: 'ok',
-      },
+      status: 'ok' as const,
+      checks: [{ name: 'db', status: 'ok', message: 'healthy' }],
     },
     '/reports?limit=1': {
       reports: [
@@ -32,7 +29,7 @@ function buildDashboardResponses() {
           id: 'report-1',
           type: 'daily',
           createdAt: Date.UTC(2026, 3, 13, 2, 0, 0),
-          thesis: 'Market breadth is improving as BTC strength spills into higher-beta rotation.',
+          tldr: 'Market breadth is improving as BTC strength spills into higher-beta rotation.',
           macroRegime: 'risk-on',
           macroConfidence: 0.82,
           keyEvents: [
@@ -145,7 +142,7 @@ describe('Dashboard', () => {
     expect(screen.getByText('42 summaries')).toBeInTheDocument();
   });
 
-  it('renders the thesis blockquote from the latest report', async () => {
+  it('renders the tldr blockquote from the latest report', async () => {
     installSuccessfulMock();
 
     render(
