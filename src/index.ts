@@ -602,7 +602,17 @@ program
       } else {
         try {
           try {
-            reportRow = await synthesizer.runDaily();
+            const tz = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+            const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz });
+            const { rows: existsRows } = await pool.query<{ exists: boolean }>(
+              `SELECT EXISTS(SELECT 1 FROM reports WHERE date = $1 AND type = 'daily') AS exists`,
+              [todayStr],
+            );
+            if (existsRows[0]?.exists) {
+              log.info({ date: todayStr }, 'Daily report already exists, skipping synthesis');
+            } else {
+              reportRow = await synthesizer.runDaily();
+            }
           } catch (err: unknown) {
             log.error({ err: toLoggedError(err) }, 'daily synthesis failed');
           }

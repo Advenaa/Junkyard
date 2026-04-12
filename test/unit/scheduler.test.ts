@@ -443,7 +443,7 @@ describe('SD-005: onDaily runs dependency refresh before synthesis', () => {
     assert.ok(onDailyStart !== -1, 'onDaily function must exist in src/index.ts');
 
     // Grab a generous slice starting from onDaily (the function now includes price + macro refresh too)
-    const onDailySlice = source.slice(onDailyStart, onDailyStart + 2200);
+    const onDailySlice = source.slice(onDailyStart, onDailyStart + 2800);
 
     const embedPos = onDailySlice.indexOf('embedPipeline.run()');
     const narrativePos = onDailySlice.indexOf('narrativeDetector.detectNarratives()');
@@ -481,7 +481,7 @@ describe('SD-005: onDaily runs dependency refresh before synthesis', () => {
     const onDailyStart = source.indexOf('async function onDaily()');
     assert.ok(onDailyStart !== -1, 'onDaily function must exist in src/index.ts');
 
-    const onDailySlice = source.slice(onDailyStart, onDailyStart + 2200);
+    const onDailySlice = source.slice(onDailyStart, onDailyStart + 2800);
 
     assert.ok(
       onDailySlice.includes('getLastCompletedDayRollup(new Date(), timezone)'),
