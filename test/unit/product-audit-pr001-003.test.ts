@@ -54,7 +54,12 @@ describe('PR-001: OAuth callback handles Discord error', () => {
 // ===========================================================================
 
 describe('PR-002: Poll interval surfaced in dashboard', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = [
+    readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/types.ts'),
+    readSrc('dashboard/src/pages/Settings/api.ts'),
+    readSrc('dashboard/src/pages/Settings/formatters.ts'),
+  ].join('\n');
 
   it('Add Source form has poll interval control', () => {
     assert.ok(

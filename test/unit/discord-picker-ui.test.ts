@@ -15,7 +15,12 @@ function readSrc(relPath: string): string {
 // ==========================================================================
 
 describe('Discord picker UI (Settings.tsx)', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = [
+    readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/types.ts'),
+    readSrc('dashboard/src/pages/Settings/api.ts'),
+    readSrc('dashboard/src/pages/Settings/formatters.ts'),
+  ].join('\n');
 
   // 1. Discord browser state variables exist
   describe('Discord browser state variables', () => {

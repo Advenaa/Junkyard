@@ -23,7 +23,12 @@ const priceWatchSectionSrc = read('pages/ReportView/sections/PriceWatchSection.t
 const narrativeSectionSrc = read('pages/ReportView/sections/NarrativeSection.tsx');
 const reportListSrc = read('pages/ReportList.tsx');
 const chatSrc = read('pages/Chat.tsx');
-const settingsSrc = read('pages/Settings.tsx');
+const settingsSrc = [
+  read('pages/Settings/index.tsx'),
+  read('pages/Settings/types.ts'),
+  read('pages/Settings/api.ts'),
+  read('pages/Settings/formatters.ts'),
+].join('\n');
 
 describe('FG-001 — wiring scaffolding exists', () => {
   it('StatusProvider wraps ErrorBoundary inside AuthProvider in router.tsx', () => {

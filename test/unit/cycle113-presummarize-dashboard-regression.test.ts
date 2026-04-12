@@ -4,7 +4,14 @@ import { readFileSync } from 'node:fs';
 
 const preSummarizeSrc = readFileSync(new URL('../../src/pre-summarize/index.ts', import.meta.url), 'utf-8');
 
-const settingsSrc = readFileSync(new URL('../../dashboard/src/pages/Settings.tsx', import.meta.url), 'utf-8');
+const settingsSrc = [
+  'dashboard/src/pages/Settings/index.tsx',
+  'dashboard/src/pages/Settings/types.ts',
+  'dashboard/src/pages/Settings/api.ts',
+  'dashboard/src/pages/Settings/formatters.ts',
+]
+  .map((f) => readFileSync(new URL('../../' + f, import.meta.url), 'utf-8'))
+  .join('\n');
 
 describe('IP-012 — Urgent long articles are size-aware in shouldSkip', () => {
   it('URGENCY_KEYWORDS array still exists', () => {
