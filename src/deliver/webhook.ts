@@ -118,7 +118,9 @@ export function colorForType(type: string): number {
   return EMBED_COLORS[type] ?? 0x4a4a5a;
 }
 
-export function buildTitle(type: string, date: string): string {
+const DEFAULT_TIMEZONE = 'Asia/Jakarta';
+
+export function buildTitle(type: string, date: string, timezone?: string): string {
   if (type === 'daily') {
     return `Daily Market Report \u2014 ${date}`;
   }
@@ -126,13 +128,21 @@ export function buildTitle(type: string, date: string): string {
     return `[FLASH] Market Report \u2014 ${date}`;
   }
   if (type === 'pulse') {
+    const tz = timezone ?? DEFAULT_TIMEZONE;
     const now = new Date();
-    const wibTime = now.toLocaleTimeString('en-GB', {
+    const localTime = now.toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
-      timeZone: 'Asia/Jakarta',
+      timeZone: tz,
     });
-    return `Market Pulse \u2014 ${wibTime} WIB`;
+    const tzAbbr =
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        timeZoneName: 'short',
+      })
+        .formatToParts(now)
+        .find((p) => p.type === 'timeZoneName')?.value ?? tz;
+    return `Market Pulse \u2014 ${localTime} ${tzAbbr}`;
   }
   return `Market Report \u2014 ${date}`;
 }
@@ -343,9 +353,14 @@ export function enforceEmbedLimit(embed: DiscordEmbed): void {
   }
 }
 
-export function buildEmbed(report: Report, parsed: MarketReportParsed, config: Config): DiscordEmbed {
+export function buildEmbed(
+  report: Report,
+  parsed: MarketReportParsed,
+  config: Config,
+  timezone?: string,
+): DiscordEmbed {
   const embed: DiscordEmbed = {
-    title: buildTitle(report.type, report.date),
+    title: buildTitle(report.type, report.date, timezone),
     description: truncate(parsed.tldr, 4096),
     color: colorForType(report.type),
     fields: buildFields(parsed),
@@ -660,7 +675,8 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       return false;
     }
 
-    const embed = buildEmbed(report, parsed, config);
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? DEFAULT_TIMEZONE;
+    const embed = buildEmbed(report, parsed, config, timezone);
     const payload = JSON.stringify({
       embeds: [embed],
       allowed_mentions: { parse: [] },

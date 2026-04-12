@@ -42,10 +42,17 @@ describe('buildTitle', () => {
     assert.strictEqual(title, '[FLASH] Market Report \u2014 2026-04-01');
   });
 
-  it('builds pulse title with WIB time', () => {
+  it('builds pulse title with dynamic timezone abbreviation (default)', () => {
     const title = buildTitle('pulse', '2026-04-01');
     assert.ok(title.startsWith('Market Pulse \u2014 '));
-    assert.ok(title.endsWith(' WIB'));
+    // Default timezone is Asia/Jakarta — abbreviation varies by locale but should be present
+    assert.match(title, /Market Pulse \u2014 \d{2}:\d{2} .+/);
+  });
+
+  it('builds pulse title with explicit timezone', () => {
+    const title = buildTitle('pulse', '2026-04-01', 'America/New_York');
+    assert.ok(title.startsWith('Market Pulse \u2014 '));
+    assert.match(title, /Market Pulse \u2014 \d{2}:\d{2} .+/);
   });
 
   it('builds fallback title for unknown type', () => {
@@ -976,6 +983,39 @@ describe('deliver — idempotency guard', () => {
     assert.ok(updateQuery, 'Expected an UPDATE delivery_status query');
     assert.strictEqual(updateQuery.values[0], 'delivered');
     assert.strictEqual(updateQuery.values[2], FAKE_REPORT.id);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('uses the configured timezone for pulse delivery titles', async (t) => {
+    const pulseReport = { ...FAKE_REPORT, id: 'rpt-pulse-tz-001', type: 'pulse' as const };
+    const pool = mockPool([
+      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
+      { rows: [{ delivery_status: 'pending' }] },
+      { rows: [{ value: 'UTC' }] },
+      { rowCount: 1 },
+    ]);
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
+      return new Response(null, { status: 200 });
+    });
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+    const result = await deliver(pulseReport);
+
+    assert.strictEqual(result, true);
+
+    const [, opts] = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
+    const body = JSON.parse(opts.body as string);
+    assert.match(body.embeds[0].title, /^Market Pulse \u2014 \d{2}:\d{2} UTC$/);
 
     fetchMock.mock.restore();
     resolve4Mock.mock.restore();
