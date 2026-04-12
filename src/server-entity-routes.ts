@@ -1,18 +1,22 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { ulid } from 'ulid';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import {
+  deleteEntityAlias,
   deleteEntityRelationship,
   getAlphaPropagationByEntity,
   getAlphaPropagationSummary,
   getAuthorById,
   getAuthorCalls,
   getCompetitors,
+  getEntityAliases,
   getEntityDivergence,
   getEntityRelationshipGraph,
   getEntityRelationships,
   getLatestPriceSnapshot,
   getPriceHistory,
+  insertEntityAlias,
   getTopAuthorsByEntity,
   getTopDivergentEntities,
   upsertEntityRelationship,
@@ -117,6 +121,106 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
           relevance: row.relevance,
           lastSeen: row.last_seen,
         })),
+      };
+    },
+  );
+
+  app.get<{ Params: { entityId: string } }>(
+    '/api/v1/entities/:entityId/aliases',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request) => {
+      const rows = await getEntityAliases(pool, request.params.entityId);
+      return {
+        aliases: rows.map((row) => toCamelCase<Record<string, unknown>>(row as unknown as Record<string, unknown>)),
+      };
+    },
+  );
+
+  app.post<{ Params: { entityId: string }; Body: { alias: string } }>(
+    '/api/v1/entities/:entityId/aliases',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+          },
+        },
+        body: {
+          type: 'object',
+          required: ['alias'],
+          properties: {
+            alias: { type: 'string', minLength: 1, maxLength: 120 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request, reply) => {
+      const entityId = request.params.entityId;
+      const alias = normalizeAlias(request.body.alias);
+      if (!alias) {
+        return reply.code(400).send({ error: 'Alias cannot be empty' });
+      }
+
+      const existingAliases = await getEntityAliases(pool, entityId);
+      if (existingAliases.some((row) => row.alias === alias)) {
+        return reply.code(409).send({ error: 'Alias already exists for this entity' });
+      }
+
+      const created = await insertEntityAlias(pool, {
+        id: ulid(),
+        entityId,
+        alias,
+        origin: 'manual',
+        createdAt: Date.now(),
+      });
+      if (!created) {
+        return reply.code(409).send({ error: 'Alias already exists for this entity' });
+      }
+
+      return reply.code(201).send({
+        alias: toCamelCase<Record<string, unknown>>(created as unknown as Record<string, unknown>),
+      });
+    },
+  );
+
+  app.delete<{ Params: { entityId: string; aliasId: string } }>(
+    '/api/v1/entities/:entityId/aliases/:aliasId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId', 'aliasId'],
+          properties: {
+            entityId: { type: 'string', minLength: 1 },
+            aliasId: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const deleted = await deleteEntityAlias(pool, request.params.aliasId, request.params.entityId);
+      if (!deleted) {
+        return reply.code(404).send({ error: 'Alias not found' });
+      }
+
+      return {
+        alias: toCamelCase<Record<string, unknown>>(deleted as unknown as Record<string, unknown>),
       };
     },
   );

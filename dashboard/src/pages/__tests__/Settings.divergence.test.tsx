@@ -110,6 +110,14 @@ function buildFetchMock(divergenceHandler: (entityId: string, days: number) => D
       });
     }
 
+    const aliasesMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/aliases$/);
+    if (aliasesMatch && method === 'GET') {
+      return new Response(JSON.stringify({ aliases: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // Entity relationships
     const relationshipsMatch = path.match(/^\/api\/v1\/entities\/([^/]+)\/relationships$/);
     if (relationshipsMatch && method === 'GET') {

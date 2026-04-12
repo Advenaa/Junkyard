@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { ulid } from 'ulid';
 
 type Migration = (client: pg.PoolClient) => Promise<void>;
 
@@ -943,6 +944,36 @@ const migrations: Migration[] = [
     await client.query(`ALTER TABLE author_calls DROP COLUMN IF EXISTS outcome`);
     await client.query(`ALTER TABLE author_calls DROP COLUMN IF EXISTS resolved`);
     await client.query(`ALTER TABLE author_calls DROP COLUMN IF EXISTS resolved_at`);
+  },
+
+  // Migration 38: Add alias metadata needed for dashboard alias management (#87)
+  async (client) => {
+    const backfillCreatedAt = Date.now();
+
+    await client.query(`ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS id TEXT`);
+    await client.query(`ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS created_at BIGINT`);
+    await client.query(`ALTER TABLE entity_aliases ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'unknown'`);
+
+    const { rows: missingIds } = await client.query<{ alias: string; context_key: string }>(
+      `SELECT alias, context_key
+         FROM entity_aliases
+        WHERE id IS NULL`,
+    );
+
+    for (const row of missingIds) {
+      await client.query(`UPDATE entity_aliases SET id = $1 WHERE alias = $2 AND context_key = $3`, [
+        ulid(),
+        row.alias,
+        row.context_key,
+      ]);
+    }
+
+    await client.query(`UPDATE entity_aliases SET created_at = $1 WHERE created_at IS NULL`, [backfillCreatedAt]);
+    await client.query(`UPDATE entity_aliases SET origin = 'unknown' WHERE origin IS NULL`);
+
+    await client.query(`ALTER TABLE entity_aliases ALTER COLUMN id SET NOT NULL`);
+    await client.query(`ALTER TABLE entity_aliases ALTER COLUMN created_at SET NOT NULL`);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_aliases_id ON entity_aliases(id)`);
   },
 ];
 
