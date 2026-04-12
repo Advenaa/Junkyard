@@ -310,12 +310,6 @@ export function ReportView() {
   const focusedChainId = searchParams.get('chain');
   const allChains = report.chainDrilldowns ?? [];
   const focusedChain = focusedChainId ? (allChains.find((chain) => chain.rootId === focusedChainId) ?? null) : null;
-  const focusedChainIndex = focusedChain ? allChains.findIndex((chain) => chain.rootId === focusedChain.rootId) : -1;
-  const focusedChainSummary =
-    focusedChainIndex >= 0 && report.eventChains[focusedChainIndex] ? report.eventChains[focusedChainIndex] : null;
-  const orderedEventChains = focusedChainSummary
-    ? [focusedChainSummary, ...report.eventChains.filter((_, index) => index !== focusedChainIndex)]
-    : report.eventChains;
   const orderedChains = focusedChain
     ? [focusedChain, ...allChains.filter((chain) => chain.rootId !== focusedChain.rootId)]
     : allChains;
@@ -518,25 +512,14 @@ export function ReportView() {
         <div>
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Event Chains</h2>
           <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
-            {orderedEventChains.map((chain, i) => {
-              const isFocusedSummary = focusedChainSummary !== null && i === 0;
-
-              return (
-                <div
-                  key={`${i}:${chain}`}
-                  className={`px-4 py-3 space-y-1 text-sm font-body leading-relaxed ${
-                    isFocusedSummary ? 'bg-accent/5 text-text-primary' : 'text-text-primary'
-                  }`}
-                >
-                  {isFocusedSummary && (
-                    <div className="font-mono text-[10px] uppercase tracking-wider text-accent">
-                      Focused chain summary
-                    </div>
-                  )}
-                  <div>{chain}</div>
-                </div>
-              );
-            })}
+            {report.eventChains.map((chain, i) => (
+              <div
+                key={`${i}:${chain}`}
+                className="px-4 py-3 space-y-1 text-sm font-body leading-relaxed text-text-primary"
+              >
+                <div>{chain}</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
