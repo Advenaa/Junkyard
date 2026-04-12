@@ -1109,5 +1109,5 @@ export function createPulse(
     }
   }
 
-  return { runPulse, recordPulseAbort };
+  return { runPulse };
 }
