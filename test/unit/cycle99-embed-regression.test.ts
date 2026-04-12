@@ -154,7 +154,7 @@ describe('EM-023 — embedBatch rejects length and dimension mismatches', () => 
       assert.ok(result.vector instanceof Float32Array);
       assert.equal(result.vector.length, 768);
       assert.equal(result.dimensions, 768);
-      assert.equal(result.model, 'text-embedding-004');
+      assert.equal(result.model, 'gemini-embedding-001');
     }
     assert.deepEqual(getQueryCounts(), {
       countQueryCalls: 1,
