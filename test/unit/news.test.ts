@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import type { Logger } from '../../src/logger.js';
 import { createNewsAdapter } from '../../src/ingest/news.js';
+import { _internal as urlValidatorInternal } from '../../src/url-validator.js';
 
 const noopLog: Logger = {
   info: () => {},
@@ -32,7 +33,7 @@ describe('createNewsAdapter', () => {
   let restoreDnsMocks = () => {};
 
   beforeEach(() => {
-    originalFetch = globalThis.fetch;
+    originalFetch = urlValidatorInternal.fetch;
     const resolve4Mock = mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
     const resolve6Mock = mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
@@ -44,7 +45,7 @@ describe('createNewsAdapter', () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    urlValidatorInternal.fetch = originalFetch;
     restoreDnsMocks();
     restoreDnsMocks = () => {};
   });
@@ -58,7 +59,8 @@ describe('createNewsAdapter', () => {
   });
 
   it('treats non-2xx responses as fetch failures', async () => {
-    globalThis.fetch = (async () => new Response('upstream error', { status: 503 })) as typeof globalThis.fetch;
+    urlValidatorInternal.fetch = (async () =>
+      new Response('upstream error', { status: 503 })) as typeof globalThis.fetch;
 
     const adapter = createNewsAdapter(noopLog);
     const result = await adapter.extract('https://example.com/article');
@@ -68,7 +70,7 @@ describe('createNewsAdapter', () => {
   });
 
   it('treats empty Readability output as a non-failure', async () => {
-    globalThis.fetch = (async () =>
+    urlValidatorInternal.fetch = (async () =>
       new Response('<html><head><title>Empty</title></head><body></body></html>', {
         status: 200,
         headers: { 'content-type': 'text/html' },
@@ -82,7 +84,7 @@ describe('createNewsAdapter', () => {
   });
 
   it('treats oversized HTML bodies as a non-failure and logs a warning', async () => {
-    globalThis.fetch = (async () => {
+    urlValidatorInternal.fetch = (async () => {
       const body = new ReadableStream({
         start(controller) {
           const chunk = new Uint8Array(1024 * 1024);
@@ -110,7 +112,7 @@ describe('createNewsAdapter', () => {
   });
 
   it('returns a RawItem when Readability extracts article content', async () => {
-    globalThis.fetch = (async () =>
+    urlValidatorInternal.fetch = (async () =>
       new Response(
         `<!DOCTYPE html>
         <html>
@@ -144,7 +146,7 @@ describe('createNewsAdapter', () => {
   });
 
   it('treats network errors as fetch failures', async () => {
-    globalThis.fetch = (async () => {
+    urlValidatorInternal.fetch = (async () => {
       throw new Error('socket hang up');
     }) as typeof globalThis.fetch;
 

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import dns from 'node:dns';
 import RssParser from 'rss-parser';
 import type { Logger } from '../../src/logger.js';
+import { _internal as urlValidatorInternal } from '../../src/url-validator.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ describe('pollFeed', () => {
 
   beforeEach(() => {
     originalParseString = RssParser.prototype.parseString;
-    originalFetch = globalThis.fetch;
+    originalFetch = urlValidatorInternal.fetch;
     const resolve4Mock = mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
     const resolve6Mock = mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
@@ -99,12 +100,13 @@ describe('pollFeed', () => {
       resolve6Mock.mock.restore();
     };
     // Mock fetch for fetchValidated — return valid RSS XML response
-    globalThis.fetch = (async () => new Response('<rss></rss>', { status: 200 })) as unknown as typeof globalThis.fetch;
+    urlValidatorInternal.fetch = (async () =>
+      new Response('<rss></rss>', { status: 200 })) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
     RssParser.prototype.parseString = originalParseString;
-    globalThis.fetch = originalFetch;
+    urlValidatorInternal.fetch = originalFetch;
     restoreDnsMocks();
     restoreDnsMocks = () => {};
   });
@@ -240,7 +242,7 @@ describe('pollFeed', () => {
   });
 
   it('handles fetch/parse error gracefully', async () => {
-    globalThis.fetch = (async () => {
+    urlValidatorInternal.fetch = (async () => {
       throw new Error('Network error: ECONNREFUSED');
     }) as unknown as typeof globalThis.fetch;
 
