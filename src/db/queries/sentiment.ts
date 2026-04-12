@@ -407,7 +407,7 @@ async function getDuplicateClusterSignalsForEntities(
      JOIN summaries s ON s.source = i.source AND s.source_id = i.source_id
      JOIN entity_mentions em ON em.summary_id = s.id
      WHERE em.entity_id = ANY($1::text[])
-       AND i.status = 'ready'
+       AND i.status IN ('ready', 'processed')
        AND i.timestamp >= s.window_start
        AND i.timestamp <= s.window_end
        AND DATE(to_timestamp(i.timestamp / 1000.0) AT TIME ZONE $2) = $3::date
