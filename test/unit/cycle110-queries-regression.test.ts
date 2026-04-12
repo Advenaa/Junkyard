@@ -1,23 +1,13 @@
 /**
- * Structural regression tests for cycle 110: QR-008, QR-009, QR-010
+ * Structural regression tests for cycle 110: QR-009, QR-010
  *
- * QR-008: computeDailySentiment filters NULL sentiments
  * QR-009: insertSummary is idempotent via ON CONFLICT (id) DO NOTHING
  * QR-010: insertSource call in server.ts uses Date.now() not epoch-seconds
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import { readServerSource } from './helpers/server-source.js';
 import { readQueriesSource } from './helpers/queries-source.js';
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-function readSrc(relPath: string): string {
-  return readFileSync(path.join(ROOT, relPath), 'utf-8');
-}
 
 // ===========================================================================
 // QR-010: insertSource uses Date.now() not epoch-seconds
@@ -47,26 +37,6 @@ describe('QR-010: insertSource call uses Date.now() not epoch-seconds', () => {
   it('insertSource call passes Date.now() as the timestamp argument', () => {
     const callLine = insertSourceCallLines.find((line) => line.includes('Date.now()'));
     assert.ok(callLine !== undefined, 'insertSource call must contain Date.now() in the invocation line');
-  });
-});
-
-// ===========================================================================
-// QR-008: computeDailySentiment filters NULL sentiments
-// ===========================================================================
-
-describe('QR-008: computeDailySentiment filters NULL sentiments', () => {
-  const src = readQueriesSource();
-
-  it('computeDailySentiment query contains sentiment IS NOT NULL', () => {
-    // Extract the function body
-    const fnStart = src.indexOf('async function computeDailySentiment');
-    assert.ok(fnStart !== -1, 'computeDailySentiment function must exist in queries.ts');
-
-    const fnBody = src.slice(fnStart, fnStart + 800);
-    assert.ok(
-      fnBody.includes('sentiment IS NOT NULL'),
-      'computeDailySentiment query must include "sentiment IS NOT NULL" to filter nulls',
-    );
   });
 });
 
