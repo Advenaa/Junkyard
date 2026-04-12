@@ -1129,6 +1129,7 @@ function truncateDiagnosticText(value: string | null, maxLength = 100): string {
 function getDiagSeverityClasses(severity: string): string {
   if (severity === 'critical') return 'bg-accent-red/20 text-accent-red';
   if (severity === 'error') return 'bg-yellow-500/20 text-yellow-400';
+  if (severity === 'warn') return 'bg-yellow-500/10 text-yellow-400';
   return 'bg-background border border-border text-text-secondary';
 }
 

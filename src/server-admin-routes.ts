@@ -865,7 +865,7 @@ export function registerAdminRoutes({
       }>(
         `SELECT id, category, severity, message, metadata, acknowledged, created_at::text
          FROM health_events
-         WHERE severity IN ('error', 'critical') AND created_at >= $1::bigint
+         WHERE severity IN ('warn', 'error', 'critical') AND created_at >= $1::bigint
          ORDER BY created_at DESC
          LIMIT $2::int`,
         [sinceMs, limit],

@@ -80,10 +80,10 @@ describe('diag endpoints — queries hit the right tables', () => {
     assert.match(block, /jobs:\s*\[\]/);
   });
 
-  it('health-events filters to error/critical severity since a timestamp', () => {
+  it('health-events filters to warn/error/critical severity since a timestamp', () => {
     const block = routeBlock('/api/v1/diag/health-events');
     assert.match(block, /FROM\s+health_events/i);
-    assert.match(block, /severity\s+IN\s*\(\s*'error'\s*,\s*'critical'\s*\)/i);
+    assert.match(block, /severity\s+IN\s*\(\s*'warn'\s*,\s*'error'\s*,\s*'critical'\s*\)/i);
     assert.match(block, /created_at\s*>=\s*\$1::bigint/);
   });
 
