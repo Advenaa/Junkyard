@@ -325,9 +325,14 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
   }
 
   function getConfiguredFallbackModels(requestedModel: string): string[] {
-    const configuredModels = [_config.models?.normalizer, _config.models?.chunk, _config.models?.thinkalot].filter(
-      (candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0,
-    );
+    const configuredModels = [
+      _config.models?.normalizer,
+      _config.models?.chunk,
+      _config.models?.thinkalot,
+      _config.models?.normalizerFallback,
+      _config.models?.chunkFallback,
+      _config.models?.thinkalotFallback,
+    ].filter((candidate): candidate is string => typeof candidate === 'string' && candidate.length > 0);
 
     return [...new Set(configuredModels)].filter((candidate) => candidate !== requestedModel);
   }
