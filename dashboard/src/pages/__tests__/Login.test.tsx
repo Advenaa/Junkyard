@@ -177,5 +177,15 @@ describe('Login request access flow', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
     expect(screen.getByText('Access request sent. An admin can review it from Settings > Users.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Request Access' }));
+
+    const reopenedDialog = await screen.findByRole('dialog', { name: 'Request Access' });
+    expect(within(reopenedDialog).getByPlaceholderText('123456789012345678')).toHaveValue('');
+    expect(within(reopenedDialog).getByRole('combobox')).toHaveValue('viewer');
+    expect(within(reopenedDialog).getByPlaceholderText('Why do you need access?')).toHaveValue('');
+    expect(
+      screen.queryByText('Access request sent. An admin can review it from Settings > Users.'),
+    ).not.toBeInTheDocument();
   });
 });
