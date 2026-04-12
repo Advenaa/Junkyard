@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { SessionInfo } from './auth/sessions.js';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
 import type { Logger } from './logger.js';
@@ -32,7 +33,9 @@ type RoutePreHandler = (request: FastifyRequest, reply: FastifyReply) => void | 
 
 interface SessionManagerLike {
   create(discordId: string, ip: string, userAgent: string): Promise<string>;
+  delete(sessionId: string): Promise<void>;
   deleteAllForUser(discordId: string): Promise<number>;
+  listForUser(discordId: string): Promise<SessionInfo[]>;
 }
 
 interface DiscordRestClient {
@@ -704,6 +707,63 @@ export function registerAdminRoutes({
         });
       }
       return toCamelCase<UserRow>(rows[0] as unknown as Record<string, unknown>);
+    },
+  );
+
+  app.get(
+    '/api/v1/users/:discordId/sessions',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['discordId'],
+          properties: {
+            discordId: { type: 'string', pattern: '^\\d{17,20}$' },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { discordId } = request.params as { discordId: string };
+      const userExists = await pool.query(`SELECT 1 FROM users WHERE discord_id = $1`, [discordId]);
+      if (userExists.rows.length === 0) {
+        return reply.code(404).send({ error: 'User not found' });
+      }
+      const sessions = await sessionManager.listForUser(discordId);
+      return { sessions };
+    },
+  );
+
+  app.delete(
+    '/api/v1/users/:discordId/sessions/:sessionId',
+    {
+      preHandler: [authPreHandler, requireAdmin],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['discordId', 'sessionId'],
+          properties: {
+            discordId: { type: 'string', pattern: '^\\d{17,20}$' },
+            sessionId: { type: 'string', minLength: 1, maxLength: 128 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { discordId, sessionId } = request.params as {
+        discordId: string;
+        sessionId: string;
+      };
+      const sessionCheck = await pool.query(`SELECT 1 FROM sessions WHERE id = $1 AND discord_id = $2`, [
+        sessionId,
+        discordId,
+      ]);
+      if (sessionCheck.rows.length === 0) {
+        return reply.code(404).send({ error: 'Session not found' });
+      }
+      await sessionManager.delete(sessionId);
+      return reply.code(204).send();
     },
   );
 
