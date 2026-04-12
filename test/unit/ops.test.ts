@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { formatDate, parseDateFromFilename } from '../../src/ops/backup.js';
 import { createRetention } from '../../src/ops/retention.js';
 import type { RetentionResult } from '../../src/ops/retention.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
 
 // ---------------------------------------------------------------------------
 // Backup helpers
@@ -91,10 +93,10 @@ function createMockPool(rowCounts: number[]) {
     },
   };
 
-  return { pool, calls };
+  return { pool: pool as unknown as Pool, calls };
 }
 
-function createMockLogger() {
+function createMockLogger(): Logger {
   return {
     info: mock.fn(),
     error: mock.fn(),
@@ -102,7 +104,7 @@ function createMockLogger() {
     debug: mock.fn(),
     fatal: mock.fn(),
     child: mock.fn(),
-  };
+  } as unknown as Logger;
 }
 
 describe('retention run()', () => {
@@ -112,7 +114,7 @@ describe('retention run()', () => {
     const { pool, calls } = createMockPool(rowCounts);
     const log = createMockLogger();
 
-    const retention = createRetention(pool as any, log as any);
+    const retention = createRetention(pool, log);
     const result = await retention.run();
 
     // items(1) + summaries(1) + mentions(1) + sentimentDaily(1) + emb_items(2) + emb_summaries(2) + sessions(1) = 9
@@ -135,7 +137,7 @@ describe('retention run()', () => {
     const { pool, calls } = createMockPool(rowCounts);
     const log = createMockLogger();
 
-    const retention = createRetention(pool as any, log as any);
+    const retention = createRetention(pool, log);
     await retention.run();
 
     // Embedding queries start at index 4 (after items, summaries, mentions, sentimentDaily)
@@ -156,7 +158,7 @@ describe('retention run()', () => {
     const { pool } = createMockPool(rowCounts);
     const log = createMockLogger();
 
-    const retention = createRetention(pool as any, log as any);
+    const retention = createRetention(pool, log);
     const result = await retention.run();
 
     const expected: RetentionResult = {
@@ -176,7 +178,7 @@ describe('retention run()', () => {
     const { pool } = createMockPool(rowCounts);
     const log = createMockLogger();
 
-    const retention = createRetention(pool as any, log as any);
+    const retention = createRetention(pool, log);
     const result = await retention.run();
 
     assert.equal(result.itemsDeleted, 0);
@@ -194,7 +196,7 @@ describe('retention run()', () => {
     const log = createMockLogger();
 
     const before = Date.now();
-    const retention = createRetention(pool as any, log as any);
+    const retention = createRetention(pool, log);
     await retention.run();
     const after = Date.now();
 
@@ -215,7 +217,7 @@ describe('retention run()', () => {
     const log = createMockLogger();
 
     const before = Date.now();
-    const retention = createRetention(pool as any, log as any);
+    const retention = createRetention(pool, log);
     await retention.run();
 
     const thirtyDays = 30 * 24 * 60 * 60 * 1000;

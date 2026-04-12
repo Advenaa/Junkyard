@@ -9,16 +9,20 @@ import {
   isFeatureDisabled,
   markFeatureKeyRejected,
 } from '../../src/features.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 const noopLog = {
   info() {},
   debug() {},
   warn() {},
   error() {},
+  fatal() {},
   child() {
     return noopLog;
   },
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -183,7 +187,7 @@ describe('features / markFeatureKeyRejected', () => {
       }),
     );
 
-    markFeatureKeyRejected(flags, 'macro', noopLog);
+    markFeatureKeyRejected(flags, 'macro', logger);
 
     assert.equal(flags.macro.keyRejected, true);
     assert.equal(flags.macro.disabled, true);
@@ -200,7 +204,7 @@ describe('features / markFeatureKeyRejected', () => {
       }),
     );
 
-    markFeatureKeyRejected(flags, 'prices', noopLog);
+    markFeatureKeyRejected(flags, 'prices', logger);
 
     const response = featureDisabledResponse(flags, 'prices');
     assert.equal(response.reason, 'auth_failed');

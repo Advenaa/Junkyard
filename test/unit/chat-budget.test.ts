@@ -4,6 +4,9 @@ import { createChatHandler } from '../../src/chat/handler.js';
 import { refundChatDailyTokens, reserveChatDailyTokens } from '../../src/db/queries.js';
 import type { Embedder } from '../../src/chat/tools.js';
 import type { SearchResult, VectorCache } from '../../src/vector-cache.js';
+import type { Config } from '../../src/config.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger } from '../helpers/mock-types.js';
 
 function createBudgetPool() {
   const usage = new Map<string, number>();
@@ -78,10 +81,15 @@ const noopLog = {
   debug() {},
   warn() {},
   error() {},
+  fatal() {},
   child() {
     return noopLog;
   },
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
+const testConfig = {
+  models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' },
+} as unknown as Config;
 
 function stubVectorCache(results: SearchResult[] = []): VectorCache {
   return {
@@ -138,16 +146,9 @@ describe('createChatHandler budget enforcement', () => {
       wrapWithNonce(content: string) {
         return { wrapped: `<wrapped>${content}</wrapped>`, nonce: 'nonce' };
       },
-    } as any;
+    };
 
-    const handler = createChatHandler(
-      pool as never,
-      noopLog,
-      { models: { normalizer: 'haiku', chunk: 'haiku', thinkalot: 'sonnet' } } as any,
-      llm,
-      stubVectorCache(),
-      stubEmbedder,
-    );
+    const handler = createChatHandler(pool as never, logger, testConfig, llm, stubVectorCache(), stubEmbedder);
 
     const result = await handler.handle('Hello', 'conv-budget', 'user-budget');
 

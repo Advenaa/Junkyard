@@ -4,6 +4,11 @@ import { checkSpam, SPAM_RULES } from '../../src/normalize/spam.js';
 import { detectInjection, sanitizeContent } from '../../src/normalize/instruct-detector.js';
 import { createNormalizer } from '../../src/normalize/index.js';
 import type { RawItem } from '../../src/ingest/rss.js';
+import type { Config } from '../../src/config.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { createLLM } from '../../src/llm.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockQueryResult } from '../helpers/mock-types.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -448,22 +453,31 @@ describe('evasion via Unicode obfuscation', () => {
 
 // ── Normalize Pipeline (D-004, D-015, D-016) ──────────────────────
 
+type NormalizerLlm = ReturnType<typeof createLLM>;
+type NormalizeLlmCallArgs = {
+  model: string;
+  system: string;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  maxTokens: number;
+  stage: string;
+};
+
 // Shared mock factories for normalize pipeline tests
 
-function makeMockLog() {
+function makeMockLog(): Logger {
   return {
     info: () => {},
     warn: () => {},
     error: () => {},
     debug: () => {},
     child: () => makeMockLog(),
-  } as any;
+  } as unknown as Logger;
 }
 
-function makeMockConfig() {
+function makeMockConfig(): Config {
   return {
     models: { normalizer: 'claude-3-haiku-20240307', chunk: 'claude-3-haiku-20240307', thinkalot: 'claude-3-sonnet' },
-  } as any;
+  } as unknown as Config;
 }
 
 /**
@@ -471,7 +485,7 @@ function makeMockConfig() {
  * - SELECT queries return empty rows (no dedup hit)
  * - INSERT queries return rowCount 1
  */
-function makeMockPool(overrides?: { queryFn?: (text: string, params?: unknown[]) => any }) {
+function makeMockPool(overrides?: { queryFn?: (text: string, params?: unknown[]) => MockQueryResult }): Pool {
   const queryFn =
     overrides?.queryFn ??
     ((text: string) => {
@@ -482,13 +496,13 @@ function makeMockPool(overrides?: { queryFn?: (text: string, params?: unknown[])
       return { rows: [], rowCount: 1 };
     });
 
-  return { query: mock.fn(queryFn) } as any;
+  return { query: mock.fn(queryFn) } as unknown as Pool;
 }
 
 function makeMockLlm(overrides?: {
-  callFn?: (...args: any[]) => any;
+  callFn?: (args: NormalizeLlmCallArgs) => Promise<{ content: string }>;
   wrapWithNonceFn?: (content: string) => { wrapped: string; nonce: string };
-}) {
+}): NormalizerLlm {
   return {
     call: mock.fn(overrides?.callFn ?? (async () => ({ content: 'translated text' }))),
     wrapWithNonce: mock.fn(
@@ -501,7 +515,7 @@ function makeMockLlm(overrides?: {
     estimateTokens: () => 100,
     sanitizeForPrompt: (s: string) => s,
     getBudgetHint: () => '',
-  } as any;
+  } as unknown as NormalizerLlm;
 }
 
 // ── P-001: Minimum content gate ────────────────────────────────────
@@ -664,12 +678,12 @@ describe('translation nonce wrapping (D-004)', () => {
       'Saya ingin membeli aset kripto karena harga sudah turun banyak sekali hari ini ' +
       'dan saya berharap besok akan naik kembali dengan sangat baik untuk semua orang';
 
-    let capturedCallArgs: any = null;
+    let capturedCallArgs: NormalizeLlmCallArgs | null = null;
     const pool = makeMockPool();
     const log = makeMockLog();
     const config = makeMockConfig();
     const llm = makeMockLlm({
-      callFn: async (args: any) => {
+      callFn: async (args: NormalizeLlmCallArgs) => {
         capturedCallArgs = args;
         return { content: 'Bitcoin price today experienced significant increase' };
       },

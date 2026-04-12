@@ -583,7 +583,7 @@ describe('health monitor', () => {
         fetchAttempt++;
         return new Response(null, { status: fetchAttempt === 1 ? 500 : 200 });
       });
-      const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: any[]) => void) => {
+      const setTimeoutMock = t.mock.method(globalThis, 'setTimeout', ((callback: (...args: unknown[]) => void) => {
         callback();
         return 0;
       }) as typeof setTimeout);

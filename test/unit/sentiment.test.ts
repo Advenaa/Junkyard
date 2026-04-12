@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSentimentTracker, getLastCompletedDayRollup } from '../../src/knowledge/sentiment.js';
 import type { Trend, MomentumEntry } from '../../src/knowledge/sentiment.js';
+import type { Pool } from '../../src/db/connection.js';
+import type { Logger } from '../../src/logger.js';
+import type { MockLogger, MockQueryResult } from '../helpers/mock-types.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────────
 
@@ -12,7 +15,8 @@ const noopLog = {
   debug: () => {},
   fatal: () => {},
   child: () => noopLog,
-} as any;
+} as MockLogger;
+const logger = noopLog as unknown as Logger;
 
 // ── Mock pool helpers ───────────────────────────────────────────────────
 
@@ -26,7 +30,10 @@ interface QueryCall {
  * `queryHandler` maps SQL patterns to result rows.
  * All queries are recorded in `calls`.
  */
-function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows: any[]; rowCount?: number }) {
+function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => MockQueryResult): {
+  pool: Pool;
+  calls: QueryCall[];
+} {
   const calls: QueryCall[] = [];
 
   const client = {
@@ -45,7 +52,7 @@ function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => { rows:
     },
   };
 
-  return { pool, calls };
+  return { pool: pool as unknown as Pool, calls };
 }
 
 // ── 1. Momentum calculation ─────────────────────────────────────────────
@@ -88,7 +95,7 @@ describe('Momentum calculation (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -123,7 +130,7 @@ describe('Momentum calculation (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -156,7 +163,7 @@ describe('Momentum calculation (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -255,7 +262,7 @@ describe('Daily rollup SQL (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const aggCall = calls.find((c) => c.sql.includes('FROM entity_mentions'));
@@ -279,7 +286,7 @@ describe('Daily rollup SQL (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const aggCall = calls.find((c) => c.sql.includes('FROM entity_mentions'));
@@ -318,7 +325,7 @@ describe('Daily rollup SQL (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCalls = calls.filter((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -361,7 +368,7 @@ describe('Daily rollup SQL (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -381,7 +388,7 @@ describe('Daily rollup SQL (runDaily)', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCalls = calls.filter((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -398,7 +405,7 @@ describe('Daily rollup SQL (runDaily)', () => {
 describe('getMomentumContext', () => {
   it('returns empty array for empty entityIds input', async () => {
     const { pool } = makeMockPool(() => ({ rows: [] }));
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     const result = await tracker.getMomentumContext([]);
     assert.deepEqual(result, []);
   });
@@ -412,7 +419,7 @@ describe('getMomentumContext', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.getMomentumContext(entityIds);
 
     const mainQuery = calls.find((c) => c.sql.includes('DISTINCT ON'));
@@ -465,7 +472,7 @@ describe('getMomentumContext', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     const result = await tracker.getMomentumContext(['ent-btc', 'ent-eth', 'ent-sol']);
 
     assert.equal(result.length, 3);
@@ -510,7 +517,7 @@ describe('getMomentumContext', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     const result = await tracker.getMomentumContext(['ent-calm']);
 
     assert.equal(result.length, 1);
@@ -540,7 +547,7 @@ describe('getMomentumContext', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     const result = await tracker.getMomentumContext(['ent-new']);
 
     assert.equal(result.length, 1);
@@ -556,7 +563,7 @@ describe('getMomentumContext', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     const result = await tracker.getMomentumContext(['ent-old']);
 
     assert.deepEqual(result, []);
@@ -593,7 +600,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -638,7 +645,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -676,7 +683,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     const upsertCall = calls.find((c) => c.sql.includes('INSERT INTO entity_sentiment_daily'));
@@ -711,7 +718,7 @@ describe('SM-001: equal-weight 3-day blending', () => {
       return { rows: [] };
     });
 
-    const tracker = createSentimentTracker(pool as any, noopLog);
+    const tracker = createSentimentTracker(pool, logger);
     await tracker.runDaily('2025-04-01', 'Asia/Jakarta');
 
     // Verify the recent window query uses SUM, not AVG
