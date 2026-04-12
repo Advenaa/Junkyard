@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { createHealthMonitor } from '../../src/health.js';
 import type { Config } from '../../src/config.js';
+import { _internal as urlValidatorInternal } from '../../src/url-validator.js';
 
 const silentLog = {
   info: () => {},
@@ -273,7 +274,7 @@ describe('health monitor', () => {
       const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
         throw new Error('no AAAA record');
       });
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
       const monitor = createHealthMonitor(
         pool,
@@ -483,7 +484,7 @@ describe('health monitor', () => {
       const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
         throw new Error('no AAAA record');
       });
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
       const monitor = createHealthMonitor(
         pool,
@@ -544,7 +545,7 @@ describe('health monitor', () => {
       const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
         throw new Error('no AAAA record');
       });
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
       const monitor = createHealthMonitor(
         pool,
@@ -578,7 +579,7 @@ describe('health monitor', () => {
         throw new Error('no AAAA record');
       });
       let fetchAttempt = 0;
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
         fetchAttempt++;
         return new Response(null, { status: fetchAttempt === 1 ? 500 : 200 });
       });
@@ -633,7 +634,7 @@ describe('health monitor', () => {
       const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
         throw new Error('no AAAA record');
       });
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
       const monitor = createHealthMonitor(
         pool,
@@ -672,7 +673,7 @@ describe('health monitor', () => {
       const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
         throw new Error('no AAAA record');
       });
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
       const monitor = createHealthMonitor(
         pool,
@@ -737,7 +738,7 @@ describe('health monitor', () => {
       const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
         throw new Error('no AAAA record');
       });
-      const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+      const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
       const monitor = createHealthMonitor(
         pool,

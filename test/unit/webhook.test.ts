@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
+import { _internal as urlValidatorInternal } from '../../src/url-validator.js';
 import {
   truncate,
   buildTitle,
@@ -906,7 +907,7 @@ describe('deliver — idempotency guard', () => {
     });
 
     // Mock fetch — should NOT be called
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       return new Response(null, { status: 200 });
     });
 
@@ -946,7 +947,7 @@ describe('deliver — idempotency guard', () => {
     });
 
     // Mock fetch — should be called with Discord webhook POST
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       return new Response(null, { status: 200 });
     });
 
@@ -1013,7 +1014,7 @@ describe('deliver — idempotency guard', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       return new Response(null, { status: 200 });
     });
 
@@ -1060,7 +1061,7 @@ describe('deliver — idempotency guard', () => {
       throw new Error('no AAAA record');
     });
     let fetchAttempt = 0;
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       fetchAttempt++;
       return new Response(null, { status: fetchAttempt === 1 ? 500 : 200 });
     });
@@ -1108,7 +1109,7 @@ describe('deliver — terminal failure context', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       return new Response('webhook deleted remotely', { status: 404 });
     });
 
@@ -1153,7 +1154,7 @@ describe('deliver — circuit breaker', () => {
 
     let reportPostCount = 0;
     let alertPostCount = 0;
-    const fetchMock = t.mock.method(globalThis, 'fetch', async (input) => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async (input) => {
       const url = String(input);
       if (url.includes('/999/alert')) {
         alertPostCount++;
@@ -1209,7 +1210,7 @@ describe('deliver — circuit breaker', () => {
     const reportStatuses = [...Array(12).fill(500), 200, ...Array(12).fill(500)];
     let reportPostCount = 0;
     let alertPostCount = 0;
-    const fetchMock = t.mock.method(globalThis, 'fetch', async (input) => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async (input) => {
       const url = String(input);
       if (url.includes('/999/alert')) {
         alertPostCount++;
@@ -1264,7 +1265,7 @@ describe('deliver — circuit breaker', () => {
 
     let reportPostCount = 0;
     let alertPostCount = 0;
-    const fetchMock = t.mock.method(globalThis, 'fetch', async (input) => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async (input) => {
       const url = String(input);
       if (url.includes('/999/alert')) {
         alertPostCount++;
@@ -1376,7 +1377,7 @@ describe('retryFailed — lookback window', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
     const config = {} as any;
     const { retryFailed } = createDelivery(pool as any, silentLog as any, config);
@@ -1471,7 +1472,7 @@ describe('retryFailed — lookback window', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response(null, { status: 204 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response(null, { status: 204 }));
 
     const config = {} as any;
     const { retryFailed } = createDelivery(pool as any, silentLog as any, config);

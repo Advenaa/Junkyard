@@ -1,6 +1,6 @@
 import dns from 'node:dns';
 import net from 'node:net';
-import { Agent, type Dispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 /**
  * Compress an IPv6 address string to its canonical shortest form.
@@ -119,6 +119,8 @@ export interface UrlValidationResult {
 
 type ValidatedFetchInit = Parameters<typeof fetch>[1];
 type ValidatedFetchInitWithDispatcher = ValidatedFetchInit & { dispatcher?: Dispatcher };
+
+export const _internal = { fetch: undiciFetch as unknown as typeof globalThis.fetch };
 
 const TRANSIENT_NETWORK_ERROR_CODES = new Set([
   'ECONNREFUSED',
@@ -351,7 +353,7 @@ export async function fetchValidated(
     const dispatcher = createPinnedDispatcher(resolvedIp);
 
     try {
-      const response = await fetch(url, {
+      const response = await _internal.fetch(url, {
         ...(init ?? {}),
         dispatcher,
       } as ValidatedFetchInitWithDispatcher);

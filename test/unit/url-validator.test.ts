@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import dns from 'node:dns';
 import { Agent } from 'undici';
-import { fetchValidated, validateUrl } from '../../src/url-validator.js';
+import { _internal as urlValidatorInternal, fetchValidated, validateUrl } from '../../src/url-validator.js';
 
 function createErrorWithCode(message: string, code: string): Error & { code: string } {
   const err = new Error(message) as Error & { code: string };
@@ -391,7 +391,7 @@ describe('fetchValidated', () => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['1.2.3.4', '5.6.7.8']);
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['2001:db8::1']);
     let callCount = 0;
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       callCount += 1;
       if (callCount === 1) {
         throw new TypeError('fetch failed', { cause: createErrorWithCode('first IP unreachable', 'EHOSTUNREACH') });
@@ -417,7 +417,7 @@ describe('fetchValidated', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response('ok', { status: 200 }));
 
     const result = await fetchValidated('https://safe.example.com', {
       headers: { Accept: 'text/plain' },
@@ -442,7 +442,7 @@ describe('fetchValidated', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response('ok', { status: 200 }));
     const closeMock = t.mock.method(Agent.prototype, 'close', async () => undefined);
 
     const result = await fetchValidated('https://safe.example.com');
@@ -462,7 +462,7 @@ describe('fetchValidated', () => {
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
       throw new Error('no AAAA record');
     });
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response('ok', { status: 200 }));
     const closeMock = t.mock.method(Agent.prototype, 'close', async () => undefined);
 
     const result = await fetchValidated('https://safe.example.com');
@@ -480,7 +480,7 @@ describe('fetchValidated', () => {
 
   it('does not retry the next IP after a non-transient TLS error', async (t) => {
     const tlsError = createErrorWithCode('certificate mismatch', 'ERR_TLS_CERT_ALTNAME_INVALID');
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
       throw tlsError;
     });
 
@@ -503,7 +503,7 @@ describe('fetchValidated', () => {
   it('stops iterating resolved IPs when the caller signal aborts', async (t) => {
     const controller = new AbortController();
     const abortReason = new DOMException('Timed out', 'AbortError');
-    const fetchMock = t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async (_url, init) => {
       const signal = init?.signal;
       assert.ok(signal);
 
@@ -537,7 +537,7 @@ describe('fetchValidated', () => {
   it('reuses an existing validation without performing a fresh DNS lookup', async (t) => {
     const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['203.0.113.10']);
     const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['2001:db8::10']);
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response('ok', { status: 200 }));
 
     const result = await fetchValidated(
       'https://safe.example.com',
@@ -557,7 +557,7 @@ describe('fetchValidated', () => {
   });
 
   it('returns a null response and skips fetch when validation fails', async (t) => {
-    const fetchMock = t.mock.method(globalThis, 'fetch', async () => new Response('ok', { status: 200 }));
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response('ok', { status: 200 }));
 
     const result = await fetchValidated('http://example.com');
 
