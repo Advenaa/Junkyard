@@ -33,6 +33,30 @@ export async function fetchSourcesData(): Promise<Source[]> {
   return res.sources;
 }
 
+export async function pollSourceNow(source: string, sourceId: string): Promise<{ message: string }> {
+  return apiFetch(`/sources/${encodeURIComponent(source)}/${encodeURIComponent(sourceId)}/poll`, {
+    method: 'POST',
+  });
+}
+
+export async function retrySource(source: string, sourceId: string): Promise<{ message: string; status: string }> {
+  return apiFetch(`/sources/${encodeURIComponent(source)}/${encodeURIComponent(sourceId)}/retry`, {
+    method: 'POST',
+  });
+}
+
+export async function testSource(
+  source: string,
+  sourceId: string,
+): Promise<{
+  preview: Array<{ author: string; content: string; timestamp: number; url: string | null }>;
+  totalItems: number;
+}> {
+  return apiFetch(`/sources/${encodeURIComponent(source)}/${encodeURIComponent(sourceId)}/test`, {
+    method: 'POST',
+  });
+}
+
 export async function fetchDiscordTokensData(): Promise<DiscordManagedToken[]> {
   const res = await apiFetch<{ tokens: DiscordManagedToken[] }>('/discord/tokens');
   return res.tokens;

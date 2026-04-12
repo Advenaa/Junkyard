@@ -46,6 +46,9 @@ import type {
 } from './types.js';
 import {
   fetchSourcesData,
+  pollSourceNow,
+  retrySource,
+  testSource,
   fetchDiscordTokensData,
   fetchDiscordTokenHealthData,
   fetchCalendarEventsData,
@@ -488,6 +491,14 @@ function SourcesTab() {
   const [editLabel, setEditLabel] = useState('');
   const [editingPollKey, setEditingPollKey] = useState<string | null>(null);
   const [editPollValue, setEditPollValue] = useState('');
+  const [pollingKey, setPollingKey] = useState<string | null>(null);
+  const [retryingKey, setRetryingKey] = useState<string | null>(null);
+  const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [testPreview, setTestPreview] = useState<{
+    sourceName: string;
+    totalItems: number;
+    preview: Array<{ author: string; content: string; timestamp: number; url: string | null }>;
+  } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Source | null>(null);
   const [tokens, setTokens] = useState<DiscordManagedToken[]>([]);
   const [tokensLoading, setTokensLoading] = useState(true);
@@ -827,6 +838,62 @@ function SourcesTab() {
       } else {
         setError(`Failed to toggle source "${getSourceDisplayName(s)}".`);
       }
+    }
+  };
+
+  const handlePollNow = async (s: Source) => {
+    const key = `${s.source}-${s.sourceId}`;
+    setPollingKey(key);
+    setError(null);
+    try {
+      await pollSourceNow(s.source, s.sourceId);
+    } catch (err: unknown) {
+      if (isApiError(err) && err.status === 429) {
+        setError(`Rate limited. Wait before polling "${getSourceDisplayName(s)}" again.`);
+      } else {
+        setError(`Failed to trigger poll for "${getSourceDisplayName(s)}".`);
+      }
+    } finally {
+      setPollingKey(null);
+    }
+  };
+
+  const handleRetry = async (s: Source) => {
+    const key = `${s.source}-${s.sourceId}`;
+    setRetryingKey(key);
+    setError(null);
+    try {
+      await retrySource(s.source, s.sourceId);
+      setSources((prev) =>
+        prev.map((src) =>
+          src.source === s.source && src.sourceId === s.sourceId
+            ? { ...src, stateStatus: 'active', errorCount: 0, lastError: null, nextRetryAt: null }
+            : src,
+        ),
+      );
+    } catch {
+      setError(`Failed to retry "${getSourceDisplayName(s)}".`);
+    } finally {
+      setRetryingKey(null);
+    }
+  };
+
+  const handleTest = async (s: Source) => {
+    const key = `${s.source}-${s.sourceId}`;
+    setTestingKey(key);
+    setError(null);
+    setTestPreview(null);
+    try {
+      const result = await testSource(s.source, s.sourceId);
+      setTestPreview({
+        sourceName: getSourceDisplayName(s),
+        totalItems: result.totalItems,
+        preview: result.preview,
+      });
+    } catch {
+      setError(`Failed to test "${getSourceDisplayName(s)}".`);
+    } finally {
+      setTestingKey(null);
     }
   };
 
@@ -1183,6 +1250,56 @@ function SourcesTab() {
     </Modal>
   );
 
+  const testSourceModal = (
+    <Modal open={testPreview != null} onClose={() => setTestPreview(null)} title="RSS Preview">
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <p className="text-text-primary text-sm font-body">{testPreview?.sourceName}</p>
+          <p className="text-text-secondary text-xs font-mono uppercase tracking-wide">
+            {testPreview == null ? '0 items' : `${testPreview.totalItems} items returned`}
+          </p>
+        </div>
+        {testPreview != null && testPreview.preview.length > 0 ? (
+          <div className="space-y-3 max-h-[60vh] overflow-y-auto">
+            {testPreview.preview.map((item, index) => (
+              <div
+                key={`${item.url ?? item.timestamp}-${index}`}
+                className="rounded-lg border border-border bg-surface-raised p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-3 text-xs font-mono text-text-secondary">
+                  <span>{item.author || 'Unknown author'}</span>
+                  <span>{new Date(item.timestamp).toLocaleString()}</span>
+                </div>
+                <p className="text-sm font-body text-text-primary whitespace-pre-wrap">{item.content}</p>
+                {item.url && (
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-mono text-accent hover:opacity-80 transition-opacity break-all"
+                  >
+                    {item.url}
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-text-secondary text-sm font-body">No preview items were returned.</p>
+        )}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setTestPreview(null)}
+            className="px-4 py-2 bg-surface-raised border border-border rounded-lg text-text-secondary text-sm font-body hover:text-text-primary transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+
   const addTokenModal = (
     <Modal open={tokenModalOpen} onClose={() => setTokenModalOpen(false)} title="Add Discord Token">
       <form onSubmit={handleAddToken} className="space-y-4">
@@ -1349,6 +1466,7 @@ function SourcesTab() {
     <div className="space-y-6">
       {addSourceModal}
       {deleteSourceModal}
+      {testSourceModal}
       {addTokenModal}
       {proxyTokenModal}
       {deleteTokenModal}
@@ -1533,6 +1651,37 @@ function SourcesTab() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handlePollNow(s)}
+                          disabled={pollingKey === `${s.source}-${s.sourceId}` || !isActive}
+                          className="text-text-secondary hover:text-accent text-xs font-mono transition-colors disabled:opacity-40"
+                          title="Trigger immediate poll"
+                        >
+                          {pollingKey === `${s.source}-${s.sourceId}` ? '...' : 'Poll'}
+                        </button>
+                        {s.stateStatus === 'halted' && (
+                          <button
+                            type="button"
+                            onClick={() => handleRetry(s)}
+                            disabled={retryingKey === `${s.source}-${s.sourceId}`}
+                            className="text-yellow-400 hover:text-yellow-300 text-xs font-mono transition-colors disabled:opacity-40"
+                            title="Clear halt state and retry"
+                          >
+                            {retryingKey === `${s.source}-${s.sourceId}` ? '...' : 'Retry'}
+                          </button>
+                        )}
+                        {s.source === 'rss' && (
+                          <button
+                            type="button"
+                            onClick={() => handleTest(s)}
+                            disabled={testingKey === `${s.source}-${s.sourceId}`}
+                            className="text-text-secondary hover:text-accent text-xs font-mono transition-colors disabled:opacity-40"
+                            title="Preview RSS feed items without persisting"
+                          >
+                            {testingKey === `${s.source}-${s.sourceId}` ? '...' : 'Test'}
+                          </button>
+                        )}
                         <button
                           onClick={() => setDeleteTarget(s)}
                           className="text-accent-red/70 hover:text-accent-red text-xs font-mono transition-colors"
