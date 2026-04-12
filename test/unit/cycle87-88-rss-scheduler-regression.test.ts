@@ -233,7 +233,12 @@ describe('CR-001: PATCH /sources returns 409 for halted sources', () => {
 // ===========================================================================
 
 describe('CR-002: Dashboard toggle uses stateStatus, not bare s.enabled', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = [
+    readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/types.ts'),
+    readSrc('dashboard/src/pages/Settings/api.ts'),
+    readSrc('dashboard/src/pages/Settings/formatters.ts'),
+  ].join('\n');
 
   it('Source interface includes stateStatus field', () => {
     assert.match(src, /stateStatus\s*:\s*string/, 'Source interface must include stateStatus field');

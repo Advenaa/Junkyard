@@ -59,7 +59,12 @@ describe('Unusual activity API route (insight route module)', () => {
 });
 
 describe('Unusual activity dashboard surface (dashboard/src/pages/Settings.tsx)', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = [
+    readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/types.ts'),
+    readSrc('dashboard/src/pages/Settings/api.ts'),
+    readSrc('dashboard/src/pages/Settings/formatters.ts'),
+  ].join('\n');
 
   it('fetches unusual activity from /unusual-activity', () => {
     assert.ok(src.includes("apiFetch<UnusualActivityOverview>('/unusual-activity')"));

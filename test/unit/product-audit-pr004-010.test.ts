@@ -22,6 +22,13 @@ function readSrc(relPath: string): string {
   return readFileSync(path.join(ROOT, relPath), 'utf-8');
 }
 
+const settingsSrc = [
+  readSrc('dashboard/src/pages/Settings/index.tsx'),
+  readSrc('dashboard/src/pages/Settings/types.ts'),
+  readSrc('dashboard/src/pages/Settings/api.ts'),
+  readSrc('dashboard/src/pages/Settings/formatters.ts'),
+].join('\n');
+
 // ===========================================================================
 // PR-004: Chat character counter
 // ===========================================================================
@@ -100,7 +107,7 @@ describe('PR-006: Budget message mentions UTC', () => {
 // ===========================================================================
 
 describe('PR-007: Timezone uses Intl.supportedValuesOf', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = settingsSrc;
 
   it('uses Intl.supportedValuesOf for dynamic timezone list', () => {
     assert.ok(src.includes('supportedValuesOf'), 'Must use Intl.supportedValuesOf for timezone list');
@@ -121,7 +128,7 @@ describe('PR-007: Timezone uses Intl.supportedValuesOf', () => {
 // ===========================================================================
 
 describe('PR-008: Halted source fallback error message', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = settingsSrc;
 
   it('shows fallback message when lastError is null for halted sources', () => {
     assert.ok(
@@ -148,7 +155,7 @@ describe('PR-008: Halted source fallback error message', () => {
 // ===========================================================================
 
 describe('PR-009: Delete uses Modal not window.confirm', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = settingsSrc;
 
   it('does not use window.confirm', () => {
     assert.ok(!src.includes('window.confirm'), 'Must not use window.confirm — should use Modal component instead');

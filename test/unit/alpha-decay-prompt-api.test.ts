@@ -147,7 +147,12 @@ describe('Server: alpha propagation API', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Dashboard: Settings alpha propagation card', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = [
+    readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/types.ts'),
+    readSrc('dashboard/src/pages/Settings/api.ts'),
+    readSrc('dashboard/src/pages/Settings/formatters.ts'),
+  ].join('\n');
 
   it('defines AlphaPropagationData interface', () => {
     assert.match(src, /interface AlphaPropagationData/);

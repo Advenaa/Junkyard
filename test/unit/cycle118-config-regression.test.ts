@@ -101,7 +101,12 @@ describe('AC-002: /auth/me handler returns avatar field', () => {
 // ===========================================================================
 
 describe('AC-003: lastFetchedAt typed as number | null in Settings.tsx', () => {
-  const src = readSrc('dashboard/src/pages/Settings.tsx');
+  const src = [
+    readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/types.ts'),
+    readSrc('dashboard/src/pages/Settings/api.ts'),
+    readSrc('dashboard/src/pages/Settings/formatters.ts'),
+  ].join('\n');
 
   it('Source interface declares lastFetchedAt as number | null', () => {
     assert.match(
