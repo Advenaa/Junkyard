@@ -28,7 +28,15 @@ import {
   REGIONAL_DIVERGENCE_PREVIEW_LIMIT,
   UNUSUAL_ACTIVITY_PREVIEW_LIMIT,
 } from './ReportView/types';
-import { CollapsibleSection, SentimentBar, formatDate, formatDateTime, formatRange } from './ReportView/formatters';
+import {
+  CollapsibleSection as ReportSectionBlock,
+  SentimentBar,
+  formatDate,
+  formatDateTime,
+  formatRange,
+} from './ReportView/formatters';
+import { CollapsibleSection } from '../components/CollapsibleSection.js';
+import { SentimentIndicator } from '../components/SentimentIndicator.js';
 import { MacroSection } from './ReportView/sections/MacroSection';
 import { PriceWatchSection } from './ReportView/sections/PriceWatchSection';
 import { NarrativeSection } from './ReportView/sections/NarrativeSection';
@@ -515,10 +523,12 @@ export function ReportView() {
             )}
 
             {report.marketCatalysts && report.marketCatalysts.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-                  Market Catalysts
-                </h2>
+              <CollapsibleSection
+                title="Market Catalysts"
+                summary={`${report.marketCatalysts.length} catalysts`}
+                defaultOpen={true}
+                storageKey="report-market-catalysts"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.marketCatalysts.map((catalyst, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -526,14 +536,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.regionalDivergence && report.regionalDivergence.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-                  Cross-Language Signals
-                </h2>
+              <CollapsibleSection
+                title="Cross-Language Signals"
+                summary={`${report.regionalDivergence.length} signals`}
+                defaultOpen={false}
+                storageKey="report-cross-language"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.regionalDivergence.map((entry, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -541,14 +553,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.narrativeShifts && report.narrativeShifts.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-                  Narrative Shifts
-                </h2>
+              <CollapsibleSection
+                title="Narrative Shifts"
+                summary={`${report.narrativeShifts.length} shifts`}
+                defaultOpen={false}
+                storageKey="report-narrative-shifts"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.narrativeShifts.map((entry, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -556,12 +570,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.firstMovers && report.firstMovers.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">First Movers</h2>
+              <CollapsibleSection
+                title="First Movers"
+                summary={`${report.firstMovers.length} movers`}
+                defaultOpen={false}
+                storageKey="report-first-movers"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.firstMovers.map((entry, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -569,12 +587,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.alphaSignals && report.alphaSignals.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Alpha Signals</h2>
+              <CollapsibleSection
+                title="Alpha Signals"
+                summary={`${report.alphaSignals.length} signals`}
+                defaultOpen={false}
+                storageKey="report-alpha-signals"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.alphaSignals.map((signal, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -582,12 +604,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.newProjects && report.newProjects.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">New Projects</h2>
+              <CollapsibleSection
+                title="New Projects"
+                summary={`${report.newProjects.length} projects`}
+                defaultOpen={false}
+                storageKey="report-new-projects"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.newProjects.map((project, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -597,12 +623,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.priceAlerts && report.priceAlerts.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Price Alerts</h2>
+              <CollapsibleSection
+                title="Price Alerts"
+                summary={`${report.priceAlerts.length} alerts`}
+                defaultOpen={false}
+                storageKey="report-price-alerts"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.priceAlerts.map((alert, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -610,14 +640,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.unusualActivity && report.unusualActivity.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-                  Unusual Activity
-                </h2>
+              <CollapsibleSection
+                title="Unusual Activity"
+                summary={`${report.unusualActivity.length} items`}
+                defaultOpen={false}
+                storageKey="report-unusual-activity"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.unusualActivity.map((alert, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -625,12 +657,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.macroAlerts && report.macroAlerts.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Macro Alerts</h2>
+              <CollapsibleSection
+                title="Macro Alerts"
+                summary={`${report.macroAlerts.length} alerts`}
+                defaultOpen={false}
+                storageKey="report-macro-alerts"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.macroAlerts.map((alert, i) => (
                     <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
@@ -638,12 +674,16 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {report.eventChains && report.eventChains.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Event Chains</h2>
+              <CollapsibleSection
+                title="Event Chains"
+                summary={`${report.eventChains.length} chains`}
+                defaultOpen={false}
+                storageKey="report-event-chains"
+              >
                 <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
                   {report.eventChains.map((chain, i) => (
                     <div
@@ -654,13 +694,17 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {allChains.length > 0 && (
-              <div>
+              <CollapsibleSection
+                title="Chain Drilldowns"
+                summary={`${allChains.length} chains`}
+                defaultOpen={false}
+                storageKey="report-chain-drilldowns"
+              >
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-                  <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Chain Drilldowns</h2>
                   {focusedChain && (
                     <div className="flex items-center gap-3 flex-wrap">
                       <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
@@ -731,13 +775,17 @@ export function ReportView() {
                     );
                   })}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {/* Key Events */}
             {report.keyEvents && report.keyEvents.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Key Events</h2>
+              <CollapsibleSection
+                title="Key Events"
+                summary={`${report.keyEvents.length} events`}
+                defaultOpen={true}
+                storageKey="report-key-events"
+              >
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {report.keyEvents.map((event, i) => (
                     <div
@@ -748,33 +796,42 @@ export function ReportView() {
                     </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {/* Entity Sentiment */}
             {report.entitySentiment && report.entitySentiment.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">
-                  Entity Sentiment
-                </h2>
+              <CollapsibleSection
+                title="Entity Sentiment"
+                summary={`${report.entitySentiment.length} tracked`}
+                defaultOpen={true}
+                storageKey="report-entity-sentiment"
+              >
                 <div className="bg-surface border border-border rounded-lg p-4">
                   {report.entitySentiment.map((entity) => (
-                    <SentimentBar key={entity.name} entity={entity} />
+                    <div key={entity.name} className="flex items-center gap-3">
+                      <SentimentBar entity={entity} />
+                      <SentimentIndicator value={entity.sentiment} />
+                    </div>
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             {/* Collapsible Sections */}
             {report.sections && report.sections.length > 0 && (
-              <div>
-                <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Sections</h2>
+              <CollapsibleSection
+                title="Sections"
+                summary={`${report.sections.length} sections`}
+                defaultOpen={false}
+                storageKey="report-sections"
+              >
                 <div className="space-y-2">
                   {report.sections.map((section) => (
-                    <CollapsibleSection key={section.title} section={section} />
+                    <ReportSectionBlock key={section.title} section={section} />
                   ))}
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
           </div>
         );
