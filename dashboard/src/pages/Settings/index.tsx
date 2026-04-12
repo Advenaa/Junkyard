@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { Link } from 'react-router';
 import { apiFetch, isApiError, isFeatureDisabledError } from '../../lib/api.js';
 import { useAuth } from '../../components/AuthProvider.js';
@@ -38,6 +38,7 @@ import type {
   UserRecord,
   UserAuditEvent,
   AccessRequest,
+  SessionInfo,
   Tab,
 } from './types.js';
 import {
@@ -65,8 +66,10 @@ import {
   fetchEntityAuthorsData,
   fetchAuthorProfileData,
   fetchUsersData,
+  fetchUserSessions,
   fetchUserAuditEventsData,
   fetchAccessRequestsData,
+  revokeUserSession,
 } from './api.js';
 import {
   getEntityStatusBadgeClasses,
@@ -158,6 +161,7 @@ export type {
   UserRecord,
   UserAuditEvent,
   AccessRequest,
+  SessionInfo,
   DiscordManagedToken,
   DiscordTokenHealthState,
   CalendarEvent,
@@ -4855,6 +4859,10 @@ function UsersTab() {
   const [inviteSaving, setInviteSaving] = useState(false);
   const [requestRoleDrafts, setRequestRoleDrafts] = useState<Record<string, 'viewer' | 'admin'>>({});
   const [requestMutatingId, setRequestMutatingId] = useState<string | null>(null);
+  const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
+  const [userSessions, setUserSessions] = useState<SessionInfo[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
 
   const reloadUsersAuditAndRequests = async () => {
     const [usersResult, requestsResult, auditResult] = await Promise.allSettled([
@@ -4901,6 +4909,34 @@ function UsersTab() {
     setInviteRole('viewer');
     setError(null);
     setInviteModalOpen(true);
+  };
+
+  const toggleUserSessions = async (discordId: string) => {
+    if (expandedUserId === discordId) {
+      setExpandedUserId(null);
+      setUserSessions([]);
+      return;
+    }
+    setExpandedUserId(discordId);
+    setSessionsLoading(true);
+    setSessionsError(null);
+    try {
+      const sessions = await fetchUserSessions(discordId);
+      setUserSessions(sessions);
+    } catch {
+      setSessionsError('Failed to load sessions.');
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  const revokeSession = async (discordId: string, managementId: string) => {
+    try {
+      await revokeUserSession(discordId, managementId);
+      setUserSessions((prev) => prev.filter((session) => session.managementId !== managementId));
+    } catch {
+      setSessionsError('Failed to revoke session.');
+    }
   };
 
   const changeRole = async (discordId: string, role: string) => {
@@ -5048,68 +5084,109 @@ function UsersTab() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr
-                  key={u.discordId}
-                  className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {u.avatar && !isPendingInvite(u) ? (
-                        <img
-                          src={`https://cdn.discordapp.com/avatars/${u.discordId}/${u.avatar}.png?size=32`}
-                          alt=""
-                          className="w-8 h-8 rounded-full"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-surface-raised flex items-center justify-center text-text-secondary text-xs font-mono">
-                          {(isPendingInvite(u) ? '?' : u.username.charAt(0)).toUpperCase()}
-                        </div>
-                      )}
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-text-primary font-body">
-                            {isPendingInvite(u) ? 'Pending invite' : u.username}
-                          </span>
-                          {isPendingInvite(u) && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-border text-text-secondary">
-                              waiting for first login
+                <Fragment key={u.discordId}>
+                  <tr className="border-b border-border hover:bg-surface-raised transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {u.avatar && !isPendingInvite(u) ? (
+                          <img
+                            src={`https://cdn.discordapp.com/avatars/${u.discordId}/${u.avatar}.png?size=32`}
+                            alt=""
+                            className="w-8 h-8 rounded-full"
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-surface-raised flex items-center justify-center text-text-secondary text-xs font-mono">
+                            {(isPendingInvite(u) ? '?' : u.username.charAt(0)).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-text-primary font-body">
+                              {isPendingInvite(u) ? 'Pending invite' : u.username}
                             </span>
-                          )}
+                            {isPendingInvite(u) && (
+                              <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-border text-text-secondary">
+                                waiting for first login
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-text-secondary/60 text-xs font-mono">{u.discordId}</div>
                         </div>
-                        <div className="text-text-secondary/60 text-xs font-mono">{u.discordId}</div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-0.5 rounded text-xs font-mono ${
-                        u.role === 'admin'
-                          ? 'bg-accent/20 text-accent'
-                          : u.role === 'blocked'
-                            ? 'bg-accent-red/20 text-accent-red'
-                            : 'bg-border text-text-secondary'
-                      }`}
-                    >
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-text-secondary font-mono text-xs">
-                    {formatRelativeTime(u.lastLoginAt)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {u.discordId !== currentUser?.discordId && (
-                      <select
-                        value={u.role}
-                        onChange={(e) => changeRole(u.discordId, e.target.value)}
-                        className="bg-background border border-border rounded px-2 py-1 text-text-primary text-xs font-mono focus:outline-none focus:border-accent"
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs font-mono ${
+                          u.role === 'admin'
+                            ? 'bg-accent/20 text-accent'
+                            : u.role === 'blocked'
+                              ? 'bg-accent-red/20 text-accent-red'
+                              : 'bg-border text-text-secondary'
+                        }`}
                       >
-                        <option value="admin">admin</option>
-                        <option value="viewer">viewer</option>
-                        <option value="blocked">blocked</option>
-                      </select>
-                    )}
-                  </td>
-                </tr>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-text-secondary font-mono text-xs">
+                      {formatRelativeTime(u.lastLoginAt)}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex flex-col items-end gap-2">
+                        {u.discordId !== currentUser?.discordId && (
+                          <select
+                            value={u.role}
+                            onChange={(e) => changeRole(u.discordId, e.target.value)}
+                            className="bg-background border border-border rounded px-2 py-1 text-text-primary text-xs font-mono focus:outline-none focus:border-accent"
+                          >
+                            <option value="admin">admin</option>
+                            <option value="viewer">viewer</option>
+                            <option value="blocked">blocked</option>
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleUserSessions(u.discordId)}
+                          className="text-[10px] font-mono uppercase tracking-wider text-text-secondary hover:text-accent hover:underline"
+                        >
+                          {expandedUserId === u.discordId ? 'Hide sessions' : 'Sessions'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedUserId === u.discordId && (
+                    <tr className="border-b border-border bg-surface-raised/30">
+                      <td colSpan={4} className="px-4 pb-3">
+                        <div className="mt-2 pl-4 border-l border-border space-y-2">
+                          {sessionsLoading && <p className="text-xs text-text-secondary">Loading sessions...</p>}
+                          {sessionsError && <p className="text-xs text-accent-red">{sessionsError}</p>}
+                          {!sessionsLoading && !sessionsError && userSessions.length === 0 && (
+                            <p className="text-xs text-text-secondary">No active sessions</p>
+                          )}
+                          {userSessions.map((session) => (
+                            <div key={session.managementId} className="flex items-center justify-between gap-4 text-xs">
+                              <div className="space-y-0.5">
+                                <div className="font-mono text-text-primary">
+                                  {session.normalizedUA ?? 'unknown device'}
+                                </div>
+                                <div className="text-text-secondary">
+                                  {session.ipAddress ?? 'unknown IP'} · last active{' '}
+                                  {formatRelativeTime(session.lastRefreshedAt)}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => revokeSession(u.discordId, session.managementId)}
+                                className="text-[10px] font-mono uppercase tracking-wider text-accent-red hover:underline"
+                              >
+                                Revoke
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

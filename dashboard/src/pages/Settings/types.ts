@@ -418,6 +418,17 @@ export interface EntityRelationshipGraphConnection {
   isEnded: boolean;
 }
 
+export interface SessionInfo {
+  managementId: string;
+  discordId: string;
+  createdAt: number;
+  expiresAt: number;
+  lastRefreshedAt: number;
+  ipAddress: string | null;
+  userAgent: string | null;
+  normalizedUA: string | null;
+}
+
 export interface EntityRelationshipSecondDegreeGroup {
   relatedEntityId: string;
   relatedEntityName: string;
