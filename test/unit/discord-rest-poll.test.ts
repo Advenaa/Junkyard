@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import type { DiscordRuntimeToken } from '../../src/discord-tokens.js';
 import type { Logger } from '../../src/logger.js';
-import { pollDiscordChannel } from '../../src/ingest/discord-rest.js';
+import { _internal as discordRestInternal, pollDiscordChannel } from '../../src/ingest/discord-rest.js';
 
 const CHANNEL_ID = '123456789012345678';
 const GUILD_ID = '987654321098765432';
@@ -31,7 +31,7 @@ interface DiscordMessageFixture {
   } | null;
 }
 
-let originalFetch: typeof globalThis.fetch;
+let originalFetch: typeof discordRestInternal.fetch;
 
 function makeToken(name: string): DiscordRuntimeToken {
   return {
@@ -105,7 +105,7 @@ function installFetchSequence(responses: Response[]) {
     return response;
   });
 
-  globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+  discordRestInternal.fetch = fetchMock as unknown as typeof globalThis.fetch;
   return { fetchMock, urls };
 }
 
@@ -122,11 +122,11 @@ function makePage(startId: number, count: number): DiscordMessageFixture[] {
 
 describe('pollDiscordChannel', () => {
   beforeEach(() => {
-    originalFetch = globalThis.fetch;
+    originalFetch = discordRestInternal.fetch;
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    discordRestInternal.fetch = originalFetch;
   });
 
   it('maps a fetched Discord message to RawItem fields', async () => {
