@@ -28,6 +28,7 @@ import type {
   DiagStuckItems,
   DiagHaltedSources,
   DiagHealthEvents,
+  SchedulerDiagnostics,
   LlmCostByModelResponse,
   CalendarEvent,
   EntityAlias,
@@ -55,6 +56,7 @@ import {
   fetchDiagStuckItems,
   fetchDiagHaltedSources,
   fetchDiagHealthEvents,
+  fetchSchedulerDiagnostics,
   fetchUnusualActivityOverviewData,
   fetchNarrativeWatchlistData,
   fetchNarrativeDrilldownData,
@@ -158,6 +160,8 @@ export type {
   DiagHaltedSources,
   DiagHealthEvent,
   DiagHealthEvents,
+  SchedulerJob,
+  SchedulerDiagnostics,
   LlmCostByModelEntry,
   LlmCostByModelResponse,
   Config,
@@ -2008,6 +2012,7 @@ function PipelineTab() {
   const [diagStuckItems, setDiagStuckItems] = useState<DiagStuckItems | null>(null);
   const [diagHaltedSources, setDiagHaltedSources] = useState<DiagHaltedSources | null>(null);
   const [diagHealthEvents, setDiagHealthEvents] = useState<DiagHealthEvents | null>(null);
+  const [schedulerDiag, setSchedulerDiag] = useState<SchedulerDiagnostics | null>(null);
   const [llmCostByModel, setLlmCostByModel] = useState<LlmCostByModelResponse | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
   const [diagExpanded, setDiagExpanded] = useState(false);
@@ -2051,7 +2056,7 @@ function PipelineTab() {
   }, []);
 
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin || !diagExpanded) return;
 
     let cancelled = false;
     setDiagError(null);
@@ -2060,19 +2065,22 @@ function PipelineTab() {
       fetchDiagStuckItems(),
       fetchDiagHaltedSources(),
       fetchDiagHealthEvents(),
-    ]).then(([backpressureResult, stuckItemsResult, haltedSourcesResult, healthEventsResult]) => {
+      fetchSchedulerDiagnostics(),
+    ]).then(([backpressureResult, stuckItemsResult, haltedSourcesResult, healthEventsResult, schedulerResult]) => {
       if (cancelled) return;
 
       setDiagBackpressure(backpressureResult.status === 'fulfilled' ? backpressureResult.value : null);
       setDiagStuckItems(stuckItemsResult.status === 'fulfilled' ? stuckItemsResult.value : null);
       setDiagHaltedSources(haltedSourcesResult.status === 'fulfilled' ? haltedSourcesResult.value : null);
       setDiagHealthEvents(healthEventsResult.status === 'fulfilled' ? healthEventsResult.value : null);
+      setSchedulerDiag(schedulerResult.status === 'fulfilled' ? schedulerResult.value : null);
 
       if (
         backpressureResult.status === 'rejected' ||
         stuckItemsResult.status === 'rejected' ||
         haltedSourcesResult.status === 'rejected' ||
-        healthEventsResult.status === 'rejected'
+        healthEventsResult.status === 'rejected' ||
+        schedulerResult.status === 'rejected'
       ) {
         setDiagError('Some diagnostic endpoints could not be loaded.');
       }
@@ -2081,7 +2089,7 @@ function PipelineTab() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin]);
+  }, [isAdmin, diagExpanded]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -2579,6 +2587,65 @@ function PipelineTab() {
                   <p className="text-text-secondary text-sm font-body">No recent critical/error events</p>
                 )}
               </div>
+
+              {schedulerDiag && (
+                <div className="bg-surface border border-border rounded-lg overflow-hidden">
+                  <div className="px-4 py-3 border-b border-border">
+                    <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Scheduler Jobs</h3>
+                    {schedulerDiag.processTimezone && (
+                      <p className="text-text-secondary/60 text-xs font-body mt-1">
+                        Process timezone: {schedulerDiag.processTimezone}
+                      </p>
+                    )}
+                  </div>
+                  {schedulerDiag.jobs.length === 0 ? (
+                    <div className="px-4 py-6 text-text-secondary text-sm font-body text-center">
+                      No scheduler jobs registered.
+                    </div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
+                          <th className="text-left px-4 py-2">Job</th>
+                          <th className="text-left px-4 py-2">Cron</th>
+                          <th className="text-left px-4 py-2">Status</th>
+                          <th className="text-left px-4 py-2">Next Run</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schedulerDiag.jobs.map((j) => {
+                          const isStuck = j.status === 'running';
+                          return (
+                            <tr
+                              key={j.job}
+                              className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
+                            >
+                              <td className="px-4 py-2 font-mono text-xs text-text-primary">{j.job}</td>
+                              <td className="px-4 py-2 font-mono text-xs text-text-secondary">{j.cron}</td>
+                              <td className="px-4 py-2">
+                                <span
+                                  className={`inline-block px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide ${
+                                    isStuck
+                                      ? 'bg-yellow-500/20 text-yellow-400'
+                                      : j.status === 'idle'
+                                        ? 'bg-accent-green/20 text-accent-green'
+                                        : 'bg-border text-text-secondary'
+                                  }`}
+                                >
+                                  {j.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 font-mono text-xs text-text-secondary">
+                                {j.nextRun ? new Date(j.nextRun).toLocaleString() : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

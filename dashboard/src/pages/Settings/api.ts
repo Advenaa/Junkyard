@@ -12,6 +12,7 @@ import type {
   DiagStuckItems,
   DiagHaltedSources,
   DiagHealthEvents,
+  SchedulerDiagnostics,
   UnusualActivityOverview,
   NarrativeWatchlistOverview,
   NarrativeDrilldown,
@@ -101,6 +102,10 @@ export async function fetchDiagHaltedSources(): Promise<DiagHaltedSources> {
 
 export async function fetchDiagHealthEvents(limit = 10): Promise<DiagHealthEvents> {
   return apiFetch<DiagHealthEvents>(`/diag/health-events?limit=${limit}`);
+}
+
+export async function fetchSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
+  return apiFetch<SchedulerDiagnostics>('/diag/scheduler');
 }
 
 export async function fetchUnusualActivityOverviewData(): Promise<UnusualActivityOverview> {

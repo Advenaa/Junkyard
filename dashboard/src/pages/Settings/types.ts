@@ -132,6 +132,19 @@ export interface DiagHealthEvents {
   events: DiagHealthEvent[];
 }
 
+export interface SchedulerJob {
+  job: string;
+  cron: string;
+  timezone: string;
+  status: string;
+  nextRun: string | null;
+}
+
+export interface SchedulerDiagnostics {
+  processTimezone: string | null;
+  jobs: SchedulerJob[];
+}
+
 export interface LlmCostByModelEntry {
   model: string;
   totalCost: number;
