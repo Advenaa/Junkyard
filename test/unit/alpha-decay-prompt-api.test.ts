@@ -149,6 +149,11 @@ describe('Server: alpha propagation API', () => {
 describe('Dashboard: Settings alpha propagation card', () => {
   const src = [
     readSrc('dashboard/src/pages/Settings/index.tsx'),
+    readSrc('dashboard/src/pages/Settings/SourcesTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/DeliveryTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/PipelineTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/EntitiesTab.tsx'),
+    readSrc('dashboard/src/pages/Settings/UsersTab.tsx'),
     readSrc('dashboard/src/pages/Settings/types.ts'),
     readSrc('dashboard/src/pages/Settings/api.ts'),
     readSrc('dashboard/src/pages/Settings/formatters.ts'),

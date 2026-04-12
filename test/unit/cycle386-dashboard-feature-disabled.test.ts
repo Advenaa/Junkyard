@@ -25,6 +25,11 @@ const reportListSrc = read('pages/ReportList.tsx');
 const chatSrc = read('pages/Chat.tsx');
 const settingsSrc = [
   read('pages/Settings/index.tsx'),
+  read('pages/Settings/SourcesTab.tsx'),
+  read('pages/Settings/DeliveryTab.tsx'),
+  read('pages/Settings/PipelineTab.tsx'),
+  read('pages/Settings/EntitiesTab.tsx'),
+  read('pages/Settings/UsersTab.tsx'),
   read('pages/Settings/types.ts'),
   read('pages/Settings/api.ts'),
   read('pages/Settings/formatters.ts'),
