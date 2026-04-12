@@ -1,5 +1,7 @@
 import type {
   Source,
+  SourceActivityBucket,
+  SourceActivityResponse,
   DiscordManagedToken,
   DiscordTokenHealthState,
   UserRecord,
@@ -31,6 +33,13 @@ import { apiFetch, isApiError } from '../../lib/api.js';
 export async function fetchSourcesData(): Promise<Source[]> {
   const res = await apiFetch<{ sources: Source[] }>('/sources');
   return res.sources;
+}
+
+export async function fetchSourceActivity(source: string, sourceId: string): Promise<SourceActivityBucket[]> {
+  const res = await apiFetch<SourceActivityResponse>(
+    `/sources/${encodeURIComponent(source)}/${encodeURIComponent(sourceId)}/activity`,
+  );
+  return res.buckets;
 }
 
 export async function fetchDiscordTokensData(): Promise<DiscordManagedToken[]> {

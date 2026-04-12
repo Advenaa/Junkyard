@@ -15,6 +15,7 @@ import type {
   EntityRelationshipGraphData,
   EntityRelationshipGraphConnection,
   Source,
+  SourceActivityBucket,
   PipelineStatus,
   DiscordManagedToken,
   DiscordTokenHealthState,
@@ -46,6 +47,7 @@ import type {
 } from './types.js';
 import {
   fetchSourcesData,
+  fetchSourceActivity,
   fetchDiscordTokensData,
   fetchDiscordTokenHealthData,
   fetchCalendarEventsData,
@@ -474,6 +476,7 @@ function EntityRelationshipGraph({
 
 function SourcesTab() {
   const [sources, setSources] = useState<Source[]>([]);
+  const [activityMap, setActivityMap] = useState<Record<string, SourceActivityBucket[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -532,6 +535,31 @@ function SourcesTab() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (sources.length === 0) return;
+
+    let cancelled = false;
+    Promise.all(
+      sources.map(async (s) => {
+        try {
+          const buckets = await fetchSourceActivity(s.source, s.sourceId);
+          return { key: `${s.source}-${s.sourceId}`, buckets };
+        } catch {
+          return { key: `${s.source}-${s.sourceId}`, buckets: [] };
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const map: Record<string, SourceActivityBucket[]> = {};
+      for (const r of results) map[r.key] = r.buckets;
+      setActivityMap(map);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sources]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1343,6 +1371,32 @@ function SourcesTab() {
     }
   };
 
+  const renderSparkline = (buckets: SourceActivityBucket[]) => {
+    const hours: number[] = [];
+    const now = new Date();
+    for (let i = 23; i >= 0; i--) {
+      const h = new Date(now);
+      h.setMinutes(0, 0, 0);
+      h.setHours(h.getHours() - i);
+      const key = h.toISOString().replace(/:\d{2}\.\d{3}Z$/, ':00Z');
+      const bucket = buckets.find((b) => b.hour === key);
+      hours.push(bucket?.itemCount ?? 0);
+    }
+    const max = Math.max(...hours, 1);
+    return (
+      <div className="flex items-end gap-px h-4" title="24h ingestion activity">
+        {hours.map((count, i) => (
+          <div
+            key={i}
+            className={`w-1 rounded-sm ${count > 0 ? 'bg-accent-green' : 'bg-border/50'}`}
+            style={{ height: `${Math.max((count / max) * 100, count > 0 ? 15 : 5)}%` }}
+            title={`${count} item${count !== 1 ? 's' : ''}`}
+          />
+        ))}
+      </div>
+    );
+  };
+
   if (loading && tokensLoading) return <div className="text-text-secondary font-body py-8">Loading...</div>;
 
   return (
@@ -1379,6 +1433,7 @@ function SourcesTab() {
                 <th className="text-left px-4 py-3">Tier</th>
                 <th className="text-left px-4 py-3">Status</th>
                 <th className="text-left px-4 py-3">Last Fetched</th>
+                <th className="text-left px-4 py-3">Activity</th>
                 <th className="text-right px-4 py-3">Actions</th>
               </tr>
             </thead>
@@ -1531,6 +1586,7 @@ function SourcesTab() {
                     <td className="px-4 py-3 text-text-secondary font-mono text-xs">
                       {formatRelativeTime(s.lastFetchedAt)}
                     </td>
+                    <td className="px-4 py-3">{renderSparkline(activityMap[`${s.source}-${s.sourceId}`] ?? [])}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
                         <button
