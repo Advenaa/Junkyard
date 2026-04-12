@@ -3,7 +3,9 @@ import { ulid } from 'ulid';
 import { ChunkSummaryLLMSchema } from './schemas.js';
 import type { AuthorClaim, ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk, estimateTokens } from './chunk.js';
-import { verifyEntities, verifyEvents, verifyRelationships } from './chunk-verify.js';
+import { verifyAuthorClaims, verifyEntities, verifyEvents, verifyRelationships } from './chunk-verify.js';
+import { buildChunkRawText, hasShortDiscordSignalMarker, shouldFilterShortDiscordChunk } from './discord-filter.js';
+import { resolveEntityIds } from './resolve-entities.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
 import {
@@ -20,19 +22,14 @@ import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
 import { normalizeAlias } from '../knowledge/entities.js';
-import type { EntityManager, ExtractedEntity } from '../knowledge/entities.js';
+import type { EntityManager } from '../knowledge/entities.js';
 import type { AlphaTracker } from '../knowledge/alpha-tracker.js';
+export { hasShortDiscordSignalMarker, shouldFilterShortDiscordChunk } from './discord-filter.js';
 
 /** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
 const MAX_ITEM_RETRIES = 3;
 const MAX_SONNET_ESCALATIONS_PER_BATCH = 3;
-const MIN_SUMMARIZABLE_DISCORD_CHUNK_CHARS = 50;
 const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
-const SHORT_DISCORD_TICKER_SIGNAL_PATTERN = /(?:^|[^A-Za-z0-9_])\$[A-Za-z]{2,10}(?=$|[^A-Za-z0-9_])/;
-const SHORT_DISCORD_NUMERIC_SIGNAL_PATTERN = /\b\d+(?:\.\d+)?%?\b/;
-const SHORT_DISCORD_URL_SIGNAL_PATTERN = /https?:\/\//i;
-const SHORT_DISCORD_KEYWORD_SIGNAL_PATTERN =
-  /(?:exploit|hack|hacked|lawsuit|sues?|etf|listed?|listing|delist|launch|airdrop|audit|partnership|acquire[ds]?|governance|vote|approval|approved|rejected|fomc|cpi|inflation|rate cut|rate hike|bullish|bearish|strong|weak|compared|versus|vs\.?|higher|lower)\b/i;
 
 const EventFollowUpSchema = z.object({
   followUp: z.boolean(),
@@ -208,23 +205,6 @@ function buildUserContent(chunk: ClaimedItem[]): string {
   return chunk.map((item) => `[${item.author}] (engagement: ${item.engagement}) ${item.content}`).join('\n');
 }
 
-function buildChunkRawText<T extends { content: string }>(chunk: T[]): string {
-  return chunk
-    .map((item) => item.content.trim())
-    .filter((content) => content.length > 0)
-    .join(' ')
-    .trim();
-}
-
-export function hasShortDiscordSignalMarker(text: string): boolean {
-  return (
-    SHORT_DISCORD_TICKER_SIGNAL_PATTERN.test(text) ||
-    SHORT_DISCORD_NUMERIC_SIGNAL_PATTERN.test(text) ||
-    SHORT_DISCORD_URL_SIGNAL_PATTERN.test(text) ||
-    SHORT_DISCORD_KEYWORD_SIGNAL_PATTERN.test(text)
-  );
-}
-
 function buildChunkSystemPrompt(
   source: string,
   sourceId: string,
@@ -241,92 +221,6 @@ function buildChunkSystemPrompt(
   }
 
   return systemPrompt;
-}
-
-export function shouldFilterShortDiscordChunk<T extends { content: string }>(source: string, chunk: T[]): boolean {
-  if (source !== 'discord') return false;
-
-  const rawChunkText = buildChunkRawText(chunk);
-
-  if (rawChunkText.length === 0) return true;
-  if (rawChunkText.length >= MIN_SUMMARIZABLE_DISCORD_CHUNK_CHARS) return false;
-
-  return !hasShortDiscordSignalMarker(rawChunkText);
-}
-
-function verifyAuthorClaims(
-  parsed: ChunkSummary,
-  chunk: ClaimedItem[],
-  log: Logger,
-  source: string,
-  sourceId: string,
-): ChunkSummary {
-  const validEntityKeys = new Set<string>();
-  for (const entity of parsed.entities) {
-    const canonical = normalizeAlias(entity.name);
-    if (canonical) validEntityKeys.add(canonical);
-    for (const alias of entity.aliases) {
-      const normalizedAlias = normalizeAlias(alias);
-      if (normalizedAlias) validEntityKeys.add(normalizedAlias);
-    }
-  }
-
-  const chunkAuthors = new Set(
-    chunk.map((item) => item.author?.trim().toLowerCase()).filter((handle): handle is string => Boolean(handle)),
-  );
-
-  const seen = new Set<string>();
-  const verified: AuthorClaim[] = [];
-
-  for (const claim of parsed.authorClaims) {
-    const authorHandle = claim.authorHandle.trim().toLowerCase();
-    const entityName = normalizeAlias(claim.entityName);
-    const claimText = claim.claimText.trim();
-    const valid =
-      authorHandle !== '' &&
-      claimText !== '' &&
-      entityName !== '' &&
-      chunkAuthors.has(authorHandle) &&
-      validEntityKeys.has(entityName);
-
-    if (!valid) {
-      log.info(
-        {
-          authorHandle: claim.authorHandle,
-          entityName: claim.entityName,
-          claimType: claim.claimType,
-          source,
-          sourceId,
-        },
-        'Dropped author claim without verified author/entity match',
-      );
-      continue;
-    }
-
-    const dedupeKey = `${authorHandle}\0${entityName}\0${claim.claimType}\0${claimText.toLowerCase()}`;
-    if (seen.has(dedupeKey)) {
-      log.info(
-        {
-          authorHandle: claim.authorHandle,
-          entityName: claim.entityName,
-          claimType: claim.claimType,
-          source,
-          sourceId,
-        },
-        'Dropped duplicate verified author claim',
-      );
-      continue;
-    }
-
-    seen.add(dedupeKey);
-    verified.push({
-      ...claim,
-      authorHandle,
-      claimText,
-    });
-  }
-
-  return { ...parsed, authorClaims: verified };
 }
 
 function verifyChunkSummary(
@@ -697,38 +591,7 @@ Rules:
           .map(normalizeAlias),
       ),
     ].filter(Boolean);
-    const entityIdByLookup = new Map<string, string>();
-
-    if (exactNames.length > 0) {
-      const exactMatches = await pool.query<{ id: string; lookup_key: string }>(
-        `SELECT id, LOWER(name) AS lookup_key
-           FROM entities
-          WHERE LOWER(name) = ANY($1)`,
-        [exactNames],
-      );
-
-      for (const row of exactMatches.rows) {
-        entityIdByLookup.set(row.lookup_key, row.id);
-      }
-
-      const unresolved = exactNames.filter((name) => !entityIdByLookup.has(name));
-      if (unresolved.length > 0) {
-        const aliasMatches = await pool.query<{ id: string; lookup_key: string }>(
-          `SELECT DISTINCT ON (ea.alias)
-              ea.entity_id AS id,
-              ea.alias AS lookup_key
-             FROM entity_aliases ea
-             JOIN entities e ON e.id = ea.entity_id
-            WHERE ea.alias = ANY($1)
-            ORDER BY ea.alias, (e.status = 'active') DESC, (ea.context_key = '') DESC, ea.context_key, ea.entity_id`,
-          [unresolved],
-        );
-
-        for (const row of aliasMatches.rows) {
-          entityIdByLookup.set(row.lookup_key, row.id);
-        }
-      }
-    }
+    const entityIdByLookup = await resolveEntityIds(pool, exactNames);
 
     for (const relationship of relationships) {
       const entityIdA = entityIdByLookup.get(normalizeAlias(relationship.entityNameA));
@@ -766,38 +629,7 @@ Rules:
     if (authorClaims.length === 0 || chunkAuthors.size === 0) return;
 
     const exactNames = [...new Set(authorClaims.map((claim) => normalizeAlias(claim.entityName)).filter(Boolean))];
-    const entityIdByLookup = new Map<string, string>();
-
-    if (exactNames.length > 0) {
-      const exactMatches = await pool.query<{ id: string; lookup_key: string }>(
-        `SELECT id, LOWER(name) AS lookup_key
-           FROM entities
-          WHERE LOWER(name) = ANY($1)`,
-        [exactNames],
-      );
-
-      for (const row of exactMatches.rows) {
-        entityIdByLookup.set(row.lookup_key, row.id);
-      }
-
-      const unresolved = exactNames.filter((name) => !entityIdByLookup.has(name));
-      if (unresolved.length > 0) {
-        const aliasMatches = await pool.query<{ id: string; lookup_key: string }>(
-          `SELECT DISTINCT ON (ea.alias)
-              ea.entity_id AS id,
-              ea.alias AS lookup_key
-             FROM entity_aliases ea
-             JOIN entities e ON e.id = ea.entity_id
-            WHERE ea.alias = ANY($1)
-            ORDER BY ea.alias, (e.status = 'active') DESC, (ea.context_key = '') DESC, ea.context_key, ea.entity_id`,
-          [unresolved],
-        );
-
-        for (const row of aliasMatches.rows) {
-          entityIdByLookup.set(row.lookup_key, row.id);
-        }
-      }
-    }
+    const entityIdByLookup = await resolveEntityIds(pool, exactNames);
 
     for (const claim of authorClaims) {
       const author = chunkAuthors.get(claim.authorHandle);
