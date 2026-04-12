@@ -19,6 +19,7 @@ export interface StatusSnapshot {
   itemsReady: number;
   itemsProcessing: number;
   summariesToday: number;
+  reportsToday?: number;
   costToday: number;
   disabledFeatures: DisabledFeatureSummary[];
 }

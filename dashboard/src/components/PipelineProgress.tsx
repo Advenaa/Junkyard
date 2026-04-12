@@ -3,7 +3,7 @@ import { apiFetch } from '../lib/api.js';
 import type { StatusSnapshot } from '../lib/types.js';
 import { useStatus } from './StatusProvider.js';
 
-type ProgressSnapshot = Pick<StatusSnapshot, 'itemsReady' | 'itemsProcessing' | 'summariesToday'>;
+type ProgressSnapshot = Pick<StatusSnapshot, 'itemsReady' | 'itemsProcessing' | 'summariesToday' | 'reportsToday'>;
 
 interface PipelineProgressProps {
   sourceCount: number;
@@ -19,6 +19,7 @@ function pickProgressSnapshot(status: StatusSnapshot | ProgressSnapshot | null |
     itemsReady: status.itemsReady,
     itemsProcessing: status.itemsProcessing,
     summariesToday: status.summariesToday,
+    reportsToday: status.reportsToday ?? 0,
   };
 }
 
@@ -31,7 +32,7 @@ export function PipelineProgress({ sourceCount, initialStatus }: PipelineProgres
   const [snapshot, setSnapshot] = useState<ProgressSnapshot>(() => {
     return (
       pickProgressSnapshot(initialStatus) ??
-      pickProgressSnapshot(status) ?? { itemsReady: 0, itemsProcessing: 0, summariesToday: 0 }
+      pickProgressSnapshot(status) ?? { itemsReady: 0, itemsProcessing: 0, summariesToday: 0, reportsToday: 0 }
     );
   });
 
@@ -40,7 +41,8 @@ export function PipelineProgress({ sourceCount, initialStatus }: PipelineProgres
     latestSnapshot &&
     (latestSnapshot.itemsReady !== snapshot.itemsReady ||
       latestSnapshot.itemsProcessing !== snapshot.itemsProcessing ||
-      latestSnapshot.summariesToday !== snapshot.summariesToday)
+      latestSnapshot.summariesToday !== snapshot.summariesToday ||
+      latestSnapshot.reportsToday !== snapshot.reportsToday)
   ) {
     setSnapshot(latestSnapshot);
   }
@@ -56,6 +58,7 @@ export function PipelineProgress({ sourceCount, initialStatus }: PipelineProgres
             itemsReady: next.itemsReady,
             itemsProcessing: next.itemsProcessing,
             summariesToday: next.summariesToday,
+            reportsToday: next.reportsToday ?? 0,
           });
         }
       } catch {
@@ -81,7 +84,7 @@ export function PipelineProgress({ sourceCount, initialStatus }: PipelineProgres
   const ingestedCount = snapshot.itemsReady + snapshot.itemsProcessing;
   const pollingActive = ingestedCount > 0 || snapshot.summariesToday > 0;
   const processingActive = snapshot.itemsProcessing > 0 || snapshot.summariesToday > 0;
-  const reportReady = snapshot.summariesToday > 0;
+  const reportReady = (snapshot.reportsToday ?? 0) > 0;
 
   return (
     <section className="rounded-2xl border border-border bg-surface p-5">
@@ -120,7 +123,13 @@ export function PipelineProgress({ sourceCount, initialStatus }: PipelineProgres
         </div>
         <div className={`rounded-2xl border px-4 py-4 ${stageClasses(reportReady)}`}>
           <div className="font-mono text-[11px] uppercase tracking-wide">05</div>
-          <div className="mt-2 text-sm">First report ready</div>
+          <div className="mt-2 text-sm">
+            {reportReady
+              ? 'First report ready'
+              : snapshot.summariesToday > 0
+                ? 'Awaiting report...'
+                : 'First report ready'}
+          </div>
         </div>
       </div>
     </section>
