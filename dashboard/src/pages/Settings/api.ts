@@ -24,6 +24,7 @@ import type {
   AlphaPropagationData,
   EntityAuthor,
   AuthorProfileData,
+  SessionInfo,
 } from './types.js';
 import { apiFetch, isApiError } from '../../lib/api.js';
 
@@ -45,6 +46,15 @@ export async function fetchDiscordTokenHealthData(): Promise<DiscordTokenHealthS
 export async function fetchUsersData(): Promise<UserRecord[]> {
   const res = await apiFetch<{ users: UserRecord[] }>('/users');
   return res.users;
+}
+
+export async function fetchUserSessions(discordId: string): Promise<SessionInfo[]> {
+  const res = await apiFetch<{ sessions: SessionInfo[] }>(`/users/${discordId}/sessions`);
+  return res.sessions;
+}
+
+export async function revokeUserSession(discordId: string, managementId: string): Promise<void> {
+  await apiFetch(`/users/${discordId}/sessions/${managementId}`, { method: 'DELETE' });
 }
 
 export async function fetchUserAuditEventsData(): Promise<UserAuditEvent[]> {
