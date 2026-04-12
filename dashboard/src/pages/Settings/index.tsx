@@ -516,6 +516,22 @@ function SourcesTab() {
   const [browseLoading, setBrowseLoading] = useState(false);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [browseOpen, setBrowseOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'halted' | 'silent' | 'disabled'>('all');
+
+  const now = Date.now();
+  const sourceStatuses = sources.map((s) => {
+    if (s.stateStatus === 'halted') return 'halted' as const;
+    if (s.stateStatus === 'disabled' || s.enabled === false) return 'disabled' as const;
+    if (s.lastFetchedAt != null && s.pollInterval > 0 && now - s.lastFetchedAt > s.pollInterval * 2 * 1000) {
+      return 'silent' as const;
+    }
+    return 'active' as const;
+  });
+
+  const statusCounts = { active: 0, halted: 0, silent: 0, disabled: 0 };
+  for (const st of sourceStatuses) statusCounts[st]++;
+
+  const filteredSources = sources.filter((_, i) => statusFilter === 'all' || sourceStatuses[i] === statusFilter);
 
   useEffect(() => {
     let cancelled = false;
@@ -1359,6 +1375,57 @@ function SourcesTab() {
         </div>
         <div className="flex gap-2">{addSourceButton}</div>
       </div>
+      {sources.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {(
+            [
+              {
+                key: 'all',
+                label: 'All',
+                count: sources.length,
+                color: 'bg-text-secondary/20 text-text-secondary',
+              },
+              {
+                key: 'active',
+                label: 'Active',
+                count: statusCounts.active,
+                color: 'bg-accent-green/15 text-accent-green',
+              },
+              {
+                key: 'halted',
+                label: 'Halted',
+                count: statusCounts.halted,
+                color: 'bg-accent-red/15 text-accent-red',
+              },
+              {
+                key: 'silent',
+                label: 'Silent',
+                count: statusCounts.silent,
+                color: 'bg-yellow-500/15 text-yellow-400',
+              },
+              {
+                key: 'disabled',
+                label: 'Disabled',
+                count: statusCounts.disabled,
+                color: 'bg-border/50 text-text-secondary',
+              },
+            ] as const
+          ).map(({ key, label, count, color }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setStatusFilter(key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-mono uppercase tracking-wider transition-colors ${
+                statusFilter === key
+                  ? `${color} ring-1 ring-current`
+                  : 'text-text-secondary/60 hover:text-text-secondary'
+              }`}
+            >
+              {label} <span className="ml-1 tabular-nums">{count}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="bg-surface border border-border rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Sources</h3>
@@ -1369,6 +1436,10 @@ function SourcesTab() {
             <p className="text-text-secondary/60 mt-2 text-sm">
               Add your first source to start collecting market intelligence.
             </p>
+          </div>
+        ) : filteredSources.length === 0 ? (
+          <div className="text-center py-8 px-6">
+            <p className="text-text-secondary text-sm">No sources match the selected filter.</p>
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -1383,7 +1454,7 @@ function SourcesTab() {
               </tr>
             </thead>
             <tbody>
-              {sources.map((s) => {
+              {filteredSources.map((s) => {
                 const isActive = s.stateStatus == null || s.stateStatus === 'active';
                 return (
                   <tr
@@ -1399,6 +1470,44 @@ function SourcesTab() {
                           }`}
                         >
                           {s.sourceId.startsWith('@') ? '@handle' : 'search'}
+                        </span>
+                      )}
+                      {s.source === 'discord' &&
+                        (() => {
+                          const discordTokensForSource = tokenHealth.filter(
+                            (th) => th.channelCount > 0 && th.status === 'active',
+                          );
+                          const healthyCount = discordTokensForSource.length;
+                          return healthyCount > 0 ? (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-accent-green/15 text-accent-green">
+                              {healthyCount} token{healthyCount !== 1 ? 's' : ''} ok
+                            </span>
+                          ) : tokenHealth.length > 0 ? (
+                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide bg-accent-red/15 text-accent-red">
+                              no healthy tokens
+                            </span>
+                          ) : null;
+                        })()}
+                      {s.source === 'rss' && getSourceDisplayName(s) !== s.sourceId && (
+                        <span
+                          className="ml-1.5 text-[10px] font-mono text-text-secondary/50 truncate max-w-[180px] inline-block align-bottom"
+                          title={s.sourceId}
+                        >
+                          {s.sourceId}
+                        </span>
+                      )}
+                      {s.source === 'news' && (
+                        <span
+                          className="ml-1.5 text-[10px] font-mono text-text-secondary/50 truncate max-w-[180px] inline-block align-bottom"
+                          title={s.sourceId}
+                        >
+                          {(() => {
+                            try {
+                              return new URL(s.sourceId).hostname;
+                            } catch {
+                              return s.sourceId;
+                            }
+                          })()}
                         </span>
                       )}
                       {editingPollKey === `${s.source}-${s.sourceId}` ? (
