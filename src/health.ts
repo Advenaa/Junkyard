@@ -105,7 +105,7 @@ export function createHealthMonitor(pool: Pool, log: Logger, config: Config): He
       const names = rows.map((r) => r.label ?? 'unknown');
       return {
         name: 'source_disabled',
-        status: 'critical',
+        status: 'warn',
         message: `Disabled sources: ${names.join(', ')}`,
       };
     }
