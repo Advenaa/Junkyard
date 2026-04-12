@@ -42,10 +42,17 @@ describe('buildTitle', () => {
     assert.strictEqual(title, '[FLASH] Market Report \u2014 2026-04-01');
   });
 
-  it('builds pulse title with WIB time', () => {
+  it('builds pulse title with dynamic timezone abbreviation (default)', () => {
     const title = buildTitle('pulse', '2026-04-01');
     assert.ok(title.startsWith('Market Pulse \u2014 '));
-    assert.ok(title.endsWith(' WIB'));
+    // Default timezone is Asia/Jakarta — abbreviation varies by locale but should be present
+    assert.match(title, /Market Pulse \u2014 \d{2}:\d{2} .+/);
+  });
+
+  it('builds pulse title with explicit timezone', () => {
+    const title = buildTitle('pulse', '2026-04-01', 'America/New_York');
+    assert.ok(title.startsWith('Market Pulse \u2014 '));
+    assert.match(title, /Market Pulse \u2014 \d{2}:\d{2} .+/);
   });
 
   it('builds fallback title for unknown type', () => {
