@@ -31,6 +31,14 @@ export interface SummaryRow {
   created_at: number;
 }
 
+export interface SummaryEntityMentionRow {
+  id: string;
+  entity_name: string;
+  entity_type: string;
+  mention_count: number;
+  sentiment: number | null;
+}
+
 export interface ReportRow {
   id: string;
   date: string;

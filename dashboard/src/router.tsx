@@ -13,6 +13,7 @@ import { Chat } from './pages/Chat';
 import { Search } from './pages/Search';
 import { SummaryView } from './pages/SummaryView';
 import { ItemView } from './pages/ItemView';
+import { EntityDetail } from './pages/EntityDetail';
 
 export function AppRouter() {
   return (
@@ -42,6 +43,7 @@ export function AppRouter() {
                   <Route path="/chat" element={<Chat />} />
                   <Route path="/search" element={<Search />} />
                   <Route path="/settings" element={<Settings />} />
+                  <Route path="/entities/:id" element={<EntityDetail />} />
                   <Route
                     path="*"
                     element={
