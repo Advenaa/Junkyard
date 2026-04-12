@@ -189,7 +189,7 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
         createdAt: Date.now(),
       });
       if (!created) {
-        return reply.code(409).send({ error: 'Alias already exists for this entity' });
+        return reply.code(409).send({ error: 'Alias is already claimed by another entity' });
       }
 
       return reply.code(201).send({
