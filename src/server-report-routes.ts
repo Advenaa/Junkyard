@@ -97,27 +97,42 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
       limit: rawLimit,
       offset: rawOffset,
       type,
-    } = request.query as { limit?: string; offset?: string; type?: string };
+      bookmarked,
+    } = request.query as { limit?: string; offset?: string; type?: string; bookmarked?: string };
     const limit = Math.min(Math.max(parseInt(rawLimit ?? '20', 10) || 20, 1), 100);
     const offset = Math.max(parseInt(rawOffset ?? '0', 10) || 0, 0);
+    const bookmarkedOnly = bookmarked === 'true';
     const params: unknown[] = [limit, offset];
-    let whereClause = '';
+    const conditions: string[] = [];
+    let joinClause = '';
     if (type) {
       params.push(type);
-      whereClause = `WHERE type = $${params.length}`;
+      conditions.push(`reports.type = $${params.length}`);
     }
+    if (bookmarkedOnly) {
+      params.push(request.user!.discordId);
+      joinClause = `INNER JOIN bookmarks ON bookmarks.report_id = reports.id AND bookmarks.user_id = $${params.length}`;
+    }
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderByClause = bookmarkedOnly ? 'bookmarks.created_at DESC' : 'reports.created_at DESC';
     const { rows: reports } = await pool.query<ReportRow>(
-      `SELECT id, date, type, tldr, sentiment, delivery_status, created_at, body FROM reports ${whereClause} ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+      `SELECT reports.id, reports.date, reports.type, reports.tldr, reports.sentiment, reports.delivery_status, reports.created_at, reports.body FROM reports ${joinClause} ${whereClause} ORDER BY ${orderByClause} LIMIT $1 OFFSET $2`,
       params,
     );
     const countParams: unknown[] = [];
-    let countWhere = '';
+    const countConditions: string[] = [];
+    let countJoin = '';
     if (type) {
       countParams.push(type);
-      countWhere = `WHERE type = $1`;
+      countConditions.push(`reports.type = $${countParams.length}`);
     }
+    if (bookmarkedOnly) {
+      countParams.push(request.user!.discordId);
+      countJoin = `INNER JOIN bookmarks ON bookmarks.report_id = reports.id AND bookmarks.user_id = $${countParams.length}`;
+    }
+    const countWhere = countConditions.length > 0 ? `WHERE ${countConditions.join(' AND ')}` : '';
     const { rows: countRows } = await pool.query<{ count: string }>(
-      `SELECT COUNT(*) AS count FROM reports ${countWhere}`,
+      `SELECT COUNT(*) AS count FROM reports ${countJoin} ${countWhere}`,
       countParams,
     );
     return {
