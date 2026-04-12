@@ -3,6 +3,7 @@ import { Link } from 'react-router';
 import { apiFetch, isFeatureDisabledError } from '../lib/api';
 import type { Report } from '../lib/types';
 import { useStatus } from '../components/StatusProvider';
+import { formatDayMonthYear, formatNarrativeSignalLabel, type NarrativeSignalStrength } from '../lib/formatting';
 import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
 import { getReportSecondaryPreview } from '../lib/reportPreview';
 import {
@@ -28,8 +29,6 @@ const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse'];
 const PAGE_SIZE = 20;
 const NARRATIVE_PREVIEW_LIMIT = 3;
 
-type NarrativeSignalStrength = 'new' | 'emerging' | 'strong' | 'stable' | 'fading';
-
 interface NarrativeWatchlistEntry {
   id: string;
   name: string;
@@ -42,29 +41,6 @@ interface NarrativeWatchlistEntry {
 interface NarrativeWatchlistOverview {
   latestDate: string | null;
   entries: NarrativeWatchlistEntry[];
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function formatNarrativeSignalLabel(signalStrength: NarrativeSignalStrength): string {
-  switch (signalStrength) {
-    case 'new':
-      return 'New';
-    case 'emerging':
-      return 'Emerging';
-    case 'strong':
-      return 'Strong';
-    case 'stable':
-      return 'Stable';
-    case 'fading':
-      return 'Fading';
-  }
 }
 
 function narrativeSignalClasses(signalStrength: NarrativeSignalStrength): string {
@@ -452,7 +428,7 @@ export function ReportList() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3 flex-wrap">
                       <TypeBadge type={report.type} />
-                      <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
+                      <span className="font-mono text-xs text-text-secondary">{formatDayMonthYear(report.date)}</span>
                       {report.macroRegime && (
                         <span
                           title={buildMacroRegimePreviewTitle(report.macroRegime, report.macroRegimeHistory)}

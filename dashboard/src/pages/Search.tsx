@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
 import { apiFetch } from '../lib/api';
+import { formatShortDate } from '../lib/formatting';
 import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
 import { getReportSecondaryPreview } from '../lib/reportPreview';
 import { useReportPreviewState } from '../lib/useReportPreviewState';
@@ -72,16 +73,6 @@ const SOURCE_COLORS: Record<string, string> = {
 function SourceBadge({ source }: { source: string }) {
   const color = SOURCE_COLORS[source] ?? 'bg-border text-text-secondary';
   return <span className={`px-2 py-0.5 rounded text-xs font-mono uppercase ${color}`}>{source}</span>;
-}
-
-function formatDate(epochMs: number): string {
-  return new Date(epochMs).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 }
 
 function truncate(text: string, max: number): string {
@@ -227,7 +218,7 @@ export function Search() {
                           <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>
                         )}
                       </div>
-                      <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
+                      <span className="text-text-secondary text-xs font-mono">{formatShortDate(result.createdAt)}</span>
                     </div>
                     <p className="text-text-primary text-sm font-body leading-relaxed">{truncate(result.body, 200)}</p>
                   </Link>
@@ -330,7 +321,7 @@ export function Search() {
                         </button>
                       )}
                     </div>
-                    <span className="text-text-secondary text-xs font-mono">{formatDate(result.createdAt)}</span>
+                    <span className="text-text-secondary text-xs font-mono">{formatShortDate(result.createdAt)}</span>
                   </div>
                   <Link
                     to={focusedReportHref}

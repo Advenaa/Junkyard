@@ -1,3 +1,5 @@
+import { formatDateTime } from './formatting';
+
 // Discord forwarder bots and Twitter mirrors often re-emit content with markdown
 // punctuation backslash-escaped (e.g. `0\.5`, `\#cabal`). The raw feed renders
 // content verbatim, not as markdown, so the escapes leak into the UI as
@@ -36,13 +38,7 @@ export function formatRelativeTime(ts: number): string {
 }
 
 export function formatAbsoluteDateTime(epochMs: number): string {
-  return new Date(epochMs).toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatDateTime(epochMs);
 }
 
 export function buildRawMessageFooterMeta(input: {
