@@ -172,6 +172,7 @@ export interface FullReport extends Report {
   chainDrilldowns?: ReportChainDrilldown[];
   entitySentiment: EntitySentiment[];
   sections: Section[];
+  newProjects?: { name: string; description: string }[];
 }
 
 export const NARRATIVE_PREVIEW_LIMIT = 3;

@@ -469,6 +469,21 @@ export function ReportView() {
         </div>
       )}
 
+      {report.newProjects && report.newProjects.length > 0 && (
+        <div>
+          <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">New Projects</h2>
+          <div className="bg-surface border border-border rounded-lg divide-y divide-border overflow-hidden">
+            {report.newProjects.map((project, i) => (
+              <div key={i} className="px-4 py-3 text-sm font-body text-text-primary leading-relaxed">
+                <span className="font-semibold">{project.name}</span>
+                <span className="text-text-secondary"> — </span>
+                {project.description}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {report.priceAlerts && report.priceAlerts.length > 0 && (
         <div>
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-secondary mb-4">Price Alerts</h2>
