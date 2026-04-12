@@ -1274,7 +1274,7 @@ export default function SourcesTab() {
           ))}
         </div>
       )}
-      <div className="bg-surface border border-border rounded-lg overflow-hidden">
+      <div className="bg-surface border border-border rounded-lg overflow-x-auto overflow-y-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Sources</h3>
         </div>
@@ -1299,7 +1299,9 @@ export default function SourcesTab() {
                 <th className="text-left px-4 py-3">Status</th>
                 <th className="text-left px-4 py-3">Last Fetched</th>
                 <th className="text-left px-4 py-3">Activity</th>
-                <th className="text-right px-4 py-3">Actions</th>
+                <th className="text-right px-4 py-3 sticky right-0 bg-surface z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.15)]">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -1308,7 +1310,7 @@ export default function SourcesTab() {
                 return (
                   <tr
                     key={`${s.source}-${s.sourceId}`}
-                    className="border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
+                    className="group border-b border-border last:border-b-0 hover:bg-surface-raised transition-colors"
                   >
                     <td className="px-4 py-3 font-mono text-xs text-text-secondary">
                       {s.source}
@@ -1488,7 +1490,7 @@ export default function SourcesTab() {
                       {formatRelativeTime(s.lastFetchedAt)}
                     </td>
                     <td className="px-4 py-3">{renderSparkline(activityMap[`${s.source}-${s.sourceId}`] ?? [])}</td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right sticky right-0 bg-surface group-hover:bg-surface-raised shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.15)]">
                       <div className="flex items-center justify-end gap-3">
                         <button
                           type="button"
