@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch, isApiError, isFeatureDisabledError } from '../lib/api';
 import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegime';
 import { buildFocusedReportHref, buildSummaryChainHref } from '../lib/reportChains';
+import { BookmarkButton } from '../components/BookmarkButton';
 import { DataShell } from '../components/DataShell';
 import { TypeBadge } from '../components/TypeBadge';
 import { useStatus } from '../components/StatusProvider';
@@ -48,6 +49,7 @@ export function ReportView() {
   const disabledPrices = getDisabledFeature('prices');
   const disabledEmbeddings = getDisabledFeature('embeddings');
   const [report, setReport] = useState<FullReport | null>(null);
+  const [bookmarked, setBookmarked] = useState(false);
   const [macroOverviewState, setMacroOverviewState] = useState<MacroOverview | null>(null);
   const [priceWatchState, setPriceWatchState] = useState<PriceWatchOverview | null>(null);
   const [narrativesState, setNarrativesState] = useState<NarrativeWatchlistOverview | null>(null);
@@ -96,6 +98,27 @@ export function ReportView() {
       cancelled = true;
     };
   }, [id, requestKey]);
+
+  useEffect(() => {
+    if (!report) return;
+    let cancelled = false;
+
+    apiFetch<{ reportIds: string[] }>('/bookmarks')
+      .then((res) => {
+        if (!cancelled) {
+          setBookmarked(res.reportIds.includes(report.id));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBookmarked(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [report]);
 
   useEffect(() => {
     if (!statusReady) return;
@@ -333,7 +356,15 @@ export function ReportView() {
                 <TypeBadge type={report.type} />
                 <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Report</span>
               </div>
-              <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
+              <div className="flex items-center gap-3">
+                <BookmarkButton
+                  reportId={report.id}
+                  bookmarked={bookmarked}
+                  onToggle={(_reportId, isBookmarked) => setBookmarked(isBookmarked)}
+                  size="md"
+                />
+                <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
+              </div>
             </div>
 
             {/* TL;DR Hero */}
