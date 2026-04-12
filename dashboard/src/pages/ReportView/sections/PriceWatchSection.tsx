@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { DisabledFeatureSummary } from '../../../lib/types';
 import { FeatureDisabledCard } from '../../../components/FeatureDisabledCard';
 import type { PriceWatchEntry, PriceWatchOverview } from '../types';
@@ -18,7 +19,7 @@ interface PriceWatchSectionProps {
   priceEntries: PriceWatchEntry[];
 }
 
-export function PriceWatchSection({
+export const PriceWatchSection = memo(function PriceWatchSection({
   pricesDisabled,
   disabledPrices,
   priceWatch,
@@ -108,4 +109,4 @@ export function PriceWatchSection({
       )}
     </>
   );
-}
+});

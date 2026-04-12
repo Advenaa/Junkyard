@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { AlphaWatchEntry, AlphaWatchOverview } from '../types';
 import { ALPHA_WATCH_PREVIEW_LIMIT } from '../types';
 import {
@@ -14,7 +14,10 @@ interface AlphaWatchSectionProps {
   alphaWatchEntries: AlphaWatchEntry[];
 }
 
-export function AlphaWatchSection({ alphaWatch, alphaWatchEntries }: AlphaWatchSectionProps) {
+export const AlphaWatchSection = memo(function AlphaWatchSection({
+  alphaWatch,
+  alphaWatchEntries,
+}: AlphaWatchSectionProps) {
   const [expanded, setExpanded] = useState(false);
 
   if (alphaWatchEntries.length === 0) {
@@ -96,4 +99,4 @@ export function AlphaWatchSection({ alphaWatch, alphaWatchEntries }: AlphaWatchS
       )}
     </div>
   );
-}
+});

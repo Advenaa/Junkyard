@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { RegionalDivergenceEntry } from '../types';
 import { REGIONAL_DIVERGENCE_DAYS } from '../types';
 import {
@@ -15,7 +16,7 @@ interface RegionalDivergenceSectionProps {
   regionalDivergenceEntries: RegionalDivergenceEntry[];
 }
 
-export function RegionalDivergenceSection({
+export const RegionalDivergenceSection = memo(function RegionalDivergenceSection({
   regionalDivergences,
   regionalDivergenceEntries,
 }: RegionalDivergenceSectionProps) {
@@ -84,4 +85,4 @@ export function RegionalDivergenceSection({
       </div>
     </div>
   );
-}
+});

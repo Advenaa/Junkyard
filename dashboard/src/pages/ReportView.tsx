@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch, isApiError, isFeatureDisabledError } from '../lib/api';
 import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegime';
@@ -289,6 +289,20 @@ export function ReportView() {
     };
   }, []);
 
+  const macroEntries = useMemo(() => macroOverview?.entries.slice(0, MACRO_PREVIEW_LIMIT) ?? [], [macroOverview]);
+  const priceEntries = useMemo(() => priceWatch?.entries.slice(0, PRICE_WATCH_PREVIEW_LIMIT) ?? [], [priceWatch]);
+  const narrativeEntries = useMemo(() => narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [], [narratives]);
+  const unusualEntries = useMemo(
+    () => unusualActivity?.entries.slice(0, UNUSUAL_ACTIVITY_PREVIEW_LIMIT) ?? [],
+    [unusualActivity],
+  );
+  const regionalDivergenceEntries = useMemo(
+    () => regionalDivergences?.slice(0, REGIONAL_DIVERGENCE_PREVIEW_LIMIT) ?? [],
+    [regionalDivergences],
+  );
+  const firstMoverEntries = useMemo(() => firstMoverWatchlist?.entries ?? [], [firstMoverWatchlist]);
+  const alphaWatchEntries = useMemo(() => alphaWatch?.entries ?? [], [alphaWatch]);
+  const calendarEntries = useMemo(() => calendarEvents?.slice(0, CALENDAR_PREVIEW_LIMIT) ?? [], [calendarEvents]);
   const loading = loadedKey !== requestKey;
 
   if (loading) {
@@ -313,14 +327,6 @@ export function ReportView() {
   const orderedChains = focusedChain
     ? [focusedChain, ...allChains.filter((chain) => chain.rootId !== focusedChain.rootId)]
     : allChains;
-  const macroEntries = macroOverview?.entries.slice(0, MACRO_PREVIEW_LIMIT) ?? [];
-  const priceEntries = priceWatch?.entries.slice(0, PRICE_WATCH_PREVIEW_LIMIT) ?? [];
-  const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
-  const unusualEntries = unusualActivity?.entries.slice(0, UNUSUAL_ACTIVITY_PREVIEW_LIMIT) ?? [];
-  const regionalDivergenceEntries = regionalDivergences?.slice(0, REGIONAL_DIVERGENCE_PREVIEW_LIMIT) ?? [];
-  const firstMoverEntries = firstMoverWatchlist?.entries ?? [];
-  const alphaWatchEntries = alphaWatch?.entries ?? [];
-  const calendarEntries = calendarEvents?.slice(0, CALENDAR_PREVIEW_LIMIT) ?? [];
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-8">

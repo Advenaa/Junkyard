@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { DisabledFeatureSummary } from '../../../lib/types';
 import { FeatureDisabledCard } from '../../../components/FeatureDisabledCard';
 import type { NarrativeWatchlistEntry, NarrativeWatchlistOverview } from '../types';
@@ -10,7 +11,7 @@ interface NarrativeSectionProps {
   narrativeEntries: NarrativeWatchlistEntry[];
 }
 
-export function NarrativeSection({
+export const NarrativeSection = memo(function NarrativeSection({
   embeddingsDisabled,
   disabledEmbeddings,
   narratives,
@@ -68,4 +69,4 @@ export function NarrativeSection({
       )}
     </>
   );
-}
+});

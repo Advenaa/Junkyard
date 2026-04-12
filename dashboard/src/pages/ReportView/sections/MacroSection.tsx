@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { DisabledFeatureSummary } from '../../../lib/types';
 import { FeatureDisabledCard } from '../../../components/FeatureDisabledCard';
 import type { MacroOverview, MacroOverviewEntry } from '../types';
@@ -10,7 +11,12 @@ interface MacroSectionProps {
   macroEntries: MacroOverviewEntry[];
 }
 
-export function MacroSection({ macroDisabled, disabledMacro, macroOverview, macroEntries }: MacroSectionProps) {
+export const MacroSection = memo(function MacroSection({
+  macroDisabled,
+  disabledMacro,
+  macroOverview,
+  macroEntries,
+}: MacroSectionProps) {
   return (
     <>
       {macroDisabled && disabledMacro ? (
@@ -77,4 +83,4 @@ export function MacroSection({ macroDisabled, disabledMacro, macroOverview, macr
       )}
     </>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { UnusualActivityEntry, UnusualActivityOverview } from '../types';
 import {
   formatSignedFixed,
@@ -12,7 +13,10 @@ interface UnusualActivitySectionProps {
   unusualEntries: UnusualActivityEntry[];
 }
 
-export function UnusualActivitySection({ unusualActivity, unusualEntries }: UnusualActivitySectionProps) {
+export const UnusualActivitySection = memo(function UnusualActivitySection({
+  unusualActivity,
+  unusualEntries,
+}: UnusualActivitySectionProps) {
   if (unusualEntries.length === 0) {
     return null;
   }
@@ -78,4 +82,4 @@ export function UnusualActivitySection({ unusualActivity, unusualEntries }: Unus
       </div>
     </div>
   );
-}
+});

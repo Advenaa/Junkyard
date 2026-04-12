@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { FirstMoverWatchlistEntry, FirstMoverWatchlistOverview } from '../types';
 import { FIRST_MOVER_PREVIEW_LIMIT } from '../types';
 import {
@@ -13,7 +13,10 @@ interface FirstMoverSectionProps {
   firstMoverEntries: FirstMoverWatchlistEntry[];
 }
 
-export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: FirstMoverSectionProps) {
+export const FirstMoverSection = memo(function FirstMoverSection({
+  firstMoverWatchlist,
+  firstMoverEntries,
+}: FirstMoverSectionProps) {
   const [expanded, setExpanded] = useState(false);
 
   if (firstMoverEntries.length === 0) {
@@ -90,4 +93,4 @@ export function FirstMoverSection({ firstMoverWatchlist, firstMoverEntries }: Fi
       )}
     </div>
   );
-}
+});
