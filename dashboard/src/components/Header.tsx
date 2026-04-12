@@ -94,6 +94,15 @@ export function Header() {
         {/* Desktop nav */}
         <nav className="hidden md:flex items-center gap-6">
           <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`
+            }
+          >
+            Dashboard
+          </NavLink>
+          <NavLink
             to="/reports"
             className={({ isActive }) =>
               `text-sm ${isActive ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'}`
@@ -213,6 +222,14 @@ export function Header() {
       {/* Mobile menu */}
       {menuOpen && (
         <nav className="md:hidden mt-3 pt-3 border-t border-border flex flex-col gap-3">
+          <NavLink
+            to="/"
+            end
+            onClick={() => setMenuOpen(false)}
+            className={({ isActive }) => `text-sm py-2 ${isActive ? 'text-text-primary' : 'text-text-secondary'}`}
+          >
+            Dashboard
+          </NavLink>
           <NavLink
             to="/reports"
             onClick={() => setMenuOpen(false)}

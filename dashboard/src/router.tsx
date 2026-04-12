@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Header } from './components/Header';
 import { Login } from './pages/Login';
+import { Dashboard } from './pages/Dashboard';
 import { ReportView } from './pages/ReportView';
 import { ReportList } from './pages/ReportList';
 import { Settings } from './pages/Settings';
@@ -34,7 +35,7 @@ export function AppRouter() {
                     </>
                   }
                 >
-                  <Route path="/" element={<ReportView />} />
+                  <Route path="/" element={<Dashboard />} />
                   <Route path="/reports" element={<ReportList />} />
                   <Route path="/reports/:id" element={<ReportView />} />
                   <Route path="/summaries/:id" element={<SummaryView />} />
