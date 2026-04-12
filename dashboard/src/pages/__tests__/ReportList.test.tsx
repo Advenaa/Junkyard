@@ -464,6 +464,34 @@ describe('ReportList', () => {
     expect(screen.getByText('Failed to load more active chains.')).toBeInTheDocument();
   });
 
+  it('shows only the error banner when the initial reports fetch fails', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(url, 'http://localhost');
+      const narrativeResponse = maybeNarrativesResponse(path);
+      if (narrativeResponse) return narrativeResponse;
+
+      if (path.pathname === '/api/v1/reports') {
+        throw new Error('initial reports load failed');
+      }
+
+      throw new Error(`Unhandled fetch ${path.pathname}${path.search}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={['/reports']}>
+        <Routes>
+          <Route path="/reports" element={<ReportList />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Failed to load reports. Please try again.')).toBeInTheDocument();
+    expect(screen.queryByText('No reports yet')).not.toBeInTheDocument();
+  });
+
   it('renders a macro alert preview when no active chain preview is present', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
