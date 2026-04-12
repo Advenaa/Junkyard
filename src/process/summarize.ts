@@ -1035,12 +1035,14 @@ Rules:
     const CHUNK_CONCURRENCY = 3;
     const succeededIds: string[] = [];
     const failedIds: string[] = [];
+    const budgetCappedIds: string[] = [];
     let summaryCount = 0;
     let hasBreaking = false;
 
     interface ChunkResult {
       succeeded: string[];
       failed: string[];
+      budgetCapped: string[];
       summaryCount: number;
       hasBreaking: boolean;
     }
@@ -1079,13 +1081,20 @@ Rules:
     async function handleChunk(chunk: ClaimedItem[]): Promise<ChunkResult> {
       const chunkItemIds = chunk.map((item) => item.id);
       if (await maybeFilterShortDiscordChunk(chunk)) {
-        return { succeeded: [], failed: [], summaryCount: 0, hasBreaking: false };
+        return { succeeded: [], failed: [], budgetCapped: [], summaryCount: 0, hasBreaking: false };
+      }
+
+      if (callBudget.count >= callBudget.max) {
+        return { succeeded: [], failed: [], budgetCapped: chunkItemIds, summaryCount: 0, hasBreaking: false };
       }
 
       const parsedResults = await processChunk(chunk, source, sourceId, windowStart, windowEnd, 0, callBudget);
 
       if (parsedResults.length === 0) {
-        return { succeeded: [], failed: chunkItemIds, summaryCount: 0, hasBreaking: false };
+        if (callBudget.count > callBudget.max) {
+          return { succeeded: [], failed: [], budgetCapped: chunkItemIds, summaryCount: 0, hasBreaking: false };
+        }
+        return { succeeded: [], failed: chunkItemIds, budgetCapped: [], summaryCount: 0, hasBreaking: false };
       }
 
       let chunkSummaryCount = 0;
@@ -1221,6 +1230,7 @@ Rules:
       return {
         succeeded: chunkSucceededIds,
         failed: chunkFailedIds,
+        budgetCapped: [],
         summaryCount: chunkSummaryCount,
         hasBreaking: chunkHasBreaking,
       };
@@ -1235,6 +1245,7 @@ Rules:
         if (result.status === 'fulfilled') {
           succeededIds.push(...result.value.succeeded);
           failedIds.push(...result.value.failed);
+          budgetCappedIds.push(...result.value.budgetCapped);
           summaryCount += result.value.summaryCount;
           if (result.value.hasBreaking) hasBreaking = true;
         } else {
@@ -1272,6 +1283,16 @@ Rules:
       log.warn(
         { failedCount: retryable, maxRetries: MAX_ITEM_RETRIES, source, sourceId, batchId },
         'Incremented retry_count on failed chunk items; items at limit marked as failed',
+      );
+    }
+
+    if (budgetCappedIds.length > 0) {
+      await pool.query(`UPDATE items SET status = 'ready', batch_id = NULL WHERE id = ANY($1::text[])`, [
+        budgetCappedIds,
+      ]);
+      log.info(
+        { budgetCappedCount: budgetCappedIds.length, source, sourceId, batchId },
+        'Released budget-capped items back to ready without retry penalty',
       );
     }
 
