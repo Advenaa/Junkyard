@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router';
 import { apiFetch, isFeatureDisabledError } from '../lib/api';
-import type { Report } from '../lib/types';
+import type { NarrativeSignalStrength, NarrativeWatchlistOverview, Report } from '../lib/types';
 import { useStatus } from '../components/StatusProvider';
-import { formatDayMonthYear, formatNarrativeSignalLabel, type NarrativeSignalStrength } from '../lib/formatting';
+import { formatDayMonthYear, formatNarrativeSignalLabel } from '../lib/formatting';
 import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
 import { getReportSecondaryPreview } from '../lib/reportPreview';
 import {
@@ -25,20 +25,6 @@ type FilterType = 'all' | 'daily' | 'flash' | 'pulse';
 const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse'];
 const PAGE_SIZE = 20;
 const NARRATIVE_PREVIEW_LIMIT = 3;
-
-interface NarrativeWatchlistEntry {
-  id: string;
-  name: string;
-  date: string;
-  memberCount: number;
-  avgSentiment: number | null;
-  signalStrength: NarrativeSignalStrength;
-}
-
-interface NarrativeWatchlistOverview {
-  latestDate: string | null;
-  entries: NarrativeWatchlistEntry[];
-}
 
 function narrativeSignalClasses(signalStrength: NarrativeSignalStrength): string {
   switch (signalStrength) {
