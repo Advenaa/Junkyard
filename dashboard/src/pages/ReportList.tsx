@@ -21,11 +21,42 @@ import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 import { BookmarkButton } from '../components/BookmarkButton';
+import { OnboardingWizard } from '../components/OnboardingWizard.js';
+import { PipelineProgress } from '../components/PipelineProgress.js';
 
 type FilterType = 'all' | 'daily' | 'flash' | 'pulse' | 'bookmarked';
 const FILTERS: FilterType[] = ['all', 'daily', 'flash', 'pulse', 'bookmarked'];
 const PAGE_SIZE = 20;
 const NARRATIVE_PREVIEW_LIMIT = 3;
+const ONBOARDING_HIDDEN_SESSION_KEY = 'podders:onboarding-hidden';
+
+interface OnboardingStatusSummary {
+  itemsReady: number;
+  itemsProcessing: number;
+  summariesToday: number;
+}
+
+interface OnboardingStatus {
+  showOnboarding: boolean;
+  sourceCount: number;
+  statusSummary: OnboardingStatusSummary;
+}
+
+function readHiddenOnboarding(): boolean {
+  try {
+    return window.sessionStorage.getItem(ONBOARDING_HIDDEN_SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function persistHiddenOnboarding(): void {
+  try {
+    window.sessionStorage.setItem(ONBOARDING_HIDDEN_SESSION_KEY, '1');
+  } catch {
+    void 0;
+  }
+}
 
 function narrativeSignalClasses(signalStrength: NarrativeSignalStrength): string {
   switch (signalStrength) {
@@ -58,6 +89,9 @@ export function ReportList() {
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [bookmarksLoaded, setBookmarksLoaded] = useState(false);
   const [narratives, setNarratives] = useState<NarrativeWatchlistOverview | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+  const [hideOnboarding, setHideOnboarding] = useState(readHiddenOnboarding);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -131,6 +165,32 @@ export function ReportList() {
       cancelled = true;
     };
   }, [fetchReports, retryNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOnboardingReady(false);
+
+    apiFetch<OnboardingStatus>('/onboarding')
+      .then((response) => {
+        if (!cancelled) {
+          setOnboarding(response);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOnboarding(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setOnboardingReady(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [retryNonce]);
 
   const loadBookmarks = useCallback(async () => {
     if (bookmarksLoaded || bookmarksLoadingRef.current) {
@@ -212,6 +272,10 @@ export function ReportList() {
 
   const narrativeEntries = narratives?.entries.slice(0, NARRATIVE_PREVIEW_LIMIT) ?? [];
   const visibleReports = reports;
+  const showOnboarding = onboarding?.showOnboarding === true && !hideOnboarding;
+  const sourceCount = onboarding?.sourceCount ?? 0;
+  const showPipelineProgress =
+    showOnboarding === false && filter === 'all' && sourceCount > 0 && visibleReports.length === 0 && !error;
 
   const handleBookmarkToggle = useCallback((reportId: string, isBookmarked: boolean) => {
     setBookmarkedIds((prev) => {
@@ -241,30 +305,37 @@ export function ReportList() {
     }
   };
 
+  function handleOnboardingHidden() {
+    persistHiddenOnboarding();
+    setHideOnboarding(true);
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <h1 className="font-heading text-2xl text-text-primary">Reports</h1>
 
       {/* Filter Pills */}
-      <div className="flex gap-2" role="radiogroup" aria-label="Report type filter">
-        {FILTERS.map((f) => (
-          <button
-            key={f}
-            role="radio"
-            aria-checked={filter === f}
-            onClick={() => setFilter(f)}
-            className={`px-4 py-2.5 min-h-[44px] rounded-full font-mono text-xs uppercase tracking-wider transition-colors ${
-              filter === f
-                ? 'bg-accent text-white'
-                : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-[#3a3a4f]'
-            }`}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
+      {!showOnboarding && (
+        <div className="flex gap-2" role="radiogroup" aria-label="Report type filter">
+          {FILTERS.map((f) => (
+            <button
+              key={f}
+              role="radio"
+              aria-checked={filter === f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-2.5 min-h-[44px] rounded-full font-mono text-xs uppercase tracking-wider transition-colors ${
+                filter === f
+                  ? 'bg-accent text-white'
+                  : 'bg-surface border border-border text-text-secondary hover:text-text-primary hover:border-[#3a3a4f]'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {embeddingsDisabled && disabledEmbeddings ? (
+      {!showOnboarding && embeddingsDisabled && disabledEmbeddings ? (
         <FeatureDisabledCard
           feature={disabledEmbeddings}
           title="Narrative Snapshot"
@@ -272,7 +343,7 @@ export function ReportList() {
         />
       ) : null}
 
-      {!embeddingsDisabled && narrativeEntries.length > 0 && (
+      {!showOnboarding && !embeddingsDisabled && narrativeEntries.length > 0 && (
         <div className="bg-surface border border-border rounded-lg overflow-hidden">
           <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-border">
             <div>
@@ -331,17 +402,32 @@ export function ReportList() {
       )}
 
       {/* Report Cards */}
-      {loading ? (
+      {loading || onboardingReady === false ? (
         <div className="text-text-secondary font-body">Loading...</div>
+      ) : showOnboarding ? (
+        <OnboardingWizard onDismissed={handleOnboardingHidden} onNavigateToSources={handleOnboardingHidden} />
       ) : visibleReports.length === 0 && !error ? (
-        <EmptyState
-          title={filter === 'bookmarked' ? 'No bookmarked reports' : 'No reports yet'}
-          description={
-            filter === 'bookmarked'
-              ? 'Bookmark reports to keep a private shortlist here.'
-              : 'Your first report will generate after sources are configured and the daily digest runs.'
-          }
-        />
+        <div className="space-y-6">
+          {filter === 'bookmarked' ? (
+            <EmptyState
+              title="No bookmarked reports"
+              description="Bookmark reports to keep a private shortlist here."
+            />
+          ) : (
+            <div className="rounded-2xl border border-border bg-surface px-6 py-12 text-center">
+              <p className="text-lg text-text-secondary">No reports yet</p>
+              <Link
+                to="/settings?tab=sources"
+                className="mt-4 inline-flex min-h-[44px] items-center justify-center rounded-full border border-border px-5 py-2.5 font-mono text-xs uppercase tracking-wider text-accent transition-colors hover:border-accent/30 hover:text-text-primary"
+              >
+                Add a source to start collecting market intelligence &rarr;
+              </Link>
+            </div>
+          )}
+          {showPipelineProgress ? (
+            <PipelineProgress sourceCount={sourceCount} initialStatus={onboarding?.statusSummary} />
+          ) : null}
+        </div>
       ) : (
         <div className="space-y-3">
           {visibleReports.map((report) => {

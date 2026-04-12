@@ -253,7 +253,9 @@ export function EntityDetail() {
           </h2>
         </div>
         {mentions.length === 0 ? (
-          <p className="px-4 py-8 text-center text-text-secondary text-sm font-body">No mentions yet.</p>
+          <p className="px-4 py-8 text-center text-text-secondary text-sm font-body">
+            Entities are discovered automatically from your sources. They'll appear here as reports are generated.
+          </p>
         ) : (
           <div className="divide-y divide-border">
             {mentions.map((mention) => (

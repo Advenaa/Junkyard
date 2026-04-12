@@ -1006,6 +1006,14 @@ const migrations: Migration[] = [
     await client.query(`CREATE INDEX IF NOT EXISTS idx_feedback_target ON feedback(target_type, target_id)`);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`);
   },
+
+  // Migration 41: Track whether a user has dismissed the onboarding wizard (#300)
+  async (client) => {
+    await client.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS dismissed_onboarding BOOLEAN NOT NULL DEFAULT FALSE
+    `);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

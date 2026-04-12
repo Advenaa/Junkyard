@@ -137,6 +137,19 @@ function TabSkeleton() {
   );
 }
 
+function getRequestedTab(visibleTabs: Array<{ key: Tab }>): Tab | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const requestedTab = new URLSearchParams(window.location.search).get('tab');
+  if (requestedTab == null) {
+    return null;
+  }
+
+  return visibleTabs.some((tab) => tab.key === requestedTab) ? (requestedTab as Tab) : null;
+}
+
 export function Settings() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -149,7 +162,16 @@ export function Settings() {
   ];
 
   const visibleTabs = tabs.filter((tab) => !tab.adminOnly || isAdmin);
-  const [activeTab, setActiveTab] = useState<Tab>(visibleTabs[0]?.key ?? 'pipeline');
+  const [activeTab, setActiveTab] = useState<Tab>(
+    () => getRequestedTab(visibleTabs) ?? visibleTabs[0]?.key ?? 'pipeline',
+  );
+
+  const requestedTab = getRequestedTab(visibleTabs);
+  if (requestedTab && requestedTab !== activeTab) {
+    setActiveTab(requestedTab);
+  } else if (!visibleTabs.some((tab) => tab.key === activeTab)) {
+    setActiveTab(visibleTabs[0]?.key ?? 'pipeline');
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
