@@ -34,6 +34,7 @@ type RoutePreHandler = (request: FastifyRequest, reply: FastifyReply) => void | 
 interface SessionManagerLike {
   create(discordId: string, ip: string, userAgent: string): Promise<string>;
   delete(sessionId: string): Promise<void>;
+  deleteByManagementId(discordId: string, managementId: string): Promise<boolean>;
   deleteAllForUser(discordId: string): Promise<number>;
   listForUser(discordId: string): Promise<SessionInfo[]>;
 }
@@ -736,33 +737,29 @@ export function registerAdminRoutes({
   );
 
   app.delete(
-    '/api/v1/users/:discordId/sessions/:sessionId',
+    '/api/v1/users/:discordId/sessions/:managementId',
     {
       preHandler: [authPreHandler, requireAdmin],
       schema: {
         params: {
           type: 'object',
-          required: ['discordId', 'sessionId'],
+          required: ['discordId', 'managementId'],
           properties: {
             discordId: { type: 'string', pattern: '^\\d{17,20}$' },
-            sessionId: { type: 'string', minLength: 1, maxLength: 128 },
+            managementId: { type: 'string', minLength: 1, maxLength: 16 },
           },
         },
       },
     },
     async (request, reply) => {
-      const { discordId, sessionId } = request.params as {
+      const { discordId, managementId } = request.params as {
         discordId: string;
-        sessionId: string;
+        managementId: string;
       };
-      const sessionCheck = await pool.query(`SELECT 1 FROM sessions WHERE id = $1 AND discord_id = $2`, [
-        sessionId,
-        discordId,
-      ]);
-      if (sessionCheck.rows.length === 0) {
+      const deleted = await sessionManager.deleteByManagementId(discordId, managementId);
+      if (!deleted) {
         return reply.code(404).send({ error: 'Session not found' });
       }
-      await sessionManager.delete(sessionId);
       return reply.code(204).send();
     },
   );

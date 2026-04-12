@@ -10,13 +10,18 @@ export interface SessionManager {
     userAgent: string,
   ): Promise<{ discordId: string; role: string; refreshed: boolean } | null>;
   delete(sessionId: string): Promise<void>;
+  deleteByManagementId(discordId: string, managementId: string): Promise<boolean>;
   deleteAllForUser(discordId: string): Promise<number>;
   listForUser(discordId: string): Promise<SessionInfo[]>;
   cleanupExpired(): Promise<number>;
 }
 
+export function sessionManagementId(rawId: string): string {
+  return crypto.createHash('sha256').update(rawId).digest('hex').slice(0, 16);
+}
+
 export interface SessionInfo {
-  id: string;
+  managementId: string;
   discordId: string;
   createdAt: number;
   expiresAt: number;
@@ -222,6 +227,18 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       log.info({ sessionId: logSessionId(sessionId) }, 'Session deleted');
     },
 
+    async deleteByManagementId(discordId: string, managementId: string): Promise<boolean> {
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM sessions WHERE discord_id = $1 AND expires_at > $2`,
+        [discordId, Date.now()],
+      );
+      const target = rows.find((r) => sessionManagementId(r.id) === managementId);
+      if (!target) return false;
+      await pool.query(`DELETE FROM sessions WHERE id = $1`, [target.id]);
+      log.info({ discordId, managementId }, 'Session revoked by management ID');
+      return true;
+    },
+
     async deleteAllForUser(discordId: string): Promise<number> {
       const result = await pool.query(`DELETE FROM sessions WHERE discord_id = $1`, [discordId]);
       const count = result.rowCount ?? 0;
@@ -249,7 +266,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
       );
 
       return rows.map((row) => ({
-        id: row.id,
+        managementId: sessionManagementId(row.id),
         discordId: row.discord_id,
         createdAt: Number(row.created_at),
         expiresAt: Number(row.expires_at),
