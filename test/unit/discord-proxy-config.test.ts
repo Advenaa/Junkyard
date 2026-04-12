@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createEnvDiscordTokens, maskProxyUrl, normalizeProxyUrl } from '../../src/discord-tokens.js';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const migrationsSrc = readFileSync(resolve(ROOT, 'src/db/migrations.ts'), 'utf-8');
-const queriesSrc = readFileSync(resolve(ROOT, 'src/db/queries.ts'), 'utf-8');
+const queriesSrc = readQueriesSource();
 const serverSrc = readServerSource();
 
 describe('Discord proxy config helpers', () => {

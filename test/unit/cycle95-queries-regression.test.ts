@@ -11,8 +11,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { readQueriesSource } from './helpers/queries-source.js';
 
-const queriesSrc = readFileSync(new URL('../../src/db/queries.ts', import.meta.url), 'utf-8');
+const queriesSrc = readQueriesSource();
 const indexSrc = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf-8');
 
 describe('SP-003 — recoverStaleProcessing exists and is exported', () => {

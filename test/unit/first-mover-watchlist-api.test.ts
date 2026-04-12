@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -21,7 +22,7 @@ function readSrc(relPath: string): string {
 }
 
 describe('First-mover watchlist queries (src/db/queries.ts)', () => {
-  const src = readSrc('src/db/queries.ts');
+  const src = readQueriesSource();
 
   it('exports getRecentFirstMoverWatchlist', () => {
     assert.match(src, /export\s+async\s+function\s+getRecentFirstMoverWatchlist\s*\(/);

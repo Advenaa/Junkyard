@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -93,7 +94,7 @@ describe('CD-005: POST /api/v1/config/test-webhook', () => {
 // ===========================================================================
 
 describe('CD-012: getAllSourcesWithState query', () => {
-  const src = readSrc('src/db/queries.ts');
+  const src = readQueriesSource();
 
   it('exports getAllSourcesWithState function', () => {
     assert.match(

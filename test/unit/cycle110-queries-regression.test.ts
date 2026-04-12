@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readServerSource } from './helpers/server-source.js';
+import { readQueriesSource } from './helpers/queries-source.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -54,7 +55,7 @@ describe('QR-010: insertSource call uses Date.now() not epoch-seconds', () => {
 // ===========================================================================
 
 describe('QR-008: computeDailySentiment filters NULL sentiments', () => {
-  const src = readSrc('src/db/queries.ts');
+  const src = readQueriesSource();
 
   it('computeDailySentiment query contains sentiment IS NOT NULL', () => {
     // Extract the function body
@@ -74,7 +75,7 @@ describe('QR-008: computeDailySentiment filters NULL sentiments', () => {
 // ===========================================================================
 
 describe('QR-009: insertSummary is idempotent', () => {
-  const src = readSrc('src/db/queries.ts');
+  const src = readQueriesSource();
 
   // Extract the insertSummary function body
   const fnStart = src.indexOf('async function insertSummary');

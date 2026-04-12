@@ -12,6 +12,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { readQueriesSource } from './helpers/queries-source.js';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function readSrc(relPath: string): string {
@@ -132,7 +134,7 @@ describe('CoinGecko module (src/prices/coingecko.ts)', () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe('Price snapshot queries (src/db/queries.ts)', () => {
-  const src = readSrc('src/db/queries.ts');
+  const src = readQueriesSource();
 
   it('PriceSnapshotRow type is exported', () => {
     assert.match(
