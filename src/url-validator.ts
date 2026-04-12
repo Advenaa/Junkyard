@@ -262,7 +262,7 @@ function createPinnedDispatcher(resolvedIp: string): Dispatcher {
     keepAliveMaxTimeout: 1,
     connect: {
       lookup(_hostname, _options, callback) {
-        callback(null, resolvedIp, family);
+        callback(null, [{ address: resolvedIp, family }]);
       },
     },
   });
