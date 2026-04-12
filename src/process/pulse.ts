@@ -10,6 +10,7 @@ import {
 import {
   getSummariesByTimeWindow,
   insertReport,
+  insertMacroRegime,
   insertHealthEvent,
   getAppConfig,
   getSentimentShiftAroundTime,
@@ -1083,6 +1084,22 @@ export function createPulse(
         },
         'Pulse report created',
       );
+
+      if (report.macroRegime) {
+        try {
+          await insertMacroRegime(pool, {
+            reportId: reportRow.id,
+            date: reportRow.date,
+            reportType: 'pulse',
+            classification: report.macroRegime.classification,
+            confidence: report.macroRegime.confidence,
+            rationale: report.macroRegime.rationale,
+            createdAt: reportRow.created_at,
+          });
+        } catch (err: unknown) {
+          log.warn({ err: toLoggedError(err), reportId: reportRow.id }, 'Failed to persist pulse macro regime history');
+        }
+      }
 
       return succeed(reportRow);
     } catch (err: unknown) {
