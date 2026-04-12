@@ -141,6 +141,62 @@ describe('SummaryView', () => {
     expect(screen.queryByText(/Error: API 404: Not Found/)).not.toBeInTheDocument();
   });
 
+  it('shows the loading state before the summary fetch resolves', async () => {
+    let resolveFetch!: (value: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        const path = new URL(url, 'http://localhost').pathname;
+
+        if (path === '/api/v1/summaries/summary-pending') {
+          return pendingResponse;
+        }
+
+        throw new Error(`Unhandled fetch ${path}`);
+      }),
+    );
+
+    renderSummaryView('/summaries/summary-pending');
+
+    // The "Loading..." placeholder is emitted synchronously before the
+    // pending fetch resolves and must NOT be replaced by an empty
+    // 'Summary not found' block while the request is still in flight.
+    expect(screen.getByText('Loading...')).toBeInTheDocument();
+    expect(screen.queryByText('Summary not found')).not.toBeInTheDocument();
+
+    // Resolve the fetch so the test cleanly unmounts without leaving a
+    // dangling promise in the next test's setup.
+    resolveFetch(
+      new Response(
+        JSON.stringify({
+          summary: {
+            id: 'summary-pending',
+            source: 'discord',
+            sourceId: 'x',
+            windowStart: Date.UTC(2026, 3, 6, 8, 0, 0),
+            windowEnd: Date.UTC(2026, 3, 6, 9, 0, 0),
+            sentiment: null,
+            urgency: null,
+            itemCount: 0,
+            createdAt: Date.UTC(2026, 3, 6, 9, 0, 0),
+            text: 'Resolved after loading.',
+            confidence: null,
+            keyEvents: [],
+            entities: [],
+            events: [],
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    await screen.findByText('Resolved after loading.');
+  });
+
   it('renders the error block when the requested summary returns 500', async () => {
     vi.stubGlobal(
       'fetch',
