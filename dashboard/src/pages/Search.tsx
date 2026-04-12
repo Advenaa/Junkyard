@@ -14,6 +14,7 @@ import {
   getReportChainStoryChipLabel,
   getReportChainToggleAction,
 } from '../lib/reportChains';
+import { Badge } from '../components/Badge';
 import { ReportChainPreviewSection } from '../components/ReportChainPreviewSection';
 import { EmptyState } from '../components/EmptyState';
 import { TypeBadge } from '../components/TypeBadge';
@@ -69,11 +70,6 @@ const SOURCE_COLORS: Record<string, string> = {
   rss: 'bg-accent-green/20 text-accent-green',
   news: 'bg-border text-text-secondary',
 };
-
-function SourceBadge({ source }: { source: string }) {
-  const color = SOURCE_COLORS[source] ?? 'bg-border text-text-secondary';
-  return <span className={`px-2 py-0.5 rounded text-xs font-mono uppercase ${color}`}>{source}</span>;
-}
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -213,7 +209,11 @@ export function Search() {
                   <Link to={getResultHref(result)} className="block p-4 space-y-2 focus:outline-none">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <SourceBadge source={result.source ?? 'summary'} />
+                        <Badge
+                          label={result.source ?? 'summary'}
+                          colorClass={SOURCE_COLORS[result.source ?? 'summary']}
+                          uppercase
+                        />
                         {result.sourceId && (
                           <span className="text-text-secondary text-xs font-mono">{result.sourceId}</span>
                         )}

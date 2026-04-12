@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { apiFetch, isApiError } from '../lib/api';
 import { formatDateTime, formatDateTimeRange, sentimentTextColor } from '../lib/formatting';
+import { Badge } from '../components/Badge';
 import { EmptyState } from '../components/EmptyState';
 
 interface SummaryEntity {
@@ -68,17 +69,6 @@ const URGENCY_COLORS: Record<string, string> = {
   elevated: 'bg-accent/20 text-accent',
   breaking: 'bg-accent-red/20 text-accent-red',
 };
-
-function SourceBadge({ source }: { source: string }) {
-  const color = SOURCE_COLORS[source] ?? 'bg-border text-text-secondary';
-  return <span className={`px-2 py-0.5 rounded text-xs font-mono uppercase ${color}`}>{source}</span>;
-}
-
-function UrgencyBadge({ urgency }: { urgency: string | null }) {
-  const value = urgency ?? 'unknown';
-  const color = URGENCY_COLORS[value] ?? 'bg-border text-text-secondary';
-  return <span className={`px-2 py-0.5 rounded text-xs font-mono uppercase ${color}`}>{value}</span>;
-}
 
 function formatLinkedChainLabel(position: number, eventCount: number): string {
   return `Event ${position} of ${eventCount} in linked chain`;
@@ -182,8 +172,12 @@ export function SummaryView() {
     <div className="p-6 max-w-4xl mx-auto space-y-8">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
-          <SourceBadge source={summary.source} />
-          <UrgencyBadge urgency={summary.urgency} />
+          <Badge label={summary.source} colorClass={SOURCE_COLORS[summary.source]} uppercase />
+          <Badge
+            label={summary.urgency ?? 'unknown'}
+            colorClass={URGENCY_COLORS[summary.urgency ?? 'unknown']}
+            uppercase
+          />
           <span className="font-mono text-xs text-text-secondary uppercase tracking-wider">Summary</span>
         </div>
         <span className="font-mono text-xs text-text-secondary">{formatDateTime(summary.createdAt)}</span>
