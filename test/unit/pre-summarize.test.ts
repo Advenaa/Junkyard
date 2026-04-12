@@ -21,7 +21,7 @@ const mockConfig = {
   },
 } as any;
 
-function longContent(len = 5000): string {
+function longContent(len = 7000): string {
   return 'a'.repeat(len);
 }
 
@@ -38,9 +38,9 @@ describe('shouldSkip', () => {
     assert.equal(shouldSkip({ source: 'twitter', content: longContent() }), true);
   });
 
-  it('skips items with content <= 4000 chars', () => {
+  it('skips items with <= 1500 estimated tokens', () => {
     assert.equal(shouldSkip({ source: 'rss', content: 'short' }), true);
-    assert.equal(shouldSkip({ source: 'rss', content: 'x'.repeat(4000) }), true);
+    assert.equal(shouldSkip({ source: 'rss', content: 'x'.repeat(6000) }), true);
   });
 
   it('skips items with urgency keywords', () => {
@@ -56,7 +56,7 @@ describe('shouldSkip', () => {
     ];
 
     for (const kw of keywords) {
-      const content = longContent(4500) + ` Breaking news: ${kw} detected`;
+      const content = longContent(7000) + ` Breaking news: ${kw} detected`;
       assert.equal(shouldSkip({ source: 'rss', content }), true, `should skip for urgency keyword "${kw}"`);
     }
   });
@@ -64,17 +64,17 @@ describe('shouldSkip', () => {
   it('skips items with high entity density', () => {
     // Construct content with many capitalized entity-like patterns
     const entities = Array.from({ length: 100 }, (_, i) => `$TOKEN${i}`).join(' ');
-    const content = entities + ' ' + longContent(4500);
+    const content = entities + ' ' + longContent(7000);
     assert.equal(shouldSkip({ source: 'rss', content }), true);
   });
 
   it('processes eligible RSS items with long content and no urgency', () => {
-    const content = longContent(5000);
+    const content = longContent();
     assert.equal(shouldSkip({ source: 'rss', content }), false);
   });
 
   it('processes eligible news items with long content', () => {
-    const content = longContent(5000);
+    const content = longContent();
     assert.equal(shouldSkip({ source: 'news', content }), false);
   });
 });
@@ -150,7 +150,7 @@ describe('createPreSummarizer.run()', () => {
     const mockPool = {
       query: async () => ({
         rows: [
-          { id: '1', source: 'rss', content: 'short' }, // <= 4000 chars
+          { id: '1', source: 'rss', content: 'short' }, // <= 1500 tokens
         ],
         rowCount: 1,
       }),
@@ -169,7 +169,7 @@ describe('createPreSummarizer.run()', () => {
 
   it('calls LLM with correct haiku model', async () => {
     let capturedModel = '';
-    const content = longContent(5000);
+    const content = longContent();
 
     const mockPool = {
       query: async (text: string) => {
@@ -200,7 +200,7 @@ describe('createPreSummarizer.run()', () => {
 
   it('PS-001 regression: includes nonce wrapping in LLM content', async () => {
     let capturedContent = '';
-    const content = longContent(5000);
+    const content = longContent();
 
     const mockPool = {
       query: async (text: string) => {
@@ -232,7 +232,7 @@ describe('createPreSummarizer.run()', () => {
 
   it('includes untrusted data instruction in system prompt', async () => {
     let capturedSystem = '';
-    const content = longContent(5000);
+    const content = longContent();
 
     const mockPool = {
       query: async (text: string) => {
@@ -293,7 +293,7 @@ describe('createPreSummarizer.run()', () => {
   });
 
   it('clears batch_id when releasing items after an LLM error', async () => {
-    const content = longContent(5000);
+    const content = longContent();
     const calls: { text: string; values: unknown[] }[] = [];
 
     const mockPool = {
@@ -332,7 +332,7 @@ describe('createPreSummarizer.run()', () => {
   });
 
   it('updates content for successfully summarized items', async () => {
-    const content = longContent(5000);
+    const content = longContent();
     const queries: string[] = [];
     const queryValues: unknown[][] = [];
 

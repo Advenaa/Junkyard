@@ -11,16 +11,16 @@ describe('IP-012 — Urgent long articles are size-aware in shouldSkip', () => {
     assert.match(preSummarizeSrc, /const URGENCY_KEYWORDS\s*=/);
   });
 
-  it('shouldSkip has a length threshold at 8000 for urgent items', () => {
-    // The 8000 threshold must appear in the shouldSkip logic
-    assert.match(preSummarizeSrc, /8000/);
-    // Specifically: urgent AND short (<= 8000) → skip (return true)
-    assert.match(preSummarizeSrc, /isUrgent\s*&&\s*item\.content\.length\s*<=\s*8000/);
+  it('shouldSkip has a token threshold at 2000 for urgent items', () => {
+    assert.match(preSummarizeSrc, /2000/);
+    assert.match(preSummarizeSrc, /isUrgent\s*&&\s*estimateTokens\(item\.content\)\s*<=\s*2000/);
   });
 
   it('urgent AND short items are skipped (return true)', () => {
-    // The line must return true when urgent AND within 8000 limit
-    assert.match(preSummarizeSrc, /if\s*\(\s*isUrgent\s*&&\s*item\.content\.length\s*<=\s*8000\s*\)\s*return\s+true/);
+    assert.match(
+      preSummarizeSrc,
+      /if\s*\(\s*isUrgent\s*&&\s*estimateTokens\(item\.content\)\s*<=\s*2000\s*\)\s*return\s+true/,
+    );
   });
 
   it('urgent AND very long items fall through (no early return)', () => {
