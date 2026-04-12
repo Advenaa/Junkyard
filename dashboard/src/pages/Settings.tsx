@@ -4752,7 +4752,11 @@ function EntitiesTab() {
       setAliasDraft('');
     } catch (err) {
       if (isApiError(err) && err.status === 409) {
-        setActionError('Alias already exists for this entity.');
+        if (err.detail?.includes('another entity')) {
+          setActionError('Alias is already claimed by another entity.');
+        } else {
+          setActionError('Alias already exists for this entity.');
+        }
       } else {
         setActionError('Failed to add alias.');
       }
