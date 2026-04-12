@@ -2134,6 +2134,19 @@ export async function deleteCalendarEvent(pool: Pool, id: string): Promise<boole
 
 // ── Price Snapshots ────────────────────────────────────────────────────
 
+interface PriceSnapshotQueryRow {
+  id: string;
+  entity_id: string;
+  timestamp: number;
+  price_usd: number;
+  price_change_24h: number | null;
+  price_change_7d: number | null;
+  volume_24h: number | null;
+  market_cap: number | null;
+  source: string;
+  created_at: number;
+}
+
 export interface PriceSnapshotRow {
   id: string;
   entityId: string;
@@ -2148,6 +2161,19 @@ export interface PriceSnapshotRow {
 }
 
 export type PriceContrarianSignal = 'price-up-sentiment-down' | 'price-down-sentiment-up';
+
+interface PriceWatchQueryRow {
+  entity_id: string;
+  entity_name: string;
+  timestamp: number;
+  price_usd: string | number;
+  price_change_24h: string | number | null;
+  price_change_7d: string | number | null;
+  volume_24h: string | number | null;
+  market_cap: string | number | null;
+  avg_sentiment: string | number | null;
+  momentum: string | number | null;
+}
 
 export interface PriceWatchEntry {
   entityId: string;
@@ -2172,18 +2198,18 @@ const PRICE_CONTRARIAN_SENTIMENT_THRESHOLD = 0.2;
 const PRICE_CONTRARIAN_MOVE_THRESHOLD = 3;
 
 /** Map a snake_case DB row to a camelCase PriceSnapshotRow. */
-function toPriceSnapshotRow(row: Record<string, unknown>): PriceSnapshotRow {
+function toPriceSnapshotRow(row: PriceSnapshotQueryRow): PriceSnapshotRow {
   return {
-    id: row.id as string,
-    entityId: row.entity_id as string,
-    timestamp: row.timestamp as number,
-    priceUsd: row.price_usd as number,
-    priceChange24h: (row.price_change_24h as number | null) ?? null,
-    priceChange7d: (row.price_change_7d as number | null) ?? null,
-    volume24h: (row.volume_24h as number | null) ?? null,
-    marketCap: (row.market_cap as number | null) ?? null,
-    source: row.source as string,
-    createdAt: row.created_at as number,
+    id: row.id,
+    entityId: row.entity_id,
+    timestamp: row.timestamp,
+    priceUsd: row.price_usd,
+    priceChange24h: row.price_change_24h ?? null,
+    priceChange7d: row.price_change_7d ?? null,
+    volume24h: row.volume_24h ?? null,
+    marketCap: row.market_cap ?? null,
+    source: row.source,
+    createdAt: row.created_at,
   };
 }
 
@@ -2203,13 +2229,13 @@ function derivePriceContrarianSignal(
   return null;
 }
 
-function toPriceWatchEntry(row: Record<string, unknown>): PriceWatchEntry {
+function toPriceWatchEntry(row: PriceWatchQueryRow): PriceWatchEntry {
   const avgSentiment = row.avg_sentiment == null ? null : Number.parseFloat(String(row.avg_sentiment));
   const priceChange24h = row.price_change_24h == null ? null : Number.parseFloat(String(row.price_change_24h));
 
   return {
-    entityId: row.entity_id as string,
-    entityName: row.entity_name as string,
+    entityId: row.entity_id,
+    entityName: row.entity_name,
     timestamp: Number(row.timestamp),
     priceUsd: Number(row.price_usd),
     priceChange24h,
@@ -2237,7 +2263,7 @@ export async function insertPriceSnapshot(
 ): Promise<PriceSnapshotRow> {
   const id = ulid();
   const now = Date.now();
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<PriceSnapshotQueryRow>(
     `INSERT INTO price_snapshots (
       id, entity_id, timestamp, price_usd, price_change_24h,
       price_change_7d, volume_24h, market_cap, source, created_at
@@ -2310,7 +2336,7 @@ export async function insertPriceSnapshots(
 }
 
 export async function getLatestPriceSnapshot(pool: Pool, entityId: string): Promise<PriceSnapshotRow | null> {
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<PriceSnapshotQueryRow>(
     `SELECT * FROM price_snapshots
       WHERE entity_id = $1
       ORDER BY timestamp DESC
@@ -2327,7 +2353,7 @@ export async function getPriceHistory(
   endTime: number,
   limit = 30,
 ): Promise<PriceSnapshotRow[]> {
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<PriceSnapshotQueryRow>(
     `SELECT * FROM price_snapshots
       WHERE entity_id = $1
         AND timestamp >= $2
@@ -2342,7 +2368,7 @@ export async function getPriceHistory(
 export async function getLatestPricesForEntities(pool: Pool, entityIds: string[]): Promise<PriceSnapshotRow[]> {
   if (entityIds.length === 0) return [];
 
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<PriceSnapshotQueryRow>(
     `SELECT DISTINCT ON (entity_id) *
       FROM price_snapshots
       WHERE entity_id = ANY($1)
@@ -2367,7 +2393,7 @@ export async function getPriceWatchOverview(pool: Pool, limit = 8): Promise<Pric
 
   const freshnessCutoff = latestTimestamp - 3 * 86_400_000;
 
-  const { rows } = await pool.query(
+  const { rows } = await pool.query<PriceWatchQueryRow>(
     `WITH latest_prices AS (
        SELECT DISTINCT ON (ps.entity_id)
          ps.entity_id,
@@ -2439,7 +2465,7 @@ export async function getPriceWatchOverview(pool: Pool, limit = 8): Promise<Pric
 
   return {
     latestTimestamp,
-    entries: rows.map((row) => toPriceWatchEntry(row as Record<string, unknown>)),
+    entries: rows.map((row) => toPriceWatchEntry(row)),
   };
 }
 
