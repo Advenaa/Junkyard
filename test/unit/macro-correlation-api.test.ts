@@ -42,8 +42,8 @@ describe('Macro API route (insight route module)', () => {
     assert.ok(routesSrc.includes('buildMacroContext'));
   });
 
-  it('returns 404 when no macro data is available', () => {
-    assert.ok(routesSrc.includes('No macro data available yet'));
+  it('returns empty entries with null latestDate when no macro data is available', () => {
+    assert.ok(!routesSrc.includes("'No macro data available yet'"), 'macro route must not return 404 for empty data');
   });
 
   it('returns overallBias and latestDate fields', () => {
