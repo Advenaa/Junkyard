@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ReportList } from '../ReportList';
@@ -490,6 +490,83 @@ describe('ReportList', () => {
 
     expect(await screen.findByText('Failed to load reports. Please try again.')).toBeInTheDocument();
     expect(screen.queryByText('No reports yet')).not.toBeInTheDocument();
+  });
+
+  it('does not clobber newer filter results with a stale in-flight fetch (regression for #195)', async () => {
+    let resolveDailyFetch!: (value: Response) => void;
+
+    const reportResponse = (reports: Array<{ id: string; type: 'daily' | 'flash'; tldr: string }>) =>
+      new Response(
+        JSON.stringify({
+          reports: reports.map((report, index) => ({
+            ...report,
+            date: '2026-04-08',
+            sentiment: null,
+            deliveryStatus: 'delivered',
+            createdAt: Date.now() + index,
+            eventChains: [],
+            chainDrilldowns: [],
+          })),
+          total: reports.length,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(url, 'http://localhost');
+      const narrativeResponse = maybeNarrativesResponse(path);
+      if (narrativeResponse) return narrativeResponse;
+
+      if (path.pathname !== '/api/v1/reports') {
+        throw new Error(`Unhandled fetch ${path.pathname}${path.search}`);
+      }
+
+      const type = path.searchParams.get('type');
+      if (type === 'daily') {
+        return new Promise<Response>((resolve) => {
+          resolveDailyFetch = resolve;
+        });
+      }
+      if (type === 'flash') {
+        return reportResponse([{ id: 'flash-report-1', type: 'flash', tldr: 'Fast flash report stayed visible.' }]);
+      }
+
+      return reportResponse([{ id: 'all-report-1', type: 'daily', tldr: 'Initial all reports entry.' }]);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={['/reports']}>
+        <Routes>
+          <Route path="/reports" element={<ReportList />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+
+    expect(await screen.findByText('Initial all reports entry.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: 'daily' }));
+    await user.click(screen.getByRole('radio', { name: 'flash' }));
+
+    expect(await screen.findByText('Fast flash report stayed visible.')).toBeInTheDocument();
+    expect(screen.queryByText('Initial all reports entry.')).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveDailyFetch(
+        reportResponse([{ id: 'daily-report-1', type: 'daily', tldr: 'Slow daily report arrived too late.' }]),
+      );
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Fast flash report stayed visible.')).toBeInTheDocument();
+    expect(screen.queryByText('Slow daily report arrived too late.')).not.toBeInTheDocument();
   });
 
   it('renders a macro alert preview when no active chain preview is present', async () => {
