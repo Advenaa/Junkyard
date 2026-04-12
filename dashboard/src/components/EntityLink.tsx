@@ -1,14 +1,19 @@
 import { Link } from 'react-router';
 
 interface EntityLinkProps {
-  entityId: string;
-  displayName: string;
+  entityId?: string;
+  name?: string;
+  /** @deprecated Use `name` instead */
+  displayName?: string;
 }
 
-export function EntityLink({ entityId, displayName }: EntityLinkProps) {
+export function EntityLink({ entityId, name, displayName }: EntityLinkProps) {
+  const label = name || displayName || '';
+  const to = entityId ? `/entities/${entityId}` : `/entities?q=${encodeURIComponent(label)}`;
+
   return (
-    <Link to={`/entities/${entityId}`} className="text-accent hover:underline">
-      {displayName}
+    <Link to={to} className="text-accent hover:underline">
+      {label}
     </Link>
   );
 }
