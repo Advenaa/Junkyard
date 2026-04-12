@@ -21,6 +21,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { EmptyState } from '../components/EmptyState';
 import { FeatureDisabledCard } from '../components/FeatureDisabledCard';
 import { BookmarkButton } from '../components/BookmarkButton';
+import { SentimentIndicator } from '../components/SentimentIndicator.js';
 import { OnboardingWizard } from '../components/OnboardingWizard.js';
 import { PipelineProgress } from '../components/PipelineProgress.js';
 
@@ -96,6 +97,7 @@ export function ReportList() {
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [expandedTldrs, setExpandedTldrs] = useState<Set<string>>(new Set());
   const {
     previewBodyOverrides,
     leadChainLabelOverrides,
@@ -288,6 +290,15 @@ export function ReportList() {
       return next;
     });
   }, []);
+
+  const toggleTldr = (reportId: string) => {
+    setExpandedTldrs((prev) => {
+      const next = new Set(prev);
+      if (next.has(reportId)) next.delete(reportId);
+      else next.add(reportId);
+      return next;
+    });
+  };
 
   const loadMore = async () => {
     const requestId = latestReportsRequestRef.current;
@@ -536,28 +547,30 @@ export function ReportList() {
                         bookmarked={bookmarkedIds.has(report.id)}
                         onToggle={handleBookmarkToggle}
                       />
-                      {report.sentiment !== null && (
-                        <span
-                          className={`font-mono text-xs ${
-                            report.sentiment >= 0.3
-                              ? 'text-accent-green'
-                              : report.sentiment <= -0.3
-                                ? 'text-accent-red'
-                                : 'text-text-secondary'
-                          }`}
-                        >
-                          {report.sentiment > 0 ? '+' : ''}
-                          {report.sentiment.toFixed(2)}
-                        </span>
-                      )}
+                      {report.sentiment !== null && <SentimentIndicator value={report.sentiment} />}
                       <StatusBadge status={report.deliveryStatus} />
                     </div>
                   </div>
-                  <Link
-                    to={focusedReportHref}
-                    className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm"
-                  >
-                    <p className="text-text-primary text-sm font-body leading-relaxed line-clamp-2">{previewBody}</p>
+                  <div>
+                    <Link
+                      to={focusedReportHref}
+                      className="block focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 rounded-sm"
+                    >
+                      <p
+                        className={`text-text-primary text-sm font-body leading-relaxed ${expandedTldrs.has(report.id) ? '' : 'line-clamp-1'}`}
+                      >
+                        {previewBody}
+                      </p>
+                    </Link>
+                    {previewBody && previewBody.length > 120 && (
+                      <button
+                        type="button"
+                        onClick={() => toggleTldr(report.id)}
+                        className="text-text-secondary hover:text-accent text-xs font-mono mt-1 transition-colors"
+                      >
+                        {expandedTldrs.has(report.id) ? 'Show less' : 'Show more'}
+                      </button>
+                    )}
                     {secondaryPreview && (
                       <p className="mt-2 text-xs font-body text-text-secondary leading-relaxed line-clamp-1">
                         <span className="font-mono uppercase tracking-wider text-[10px] text-text-secondary/80">
@@ -566,7 +579,7 @@ export function ReportList() {
                         {secondaryPreview.text}
                       </p>
                     )}
-                  </Link>
+                  </div>
                 </div>
                 {activeChains.length > 0 && (
                   <ReportChainPreviewSection
