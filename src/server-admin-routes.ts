@@ -770,12 +770,14 @@ export function registerAdminRoutes({
       items_ready: string;
       items_processing: string;
       summaries_today: string;
+      reports_today: string;
       cost_today: string;
     }>(
       `SELECT
         (SELECT count(*) FROM items WHERE status = 'ready') AS items_ready,
         (SELECT count(*) FROM items WHERE status = 'processing') AS items_processing,
         (SELECT count(*) FROM summaries WHERE created_at > EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000) AS summaries_today,
+        (SELECT count(*) FROM reports WHERE created_at > EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000) AS reports_today,
         (SELECT COALESCE(SUM(cost_usd), 0) FROM llm_usage WHERE created_at > EXTRACT(EPOCH FROM date_trunc('day', NOW() AT TIME ZONE $1)) * 1000) AS cost_today`,
       [timezone],
     );
@@ -785,6 +787,7 @@ export function registerAdminRoutes({
       itemsReady: parseInt(row.items_ready, 10),
       itemsProcessing: parseInt(row.items_processing, 10),
       summariesToday: parseInt(row.summaries_today, 10),
+      reportsToday: parseInt(row.reports_today, 10),
       costToday: parseFloat(row.cost_today),
       disabledFeatures: (Object.keys(config.disabledFeatures) as Array<keyof typeof config.disabledFeatures>)
         .filter((key) => config.disabledFeatures[key].disabled)
