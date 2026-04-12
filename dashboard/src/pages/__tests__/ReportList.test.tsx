@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { ReportList } from '../ReportList';
@@ -65,10 +65,50 @@ function maybeNarrativesResponse(
   });
 }
 
+function maybeOnboardingResponse(
+  path: URL,
+  payload: {
+    showOnboarding: boolean;
+    sourceCount: number;
+    statusSummary: {
+      itemsReady: number;
+      itemsProcessing: number;
+      summariesToday: number;
+    };
+  } = {
+    showOnboarding: false,
+    sourceCount: 0,
+    statusSummary: {
+      itemsReady: 0,
+      itemsProcessing: 0,
+      summariesToday: 0,
+    },
+  },
+) {
+  if (path.pathname !== '/api/v1/onboarding') {
+    return null;
+  }
+
+  return new Response(JSON.stringify(payload), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function getPath(input: RequestInfo | URL): string {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  return new URL(url, 'http://localhost').pathname;
+}
+
+function countPathCalls(fetchMock: ReturnType<typeof vi.fn>, path: string): number {
+  return fetchMock.mock.calls.filter(([input]) => getPath(input as RequestInfo | URL) === path).length;
+}
+
 describe('ReportList', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     window.sessionStorage.clear();
   });
 
@@ -76,6 +116,8 @@ describe('ReportList', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const path = new URL(url, 'http://localhost');
+      const onboardingResponse = maybeOnboardingResponse(path);
+      if (onboardingResponse) return onboardingResponse;
       const narrativeResponse = maybeNarrativesResponse(path);
       if (narrativeResponse) return narrativeResponse;
 
@@ -243,7 +285,7 @@ describe('ReportList', () => {
       '/summaries/summary-12?chain=chain-root-2',
     );
     await user.click(screen.getByRole('button', { name: 'Active stories · 2' }));
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(countPathCalls(fetchMock, '/api/v1/reports/report-1')).toBe(1);
     expect(screen.queryByRole('button', { name: 'Show 3 more active chains' })).not.toBeInTheDocument();
     expect(await screen.findByRole('link', { name: 'Solana · audit · 4 linked events' })).toHaveAttribute(
       'href',
@@ -280,7 +322,7 @@ describe('ReportList', () => {
 
     await user.click(screen.getByRole('button', { name: 'Refresh stories' }));
 
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(countPathCalls(fetchMock, '/api/v1/reports/report-1')).toBe(2);
     expect(screen.getByRole('button', { name: 'Active stories · 5' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Lead chain · Chainlink · legal' })).toHaveAttribute(
       'href',
@@ -318,6 +360,8 @@ describe('ReportList', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const path = new URL(url, 'http://localhost');
+      const onboardingResponse = maybeOnboardingResponse(path);
+      if (onboardingResponse) return onboardingResponse;
       const narrativeResponse = maybeNarrativesResponse(path);
       if (narrativeResponse) return narrativeResponse;
 
@@ -403,6 +447,72 @@ describe('ReportList', () => {
     );
 
     expect(await screen.findByRole('button', { name: 'Active stories · 3' })).toBeInTheDocument();
+  });
+
+  it('shows the onboarding wizard when the server says onboarding should be shown, then hides it after dismiss', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = new URL(url, 'http://localhost');
+      const method = init?.method ?? 'GET';
+
+      const narrativeResponse = maybeNarrativesResponse(path);
+      if (narrativeResponse) return narrativeResponse;
+
+      if (path.pathname === '/api/v1/onboarding' && method === 'GET') {
+        return maybeOnboardingResponse(path, {
+          showOnboarding: true,
+          sourceCount: 0,
+          statusSummary: {
+            itemsReady: 0,
+            itemsProcessing: 0,
+            summariesToday: 0,
+          },
+        })!;
+      }
+
+      if (path.pathname === '/api/v1/onboarding/dismiss' && method === 'PATCH') {
+        expect(init?.body).toBe('{}');
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (path.pathname === '/api/v1/reports' && method === 'GET') {
+        return new Response(JSON.stringify({ reports: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unhandled fetch ${method} ${path.pathname}${path.search}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={['/reports']}>
+        <Routes>
+          <Route path="/reports" element={<ReportList />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const user = userEvent.setup();
+
+    expect(await screen.findByText('Welcome to Podders')).toBeInTheDocument();
+    expect(screen.getByText('Step 1 / 3')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Skip' }));
+
+    expect(await screen.findByText('No reports yet')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Add a source to start collecting market intelligence/i })).toHaveAttribute(
+      'href',
+      '/settings?tab=sources',
+    );
+    expect(screen.queryByText('Welcome to Podders')).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem('podders:onboarding-hidden')).toBe('1');
+    expect(countPathCalls(fetchMock, '/api/v1/onboarding/dismiss')).toBe(1);
   });
 
   it('shows a header retry label when active-story expansion fails', async () => {

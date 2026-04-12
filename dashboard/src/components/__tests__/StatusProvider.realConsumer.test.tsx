@@ -26,6 +26,28 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function onboardingResponse(
+  body: {
+    showOnboarding: boolean;
+    sourceCount: number;
+    statusSummary: {
+      itemsReady: number;
+      itemsProcessing: number;
+      summariesToday: number;
+    };
+  } = {
+    showOnboarding: false,
+    sourceCount: 0,
+    statusSummary: {
+      itemsReady: 0,
+      itemsProcessing: 0,
+      summariesToday: 0,
+    },
+  },
+): Response {
+  return jsonResponse(body);
+}
+
 function createDeferredResponse() {
   let resolve!: (value: Response) => void;
   let reject!: (reason?: unknown) => void;
@@ -86,6 +108,10 @@ describe('StatusProvider real consumer regression coverage', () => {
         return deferredStatus.promise;
       }
 
+      if (path === '/api/v1/onboarding') {
+        return onboardingResponse();
+      }
+
       if (path === '/api/v1/reports') {
         return jsonResponse({ reports: [] });
       }
@@ -137,6 +163,10 @@ describe('StatusProvider real consumer regression coverage', () => {
 
       if (path === '/api/v1/status') {
         return jsonResponse(statusSnapshot());
+      }
+
+      if (path === '/api/v1/onboarding') {
+        return onboardingResponse();
       }
 
       if (path === '/api/v1/reports') {
