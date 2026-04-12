@@ -14,6 +14,7 @@ import { createSessionManager } from './auth/sessions.js';
 import { createDiscordRest } from './ingest/discord-rest.js';
 import { createEnvDiscordTokens, type DiscordRuntimeToken } from './discord-tokens.js';
 import { registerAdminRoutes } from './server-admin-routes.js';
+import { registerBookmarkRoutes } from './server-bookmark-routes.js';
 import { registerCalendarRoutes } from './server-calendar-routes.js';
 import { registerEntityRoutes } from './server-entity-routes.js';
 import { registerInsightRoutes } from './server-insight-routes.js';
@@ -97,6 +98,7 @@ export async function createServer(
   });
 
   registerReportRoutes({ app, authPreHandler, pool });
+  registerBookmarkRoutes({ app, authPreHandler, pool });
   registerSourceRoutes({ app, authPreHandler, requireAdmin, pool });
   registerSearchRoutes({ app, authPreHandler, chatHandler, config, pool });
 
