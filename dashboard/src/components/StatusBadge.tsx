@@ -1,10 +1,11 @@
-import { Badge } from './Badge';
+import { Badge } from './Badge.js';
 
 const COLORS: Record<string, string> = {
   delivered: 'bg-accent-green/20 text-accent-green',
   pending: 'bg-accent/20 text-accent',
   failed: 'bg-accent-red/20 text-accent-red',
   active: 'bg-accent-green/20 text-accent-green',
+  archived: 'bg-border text-text-secondary',
   disabled: 'bg-border text-text-secondary',
   halted: 'bg-accent-red/20 text-accent-red',
   connected: 'bg-accent-green/20 text-accent-green',
