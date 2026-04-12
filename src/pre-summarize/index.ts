@@ -2,6 +2,7 @@ import { ulid } from 'ulid';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import { estimateTokens } from '../process/chunk.js';
 
 interface LLMCaller {
   call(params: {
@@ -33,12 +34,12 @@ const URGENCY_KEYWORDS = [
 
 export function shouldSkip(item: { source: string; content: string }): boolean {
   if (item.source === 'discord' || item.source === 'twitter') return true;
-  if (item.content.length <= 4000) return true;
+  if (estimateTokens(item.content) <= 1500) return true;
 
   // Urgency items still need pre-summarization if extremely long
   const lower = item.content.toLowerCase();
   const isUrgent = URGENCY_KEYWORDS.some((kw) => lower.includes(kw));
-  if (isUrgent && item.content.length <= 8000) return true; // Short urgent: skip pre-summarize
+  if (isUrgent && estimateTokens(item.content) <= 2000) return true; // Short urgent: skip pre-summarize
   // Long urgent (>8000): fall through to pre-summarization
 
   const tokenEstimate = item.content.length / 4;
