@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { CalendarEventSnapshotEntry } from '../types';
 import { formatCalendarCategoryLabel, formatCalendarRecurrenceLabel, formatDateTime } from '../formatters';
 
@@ -6,7 +7,10 @@ interface CalendarSectionProps {
   calendarEntries: CalendarEventSnapshotEntry[];
 }
 
-export function CalendarSection({ calendarEvents, calendarEntries }: CalendarSectionProps) {
+export const CalendarSection = memo(function CalendarSection({
+  calendarEvents,
+  calendarEntries,
+}: CalendarSectionProps) {
   if (calendarEntries.length === 0) {
     return null;
   }
@@ -60,4 +64,4 @@ export function CalendarSection({ calendarEvents, calendarEntries }: CalendarSec
       </div>
     </div>
   );
-}
+});
