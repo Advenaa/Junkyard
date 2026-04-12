@@ -544,6 +544,7 @@ program
         reportRow = await pulse.runPulse();
       } catch (err: unknown) {
         log.error({ err: toLoggedError(err) }, 'pulse generation failed');
+        await pulse.recordPulseAbort(err instanceof Error ? err : new Error(String(err)));
         return;
       }
       if (reportRow) {
