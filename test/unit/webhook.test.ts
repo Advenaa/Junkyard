@@ -989,6 +989,39 @@ describe('deliver — idempotency guard', () => {
     resolve6Mock.mock.restore();
   });
 
+  it('uses the configured timezone for pulse delivery titles', async (t) => {
+    const pulseReport = { ...FAKE_REPORT, id: 'rpt-pulse-tz-001', type: 'pulse' as const };
+    const pool = mockPool([
+      { rows: [{ value: 'https://discord.com/api/webhooks/123/abc' }] },
+      { rows: [{ delivery_status: 'pending' }] },
+      { rows: [{ value: 'UTC' }] },
+      { rowCount: 1 },
+    ]);
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['104.16.60.37']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
+      return new Response(null, { status: 200 });
+    });
+
+    const config = {} as any;
+    const { deliver } = createDelivery(pool as any, silentLog as any, config);
+    const result = await deliver(pulseReport);
+
+    assert.strictEqual(result, true);
+
+    const [, opts] = fetchMock.mock.calls[0]!.arguments as [string, RequestInit];
+    const body = JSON.parse(opts.body as string);
+    assert.match(body.embeds[0].title, /^Market Pulse \u2014 \d{2}:\d{2} UTC$/);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
   it('reconciles delivered status without re-posting when the DB update fails after a successful POST', async (t) => {
     const calls: Array<{ text: string; values: unknown[] }> = [];
     let deliveredUpdateAttempts = 0;

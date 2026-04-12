@@ -128,21 +128,21 @@ export function buildTitle(type: string, date: string, timezone?: string): strin
     return `[FLASH] Market Report \u2014 ${date}`;
   }
   if (type === 'pulse') {
-    const tz = timezone || DEFAULT_TIMEZONE;
+    const tz = timezone ?? DEFAULT_TIMEZONE;
     const now = new Date();
-    const time = now.toLocaleTimeString('en-GB', {
+    const localTime = now.toLocaleTimeString('en-GB', {
       hour: '2-digit',
       minute: '2-digit',
       timeZone: tz,
     });
     const tzAbbr =
-      new Intl.DateTimeFormat('en-GB', {
+      new Intl.DateTimeFormat('en-US', {
         timeZone: tz,
         timeZoneName: 'short',
       })
         .formatToParts(now)
-        .find((p) => p.type === 'timeZoneName')?.value ?? '';
-    return `Market Pulse \u2014 ${time} ${tzAbbr}`;
+        .find((p) => p.type === 'timeZoneName')?.value ?? tz;
+    return `Market Pulse \u2014 ${localTime} ${tzAbbr}`;
   }
   return `Market Report \u2014 ${date}`;
 }
@@ -675,7 +675,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
       return false;
     }
 
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? undefined;
+    const timezone = (await getAppConfig(pool, 'timezone')) ?? DEFAULT_TIMEZONE;
     const embed = buildEmbed(report, parsed, config, timezone);
     const payload = JSON.stringify({
       embeds: [embed],
