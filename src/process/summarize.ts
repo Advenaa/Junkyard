@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ulid } from 'ulid';
 import { ChunkSummaryLLMSchema } from './schemas.js';
 import type { AuthorClaim, ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
-import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk } from './chunk.js';
+import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk, estimateTokens } from './chunk.js';
 import { verifyEntities, verifyEvents, verifyRelationships } from './chunk-verify.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
@@ -1008,6 +1008,21 @@ Rules:
 
     // c. Chunk
     const chunks = chunkByTokens(items, CHUNK_TOKEN_BUDGET);
+    const chunkSamples = chunks.slice(0, 50);
+    log.info(
+      {
+        event: 'chunk_distribution',
+        stage: 'summarize',
+        source,
+        sourceId,
+        batchId,
+        chunkCount: chunks.length,
+        tokenBudget: CHUNK_TOKEN_BUDGET,
+        chunkTokens: chunkSamples.map((chunk) => estimateTokens(chunk.map((item) => item.content).join(' '))),
+        chunkItems: chunkSamples.map((chunk) => chunk.length),
+      },
+      'chunk distribution',
+    );
 
     // d-g. Process chunks with bounded concurrency (max 3 parallel)
     const callBudget: CallBudget = {

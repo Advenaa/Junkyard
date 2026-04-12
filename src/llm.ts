@@ -410,6 +410,7 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
         const isCodexProvider = provider === 'openai-codex';
         const effectiveTemperature = params.temperature ?? STAGE_TEMPERATURES[params.stage] ?? 0.5;
         const codexKey = isCodexProvider ? await _getCodexApiKey(log) : undefined;
+        const requestStartedAt = Date.now();
         const response = await (_complete as typeof complete)(model, context, {
           maxTokens: params.maxTokens,
           ...(isCodexProvider ? {} : { temperature: effectiveTemperature }),
@@ -451,6 +452,18 @@ export function createLLM(pool: Pool, log: Logger, _config: Config, _testOverrid
           output_tokens: response.usage.output,
         };
         const cost = response.usage?.cost?.total ?? 0;
+        log.info(
+          {
+            event: 'llm_budget',
+            stage: params.stage,
+            model: modelName,
+            inputTokens: usage.input_tokens,
+            outputTokens: usage.output_tokens,
+            costUsd: cost,
+            durationMs: Date.now() - requestStartedAt,
+          },
+          'llm budget consumed',
+        );
 
         await insertLlmUsage(pool, {
           id: ulid(),
