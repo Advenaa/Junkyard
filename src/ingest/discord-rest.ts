@@ -28,7 +28,7 @@ export interface DiscordChannel {
 
 const DISCORD_API = 'https://discord.com/api/v10';
 
-export const _internal = { fetch: undiciFetch as unknown as typeof globalThis.fetch };
+export const _internal = { fetch: undiciFetch as unknown as typeof fetch };
 
 // ---------------------------------------------------------------------------
 // Internal raw types (snake_case from Discord API)
