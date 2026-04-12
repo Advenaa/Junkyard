@@ -3,11 +3,14 @@ import { ulid } from 'ulid';
 import type { Config } from '../config.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
+import { insertLlmUsage } from '../db/queries.js';
 import type { RawItem } from './rss.js';
 
 const BASE_URL = 'https://api.twitterapi.io';
 const MAX_PAGES = 5;
 const CONSECUTIVE_FAILURE_THRESHOLD = 10;
+// twitterapi.io bills $0.15 per 1K tweets (ARCHITECTURE.md).
+const TWITTER_COST_PER_TWEET = 0.00015;
 
 const TwitterTweetSchema = z.object({
   id: z.string(),
@@ -223,6 +226,25 @@ export function createTwitterAdapter(config: Config, pool: Pool, log: Logger) {
         'Twitter API response failed zod validation',
       );
       return null;
+    }
+
+    const tweetCount = parsed.data.tweets.length;
+    const model = sourceId.startsWith('@') ? 'twitterapi.io:last_tweets' : 'twitterapi.io:advanced_search';
+    try {
+      await insertLlmUsage(pool, {
+        id: ulid(),
+        stage: 'twitter-ingest',
+        model,
+        inputTokens: 0,
+        outputTokens: tweetCount,
+        costUsd: tweetCount * TWITTER_COST_PER_TWEET,
+        createdAt: Date.now(),
+      });
+    } catch (err: unknown) {
+      log.warn(
+        { sourceId, model, tweetCount, error: err instanceof Error ? err.message : String(err) },
+        'Twitter cost tracking insert failed — continuing with ingested tweets',
+      );
     }
 
     return parsed.data;
