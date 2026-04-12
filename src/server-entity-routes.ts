@@ -126,6 +126,128 @@ export function registerEntityRoutes({ app, authPreHandler, config, pool, requir
   );
 
   app.get<{ Params: { entityId: string } }>(
+    '/api/v1/entities/:entityId',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: { entityId: { type: 'string' } },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { entityId } = request.params;
+
+      const { rows } = await pool.query<{
+        id: string;
+        name: string;
+        type: string;
+        status: string;
+        relevance: number;
+        first_seen: number;
+        last_seen: number;
+      }>('SELECT * FROM entities WHERE id = $1', [entityId]);
+
+      if (rows.length === 0) {
+        return reply.code(404).send({ error: 'Entity not found' });
+      }
+
+      const entity = rows[0];
+
+      const { rows: mentionRows } = await pool.query<{ count: string }>(
+        'SELECT COUNT(*) AS count FROM entity_mentions WHERE entity_id = $1',
+        [entityId],
+      );
+
+      const { rows: aliasRows } = await pool.query<{ alias: string }>(
+        'SELECT alias FROM entity_aliases WHERE entity_id = $1 ORDER BY alias',
+        [entityId],
+      );
+
+      return {
+        entity: {
+          id: entity.id,
+          name: entity.name,
+          type: entity.type,
+          status: entity.status,
+          relevance: entity.relevance,
+          firstSeen: entity.first_seen,
+          lastSeen: entity.last_seen,
+          mentionCount: Number.parseInt(mentionRows[0].count, 10),
+          aliases: aliasRows.map((row) => row.alias),
+        },
+      };
+    },
+  );
+
+  app.get<{
+    Params: { entityId: string };
+    Querystring: { limit?: number; offset?: number };
+  }>(
+    '/api/v1/entities/:entityId/mentions',
+    {
+      preHandler: [authPreHandler],
+      schema: {
+        params: {
+          type: 'object',
+          required: ['entityId'],
+          properties: {
+            entityId: { type: 'string' },
+          },
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 50 },
+            offset: { type: 'integer', minimum: 0 },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    async (request) => {
+      const { entityId } = request.params;
+      const limit = request.query.limit ?? 20;
+      const offset = request.query.offset ?? 0;
+
+      const { rows } = await pool.query<{
+        id: string;
+        summary_id: string | null;
+        sentiment: number | null;
+        mention_count: number;
+        created_at: number;
+        source: string;
+      }>(
+        `SELECT id, summary_id, sentiment, mention_count, source, created_at
+           FROM entity_mentions
+          WHERE entity_id = $1
+          ORDER BY created_at DESC
+          LIMIT $2 OFFSET $3`,
+        [entityId, limit, offset],
+      );
+
+      const { rows: countRows } = await pool.query<{ count: string }>(
+        'SELECT COUNT(*) AS count FROM entity_mentions WHERE entity_id = $1',
+        [entityId],
+      );
+
+      return {
+        mentions: rows.map((row) => ({
+          id: row.id,
+          summaryId: row.summary_id,
+          sentiment: row.sentiment,
+          mentionCount: row.mention_count,
+          createdAt: row.created_at,
+          source: row.source,
+        })),
+        total: Number.parseInt(countRows[0].count, 10),
+      };
+    },
+  );
+
+  app.get<{ Params: { entityId: string } }>(
     '/api/v1/entities/:entityId/aliases',
     {
       preHandler: [authPreHandler],
