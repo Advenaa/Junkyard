@@ -73,9 +73,14 @@ export function registerInsightRoutes({
     };
   });
 
-  app.get('/api/v1/unusual-activity', { preHandler: [authPreHandler] }, async () => {
-    const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
-    return getUnusualActivityOverview(pool, 8, timezone);
+  app.get('/api/v1/unusual-activity', { preHandler: [authPreHandler] }, async (_request, reply) => {
+    try {
+      const timezone = (await getAppConfig(pool, 'timezone')) ?? 'Asia/Jakarta';
+      return await getUnusualActivityOverview(pool, 8, timezone);
+    } catch (err: unknown) {
+      app.log.error({ err }, 'unusual-activity: query failed');
+      return reply.code(200).send({ latestDate: null, entries: [] });
+    }
   });
 
   app.get('/api/v1/price-watch', { preHandler: [authPreHandler] }, async (_request, reply) => {

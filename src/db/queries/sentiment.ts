@@ -435,7 +435,7 @@ export async function getUnusualActivityOverview(
          COUNT(*)::integer AS baseline_days
        FROM entity_sentiment_daily
        WHERE date < $1
-         AND date >= ($1::date - ($2 * INTERVAL '1 day'))
+         AND date >= (($1::date - ($2::integer * INTERVAL '1 day'))::date)::text
        GROUP BY entity_id
      )
      SELECT
