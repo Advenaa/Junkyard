@@ -302,6 +302,14 @@ export function registerSourceRoutes({ app, authPreHandler, requireAdmin, pool }
         });
       }
 
+      const { rows: stateCheck } = await pool.query<{ status: string }>(
+        'SELECT status FROM source_state WHERE source = $1 AND source_id = $2',
+        [source, sourceId],
+      );
+      if (stateCheck[0]?.status === 'halted') {
+        return reply.code(409).send({ error: 'Source is halted — use retry to unhalt first' });
+      }
+
       const { rowCount } = await pool.query(
         `UPDATE source_state SET last_fetched_at = 0
        WHERE source = $1 AND source_id = $2 AND status != 'disabled'`,
