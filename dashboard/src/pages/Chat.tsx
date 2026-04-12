@@ -21,6 +21,14 @@ interface ChatResponse {
   sources: ChatSource[];
 }
 
+const SUGGESTED_QUERIES = [
+  "What's the overall market sentiment today?",
+  "Summarize today's alpha signals",
+  'Which entities had unusual activity recently?',
+  'What are the key narrative shifts this week?',
+  'Show me the latest first movers',
+];
+
 function generateId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
@@ -43,17 +51,16 @@ export function Chat() {
   const disabledEmbeddings = getDisabledFeature('embeddings');
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
-      return JSON.parse(sessionStorage.getItem('podders-chat-messages') ?? '[]');
+      return JSON.parse(localStorage.getItem('podders-chat-messages') ?? '[]');
     } catch {
       return [];
     }
   });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [retryQuery, setRetryQuery] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [conversationId, setConversationId] = useState(() => {
-    return sessionStorage.getItem('podders-chat-conversation-id') ?? generateId();
+    return localStorage.getItem('podders-chat-conversation-id') ?? generateId();
   });
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -68,11 +75,11 @@ export function Chat() {
   }, [messages, loading]);
 
   useEffect(() => {
-    sessionStorage.setItem('podders-chat-messages', JSON.stringify(messages));
+    localStorage.setItem('podders-chat-messages', JSON.stringify(messages));
   }, [messages]);
 
   useEffect(() => {
-    sessionStorage.setItem('podders-chat-conversation-id', conversationId);
+    localStorage.setItem('podders-chat-conversation-id', conversationId);
   }, [conversationId]);
 
   useEffect(() => {
@@ -107,7 +114,6 @@ export function Chat() {
         setInput('');
         setMessages((prev) => [...prev, { id: generateId(), role: 'user', content: query }]);
       }
-      setRetryQuery(null);
       setLoading(true);
 
       try {
@@ -116,7 +122,6 @@ export function Chat() {
           body: JSON.stringify({ query, conversationId: requestConversationId }),
         });
         if (conversationIdRef.current !== requestConversationId) return;
-        setRetryQuery(null);
         setMessages((prev) => [
           ...prev,
           {
@@ -130,7 +135,6 @@ export function Chat() {
       } catch (err) {
         if (conversationIdRef.current !== requestConversationId) return;
         const errorMessage = parseErrorMessage(err);
-        setRetryQuery(query);
         setMessages((prev) => [
           ...prev,
           { id: generateId(), role: 'assistant', content: errorMessage, retryQuery: query },
@@ -151,14 +155,12 @@ export function Chat() {
     }
   };
 
-  const newChat = () => {
+  const handleNewChat = () => {
     setMessages([]);
     setConversationId(generateId());
     setInput('');
-    setRetryQuery(null);
     setLoading(false);
-    sessionStorage.removeItem('podders-chat-messages');
-    sessionStorage.removeItem('podders-chat-conversation-id');
+    localStorage.removeItem('podders-chat-messages');
     textareaRef.current?.focus();
   };
 
@@ -168,9 +170,10 @@ export function Chat() {
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-surface">
         <span className="text-sm text-text-secondary">Chat</span>
         <button
-          onClick={newChat}
+          type="button"
+          onClick={handleNewChat}
           aria-label="Start new chat conversation"
-          className="text-xs px-3 py-2.5 min-h-[44px] rounded bg-surface-raised text-text-secondary hover:text-text-primary transition-colors"
+          className="text-text-secondary hover:text-accent text-xs font-mono transition-colors"
         >
           New Chat
         </button>
@@ -188,9 +191,27 @@ export function Chat() {
 
       {/* Messages */}
       <ChatPanel>
-        {messages.length === 0 && !loading && (
-          <div className="flex items-center justify-center h-full text-text-secondary text-sm">
-            Ask anything about your market intelligence data.
+        {messages.length === 0 && (
+          <div className="px-4 py-6 space-y-4">
+            <p className="sr-only">Ask anything about your market intelligence data.</p>
+            <p className="text-text-secondary text-sm font-body text-center">
+              Ask about entities, signals, reports, or market conditions.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {SUGGESTED_QUERIES.map((query) => (
+                <button
+                  key={query}
+                  type="button"
+                  onClick={() => {
+                    setInput(query);
+                    textareaRef.current?.focus();
+                  }}
+                  className="px-3 py-1.5 rounded-full border border-border bg-surface text-text-secondary text-xs font-mono hover:text-accent hover:border-accent/30 transition-colors"
+                >
+                  {query}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {messages.map((msg) => (
