@@ -37,6 +37,38 @@ async function validateIntermediateHop(parsed: URL): Promise<{ valid: boolean; r
     return { valid: false };
   }
 
+  // Block literal IP hostnames that resolve to private ranges
+  const literalHost =
+    hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, hostname.length - 1) : hostname;
+  if (net.isIP(literalHost)) {
+    if (net.isIPv4(literalHost)) {
+      const parts = literalHost.split('.').map(Number);
+      const [a, b] = parts;
+      if (
+        a === 0 ||
+        a === 10 ||
+        a === 127 ||
+        (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168) ||
+        (a === 169 && b === 254)
+      ) {
+        return { valid: false };
+      }
+    } else if (net.isIPv6(literalHost)) {
+      const normalized = literalHost.toLowerCase();
+      if (
+        normalized === '::1' ||
+        normalized === '::' ||
+        normalized.startsWith('fc') ||
+        normalized.startsWith('fd') ||
+        normalized.startsWith('fe80')
+      ) {
+        return { valid: false };
+      }
+    }
+    return { valid: true, resolvedIp: literalHost };
+  }
+
   // DNS resolve — reject private IPs
   const [ipv4Result, ipv6Result] = await Promise.allSettled([
     dns.promises.resolve4(hostname),
