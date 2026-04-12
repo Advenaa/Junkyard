@@ -76,9 +76,10 @@ export function createVectorCache(pool: Pool, log: Logger): VectorCache {
 
   async function loadType(type: SearchableType): Promise<number> {
     const result = await pool.query<{ target_id: string; vector: Buffer }>(
-      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at ASC LIMIT $2',
+      'SELECT target_id, vector FROM embeddings WHERE target_type = $1 ORDER BY created_at DESC LIMIT $2',
       [type, MAX_VECTORS],
     );
+    result.rows.reverse();
 
     const map = maps[type];
     map.clear();

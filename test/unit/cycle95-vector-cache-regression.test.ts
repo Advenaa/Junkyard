@@ -32,15 +32,19 @@ describe('CH-002 — loadType loads all vectors without date filter', () => {
     assert.ok(!loadTypeBody.includes('created_at >'), 'loadType query must NOT contain any created_at > comparison');
   });
 
-  it('loadType query has ORDER BY created_at ASC LIMIT for correct eviction order', () => {
+  it('loadType query fetches newest rows DESC and reverses for correct eviction order', () => {
     const loadTypeIdx = vectorCacheSrc.indexOf('async function loadType');
     const loadTypeEnd = vectorCacheSrc.indexOf('\n  }', loadTypeIdx);
     const loadTypeBody = vectorCacheSrc.slice(loadTypeIdx, loadTypeEnd);
 
     assert.match(
       loadTypeBody,
-      /ORDER BY created_at ASC LIMIT/,
-      'loadType query must use ASC so Map front = oldest = correct eviction (VE-002)',
+      /ORDER BY created_at DESC LIMIT/,
+      'loadType query must use DESC to fetch the most recent vectors (VE-002)',
+    );
+    assert.ok(
+      loadTypeBody.includes('.reverse()'),
+      'loadType must reverse rows so Map front = oldest = correct eviction order (VE-002)',
     );
   });
 
