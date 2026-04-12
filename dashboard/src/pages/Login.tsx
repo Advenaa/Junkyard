@@ -25,6 +25,7 @@ export function Login() {
     setRequestedRole('viewer');
     setNote('');
     setRequestError(null);
+    setRequestSuccess(null);
     setRequestModalOpen(true);
   };
 
