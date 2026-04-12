@@ -311,8 +311,8 @@ describe('health monitor', () => {
       }
     });
 
-    it('returns healthy=false when a check is critical', async () => {
-      // Return disabled sources to trigger source_disabled critical
+    it('returns healthy=false when a check is warn', async () => {
+      // Return disabled sources to trigger source_disabled warn
       const pool = createMockPool({
         queryFn: async (text: string) => {
           if (text.includes('SELECT 1')) {
@@ -337,7 +337,7 @@ describe('health monitor', () => {
       assert.equal(healthy, false);
       const disabled = checks.find((c) => c.name === 'source_disabled');
       assert.ok(disabled, 'source_disabled check should exist');
-      assert.equal(disabled.status, 'critical');
+      assert.equal(disabled.status, 'warn');
       assert.ok(disabled.message?.includes('broken-source'));
     });
 
