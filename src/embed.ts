@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, TaskType } from '@google/generative-ai';
+import type { EmbedContentRequest } from '@google/generative-ai';
 import { ulid } from 'ulid';
 import type { Config } from './config.js';
 import type { Pool } from './db/connection.js';
@@ -10,7 +11,7 @@ import { insertLlmUsage } from './db/queries.js';
 export interface EmbedResult {
   vector: Float32Array;
   dimensions: number; // 768
-  model: string; // 'text-embedding-004'
+  model: string; // 'gemini-embedding-001'
 }
 
 interface GoogleGenerativeAIFetchError extends Error {
@@ -23,7 +24,7 @@ function isFetchError(err: unknown): err is GoogleGenerativeAIFetchError {
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-const MODEL_NAME = 'text-embedding-004';
+const MODEL_NAME = 'gemini-embedding-001';
 const DIMENSIONS = 768;
 const BATCH_CHUNK_SIZE = 100;
 const MAX_CHARS = 2048; // ~512 tokens at 4 chars/token
@@ -187,10 +188,12 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger, onAuthFa
     try {
       result = await withRetry(
         () =>
+          // SDK 0.24.1 forwards outputDimensionality but does not type it yet.
           model.embedContent({
             content: { parts: [{ text }], role: 'user' },
             taskType,
-          }),
+            outputDimensionality: DIMENSIONS,
+          } as Parameters<typeof model.embedContent>[0]),
         log,
         onAuthFailure,
       );
@@ -247,10 +250,14 @@ export function createEmbedder(config: Config, pool: Pool, log: Logger, onAuthFa
         const batchResult = await withRetry(
           () =>
             model.batchEmbedContents({
-              requests: chunk.map((text) => ({
-                content: { parts: [{ text }], role: 'user' },
-                taskType: TaskType.RETRIEVAL_DOCUMENT,
-              })),
+              requests: chunk.map(
+                (text) =>
+                  ({
+                    content: { parts: [{ text }], role: 'user' },
+                    taskType: TaskType.RETRIEVAL_DOCUMENT,
+                    outputDimensionality: DIMENSIONS,
+                  }) as EmbedContentRequest,
+              ),
             }),
           log,
           onAuthFailure,
