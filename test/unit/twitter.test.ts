@@ -513,4 +513,170 @@ describe('Twitter adapter', () => {
       assert.equal(log.calls['fatal']?.length, 1, 'should log fatal only once');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // llm_usage cost tracking (issue #186)
+  // -------------------------------------------------------------------------
+  describe('llm_usage cost tracking', () => {
+    /** Mock pool that captures every INSERT INTO llm_usage call. */
+    function makeUsageCapturingPool() {
+      const inserts: Array<{
+        id: string;
+        stage: string;
+        model: string;
+        inputTokens: number;
+        outputTokens: number;
+        costUsd: number;
+        createdAt: number;
+      }> = [];
+      const pool = {
+        query: async (sql: string, params?: unknown[]) => {
+          if (typeof sql === 'string' && sql.includes('INSERT INTO llm_usage')) {
+            const p = params as [string, string, string, number, number, number, number];
+            inserts.push({
+              id: p[0],
+              stage: p[1],
+              model: p[2],
+              inputTokens: p[3],
+              outputTokens: p[4],
+              costUsd: p[5],
+              createdAt: p[6],
+            });
+            return { rows: [], rowCount: 1 };
+          }
+          return { rows: [] };
+        },
+      } as any;
+      return { pool, inserts };
+    }
+
+    it('records an llm_usage row for a successful @handle poll', async () => {
+      const tweets = [makeTweet({ id: '100' }), makeTweet({ id: '200' }), makeTweet({ id: '300' })];
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets,
+          has_next_page: false,
+        });
+
+      const { pool, inserts } = makeUsageCapturingPool();
+      const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+      const { items } = await adapter.poll('@testuser', null);
+
+      assert.equal(items.length, 3);
+      assert.equal(inserts.length, 1, 'should insert exactly one llm_usage row');
+
+      const row = inserts[0]!;
+      assert.equal(row.stage, 'twitter-ingest');
+      assert.equal(row.model, 'twitterapi.io:last_tweets');
+      assert.equal(row.inputTokens, 0);
+      assert.equal(row.outputTokens, 3, 'should record tweet count in outputTokens');
+      // 3 tweets * $0.00015 = $0.00045
+      assert.ok(Math.abs(row.costUsd - 0.00045) < 1e-9, `expected 0.00045 cost, got ${row.costUsd}`);
+      assert.ok(typeof row.id === 'string' && row.id.length > 0, 'should generate a ULID');
+      assert.ok(typeof row.createdAt === 'number' && row.createdAt > 0, 'should record createdAt');
+    });
+
+    it('uses advanced_search model for non-handle sourceIds', async () => {
+      const tweets = [makeTweet({ id: '100' }), makeTweet({ id: '200' })];
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets,
+          has_next_page: false,
+        });
+
+      const { pool, inserts } = makeUsageCapturingPool();
+      const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+      await adapter.poll('bitcoin OR BTC', null);
+
+      assert.equal(inserts.length, 1);
+      assert.equal(inserts[0]!.model, 'twitterapi.io:advanced_search');
+      assert.equal(inserts[0]!.outputTokens, 2);
+      assert.ok(Math.abs(inserts[0]!.costUsd - 0.0003) < 1e-9);
+    });
+
+    it('records one row per page when pagination spans multiple requests', async () => {
+      let callCount = 0;
+      globalThis.fetch = () => {
+        callCount++;
+        if (callCount === 1) {
+          return mockFetchResponse({
+            tweets: [makeTweet({ id: '100' }), makeTweet({ id: '150' })],
+            has_next_page: true,
+            next_cursor: 'cursor_abc',
+          });
+        }
+        return mockFetchResponse({
+          tweets: [makeTweet({ id: '200' })],
+          has_next_page: false,
+        });
+      };
+
+      const { pool, inserts } = makeUsageCapturingPool();
+      const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+      const { items } = await adapter.poll('@testuser', null);
+
+      assert.equal(items.length, 3);
+      assert.equal(inserts.length, 2, 'should record one llm_usage row per page');
+      assert.equal(inserts[0]!.outputTokens, 2);
+      assert.equal(inserts[1]!.outputTokens, 1);
+      // Total cost = (2 + 1) * 0.00015 = 0.00045
+      const total = inserts[0]!.costUsd + inserts[1]!.costUsd;
+      assert.ok(Math.abs(total - 0.00045) < 1e-9);
+    });
+
+    it('records zero-cost row when response contains no tweets', async () => {
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets: [],
+          has_next_page: false,
+        });
+
+      const { pool, inserts } = makeUsageCapturingPool();
+      const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+      await adapter.poll('@testuser', null);
+
+      assert.equal(inserts.length, 1, 'should still record a row for audit trail');
+      assert.equal(inserts[0]!.outputTokens, 0);
+      assert.equal(inserts[0]!.costUsd, 0);
+    });
+
+    it('does not record llm_usage when fetch fails (401/429/5xx)', async () => {
+      globalThis.fetch = () => mockFetchResponse({}, 500);
+
+      const { pool, inserts } = makeUsageCapturingPool();
+      const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+      await adapter.poll('@testuser', null);
+
+      assert.equal(inserts.length, 0, 'no tweets fetched means no usage row');
+    });
+
+    it('swallows DB insert failure and still returns ingested tweets', async () => {
+      const tweets = [makeTweet({ id: '100' }), makeTweet({ id: '200' })];
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets,
+          has_next_page: false,
+        });
+
+      const flakyPool = {
+        query: async (sql: string) => {
+          if (typeof sql === 'string' && sql.includes('INSERT INTO llm_usage')) {
+            throw new Error('simulated DB write failure');
+          }
+          return { rows: [] };
+        },
+      } as any;
+
+      const log = makeLogger();
+      const adapter = createTwitterAdapter(makeConfig(), flakyPool, log);
+      const { items, lastId } = await adapter.poll('@testuser', null);
+
+      assert.equal(items.length, 2, 'DB failure must not drop fetched tweets');
+      assert.equal(lastId, '200');
+      assert.ok(
+        log.calls['warn']?.some((args) => JSON.stringify(args).includes('cost tracking insert failed')),
+        'should log warning about cost tracking failure',
+      );
+    });
+  });
 });
