@@ -165,6 +165,7 @@ export function registerReportRoutes({ app, authPreHandler, pool }: ReportRouteD
         report.entitySentiment = (parsed.entitySentiment ?? parsed.entity_sentiment ?? []) as unknown[];
         report.sections = (parsed.sections ?? []) as unknown[];
         report.sourceFamilies = (parsed.sourceFamilies ?? parsed.source_families ?? []) as unknown[];
+        report.newProjects = (parsed.newProjects ?? parsed.new_projects ?? []) as unknown[];
         const macroRegime = extractMacroRegime(parsed.macroRegime ?? parsed.macro_regime);
         if (macroRegime) {
           report.macroRegime = macroRegime;
