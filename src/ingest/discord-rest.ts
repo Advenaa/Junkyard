@@ -1,4 +1,4 @@
-import { ProxyAgent, type Dispatcher } from 'undici';
+import { ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import { ulid } from 'ulid';
 import type { Logger } from '../logger.js';
 import type { DiscordRuntimeToken } from '../discord-tokens.js';
@@ -27,6 +27,8 @@ export interface DiscordChannel {
 // ---------------------------------------------------------------------------
 
 const DISCORD_API = 'https://discord.com/api/v10';
+
+export const _internal = { fetch: undiciFetch as unknown as typeof globalThis.fetch };
 
 // ---------------------------------------------------------------------------
 // Internal raw types (snake_case from Discord API)
@@ -73,7 +75,7 @@ function closeDispatchers(tokens: RestTokenRuntime[], log: Logger): void {
 
 async function discordFetch<T>(path: string, token: RestTokenRuntime, log: Logger): Promise<T | null> {
   try {
-    const response = await fetch(`${DISCORD_API}${path}`, {
+    const response = await _internal.fetch(`${DISCORD_API}${path}`, {
       headers: {
         Authorization: token.config.token,
         'Content-Type': 'application/json',
