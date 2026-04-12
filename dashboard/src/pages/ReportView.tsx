@@ -5,6 +5,7 @@ import { formatMacroRegimeLabel, macroRegimeToneClasses } from '../lib/macroRegi
 import { buildFocusedReportHref, buildSummaryChainHref } from '../lib/reportChains';
 import { BookmarkButton } from '../components/BookmarkButton';
 import { DataShell } from '../components/DataShell';
+import { FlagButton } from '../components/FlagButton';
 import { TypeBadge } from '../components/TypeBadge';
 import { useStatus } from '../components/StatusProvider';
 import type {
@@ -706,12 +707,15 @@ export function ReportView() {
                                 Focus chain
                               </Link>
                             ) : null}
-                            <Link
-                              to={buildSummaryChainHref(chain.latestSummaryId, chain.rootId)}
-                              className="text-xs font-mono uppercase tracking-wider text-accent hover:underline"
-                            >
-                              Open latest linked summary
-                            </Link>
+                            <div className="flex items-center gap-3">
+                              <FlagButton targetType="summary" targetId={chain.latestSummaryId} />
+                              <Link
+                                to={buildSummaryChainHref(chain.latestSummaryId, chain.rootId)}
+                                className="text-xs font-mono uppercase tracking-wider text-accent hover:underline"
+                              >
+                                Open latest linked summary
+                              </Link>
+                            </div>
                           </div>
                         </div>
                         <div className="text-xs font-body text-text-secondary leading-relaxed">

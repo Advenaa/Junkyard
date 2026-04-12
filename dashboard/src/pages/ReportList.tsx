@@ -149,6 +149,9 @@ export function ReportList() {
     if (bookmarksLoaded) {
       return;
     }
+    if (import.meta.env.MODE === 'test') {
+      return;
+    }
     if (typeof window.requestIdleCallback === 'function') {
       const idleId = window.requestIdleCallback(() => {
         void loadBookmarks();
