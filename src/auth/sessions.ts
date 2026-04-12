@@ -3,7 +3,7 @@ import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 
 export interface SessionManager {
-  create(discordId: string, ip: string, userAgent: string): Promise<string>;
+  create(discordId: string, ip: string, userAgent: string, maxSessions?: number): Promise<string>;
   validate(
     sessionId: string,
     ip: string,
@@ -70,11 +70,12 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
   let lastCleanupAt = 0;
 
   return {
-    async create(discordId: string, ip: string, userAgent: string): Promise<string> {
+    async create(discordId: string, ip: string, userAgent: string, maxSessions?: number): Promise<string> {
       const sessionId = crypto.randomBytes(32).toString('hex');
       const now = Date.now();
       const expiresAt = now + SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
       const normalizedUA = normalizeUA(userAgent);
+      const limit = maxSessions ?? MAX_SESSIONS_PER_USER;
 
       // Wrap eviction + insert in a transaction with FOR UPDATE lock
       // to prevent concurrent logins exceeding MAX_SESSIONS_PER_USER (AU-010)
@@ -88,7 +89,7 @@ export function createSessionManager(pool: Pool, log: Logger): SessionManager {
         // Evict oldest sessions if at limit
         const existing = await client.query<{ id: string }>(
           `SELECT id FROM sessions WHERE discord_id = $1 ORDER BY created_at DESC OFFSET $2`,
-          [discordId, MAX_SESSIONS_PER_USER - 1],
+          [discordId, limit - 1],
         );
 
         if (existing.rows.length > 0) {

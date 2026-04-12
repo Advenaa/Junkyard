@@ -36,10 +36,17 @@ describe('POST /api/v1/auth/devtools-session (structural)', () => {
     assert.ok(adminRoutesSrc.includes('podders_session: sessionId'), 'Must return session in JSON body');
   });
 
-  it('SessionManagerLike includes create method', () => {
+  it('SessionManagerLike includes create method with optional maxSessions', () => {
     assert.ok(
-      adminRoutesSrc.includes('create(discordId: string, ip: string, userAgent: string): Promise<string>'),
-      'SessionManagerLike must include create signature',
+      adminRoutesSrc.includes(
+        'create(discordId: string, ip: string, userAgent: string, maxSessions?: number): Promise<string>',
+      ),
+      'SessionManagerLike must include create signature with optional maxSessions override',
     );
+  });
+
+  it('devtools endpoint passes MAX_DEVTOOLS_SESSIONS to sessionManager.create', () => {
+    assert.ok(adminRoutesSrc.includes('MAX_DEVTOOLS_SESSIONS'), 'Must define MAX_DEVTOOLS_SESSIONS constant');
+    assert.match(adminRoutesSrc, /sessionManager\.create\(.*MAX_DEVTOOLS_SESSIONS\)/);
   });
 });
