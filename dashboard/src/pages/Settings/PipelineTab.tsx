@@ -39,6 +39,7 @@ import type {
   UserAuditEvent,
   AccessRequest,
   SessionInfo,
+  FeedbackItem,
   Tab,
 } from './types.js';
 import {
@@ -69,7 +70,9 @@ import {
   fetchUserSessions,
   fetchUserAuditEventsData,
   fetchAccessRequestsData,
+  fetchFeedbackList,
   revokeUserSession,
+  updateFeedbackStatus,
 } from './api.js';
 import {
   getEntityStatusBadgeClasses,
@@ -143,6 +146,14 @@ export default function PipelineTab() {
   const [diagStuckItems, setDiagStuckItems] = useState<DiagStuckItems | null>(null);
   const [diagHaltedSources, setDiagHaltedSources] = useState<DiagHaltedSources | null>(null);
   const [diagHealthEvents, setDiagHealthEvents] = useState<DiagHealthEvents | null>(null);
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[] | null>(null);
+  const [feedbackTotal, setFeedbackTotal] = useState(0);
+  const [feedbackStatusFilter, setFeedbackStatusFilter] = useState<'all' | 'pending' | 'dismissed' | 'acknowledged'>(
+    'all',
+  );
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackActionId, setFeedbackActionId] = useState<string | null>(null);
   const [llmCostByModel, setLlmCostByModel] = useState<LlmCostByModelResponse | null>(null);
   const [diagError, setDiagError] = useState<string | null>(null);
   const [diagExpanded, setDiagExpanded] = useState(false);
@@ -182,7 +193,7 @@ export default function PipelineTab() {
       .catch(() => {});
   }, []);
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin || !diagExpanded) return;
     let cancelled = false;
     setDiagError(null);
     Promise.allSettled([
@@ -208,7 +219,31 @@ export default function PipelineTab() {
     return () => {
       cancelled = true;
     };
-  }, [isAdmin]);
+  }, [diagExpanded, isAdmin]);
+  useEffect(() => {
+    if (!isAdmin || !diagExpanded) return;
+    let cancelled = false;
+    setFeedbackLoading(true);
+    setFeedbackError(null);
+    fetchFeedbackList(feedbackStatusFilter === 'all' ? undefined : feedbackStatusFilter)
+      .then((data) => {
+        if (cancelled) return;
+        setFeedbackItems(data.feedback);
+        setFeedbackTotal(data.total);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFeedbackItems(null);
+        setFeedbackTotal(0);
+        setFeedbackError('Feedback review is unavailable right now.');
+      })
+      .finally(() => {
+        if (!cancelled) setFeedbackLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [diagExpanded, feedbackStatusFilter, isAdmin]);
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
@@ -482,6 +517,20 @@ export default function PipelineTab() {
       setRemovingCalendarEventId(null);
     }
   }
+  async function handleFeedbackAction(feedbackId: string, status: 'dismissed' | 'acknowledged'): Promise<void> {
+    setFeedbackActionId(feedbackId);
+    setFeedbackError(null);
+    try {
+      await updateFeedbackStatus(feedbackId, status);
+      const data = await fetchFeedbackList(feedbackStatusFilter === 'all' ? undefined : feedbackStatusFilter);
+      setFeedbackItems(data.feedback);
+      setFeedbackTotal(data.total);
+    } catch {
+      setFeedbackError('Failed to update feedback status.');
+    } finally {
+      setFeedbackActionId(null);
+    }
+  }
   if (!statusReady) return <div className="text-text-secondary font-body py-8">Loading...</div>;
   if (!status) return <p className="text-red-400 text-sm font-body py-4">Failed to load pipeline status.</p>;
   const healthColor =
@@ -674,6 +723,102 @@ export default function PipelineTab() {
                   </div>
                 ) : (
                   <p className="text-text-secondary text-sm font-body">No recent critical/error events</p>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div>
+                    <h4 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Feedback</h4>
+                    <p className="mt-1 text-sm font-body text-text-secondary/70">
+                      Review user-submitted flags on summaries and entity associations.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {(['all', 'pending', 'dismissed', 'acknowledged'] as const).map((statusOption) => (
+                      <button
+                        key={statusOption}
+                        type="button"
+                        onClick={() => setFeedbackStatusFilter(statusOption)}
+                        className={`rounded border px-2.5 py-1 text-[11px] font-mono uppercase tracking-wide transition-colors ${
+                          feedbackStatusFilter === statusOption
+                            ? 'border-accent/40 bg-accent/10 text-accent'
+                            : 'border-border bg-background text-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        {statusOption}
+                      </button>
+                    ))}
+                    <span className="rounded border border-border bg-background px-2.5 py-1 text-[11px] font-mono uppercase tracking-wide text-text-secondary">
+                      {feedbackTotal} total
+                    </span>
+                  </div>
+                </div>
+
+                {feedbackError ? <p className="text-red-400 text-sm font-body">{feedbackError}</p> : null}
+
+                {feedbackLoading ? (
+                  <p className="text-text-secondary text-sm font-body">Loading feedback...</p>
+                ) : !feedbackItems ? null : feedbackItems.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
+                          <th className="px-3 py-2 text-left">Target Type</th>
+                          <th className="px-3 py-2 text-left">Target ID</th>
+                          <th className="px-3 py-2 text-left">Category</th>
+                          <th className="px-3 py-2 text-left">Status</th>
+                          <th className="px-3 py-2 text-left">Date</th>
+                          <th className="px-3 py-2 text-left">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {feedbackItems.map((feedback) => (
+                          <tr key={feedback.id} className="border-b border-border/70 last:border-b-0 align-top">
+                            <td className="px-3 py-2 text-text-primary font-body">{feedback.targetType}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-text-secondary">{feedback.targetId}</td>
+                            <td className="px-3 py-2 text-text-secondary font-body">
+                              {feedback.category.replace(/_/g, ' ')}
+                              {feedback.note ? (
+                                <div className="mt-1 text-xs text-text-secondary/70">{feedback.note}</div>
+                              ) : null}
+                            </td>
+                            <td className="px-3 py-2 font-mono text-xs text-text-secondary">{feedback.status}</td>
+                            <td className="px-3 py-2 text-text-secondary">
+                              <div className="text-sm font-body">{formatDateLabel(feedback.createdAt)}</div>
+                              <div className="text-xs font-mono">{formatRelativeTime(feedback.createdAt)}</div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {feedback.status === 'pending' ? (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleFeedbackAction(feedback.id, 'dismissed')}
+                                    disabled={feedbackActionId === feedback.id}
+                                    className="rounded border border-border bg-background px-2.5 py-1 text-[11px] font-mono uppercase tracking-wide text-text-secondary transition-colors hover:text-text-primary disabled:opacity-50"
+                                  >
+                                    Dismiss
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void handleFeedbackAction(feedback.id, 'acknowledged')}
+                                    disabled={feedbackActionId === feedback.id}
+                                    className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-[11px] font-mono uppercase tracking-wide text-accent transition-colors hover:bg-accent/15 disabled:opacity-50"
+                                  >
+                                    Acknowledge
+                                  </button>
+                                </div>
+                              ) : (
+                                <span className="font-mono text-xs text-text-secondary">No actions</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-text-secondary text-sm font-body">No feedback matches the current filter.</p>
                 )}
               </div>
             </div>

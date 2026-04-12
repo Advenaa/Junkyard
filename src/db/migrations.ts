@@ -988,6 +988,24 @@ const migrations: Migration[] = [
     `);
     await client.query(`CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON bookmarks(user_id)`);
   },
+
+  async (client) => {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS feedback (
+        id TEXT NOT NULL PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(discord_id) ON DELETE CASCADE,
+        target_type TEXT NOT NULL CHECK (target_type IN ('summary', 'entity_mention')),
+        target_id TEXT NOT NULL,
+        category TEXT NOT NULL CHECK (category IN ('wrong_entity', 'wrong_sentiment', 'wrong_event_type', 'spam', 'other')),
+        note TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'dismissed', 'acknowledged')),
+        created_at BIGINT NOT NULL
+      )
+    `);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_feedback_user_id ON feedback(user_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_feedback_target ON feedback(target_type, target_id)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)`);
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
