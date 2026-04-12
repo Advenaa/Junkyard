@@ -380,11 +380,11 @@ program
                   'RSS feed poll failed — not advancing state',
                 );
                 await pool.query(
-                  `INSERT INTO source_state (source, source_id, error_count, last_error, status)
-                   VALUES ($2, $3, 1, $1, 'active')
+                  `INSERT INTO source_state (source, source_id, error_count, last_error, status, last_fetched_at)
+                   VALUES ($2, $3, 1, $1, 'active', $4)
                    ON CONFLICT (source, source_id)
-                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
-                  ['RSS feed poll failed', src.source, src.source_id],
+                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1, last_fetched_at = $4`,
+                  ['RSS feed poll failed', src.source, src.source_id, now],
                 );
                 return;
               }
@@ -401,17 +401,17 @@ program
               }
               const result = await pollDiscordChannel(src.source_id, lastId, currentDiscordTokens, log);
               if (result.fetchFailed) {
-                // All tokens failed — don't update last_fetched_at so health monitor detects the stall
+                // All tokens failed — advance last_fetched_at so the source waits its full poll_interval before retrying
                 log.error(
                   { source: src.source, sourceId: src.source_id },
                   'discord REST poll failed — all tokens exhausted',
                 );
                 await pool.query(
-                  `INSERT INTO source_state (source, source_id, error_count, last_error, status)
-                   VALUES ($2, $3, 1, $1, 'active')
+                  `INSERT INTO source_state (source, source_id, error_count, last_error, status, last_fetched_at)
+                   VALUES ($2, $3, 1, $1, 'active', $4)
                    ON CONFLICT (source, source_id)
-                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
-                  ['all discord tokens failed', src.source, src.source_id],
+                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1, last_fetched_at = $4`,
+                  ['all discord tokens failed', src.source, src.source_id, now],
                 );
                 return;
               }
@@ -431,11 +431,11 @@ program
                   'news extraction failed — not advancing state',
                 );
                 await pool.query(
-                  `INSERT INTO source_state (source, source_id, error_count, last_error, status)
-                   VALUES ($2, $3, 1, $1, 'active')
+                  `INSERT INTO source_state (source, source_id, error_count, last_error, status, last_fetched_at)
+                   VALUES ($2, $3, 1, $1, 'active', $4)
                    ON CONFLICT (source, source_id)
-                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
-                  ['news extraction failed', src.source, src.source_id],
+                   DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1, last_fetched_at = $4`,
+                  ['news extraction failed', src.source, src.source_id, now],
                 );
                 return;
               }
@@ -460,11 +460,11 @@ program
             log.error({ err, source: src.source, sourceId: src.source_id }, 'source poll failed');
             // Increment error count in source_state
             await pool.query(
-              `INSERT INTO source_state (source, source_id, error_count, last_error, status)
-               VALUES ($2, $3, 1, $1, 'active')
+              `INSERT INTO source_state (source, source_id, error_count, last_error, status, last_fetched_at)
+               VALUES ($2, $3, 1, $1, 'active', $4)
                ON CONFLICT (source, source_id)
-               DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1`,
-              [err instanceof Error ? err.message : String(err), src.source, src.source_id],
+               DO UPDATE SET error_count = source_state.error_count + 1, last_error = $1, last_fetched_at = $4`,
+              [err instanceof Error ? err.message : String(err), src.source, src.source_id, now],
             );
           }
         });
