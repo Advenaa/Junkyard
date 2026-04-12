@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSentimentTracker, getLastCompletedDayRollup } from '../../src/knowledge/sentiment.js';
 import type { Trend, MomentumEntry } from '../../src/knowledge/sentiment.js';
-import { computeDailySentiment } from '../../src/db/queries.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────────
 
@@ -718,101 +717,5 @@ describe('SM-001: equal-weight 3-day blending', () => {
     // Verify the recent window query uses SUM, not AVG
     const recentWindowCall = calls.find((c) => c.sql.includes('SUM(avg_sentiment)') && c.sql.includes('COUNT(*)'));
     assert.ok(recentWindowCall, 'Recent window query must use SUM(avg_sentiment) and COUNT(*), not AVG');
-  });
-});
-
-// ── 6. CF-004 regression: computeDailySentiment epoch bounds ────────────
-
-describe('CF-004: computeDailySentiment epoch-ms bounds', () => {
-  it('converts date string to correct epoch-ms range bounds', async () => {
-    const calls: { sql: string; params: unknown[] }[] = [];
-    const mockPool = {
-      query: async (sql: string, params?: unknown[]) => {
-        calls.push({ sql, params: params ?? [] });
-        return { rows: [] };
-      },
-    };
-
-    await computeDailySentiment(mockPool as any, '2025-04-01');
-
-    assert.equal(calls.length, 1, 'Should issue exactly one query');
-    const [dayStart, dayEnd] = calls[0].params as [number, number];
-
-    // 2025-04-01T00:00:00Z in epoch-ms
-    const expectedStart = new Date('2025-04-01T00:00:00Z').getTime();
-    const expectedEnd = expectedStart + 86_400_000;
-
-    assert.equal(dayStart, expectedStart, `dayStart should be ${expectedStart}, got ${dayStart}`);
-    assert.equal(dayEnd, expectedEnd, `dayEnd should be ${expectedEnd}, got ${dayEnd}`);
-  });
-
-  it('bounds span exactly 24 hours (86400000 ms)', async () => {
-    const calls: { sql: string; params: unknown[] }[] = [];
-    const mockPool = {
-      query: async (sql: string, params?: unknown[]) => {
-        calls.push({ sql, params: params ?? [] });
-        return { rows: [] };
-      },
-    };
-
-    await computeDailySentiment(mockPool as any, '2025-04-01');
-
-    const [dayStart, dayEnd] = calls[0].params as [number, number];
-    assert.equal(dayEnd - dayStart, 86_400_000, `Bounds must span exactly 86400000 ms (24h), got ${dayEnd - dayStart}`);
-  });
-
-  it('uses >= for start and < for end (half-open interval)', async () => {
-    const calls: { sql: string; params: unknown[] }[] = [];
-    const mockPool = {
-      query: async (sql: string, params?: unknown[]) => {
-        calls.push({ sql, params: params ?? [] });
-        return { rows: [] };
-      },
-    };
-
-    await computeDailySentiment(mockPool as any, '2025-04-01');
-
-    const sql = calls[0].sql;
-    assert.ok(
-      sql.includes('created_at >= $1') && sql.includes('created_at < $2'),
-      'Query must use >= $1 AND < $2 for half-open interval (no off-by-one at midnight)',
-    );
-  });
-
-  it('passes epoch-ms numbers, not date strings, to the query', async () => {
-    const calls: { sql: string; params: unknown[] }[] = [];
-    const mockPool = {
-      query: async (sql: string, params?: unknown[]) => {
-        calls.push({ sql, params: params ?? [] });
-        return { rows: [] };
-      },
-    };
-
-    await computeDailySentiment(mockPool as any, '2025-12-31');
-
-    const [dayStart, dayEnd] = calls[0].params as [unknown, unknown];
-    assert.equal(typeof dayStart, 'number', 'dayStart must be a number (epoch-ms)');
-    assert.equal(typeof dayEnd, 'number', 'dayEnd must be a number (epoch-ms)');
-
-    // Verify they are plausible epoch-ms values (> year 2000 in ms)
-    assert.ok((dayStart as number) > 946684800000, 'dayStart should be a plausible epoch-ms value');
-  });
-
-  it('does not use to_timestamp() — epoch-ms compared directly', async () => {
-    const calls: { sql: string; params: unknown[] }[] = [];
-    const mockPool = {
-      query: async (sql: string, params?: unknown[]) => {
-        calls.push({ sql, params: params ?? [] });
-        return { rows: [] };
-      },
-    };
-
-    await computeDailySentiment(mockPool as any, '2025-04-01');
-
-    const sql = calls[0].sql;
-    assert.ok(
-      !sql.includes('to_timestamp'),
-      'Query must NOT use to_timestamp() — created_at is already epoch-ms, compare directly',
-    );
   });
 });

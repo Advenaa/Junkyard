@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { Config } from '../../src/config.js';
 import type { Logger } from '../../src/logger.js';
 import { createEntityManager, type ExtractedEntity } from '../../src/knowledge/entities.js';
-import { computeDailySentiment, getEntityDivergence } from '../../src/db/queries.js';
+import { getEntityDivergence } from '../../src/db/queries.js';
 
 type EntityType = ExtractedEntity['type'];
 
@@ -300,7 +300,7 @@ describe('entity reactivation sentiment handling', () => {
     assert.equal(mentions[0]?.mentionCount, 4);
   });
 
-  it('reactivated mentions remain visible to downstream sentiment queries', async () => {
+  it('reactivated mentions remain visible to downstream divergence queries', async () => {
     const { pool } = makeMockDb({
       aliases: [{ alias: 'ethereum', entityId: 'ent-eth', type: 'token' }],
       entities: [{ id: 'ent-eth', name: 'ethereum', type: 'token', status: 'archived', relevance: 0.2 }],
@@ -319,12 +319,6 @@ describe('entity reactivation sentiment handling', () => {
       'sum-ind',
       'ind',
     );
-
-    const today = new Date().toISOString().slice(0, 10);
-    const daily = await computeDailySentiment(pool as never, today);
-    assert.equal(daily.length, 1);
-    assert.equal(daily[0]?.entity_id, 'ent-eth');
-    assert.equal(daily[0]?.mention_count, 2);
 
     const divergence = await getEntityDivergence(pool as never, 'ent-eth', 0, Date.now() + 1_000);
     assert.equal(divergence.engMentions, 1);

@@ -181,30 +181,6 @@ export async function getTopDivergentEntities(
   return rows;
 }
 
-export async function computeDailySentiment(
-  pool: Pool,
-  date: string,
-): Promise<{ entity_id: string; avg_sentiment: number; mention_count: number }[]> {
-  const dayStart = new Date(`${date}T00:00:00Z`).getTime();
-  const dayEnd = dayStart + 86_400_000; // +24h in ms
-
-  const { rows } = await pool.query<{
-    entity_id: string;
-    avg_sentiment: number;
-    mention_count: number;
-  }>(
-    `SELECT
-       entity_id,
-       AVG(sentiment) AS avg_sentiment,
-       COUNT(*)::integer AS mention_count
-     FROM entity_mentions
-     WHERE created_at >= $1 AND created_at < $2 AND sentiment IS NOT NULL
-     GROUP BY entity_id`,
-    [dayStart, dayEnd],
-  );
-  return rows;
-}
-
 export interface UnusualActivityEntry {
   entityId: string;
   entityName: string;
