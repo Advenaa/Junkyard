@@ -284,6 +284,55 @@ describe('pollDiscordChannel', () => {
     assert.deepEqual(result.items[0]!.metadata['imageUrls'], [imageUrl]);
   });
 
+  it('rejects non-https attachment URLs even when they use Discord CDN hosts', async () => {
+    const log = makeLogger();
+    const token = makeToken('primary');
+    const secureUrl = 'https://cdn.discordapp.com/attachments/1/2/chart.png';
+
+    installFetchSequence([
+      makeJsonResponse([
+        makeMessage({
+          id: '401',
+          attachments: [
+            { url: 'http://cdn.discordapp.com/attachments/1/2/insecure.png', content_type: 'image/png' },
+            { url: 'http://media.discordapp.net/attachments/1/2/also-insecure.png', content_type: 'image/png' },
+            { url: secureUrl, content_type: 'image/png' },
+          ],
+        }),
+      ]),
+    ]);
+
+    const result = await pollDiscordChannel(CHANNEL_ID, null, [token], log);
+
+    assert.equal(result.items.length, 1);
+    assert.deepEqual(result.items[0]!.attachments, [secureUrl]);
+    assert.deepEqual(result.items[0]!.metadata['imageUrls'], [secureUrl]);
+  });
+
+  it('falls back to Date.now() when a Discord message timestamp is invalid', async (t) => {
+    const fallbackNow = 1_713_456_789_000;
+    t.mock.method(Date, 'now', () => fallbackNow);
+
+    const log = makeLogger();
+    const token = makeToken('primary');
+
+    installFetchSequence([
+      makeJsonResponse([
+        makeMessage({
+          id: '450',
+          timestamp: 'not-a-real-timestamp',
+        }),
+      ]),
+    ]);
+
+    const result = await pollDiscordChannel(CHANNEL_ID, null, [token], log);
+
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]!.timestamp, fallbackNow);
+    assert.equal(log.warn.mock.callCount(), 1);
+    assert.match(String(log.warn.mock.calls[0]?.arguments[1]), /invalid timestamp/i);
+  });
+
   it('returns fetchFailed=true and preserves lastId when every token fails', async () => {
     const log = makeLogger();
     const tokens = [makeToken('one'), makeToken('two')];
