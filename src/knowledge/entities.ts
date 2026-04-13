@@ -20,7 +20,7 @@ export interface ResolvedEntity {
 
 export const DisambiguatedEntitySchema = z.array(
   z.object({
-    name: z.string(),
+    name: z.string().min(1),
     type: z.enum(['token', 'person', 'project', 'company', 'event']),
     context_key: z.string(),
   }),
