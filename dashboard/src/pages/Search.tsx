@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router';
-import { apiFetch } from '../lib/api';
+import { apiFetch, isApiError } from '../lib/api';
 import { formatShortDate } from '../lib/formatting';
 import { buildMacroRegimePreviewTitle, formatMacroRegimePreview, macroRegimeToneClasses } from '../lib/macroRegime';
 import { getReportSecondaryPreview } from '../lib/reportPreview';
@@ -149,8 +149,8 @@ export function Search() {
         localStorage.setItem('podders-recent-searches', JSON.stringify(updated));
         return updated;
       });
-    } catch {
-      setError('Search failed. Please try again.');
+    } catch (err: unknown) {
+      setError(isApiError(err) ? err.message : 'Search failed. Please try again.');
       setResults([]);
     } finally {
       setLoading(false);
