@@ -1,7 +1,5 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Config } from '../../src/config.js';
-import type { Logger } from '../../src/logger.js';
 
 import {
   createEntityManager,
@@ -10,6 +8,7 @@ import {
   normalizeAlias,
   type ExtractedEntity,
 } from '../../src/knowledge/entities.js';
+import { fakeConfig, fakeEntity, makeMockLogger, makeMockPool } from '../helpers/factories.js';
 
 // ── DisambiguatedEntitySchema (H-037) ──────────────────────────────────────
 
@@ -252,21 +251,11 @@ describe('Relevance delta formula', () => {
   });
 
   it('folds duplicate canonical entity IDs in the batch relevance update while preserving mention rows', async () => {
-    const calls: Array<{ sql: string; params: unknown[] }> = [];
-
-    async function query(
-      sql: string,
-      params: unknown[] = [],
-    ): Promise<{ rows: Array<Record<string, unknown>>; rowCount: number }> {
-      calls.push({ sql, params });
-
-      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
-        return { rows: [], rowCount: 0 };
-      }
-
+    const activeEntity = fakeEntity({ id: 'ent-btc', name: 'bitcoin' });
+    const pool = makeMockPool((sql, params = []) => {
       if (sql.includes('FROM entity_aliases ea') && sql.includes('WHERE ea.alias = $1')) {
         return {
-          rows: [{ entity_id: 'ent-btc', status: 'active' }],
+          rows: [{ entity_id: activeEntity.id, status: activeEntity.status }],
           rowCount: 1,
         };
       }
@@ -289,31 +278,20 @@ describe('Relevance delta formula', () => {
       }
 
       throw new Error(`Unhandled SQL in test harness: ${sql}`);
-    }
-
-    const client = { query, release: () => {} };
-    const pool = {
-      connect: async () => client,
-      query,
-    };
-    const config = {
+    });
+    const calls = pool.calls;
+    const config = fakeConfig({
       models: {
         normalizer: 'openai-codex:gpt-5.4-mini',
       },
-    } as Config;
-    const log: Logger = {
-      info: () => {},
-      warn: () => {},
-      error: () => {},
-      debug: () => {},
-      child: () => log,
-    } as unknown as Logger;
+    });
+    const log = makeMockLogger();
     const llm = {
       async call() {
         throw new Error('LLM should not run in duplicate relevance fold test');
       },
     };
-    const manager = createEntityManager(pool as never, log, config, llm);
+    const manager = createEntityManager(pool, log, config, llm);
     const entities: ExtractedEntity[] = [
       { name: 'BTC', mentionCount: 4, sentiment: 0, aliases: [], type: 'token' },
       { name: 'btc', mentionCount: 3, sentiment: 0, aliases: [], type: 'token' },

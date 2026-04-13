@@ -13,90 +13,32 @@ import {
 } from '../../src/auth/sessions.js';
 import { requireAuth, requireAdmin } from '../../src/auth/middleware.js';
 import type { Config } from '../../src/config.js';
+import { fakeConfig, fakeRequest, makeMockLogger, makeMockPool } from '../helpers/factories.js';
 
 // ---------------------------------------------------------------------------
 // Helpers: minimal mocks
 // ---------------------------------------------------------------------------
 
 /** Build a mock Pool whose .query() returns the given rows/rowCount. */
-function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []) {
+function mockPool(responses: Array<{ rows?: Array<Record<string, unknown>>; rowCount?: number }> = []) {
   let callIndex = 0;
-  const calls: Array<{ text: string; values: unknown[] }> = [];
-  const queryFn = async (text: string, values?: unknown[]) => {
-    calls.push({ text, values: values ?? [] });
-    // Skip BEGIN/COMMIT/ROLLBACK/FOR UPDATE — return empty for transaction control
+  return makeMockPool((text) => {
     if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(text.trim()) || text.includes('FOR UPDATE')) {
       return { rows: [], rowCount: 0 };
     }
     const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
     callIndex++;
-    return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
-  };
-  return {
-    calls,
-    query: queryFn,
-    connect: async () => ({
-      query: queryFn,
-      release: () => {},
-    }),
-  };
+    return {
+      rows: resp.rows ?? [],
+      rowCount: resp.rowCount ?? resp.rows?.length ?? 0,
+    };
+  });
 }
 
 /** Minimal logger that swallows everything. */
-const silentLog = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
-  child: () => silentLog,
-} as never;
+const silentLog = makeMockLogger();
 
 const originalFetch = globalThis.fetch;
-
-/** Partial Config for middleware tests. */
-function fakeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    anthropicApiKey: '',
-    geminiApiKey: '',
-    databaseUrl: '',
-    discordClientId: null,
-    discordClientSecret: null,
-    adminUserIds: [],
-    discordTokens: [],
-    twitterApiKey: null,
-    apiKey: 'test-api-key-12345',
-    sessionSecret: 'secret',
-    port: 3000,
-    dataDir: './data',
-    publicUrl: null,
-    alertWebhookUrl: null,
-    models: { normalizer: 'h', chunk: 'h', thinkalot: 's' },
-    secrets: [],
-    ...overrides,
-  };
-}
-
-/** Build a mock Fastify request. */
-function fakeRequest(
-  opts: {
-    cookies?: Record<string, string>;
-    authorization?: string;
-    unsignResult?: { valid: boolean; value: string | null };
-    ip?: string;
-    userAgent?: string;
-  } = {},
-) {
-  const req: Record<string, unknown> = {
-    cookies: opts.cookies ?? {},
-    headers: {
-      authorization: opts.authorization ?? undefined,
-      'user-agent': opts.userAgent ?? 'TestAgent/1.0',
-    },
-    ip: opts.ip ?? '127.0.0.1',
-    unsignCookie: (_raw: string) => opts.unsignResult ?? { valid: false, value: null },
-  };
-  return req as never;
-}
 
 /** Build a mock Fastify reply that captures status + body. */
 function fakeReply() {
@@ -244,10 +186,10 @@ describe('createSessionManager', () => {
       const after = Date.now();
 
       // Find the INSERT query (position varies due to transaction control queries)
-      const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO sessions'));
+      const insertCall = pool.calls.find((c) => c.sql.includes('INSERT INTO sessions'));
       assert.ok(insertCall, 'should have INSERT INTO sessions query');
 
-      const expiresAt = insertCall!.values[4] as number;
+      const expiresAt = insertCall!.params[4] as number;
       const thirtyDaysMs = SESSION_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
       assert.ok(expiresAt >= before + thirtyDaysMs);
       assert.ok(expiresAt <= after + thirtyDaysMs);
@@ -264,10 +206,10 @@ describe('createSessionManager', () => {
       await mgr.create('user-1', '127.0.0.1', 'TestAgent');
 
       // Verify DELETE and INSERT queries exist (transaction adds BEGIN/COMMIT/FOR UPDATE)
-      const deleteCall = pool.calls.find((c) => c.text.includes('DELETE FROM sessions'));
+      const deleteCall = pool.calls.find((c) => c.sql.includes('DELETE FROM sessions'));
       assert.ok(deleteCall, 'should have DELETE query');
-      assert.deepStrictEqual(deleteCall!.values, [['old-1', 'old-2']]);
-      const insertCall = pool.calls.find((c) => c.text.includes('INSERT INTO sessions'));
+      assert.deepStrictEqual(deleteCall!.params, [['old-1', 'old-2']]);
+      const insertCall = pool.calls.find((c) => c.sql.includes('INSERT INTO sessions'));
       assert.ok(insertCall, 'should have INSERT query');
     });
   });
@@ -301,7 +243,7 @@ describe('createSessionManager', () => {
 
       assert.strictEqual(result, null);
       assert.strictEqual(pool.calls.length, 2);
-      assert.ok(pool.calls[1]!.text.includes('DELETE'));
+      assert.ok(pool.calls[1]!.sql.includes('DELETE'));
     });
 
     it('returns user info for valid session', async () => {
@@ -348,9 +290,9 @@ describe('createSessionManager', () => {
 
       // At least 2 calls: SELECT + UPDATE. May also have cleanup query.
       assert.ok(pool.calls.length >= 2);
-      const updateCall = pool.calls.find((c) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
+      const updateCall = pool.calls.find((c) => c.sql.includes('UPDATE sessions SET last_refreshed_at'));
       assert.ok(updateCall, 'should trigger sliding refresh UPDATE');
-      assert.ok(updateCall.text.includes('expires_at'), 'AU-026: sliding refresh should also extend expires_at');
+      assert.ok(updateCall.sql.includes('expires_at'), 'AU-026: sliding refresh should also extend expires_at');
       assert.ok(result, 'validate should return a session');
       assert.strictEqual(result.refreshed, true, 'refreshed flag should be true on stale path');
     });
@@ -376,7 +318,7 @@ describe('createSessionManager', () => {
       const result = await mgr.validate('fresh-session', '127.0.0.1', 'TestAgent');
 
       // No UPDATE for refresh — only SELECT (and possibly cleanup)
-      const hasRefresh = pool.calls.some((c) => c.text.includes('UPDATE sessions SET last_refreshed_at'));
+      const hasRefresh = pool.calls.some((c) => c.sql.includes('UPDATE sessions SET last_refreshed_at'));
       assert.ok(!hasRefresh, 'should NOT trigger sliding refresh when fresh');
       assert.ok(result, 'validate should return a session');
       assert.strictEqual(result.refreshed, false, 'refreshed flag should be false on fresh path');
@@ -403,7 +345,7 @@ describe('createSessionManager', () => {
 
       assert.strictEqual(result, null);
       assert.strictEqual(pool.calls.length, 2);
-      assert.ok(pool.calls[1]!.text.includes('DELETE'));
+      assert.ok(pool.calls[1]!.sql.includes('DELETE'));
     });
 
     it('allows session with different IP (warns only)', async () => {
@@ -636,7 +578,7 @@ describe('registerOAuthRoutes', () => {
       assert.equal(response.statusCode, 403);
       assert.deepStrictEqual(JSON.parse(response.payload), { error: 'Invalid OAuth state' });
       assert.ok(
-        pool.calls.some((call) => call.text.includes('SELECT discord_id FROM users WHERE discord_id = $1 LIMIT 1')),
+        pool.calls.some((call) => call.sql.includes('SELECT discord_id FROM users WHERE discord_id = $1 LIMIT 1')),
         'Invalid-state rejection should still hit the users table for timing padding',
       );
     } finally {
@@ -715,7 +657,7 @@ describe('registerOAuthRoutes', () => {
         'The initial invite-only rejection should perform the Discord token and user fetches',
       );
       assert.equal(
-        pool.calls.filter((call) => call.text.includes('FROM users WHERE discord_id = $1')).length,
+        pool.calls.filter((call) => call.sql.includes('FROM users WHERE discord_id = $1')).length,
         2,
         'The initial invite-only rejection should include the real lookup plus a padding lookup',
       );
@@ -732,7 +674,7 @@ describe('registerOAuthRoutes', () => {
       assert.deepStrictEqual(JSON.parse(replayResponse.payload), { error: 'OAuth state already used' });
       assert.equal(fetchCalls, 2, 'Replay rejection should stop before Discord token or user fetches');
       assert.equal(
-        pool.calls.filter((call) => call.text.includes('FROM users WHERE discord_id = $1')).length,
+        pool.calls.filter((call) => call.sql.includes('FROM users WHERE discord_id = $1')).length,
         3,
         'Replay rejection should still hit the users table for timing padding',
       );
@@ -812,11 +754,11 @@ describe('registerOAuthRoutes', () => {
       assert.equal(response.headers.location, '/login?error=unauthorized');
       assert.equal(createdSessions, 0, 'Unauthorized users must not create sessions');
       assert.equal(
-        pool.calls.filter((call) => call.text.includes('FROM users WHERE discord_id = $1')).length,
+        pool.calls.filter((call) => call.sql.includes('FROM users WHERE discord_id = $1')).length,
         2,
         'Unauthorized rejection should include the real lookup plus a padding lookup',
       );
-      assert.ok(!pool.calls.some((call) => call.text.includes('INSERT INTO users')));
+      assert.ok(!pool.calls.some((call) => call.sql.includes('INSERT INTO users')));
     } finally {
       await app.close();
     }
