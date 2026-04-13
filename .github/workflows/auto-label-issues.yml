@@ -1,0 +1,66 @@
+name: Auto-label issues
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Auto-label new issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const title = issue.title.toLowerCase();
+            const body = (issue.body || '').toLowerCase();
+            const text = `${title} ${body}`;
+            const existing = issue.labels.map(l => l.name);
+
+            const labels = [];
+
+            // state: default to ready unless already labelled
+            if (!existing.some(l => l.startsWith('state:'))) {
+              labels.push('state:ready');
+            }
+
+            // source: default to manual unless already labelled
+            if (!existing.some(l => l.startsWith('source:'))) {
+              labels.push('source:manual');
+            }
+
+            // type: infer from title/body keywords
+            if (!existing.some(l => l.startsWith('type:'))) {
+              if (/\b(bug|fix|broken|crash|fail|error|wrong|missing)\b/.test(text)) {
+                labels.push('type:bug');
+              } else if (/\b(refactor|cleanup|dedup|extract|split|rename)\b/.test(text)) {
+                labels.push('type:refactor');
+              } else if (/\b(add|feature|new|support|implement)\b/.test(text)) {
+                labels.push('type:feature');
+              }
+            }
+
+            // priority: infer from urgency signals
+            if (!existing.some(l => /^p\d$/.test(l))) {
+              if (/\b(critical|urgent|p0|drop everything|production down|broken in prod)\b/.test(text)) {
+                labels.push('p0');
+              } else if (/\b(important|p1|high|asap|blocking)\b/.test(text)) {
+                labels.push('p1');
+              } else {
+                labels.push('p2');
+              }
+            }
+
+            if (labels.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: labels,
+              });
+              core.info(`Added labels: ${labels.join(', ')}`);
+            }
