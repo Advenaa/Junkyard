@@ -9,6 +9,7 @@ import type { Pool } from '../../src/db/connection.js';
 import type { createLLM } from '../../src/llm.js';
 import type { Logger } from '../../src/logger.js';
 import type { MockQueryResult } from '../helpers/mock-types.js';
+import { makeMockPool as buildMockPool } from '../helpers/factories.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -496,7 +497,16 @@ function makeMockPool(overrides?: { queryFn?: (text: string, params?: unknown[])
       return { rows: [], rowCount: 1 };
     });
 
-  return { query: mock.fn(queryFn) } as unknown as Pool;
+  const base = buildMockPool((text, params) => queryFn(text, params as unknown[] | undefined));
+  const query = mock.fn((text: string, params?: unknown[]) => base.query(text, params));
+
+  return {
+    query,
+    connect: async () => ({
+      query,
+      release: () => {},
+    }),
+  } as unknown as Pool;
 }
 
 function makeMockLlm(overrides?: {

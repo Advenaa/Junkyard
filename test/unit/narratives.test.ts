@@ -5,6 +5,7 @@ import type { Narrative } from '../../src/process/narratives.js';
 import { createPool } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/migrations.js';
 import { getNarrativeDrilldownById } from '../../src/db/queries.js';
+import { makeMockPool } from '../helpers/factories.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -89,30 +90,28 @@ function mockPool(opts: {
   priorEmbeddings?: Map<string, Buffer[]>;
 }) {
   const inserts: any[][] = [];
+  const pool = makeMockPool((sql, params) => {
+    const trimmed = sql.replace(/\s+/g, ' ').trim();
+    if (trimmed.includes('FROM embeddings e JOIN summaries s')) {
+      return { rows: opts.summaryRows ?? [] };
+    }
+    if (trimmed.includes('FROM narratives WHERE')) {
+      return { rows: opts.priorNarratives ?? [] };
+    }
+    if (trimmed.includes('FROM embeddings e WHERE')) {
+      const ids = params?.[0] as string[] | undefined;
+      const buffers = opts.priorEmbeddings?.get(ids?.join(',') ?? '') ?? [];
+      return { rows: buffers.map((v) => ({ vector: v })) };
+    }
+    if (trimmed.includes('INSERT INTO narratives')) {
+      inserts.push((params ?? []) as any[]);
+      return { rows: [] };
+    }
+    return { rows: [] };
+  });
 
   return {
-    pool: {
-      async query(sql: string, params?: any[]) {
-        const trimmed = sql.replace(/\s+/g, ' ').trim();
-        if (trimmed.includes('FROM embeddings e JOIN summaries s')) {
-          return { rows: opts.summaryRows ?? [] };
-        }
-        if (trimmed.includes('FROM narratives WHERE')) {
-          return { rows: opts.priorNarratives ?? [] };
-        }
-        if (trimmed.includes('FROM embeddings e WHERE')) {
-          // Prior narrative embeddings lookup
-          const ids = params?.[0] as string[];
-          const buffers = opts.priorEmbeddings?.get(ids.join(',')) ?? [];
-          return { rows: buffers.map((v) => ({ vector: v })) };
-        }
-        if (trimmed.includes('INSERT INTO narratives')) {
-          inserts.push(params!);
-          return { rows: [] };
-        }
-        return { rows: [] };
-      },
-    } as any,
+    pool: pool as any,
     inserts,
   };
 }

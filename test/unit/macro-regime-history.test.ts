@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getMacroRegimeHistoryByReport } from '../../src/db/queries.js';
 import { readServerSource } from './helpers/server-source.js';
+import { makeMockPool } from '../helpers/factories.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -14,13 +15,11 @@ function readSrc(relPath: string): string {
 
 function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }>) {
   let callIndex = 0;
-  return {
-    query: async () => {
-      const response = responses[callIndex] ?? { rows: [], rowCount: 0 };
-      callIndex += 1;
-      return { rows: response.rows ?? [], rowCount: response.rowCount ?? 0 };
-    },
-  };
+  return makeMockPool(() => {
+    const response = responses[callIndex] ?? { rows: [], rowCount: 0 };
+    callIndex += 1;
+    return { rows: response.rows ?? [], rowCount: response.rowCount ?? 0 };
+  });
 }
 
 describe('getMacroRegimeHistoryByReport', () => {

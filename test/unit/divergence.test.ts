@@ -4,19 +4,12 @@ import { createDivergenceTracker } from '../../src/knowledge/divergence.js';
 import type { DivergenceEntry, Direction } from '../../src/knowledge/divergence.js';
 import type { Pool } from '../../src/db/connection.js';
 import type { Logger } from '../../src/logger.js';
-import type { MockLogger, MockQueryResult } from '../helpers/mock-types.js';
+import type { MockQueryResult } from '../helpers/mock-types.js';
+import { makeMockLogger, makeMockPool as buildMockPool } from '../helpers/factories.js';
 
 // ── Stubs ───────────────────────────────────────────────────────────────
 
-const noopLog = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
-  fatal: () => {},
-  child: () => noopLog,
-} as MockLogger;
-const logger = noopLog as unknown as Logger;
+const logger = makeMockLogger() as Logger;
 
 // ── Mock pool helpers ───────────────────────────────────────────────────
 
@@ -33,23 +26,8 @@ function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => MockQue
   pool: Pool;
   calls: QueryCall[];
 } {
-  const calls: QueryCall[] = [];
-
-  const pool = {
-    connect: async () => ({
-      query: async (sql: string, params?: unknown[]) => {
-        calls.push({ sql, params: params ?? [] });
-        return queryHandler(sql, params);
-      },
-      release: () => {},
-    }),
-    query: async (sql: string, params?: unknown[]) => {
-      calls.push({ sql, params: params ?? [] });
-      return queryHandler(sql, params);
-    },
-  };
-
-  return { pool: pool as unknown as Pool, calls };
+  const pool = buildMockPool(queryHandler);
+  return { pool: pool.pool as unknown as Pool, calls: pool.calls };
 }
 
 // ── 1. getDivergence ────────────────────────────────────────────────────

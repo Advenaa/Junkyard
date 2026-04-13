@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createSummarizer } from '../../src/process/summarize.js';
 import { ContextLengthExceededError } from '../../src/llm.js';
 import type { Config } from '../../src/config.js';
+import { fakeConfig as buildFakeConfig, makeMockPool as buildMockPool } from '../helpers/factories.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -18,24 +19,9 @@ const silentLog = {
 } as never;
 
 function fakeConfig(): Config {
-  return {
-    anthropicApiKey: '',
-    geminiApiKey: '',
-    databaseUrl: '',
-    discordClientId: null,
-    discordClientSecret: null,
-    adminUserIds: [],
-    discordTokens: [],
-    twitterApiKey: null,
-    apiKey: 'test',
-    sessionSecret: 'secret',
-    port: 3000,
-    dataDir: './data',
-    publicUrl: null,
-    alertWebhookUrl: null,
+  return buildFakeConfig({
     models: { normalizer: 'haiku-test', chunk: 'haiku-test', thinkalot: 'sonnet-test' },
-    secrets: [],
-  };
+  });
 }
 
 /** Build a valid ChunkSummary JSON string that passes zod. */
@@ -65,10 +51,7 @@ function fakeItem(id: string) {
  * `items` is the list of items that will be "claimed" and returned.
  */
 function mockPool(items: ReturnType<typeof fakeItem>[]) {
-  const calls: Array<{ text: string; values: unknown[] }> = [];
-  const query = async (text: string, values?: unknown[]) => {
-    calls.push({ text, values: values ?? [] });
-
+  const base = buildMockPool((text) => {
     // claimBatch: UPDATE ... SET batch_id
     if (text.includes('batch_id') && text.includes('UPDATE') && text.includes('SET')) {
       return { rows: [], rowCount: items.length };
@@ -86,15 +69,14 @@ function mockPool(items: ReturnType<typeof fakeItem>[]) {
       return { rows: [], rowCount: items.length };
     }
     return { rows: [], rowCount: 0 };
-  };
+  });
 
   return {
-    calls,
-    query,
-    connect: async () => ({
-      query,
-      release: () => {},
-    }),
+    query: base.query,
+    connect: base.connect,
+    get calls() {
+      return base.calls.map(({ sql, params }) => ({ text: sql, values: params }));
+    },
   };
 }
 

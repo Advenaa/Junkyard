@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createSynthesizer } from '../../src/process/synthesize.js';
 import type { Config } from '../../src/config.js';
+import { fakeConfig as buildFakeConfig, makeMockPool as buildMockPool } from '../helpers/factories.js';
 
 // ---------------------------------------------------------------------------
 // Helpers: minimal mocks (following auth.test.ts pattern)
@@ -11,17 +12,19 @@ import type { Config } from '../../src/config.js';
 /** Build a mock Pool whose .query() returns the given rows/rowCount. */
 function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number; error?: unknown }> = []) {
   let callIndex = 0;
-  const calls: Array<{ text: string; values: unknown[] }> = [];
+  const base = buildMockPool(() => {
+    const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
+    callIndex++;
+    if ('error' in resp && resp.error !== undefined) {
+      throw resp.error;
+    }
+    return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
+  });
   return {
-    calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-      const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
-      callIndex++;
-      if ('error' in resp && resp.error !== undefined) {
-        throw resp.error;
-      }
-      return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
+    query: base.query,
+    connect: base.connect,
+    get calls() {
+      return base.calls.map(({ sql, params }) => ({ text: sql, values: params }));
     },
   };
 }
@@ -74,25 +77,15 @@ function captureLog() {
 
 /** Partial Config for synthesizer tests. */
 function fakeConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    anthropicApiKey: '',
-    geminiApiKey: '',
-    databaseUrl: '',
-    discordClientId: null,
-    discordClientSecret: null,
-    adminUserIds: [],
-    discordTokens: [],
-    twitterApiKey: null,
-    apiKey: 'test-api-key',
-    sessionSecret: 'secret',
-    port: 3000,
-    dataDir: './data',
-    publicUrl: null,
-    alertWebhookUrl: null,
-    models: { normalizer: 'haiku-test', chunk: 'haiku-test', thinkalot: 'sonnet-test' },
-    secrets: [],
+  return buildFakeConfig({
     ...overrides,
-  };
+    models: {
+      normalizer: 'haiku-test',
+      chunk: 'haiku-test',
+      thinkalot: 'sonnet-test',
+      ...overrides.models,
+    },
+  });
 }
 
 /** Build a valid parsed summary body (JSON string). */
