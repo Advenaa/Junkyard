@@ -175,6 +175,80 @@ describe('validateUrl', () => {
     assert.ok(result.reason);
   });
 
+  // --- IPv6 private range coverage ---
+
+  it('should reject raw fc00::/7 IPv6 hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://[fc00::1]');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject raw fd00::/8 IPv6 hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://[fd12::1]');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject raw fe80::/10 IPv6 hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://[fe80::1]');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject the IPv6 unspecified address without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://[::]');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
   // --- Private IP range coverage ---
 
   it('should reject when DNS resolves to 127.0.0.2 (127.x range)', async (t) => {
@@ -240,6 +314,66 @@ describe('validateUrl', () => {
     });
 
     const result = await validateUrl('https://rebind-192.example.com');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject when DNS resolves to fc00::/7 IPv6 addresses', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('no A record');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['fc00::1']);
+
+    const result = await validateUrl('https://rebind-fc00.example.com');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject when DNS resolves to fe80::/10 IPv6 addresses', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('no A record');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['fe80::1']);
+
+    const result = await validateUrl('https://rebind-fe80.example.com');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject raw 0.0.0.0 hostnames without consulting DNS', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('DNS should not run for literal IP hosts');
+    });
+
+    const result = await validateUrl('https://0.0.0.0');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /private/i);
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject when DNS resolves to 0.0.0.1 (0.0.0.0/8)', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['0.0.0.1']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    const result = await validateUrl('https://rebind-zero.example.com');
     assert.strictEqual(result.valid, false);
     assert.match(result.reason!, /private/i);
 
@@ -383,6 +517,72 @@ describe('validateUrl', () => {
     const result = await validateUrl('https://myserver.local');
     assert.strictEqual(result.valid, false);
     assert.ok(result.reason);
+  });
+
+  // --- URL parsing and hostname edge cases ---
+
+  it('should accept HTTPS URLs with auth credentials when the hostname is public', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    const result = await validateUrl('https://user:pass@example.com/path');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.resolvedIp, '93.184.216.34');
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should accept extremely long HTTPS URLs when the hostname resolves publicly', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+    const longUrl = `https://example.com/${'a'.repeat(10050)}`;
+
+    const result = await validateUrl(longUrl);
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.resolvedIp, '93.184.216.34');
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should handle Unicode IDN hostnames without crashing', async (t) => {
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => {
+      throw new Error('no AAAA record');
+    });
+
+    const result = await validateUrl('https://münchen.de/path');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.resolvedIp, '93.184.216.34');
+
+    const [hostname] = resolve4Mock.mock.calls[0]!.arguments as [string];
+    assert.strictEqual(hostname, 'xn--mnchen-3ya.de');
+
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('should reject empty URL strings', async () => {
+    const result = await validateUrl('');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /invalid/i);
+  });
+
+  it('should reject URLs with only a scheme', async () => {
+    const result = await validateUrl('https://');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /invalid/i);
+  });
+
+  it('should reject double-encoded hostnames that cannot be parsed safely', async () => {
+    const result = await validateUrl('https://%256cocalhost');
+    assert.strictEqual(result.valid, false);
+    assert.match(result.reason!, /invalid/i);
   });
 });
 
@@ -564,6 +764,60 @@ describe('fetchValidated', () => {
     assert.strictEqual(result.response, null);
     assert.strictEqual(result.validation.valid, false);
     assert.strictEqual(fetchMock.mock.callCount(), 0);
+
+    fetchMock.mock.restore();
+  });
+
+  it('throws immediately when the AbortSignal is already aborted', async (t) => {
+    const controller = new AbortController();
+    const abortReason = new DOMException('Already aborted', 'AbortError');
+    controller.abort(abortReason);
+
+    const resolve4Mock = t.mock.method(dns.promises, 'resolve4', async () => ['93.184.216.34']);
+    const resolve6Mock = t.mock.method(dns.promises, 'resolve6', async () => ['2001:db8::10']);
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => new Response('ok', { status: 200 }));
+
+    await assert.rejects(
+      fetchValidated(
+        'https://safe.example.com',
+        { signal: controller.signal },
+        { valid: true, resolvedIp: '1.2.3.4', resolvedIps: ['1.2.3.4', '5.6.7.8'] },
+      ),
+      (err: unknown) => {
+        assert.strictEqual(err, abortReason);
+        return true;
+      },
+    );
+    assert.strictEqual(resolve4Mock.mock.callCount(), 0);
+    assert.strictEqual(resolve6Mock.mock.callCount(), 0);
+    assert.strictEqual(fetchMock.mock.callCount(), 0);
+
+    fetchMock.mock.restore();
+    resolve4Mock.mock.restore();
+    resolve6Mock.mock.restore();
+  });
+
+  it('throws the last transient error when all resolved IPs fail transiently', async (t) => {
+    const firstError = createErrorWithCode('first IP unreachable', 'EHOSTUNREACH');
+    const secondError = createErrorWithCode('second IP timed out', 'ETIMEDOUT');
+    let callCount = 0;
+    const fetchMock = t.mock.method(urlValidatorInternal, 'fetch', async () => {
+      callCount += 1;
+      throw callCount === 1 ? firstError : secondError;
+    });
+
+    await assert.rejects(
+      fetchValidated('https://safe.example.com', undefined, {
+        valid: true,
+        resolvedIp: '1.2.3.4',
+        resolvedIps: ['1.2.3.4', '5.6.7.8'],
+      }),
+      (err: unknown) => {
+        assert.strictEqual(err, secondError);
+        return true;
+      },
+    );
+    assert.strictEqual(fetchMock.mock.callCount(), 2);
 
     fetchMock.mock.restore();
   });
