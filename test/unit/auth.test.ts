@@ -9,6 +9,7 @@ import {
   SLIDING_REFRESH_HOURS,
   createSessionManager,
   normalizeUA,
+  sessionManagementId,
   type SessionManager,
 } from '../../src/auth/sessions.js';
 import { requireAuth, requireAdmin } from '../../src/auth/middleware.js';
@@ -137,6 +138,90 @@ function getOAuthStateFromRedirect(response: { headers: Record<string, string | 
   return state;
 }
 
+function extractCookieValue(
+  response: { headers: Record<string, string | string[] | undefined> },
+  name: string,
+): string | null {
+  const setCookieHeader = response.headers['set-cookie'];
+  const cookies = Array.isArray(setCookieHeader) ? setCookieHeader : setCookieHeader ? [setCookieHeader] : [];
+
+  for (const cookieHeader of cookies) {
+    const cookie = cookieHeader.split(';', 1)[0];
+    if (cookie?.startsWith(`${name}=`)) {
+      return decodeURIComponent(cookie.slice(name.length + 1));
+    }
+  }
+
+  return null;
+}
+
+function mockDiscordFetch(
+  overrides: {
+    discordUser?: { id: string; username: string; avatar: string | null; discriminator: string };
+    tokenOk?: boolean;
+    tokenStatus?: number;
+    tokenBody?: string;
+    userOk?: boolean;
+    userStatus?: number;
+    userBody?: string;
+  } = {},
+): string[] {
+  const calls: string[] = [];
+
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    calls.push(url);
+
+    if (url.includes('/oauth2/token')) {
+      if (overrides.tokenOk === false) {
+        return new Response(overrides.tokenBody ?? 'token exchange failed', {
+          status: overrides.tokenStatus ?? 502,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({
+          access_token: 'oauth-token',
+          token_type: 'Bearer',
+          expires_in: 3600,
+          scope: 'identify',
+        }),
+        {
+          status: overrides.tokenStatus ?? 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    if (url.includes('/users/@me')) {
+      if (overrides.userOk === false) {
+        return new Response(overrides.userBody ?? 'user fetch failed', {
+          status: overrides.userStatus ?? 502,
+        });
+      }
+
+      return new Response(
+        JSON.stringify(
+          overrides.discordUser ?? {
+            id: '123456789012345678',
+            username: 'alice',
+            avatar: null,
+            discriminator: '0001',
+          },
+        ),
+        {
+          status: overrides.userStatus ?? 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    throw new Error(`Unexpected fetch: ${url}`);
+  }) as typeof fetch;
+
+  return calls;
+}
+
 // ===========================================================================
 // Session constants & expiry math
 // ===========================================================================
@@ -211,6 +296,30 @@ describe('createSessionManager', () => {
       assert.deepStrictEqual(deleteCall!.params, [['old-1', 'old-2']]);
       const insertCall = pool.calls.find((c) => c.sql.includes('INSERT INTO sessions'));
       assert.ok(insertCall, 'should have INSERT query');
+    });
+
+    it('uses FOR UPDATE and evicts the oldest session when creating a 6th session', async () => {
+      const pool = mockPool([
+        { rows: [{ id: 'oldest-session' }] }, // overflow SELECT returns the 6th-oldest session
+        {}, // DELETE oldest session
+        {}, // INSERT new session
+      ]);
+      const mgr = createSessionManager(pool as never, silentLog);
+      await mgr.create('user-1', '127.0.0.1', 'TestAgent');
+
+      const lockCall = pool.calls.find((c) => c.sql.includes('FOR UPDATE'));
+      assert.ok(lockCall, 'should lock the user session rows with FOR UPDATE');
+      assert.deepStrictEqual(lockCall!.params, ['user-1']);
+
+      const existingCall = pool.calls.find((c) =>
+        c.sql.includes('SELECT id FROM sessions WHERE discord_id = $1 ORDER BY created_at DESC OFFSET $2'),
+      );
+      assert.ok(existingCall, 'should query overflow sessions using OFFSET MAX_SESSIONS_PER_USER - 1');
+      assert.deepStrictEqual(existingCall!.params, ['user-1', MAX_SESSIONS_PER_USER - 1]);
+
+      const deleteCall = pool.calls.find((c) => c.sql.includes('DELETE FROM sessions WHERE id = ANY($1)'));
+      assert.ok(deleteCall, 'should delete the oldest session before inserting the new one');
+      assert.deepStrictEqual(deleteCall!.params, [['oldest-session']]);
     });
   });
 
@@ -384,6 +493,110 @@ describe('createSessionManager', () => {
       const mgr = createSessionManager(pool as never, silentLog);
       const count = await mgr.cleanupExpired();
       assert.strictEqual(count, 0);
+    });
+  });
+
+  describe('deleteByManagementId()', () => {
+    it('deletes the matching active session and returns true', async () => {
+      const targetSessionId = 'a'.repeat(64);
+      const pool = mockPool([{ rows: [{ id: 'b'.repeat(64) }, { id: targetSessionId }] }, { rowCount: 1 }]);
+      const mgr = createSessionManager(pool as never, silentLog);
+
+      const result = await mgr.deleteByManagementId('user-1', sessionManagementId(targetSessionId));
+
+      assert.equal(result, true);
+      const deleteCall = pool.calls.find((c) => c.sql.includes('DELETE FROM sessions WHERE id = $1'));
+      assert.ok(deleteCall, 'should delete the matching session');
+      assert.deepStrictEqual(deleteCall!.params, [targetSessionId]);
+    });
+
+    it('returns false when no active session matches the management ID', async () => {
+      const pool = mockPool([{ rows: [{ id: 'c'.repeat(64) }] }]);
+      const mgr = createSessionManager(pool as never, silentLog);
+
+      const result = await mgr.deleteByManagementId('user-1', sessionManagementId('d'.repeat(64)));
+
+      assert.equal(result, false);
+      assert.equal(
+        pool.calls.filter((c) => c.sql.includes('DELETE FROM sessions WHERE id = $1')).length,
+        0,
+        'should not delete any session when the management ID does not match',
+      );
+    });
+  });
+
+  describe('deleteAllForUser()', () => {
+    it('deletes all sessions for a user and returns the deleted count', async () => {
+      const pool = mockPool([{ rowCount: 3 }]);
+      const mgr = createSessionManager(pool as never, silentLog);
+
+      const count = await mgr.deleteAllForUser('user-1');
+
+      assert.equal(count, 3);
+      assert.ok(pool.calls[0]?.sql.includes('DELETE FROM sessions WHERE discord_id = $1'));
+      assert.deepStrictEqual(pool.calls[0]?.params, ['user-1']);
+    });
+  });
+
+  describe('listForUser()', () => {
+    it('lists active sessions with management IDs and normalized fields', async () => {
+      const firstSessionId = '1'.repeat(64);
+      const secondSessionId = '2'.repeat(64);
+      const pool = mockPool([
+        {
+          rows: [
+            {
+              id: firstSessionId,
+              discord_id: 'user-1',
+              created_at: '1000',
+              expires_at: '2000',
+              last_refreshed_at: '1500',
+              ip_address: '127.0.0.1',
+              user_agent:
+                'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+            },
+            {
+              id: secondSessionId,
+              discord_id: 'user-1',
+              created_at: '900',
+              expires_at: '1900',
+              last_refreshed_at: '1400',
+              ip_address: null,
+              user_agent: 'mac/chrome',
+            },
+          ],
+        },
+      ]);
+      const mgr = createSessionManager(pool as never, silentLog);
+
+      const sessions = await mgr.listForUser('user-1');
+
+      assert.ok(
+        pool.calls[0]?.sql.includes('WHERE discord_id = $1 AND expires_at > $2'),
+        'should query only active sessions',
+      );
+      assert.deepStrictEqual(sessions, [
+        {
+          managementId: sessionManagementId(firstSessionId),
+          discordId: 'user-1',
+          createdAt: 1000,
+          expiresAt: 2000,
+          lastRefreshedAt: 1500,
+          ipAddress: '127.0.0.1',
+          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
+          normalizedUA: 'mac/chrome',
+        },
+        {
+          managementId: sessionManagementId(secondSessionId),
+          discordId: 'user-1',
+          createdAt: 900,
+          expiresAt: 1900,
+          lastRefreshedAt: 1400,
+          ipAddress: null,
+          userAgent: 'mac/chrome',
+          normalizedUA: 'mac/chrome',
+        },
+      ]);
     });
   });
 });
@@ -763,6 +976,334 @@ describe('registerOAuthRoutes', () => {
       await app.close();
     }
   });
+
+  it('creates a session and redirects home for an invited existing user', async () => {
+    const pool = mockPool([
+      { rows: [{ discord_id: '123456789012345678', role: 'viewer' }] }, // existing user lookup
+      { rowCount: 1 }, // user upsert
+    ]);
+    let createdSession: {
+      discordId: string;
+      ip: string;
+      userAgent: string;
+    } | null = null;
+    const app = await buildOAuthApp(
+      pool,
+      {},
+      {
+        create: async (discordId, ip, userAgent) => {
+          createdSession = { discordId, ip, userAgent };
+          return 'new-session-id';
+        },
+      },
+    );
+    mockDiscordFetch({
+      discordUser: {
+        id: '123456789012345678',
+        username: 'alice',
+        avatar: 'avatar-hash',
+        discriminator: '0001',
+      },
+    });
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+        remoteAddress: '203.0.113.10',
+      });
+
+      const callbackResponse = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        remoteAddress: '203.0.113.10',
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+          'user-agent': 'Browser/1.0',
+        },
+      });
+
+      assert.equal(callbackResponse.statusCode, 302);
+      assert.equal(callbackResponse.headers.location, '/');
+      assert.deepStrictEqual(createdSession, {
+        discordId: '123456789012345678',
+        ip: '203.0.113.10',
+        userAgent: 'Browser/1.0',
+      });
+
+      const sessionCookie = extractCookieValue(callbackResponse, 'podders_session');
+      assert.ok(sessionCookie, 'successful login should set a session cookie');
+      const unsignedSessionCookie = app.unsignCookie(sessionCookie);
+      assert.equal(unsignedSessionCookie.valid, true);
+      assert.equal(unsignedSessionCookie.value, 'new-session-id');
+
+      const insertCall = pool.calls.find((call) => call.sql.includes('INSERT INTO users'));
+      assert.ok(insertCall, 'successful login should upsert the user record');
+      assert.equal(insertCall!.params[0], '123456789012345678');
+      assert.equal(insertCall!.params[1], 'alice');
+      assert.equal(insertCall!.params[2], 'avatar-hash');
+      assert.equal(insertCall!.params[3], 'viewer');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('bootstraps admin users from config even when they are not yet in the database', async () => {
+    const pool = mockPool([
+      { rows: [] }, // existing user lookup
+      { rowCount: 1 }, // user upsert
+    ]);
+    let createdSessionDiscordId: string | null = null;
+    const app = await buildOAuthApp(
+      pool,
+      {
+        adminUserIds: ['987654321098765432'],
+      },
+      {
+        create: async (discordId) => {
+          createdSessionDiscordId = discordId;
+          return 'bootstrap-session-id';
+        },
+      },
+    );
+    mockDiscordFetch({
+      discordUser: {
+        id: '987654321098765432',
+        username: 'bootstrap-admin',
+        avatar: null,
+        discriminator: '0001',
+      },
+    });
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      const callbackResponse = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(callbackResponse.statusCode, 302);
+      assert.equal(callbackResponse.headers.location, '/');
+      assert.equal(createdSessionDiscordId, '987654321098765432');
+
+      const insertCall = pool.calls.find((call) => call.sql.includes('INSERT INTO users'));
+      assert.ok(insertCall, 'bootstrap admin login should upsert the user record');
+      assert.equal(insertCall!.params[0], '987654321098765432');
+      assert.equal(insertCall!.params[1], 'bootstrap-admin');
+      assert.equal(insertCall!.params[3], 'admin');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('rejects blocked users at the OAuth callback without creating a session', async () => {
+    const pool = mockPool([
+      { rows: [{ discord_id: '123456789012345678', role: 'blocked' }] }, // existing user lookup
+      { rows: [], rowCount: 0 }, // rejection padding lookup
+    ]);
+    let createdSessions = 0;
+    const app = await buildOAuthApp(
+      pool,
+      {},
+      {
+        create: async () => {
+          createdSessions++;
+          return 'blocked-user-session';
+        },
+      },
+    );
+    mockDiscordFetch({
+      discordUser: {
+        id: '123456789012345678',
+        username: 'blocked-user',
+        avatar: null,
+        discriminator: '0001',
+      },
+    });
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(response.statusCode, 302);
+      assert.equal(response.headers.location, '/login?error=blocked');
+      assert.equal(createdSessions, 0, 'blocked users must not create sessions');
+      assert.ok(!pool.calls.some((call) => call.sql.includes('INSERT INTO users')));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 502 when the Discord token exchange fails', async () => {
+    const pool = mockPool([{ rows: [], rowCount: 0 }]); // rejection padding lookup
+    const app = await buildOAuthApp(pool);
+    const fetchCalls = mockDiscordFetch({
+      tokenOk: false,
+      tokenStatus: 401,
+      tokenBody: 'bad authorization code',
+    });
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=bad-code&state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(response.statusCode, 502);
+      assert.deepStrictEqual(JSON.parse(response.payload), { error: 'Discord token exchange failed' });
+      assert.equal(fetchCalls.length, 1, 'token exchange failure should stop before fetching the Discord user');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 502 when fetching the Discord user fails after a successful token exchange', async () => {
+    const pool = mockPool([{ rows: [], rowCount: 0 }]); // rejection padding lookup
+    const app = await buildOAuthApp(pool);
+    const fetchCalls = mockDiscordFetch({
+      userOk: false,
+      userStatus: 500,
+      userBody: 'discord user unavailable',
+    });
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?code=test-code&state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(response.statusCode, 502);
+      assert.deepStrictEqual(JSON.parse(response.payload), { error: 'Failed to fetch Discord user' });
+      assert.equal(fetchCalls.length, 2, 'user fetch failure should happen after the token exchange');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 503 for OAuth initiation when Discord OAuth is not configured', async () => {
+    const app = await buildOAuthApp(mockPool(), {
+      discordClientId: null,
+    });
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      assert.equal(response.statusCode, 503);
+      assert.deepStrictEqual(JSON.parse(response.payload), { error: 'Discord OAuth is not configured' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 503 for the OAuth callback when Discord OAuth is not configured', async () => {
+    const app = await buildOAuthApp(mockPool(), {
+      discordClientId: null,
+    });
+
+    try {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord/callback?code=test-code&state=test-state',
+      });
+
+      assert.equal(response.statusCode, 503);
+      assert.deepStrictEqual(JSON.parse(response.payload), { error: 'Discord OAuth is not configured' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('redirects to the denied login error when Discord OAuth is denied by the user', async () => {
+    const pool = mockPool([{ rows: [], rowCount: 0 }]); // rejection padding lookup
+    const app = await buildOAuthApp(pool);
+    globalThis.fetch = (async () => {
+      throw new Error('fetch should not be called when the user denies OAuth');
+    }) as typeof fetch;
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?state=${getOAuthStateFromRedirect(initiationResponse)}&error=access_denied`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(response.statusCode, 302);
+      assert.equal(response.headers.location, '/login?error=denied');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('redirects to the missing-code login error when the callback omits the code parameter', async () => {
+    const pool = mockPool([{ rows: [], rowCount: 0 }]); // rejection padding lookup
+    const app = await buildOAuthApp(pool);
+    globalThis.fetch = (async () => {
+      throw new Error('fetch should not be called when the callback has no code');
+    }) as typeof fetch;
+
+    try {
+      const initiationResponse = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/discord',
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/auth/discord/callback?state=${getOAuthStateFromRedirect(initiationResponse)}`,
+        headers: {
+          cookie: getOAuthCookieHeader(initiationResponse),
+        },
+      });
+
+      assert.equal(response.statusCode, 302);
+      assert.equal(response.headers.location, '/login?error=missing_code');
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 // ===========================================================================
@@ -962,6 +1503,87 @@ describe('requireAuth', () => {
     await handler(req, reply as never);
 
     assert.strictEqual(reply.statusCode, 401);
+  });
+
+  it('destroys blocked user sessions and clears the cookie before returning 403', async () => {
+    const deletedSessionIds: string[] = [];
+    const sessionManager = fakeSessionManager({
+      validate: async () => ({ discordId: 'blocked-user', role: 'blocked', refreshed: false }),
+      delete: async (sessionId) => {
+        deletedSessionIds.push(sessionId);
+      },
+    });
+    const pool = mockPool([{ rows: [{ username: 'eve' }] }]);
+    const config = fakeConfig();
+    const handler = requireAuth(pool as never, config, sessionManager as never);
+
+    const req = fakeRequest({
+      cookies: { podders_session: 'signed-cookie' },
+      unsignResult: { valid: true, value: 'blocked-session-id' },
+    });
+    const reply = fakeReply();
+    await handler(req, reply as never);
+
+    assert.deepStrictEqual(deletedSessionIds, ['blocked-session-id']);
+    assert.deepStrictEqual(reply.clearCookieCalls, [
+      {
+        name: 'podders_session',
+        options: { path: '/' },
+      },
+    ]);
+    assert.strictEqual(reply.statusCode, 403);
+    assert.deepStrictEqual(reply.body, { error: 'Access blocked' });
+  });
+
+  it('returns 401 when the podders_session cookie is missing and no Bearer token is provided', async () => {
+    let validateCalls = 0;
+    const sessionManager = fakeSessionManager({
+      validate: async () => {
+        validateCalls++;
+        return null;
+      },
+    });
+    const pool = mockPool();
+    const config = fakeConfig();
+    const handler = requireAuth(pool as never, config, sessionManager as never);
+
+    const req = fakeRequest({
+      cookies: {},
+    });
+    const reply = fakeReply();
+    await handler(req, reply as never);
+
+    assert.strictEqual(validateCalls, 0);
+    assert.strictEqual(reply.statusCode, 401);
+    assert.deepStrictEqual(reply.body, { error: 'Unauthorized' });
+  });
+
+  it('falls through to API key auth when the signed session cookie is invalid', async () => {
+    let validateCalls = 0;
+    const sessionManager = fakeSessionManager({
+      validate: async () => {
+        validateCalls++;
+        return null;
+      },
+    });
+    const pool = mockPool();
+    const config = fakeConfig({ apiKey: 'my-secret-key' });
+    const handler = requireAuth(pool as never, config, sessionManager as never);
+
+    const req = fakeRequest({
+      cookies: { podders_session: 'tampered-cookie' },
+      authorization: 'Bearer my-secret-key',
+      unsignResult: { valid: false, value: null },
+    });
+    const reply = fakeReply();
+    await handler(req, reply as never);
+
+    assert.strictEqual(validateCalls, 0);
+    assert.deepStrictEqual((req as Record<string, unknown>).user, {
+      discordId: 'api-key',
+      username: 'api',
+      role: 'admin',
+    });
   });
 
   it('skips API key check when apiKey config is empty', async () => {
