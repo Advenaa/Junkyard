@@ -54,6 +54,7 @@ import {
   fetchDiagStuckItems,
   fetchDiagHaltedSources,
   fetchDiagHealthEvents,
+  fetchDiagCostSpikes,
   fetchUnusualActivityOverviewData,
   fetchNarrativeWatchlistData,
   fetchNarrativeDrilldownData,
@@ -75,6 +76,7 @@ import {
   fetchFeedbackList,
   revokeUserSession,
   updateFeedbackStatus,
+  type DiagCostSpikes,
 } from './api.js';
 import {
   getEntityStatusBadgeClasses,
@@ -135,6 +137,14 @@ import {
   getAuditTargetLabel,
 } from './formatters.js';
 
+const costSpikeTimestampFormatter = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
 export default function PipelineTab() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
@@ -148,6 +158,8 @@ export default function PipelineTab() {
   const [diagStuckItems, setDiagStuckItems] = useState<DiagStuckItems | null>(null);
   const [diagHaltedSources, setDiagHaltedSources] = useState<DiagHaltedSources | null>(null);
   const [diagHealthEvents, setDiagHealthEvents] = useState<DiagHealthEvents | null>(null);
+  const [diagCostSpikes, setDiagCostSpikes] = useState<DiagCostSpikes | null>(null);
+  const [diagCostSpikesLoading, setDiagCostSpikesLoading] = useState(false);
   const [schedulerDiag, setSchedulerDiag] = useState<SchedulerDiagnostics | null>(null);
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[] | null>(null);
   const [feedbackTotal, setFeedbackTotal] = useState(0);
@@ -199,29 +211,43 @@ export default function PipelineTab() {
     if (!isAdmin || !diagExpanded) return;
     let cancelled = false;
     setDiagError(null);
+    setDiagCostSpikesLoading(true);
     Promise.allSettled([
       fetchDiagBackpressure(),
       fetchDiagStuckItems(),
       fetchDiagHaltedSources(),
       fetchDiagHealthEvents(),
       fetchSchedulerDiagnostics(),
-    ]).then(([backpressureResult, stuckItemsResult, haltedSourcesResult, healthEventsResult, schedulerResult]) => {
-      if (cancelled) return;
-      setDiagBackpressure(backpressureResult.status === 'fulfilled' ? backpressureResult.value : null);
-      setDiagStuckItems(stuckItemsResult.status === 'fulfilled' ? stuckItemsResult.value : null);
-      setDiagHaltedSources(haltedSourcesResult.status === 'fulfilled' ? haltedSourcesResult.value : null);
-      setDiagHealthEvents(healthEventsResult.status === 'fulfilled' ? healthEventsResult.value : null);
-      setSchedulerDiag(schedulerResult.status === 'fulfilled' ? schedulerResult.value : null);
-      if (
-        backpressureResult.status === 'rejected' ||
-        stuckItemsResult.status === 'rejected' ||
-        haltedSourcesResult.status === 'rejected' ||
-        healthEventsResult.status === 'rejected' ||
-        schedulerResult.status === 'rejected'
-      ) {
-        setDiagError('Some diagnostic endpoints could not be loaded.');
-      }
-    });
+      fetchDiagCostSpikes(),
+    ]).then(
+      ([
+        backpressureResult,
+        stuckItemsResult,
+        haltedSourcesResult,
+        healthEventsResult,
+        schedulerResult,
+        costSpikesResult,
+      ]) => {
+        if (cancelled) return;
+        setDiagBackpressure(backpressureResult.status === 'fulfilled' ? backpressureResult.value : null);
+        setDiagStuckItems(stuckItemsResult.status === 'fulfilled' ? stuckItemsResult.value : null);
+        setDiagHaltedSources(haltedSourcesResult.status === 'fulfilled' ? haltedSourcesResult.value : null);
+        setDiagHealthEvents(healthEventsResult.status === 'fulfilled' ? healthEventsResult.value : null);
+        setSchedulerDiag(schedulerResult.status === 'fulfilled' ? schedulerResult.value : null);
+        setDiagCostSpikes(costSpikesResult.status === 'fulfilled' ? costSpikesResult.value : null);
+        setDiagCostSpikesLoading(false);
+        if (
+          backpressureResult.status === 'rejected' ||
+          stuckItemsResult.status === 'rejected' ||
+          haltedSourcesResult.status === 'rejected' ||
+          healthEventsResult.status === 'rejected' ||
+          schedulerResult.status === 'rejected' ||
+          costSpikesResult.status === 'rejected'
+        ) {
+          setDiagError('Some diagnostic endpoints could not be loaded.');
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -729,6 +755,99 @@ export default function PipelineTab() {
                   </div>
                 ) : (
                   <p className="text-text-secondary text-sm font-body">No recent critical/error events</p>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <h4 className="font-mono text-xs uppercase tracking-wider text-text-secondary">Cost Spikes</h4>
+                  {diagCostSpikes && (
+                    <div className="flex flex-wrap gap-2 text-xs font-mono">
+                      <span className="px-2 py-1 rounded bg-background border border-border text-text-secondary">
+                        {diagCostSpikes.spikes.length} spike{diagCostSpikes.spikes.length === 1 ? '' : 's'}
+                      </span>
+                      <span className="px-2 py-1 rounded bg-background border border-border text-text-secondary">
+                        {diagCostSpikes.windowHours}h window
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {diagCostSpikesLoading ? (
+                  <div className="overflow-x-auto rounded-lg border border-border bg-background">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
+                          <th className="text-left px-3 py-2">Model</th>
+                          <th className="text-left px-3 py-2">Timestamp</th>
+                          <th className="text-left px-3 py-2">Actual</th>
+                          <th className="text-left px-3 py-2">Baseline</th>
+                          <th className="text-left px-3 py-2">Ratio</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[0, 1, 2].map((rowIndex) => (
+                          <tr key={rowIndex} className="border-b border-border/70 last:border-b-0">
+                            <td className="px-3 py-3">
+                              <div className="h-3 w-28 rounded bg-surface animate-pulse" />
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="h-3 w-36 rounded bg-surface animate-pulse" />
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="h-3 w-16 rounded bg-surface animate-pulse" />
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="h-3 w-16 rounded bg-surface animate-pulse" />
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="h-3 w-14 rounded bg-surface animate-pulse" />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : !diagCostSpikes ? (
+                  <p className="text-text-secondary text-sm font-body">Cost spike diagnostics unavailable.</p>
+                ) : diagCostSpikes.spikes.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-border text-text-secondary font-mono text-xs uppercase tracking-wider">
+                          <th className="text-left px-3 py-2">Model</th>
+                          <th className="text-left px-3 py-2">Timestamp</th>
+                          <th className="text-left px-3 py-2">Actual</th>
+                          <th className="text-left px-3 py-2">Baseline</th>
+                          <th className="text-left px-3 py-2">Ratio</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {diagCostSpikes.spikes.map((spike) => (
+                          <tr
+                            key={`${spike.model}:${spike.hourEpochMs}`}
+                            className="border-b border-border/70 last:border-b-0"
+                          >
+                            <td className="px-3 py-2 text-text-primary font-mono text-xs">{spike.model}</td>
+                            <td className="px-3 py-2 text-text-secondary text-sm font-body">
+                              {costSpikeTimestampFormatter.format(spike.hourEpochMs)}
+                            </td>
+                            <td className="px-3 py-2 text-text-primary font-mono text-xs">
+                              ${spike.actualUsd.toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2 text-text-secondary font-mono text-xs">
+                              ${spike.baselineUsd.toFixed(2)}
+                            </td>
+                            <td className="px-3 py-2 text-text-primary font-mono text-xs">
+                              {Number.isFinite(spike.ratio) ? `${spike.ratio.toFixed(1)}×` : '∞'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-text-secondary text-sm font-body">No cost spikes detected</p>
                 )}
               </div>
 

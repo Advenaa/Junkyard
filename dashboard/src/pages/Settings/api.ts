@@ -32,6 +32,19 @@ import type {
 } from './types.js';
 import { apiFetch, isApiError } from '../../lib/api.js';
 
+export interface CostSpike {
+  model: string;
+  hourEpochMs: number;
+  actualUsd: number;
+  baselineUsd: number;
+  ratio: number;
+}
+
+export interface DiagCostSpikes {
+  windowHours: number;
+  spikes: CostSpike[];
+}
+
 export async function fetchSourcesData(): Promise<Source[]> {
   const res = await apiFetch<{ sources: Source[] }>('/sources');
   return res.sources;
@@ -140,6 +153,10 @@ export async function fetchDiagHealthEvents(limit = 10): Promise<DiagHealthEvent
 
 export async function fetchSchedulerDiagnostics(): Promise<SchedulerDiagnostics> {
   return apiFetch<SchedulerDiagnostics>('/diag/scheduler');
+}
+
+export async function fetchDiagCostSpikes(): Promise<DiagCostSpikes> {
+  return apiFetch<DiagCostSpikes>('/diag/cost-spikes');
 }
 
 export async function fetchUnusualActivityOverviewData(): Promise<UnusualActivityOverview> {
