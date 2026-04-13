@@ -176,23 +176,27 @@ describe('LM-012: pre-summarize does NOT double-sanitize before wrapWithNonce', 
 });
 
 describe('LM-012: process/summarize.ts does NOT double-sanitize before wrapWithNonce', () => {
-  const src = readSrc('src/process/summarize.ts');
+  const summarizeSrc = readSrc('src/process/summarize.ts');
+  const escalationSrc = readSrc('src/process/summarize-escalation.ts');
 
   it('does NOT call sanitizeForPrompt before wrapWithNonce', () => {
-    // Check that sanitizeForPrompt does not appear in the file at all
-    // (summarize.ts uses wrapWithNonce from llm, which handles sanitization internally)
     assert.doesNotMatch(
-      src,
+      summarizeSrc,
       /sanitizeForPrompt/,
       'summarize.ts must NOT call sanitizeForPrompt — wrapWithNonce handles it',
     );
+    assert.doesNotMatch(
+      escalationSrc,
+      /sanitizeForPrompt/,
+      'summarize-escalation.ts must NOT call sanitizeForPrompt — wrapWithNonce handles it',
+    );
   });
 
-  it('callAndParse wraps user content with wrapWithNonce', () => {
-    const fnStart = src.indexOf('async function callAndParse');
+  it('callAndParse wraps user content with wrapWithNonce in summarize-escalation.ts', () => {
+    const fnStart = escalationSrc.indexOf('async function callAndParse');
     assert.ok(fnStart !== -1, 'callAndParse must exist');
 
-    const fnBody = src.slice(fnStart, src.indexOf('\n  async function', fnStart + 1));
+    const fnBody = escalationSrc.slice(fnStart, escalationSrc.indexOf('\n  async function', fnStart + 1));
 
     assert.ok(
       fnBody.includes('wrapWithNonce(userContent)') || fnBody.includes('wrapWithNonce(userContent,'),
@@ -201,6 +205,10 @@ describe('LM-012: process/summarize.ts does NOT double-sanitize before wrapWithN
   });
 
   it('LLM interface in summarize.ts declares wrapWithNonce', () => {
-    assert.match(src, /wrapWithNonce\s*\(\s*content\s*:\s*string\s*\)/, 'LLM interface must include wrapWithNonce');
+    assert.match(
+      summarizeSrc,
+      /wrapWithNonce\s*\(\s*content\s*:\s*string\s*\)/,
+      'LLM interface must include wrapWithNonce',
+    );
   });
 });

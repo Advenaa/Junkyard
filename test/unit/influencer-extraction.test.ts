@@ -2,7 +2,7 @@
  * Structural regression tests for Influencer Tracking 3.2 Cycle 281 — Author Extraction.
  *
  * Verifies:
- * - Summarize: upsertAuthor import + author extraction logic in handleChunk
+ * - Summarize persistence: upsertAuthor import + author extraction logic
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,8 +20,8 @@ function readSrc(relPath: string): string {
 // Summarize: author extraction wiring
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('Summarize: author extraction wiring', () => {
-  const src = readSrc('src/process/summarize.ts');
+describe('Summarize persistence: author extraction wiring', () => {
+  const src = readSrc('src/process/summarize-persistence.ts');
 
   it('imports upsertAuthor from ../db/queries.js', () => {
     assert.match(src, /upsertAuthor/);

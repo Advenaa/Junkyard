@@ -1,43 +1,35 @@
-import { z } from 'zod';
 import { ulid } from 'ulid';
-import { ChunkSummaryLLMSchema } from './schemas.js';
-import type { AuthorClaim, ChunkEvent, ChunkRelationship, ChunkSummary } from './schemas.js';
+import type { ChunkSummary } from './schemas.js';
 import { chunkByTokens, CHUNK_TOKEN_BUDGET, analyzeChunk, estimateTokens } from './chunk.js';
 import { verifyAuthorClaims, verifyEntities, verifyEvents, verifyRelationships } from './chunk-verify.js';
 import { buildChunkRawText, hasShortDiscordSignalMarker, shouldFilterShortDiscordChunk } from './discord-filter.js';
-import { resolveEntityIds } from './resolve-entities.js';
+import { createEscalation } from './summarize-escalation.js';
+import { MAX_SONNET_ESCALATIONS_PER_BATCH, type CallBudget } from './summarize-budget.js';
+import { createPersistence } from './summarize-persistence.js';
 import { ContextLengthExceededError } from '../llm.js';
 import type { LLMCallResult, Stage } from '../llm.js';
-import {
-  insertSummary,
-  claimBatch,
-  insertEvents,
-  insertAuthorCall,
-  getMostRecentEventForEntity,
-  upsertEntityRelationship,
-  upsertAuthor,
-} from '../db/queries.js';
-import type { EntityRelationshipType, EventRow } from '../db/queries.js';
+import { insertSummary, claimBatch } from '../db/queries.js';
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
-import { normalizeAlias } from '../knowledge/entities.js';
 import type { EntityManager } from '../knowledge/entities.js';
 import type { AlphaTracker } from '../knowledge/alpha-tracker.js';
 export { hasShortDiscordSignalMarker, shouldFilterShortDiscordChunk } from './discord-filter.js';
+export {
+  type CallBudget,
+  budgetExhausted,
+  escalationBudgetExhausted,
+  MAX_SONNET_ESCALATIONS_PER_BATCH,
+} from './summarize-budget.js';
+export { createPersistence, type ChunkAuthorReference } from './summarize-persistence.js';
+export { createEscalation } from './summarize-escalation.js';
 
 /** Maximum number of summarization attempts before an item is permanently marked 'failed' (DP-003). */
 const MAX_ITEM_RETRIES = 3;
-const MAX_SONNET_ESCALATIONS_PER_BATCH = 3;
-const EVENT_CHAIN_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
-
-const EventFollowUpSchema = z.object({
-  followUp: z.boolean(),
-});
 
 // ── LLM interface ─────────────────────────────────────────────────────
 
-interface LLM {
+export interface LLM {
   call(params: {
     model: string;
     system: string;
@@ -50,19 +42,13 @@ interface LLM {
 
 // ── Item shape from DB ────────────────────────────────────────────────
 
-interface ClaimedItem {
+export interface ClaimedItem {
   id: string;
   content: string;
   author: string;
   engagement: number;
   timestamp: number;
   original_language: string | null;
-}
-
-interface ChunkAuthorReference {
-  authorId: string;
-  sourceItemId: string;
-  timestamp: number;
 }
 
 // ── System prompt ─────────────────────────────────────────────────────
@@ -250,39 +236,6 @@ function getChunkEventTime(chunk: ClaimedItem[], fallback: number): number {
   return finiteTimestamps.length > 0 ? Math.max(...finiteTimestamps) : fallback;
 }
 
-// ── Call budget ──────────────────────────────────────────────────────
-
-interface CallBudget {
-  count: number;
-  readonly max: number;
-  escalationCount: number;
-  readonly maxEscalations: number;
-  escalationLimitLogged: boolean;
-}
-
-/** Increment budget and return true if exhausted. */
-function budgetExhausted(budget: CallBudget, log: Logger): boolean {
-  budget.count++;
-  if (budget.count > budget.max) {
-    log.warn({ count: budget.count, max: budget.max }, 'Batch LLM call budget exhausted');
-    return true;
-  }
-  return false;
-}
-
-function escalationBudgetExhausted(budget: CallBudget, log: Logger): boolean {
-  if (budget.escalationCount < budget.maxEscalations) {
-    return false;
-  }
-
-  if (!budget.escalationLimitLogged) {
-    budget.escalationLimitLogged = true;
-    log.warn({ count: budget.escalationCount, max: budget.maxEscalations }, 'Batch Sonnet escalation cap reached');
-  }
-
-  return true;
-}
-
 // ── Factory ───────────────────────────────────────────────────────────
 
 export function createSummarizer(
@@ -293,412 +246,16 @@ export function createSummarizer(
   entityManager: EntityManager,
   alphaTracker?: AlphaTracker,
 ) {
-  /**
-   * Parse LLM response as JSON, validate with zod.
-   * On JSON parse failure: returns null (caller retries with fresh prompt).
-   * On zod failure: retries once with error paths appended to system prompt.
-   */
-  async function parseWithZodRetry(
-    content: string,
-    systemPrompt: string,
-    wrappedContent: string,
-    callBudget: CallBudget,
-  ): Promise<ChunkSummary | null> {
-    const jsonStr = stripCodeFences(content);
-
-    let raw: unknown;
-    try {
-      raw = JSON.parse(jsonStr);
-    } catch {
-      return null;
-    }
-
-    const result = ChunkSummaryLLMSchema.safeParse(normalizeChunkSummaryCandidate(raw));
-    if (result.success) {
-      return result.data;
-    }
-
-    // Zod failure — retry with error feedback
-    const errorPaths = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    log.warn({ errorPaths }, 'Zod validation failed, retrying with error feedback');
-
-    const augmentedSystem = `${systemPrompt}\n\nYour previous response had validation errors: ${errorPaths}. Please fix these fields.`;
-
-    if (budgetExhausted(callBudget, log)) return null;
-    const retryResult = await llm.call({
-      model: config.models.chunk,
-      system: augmentedSystem,
-      messages: [{ role: 'user', content: wrappedContent }],
-      maxTokens: 3000,
-      stage: 'summarize',
-    });
-
-    const retryJson = stripCodeFences(retryResult.content);
-
-    try {
-      const retryRaw: unknown = JSON.parse(retryJson);
-      const retryParsed = ChunkSummaryLLMSchema.safeParse(normalizeChunkSummaryCandidate(retryRaw));
-      if (retryParsed.success) {
-        return retryParsed.data;
-      }
-      log.error({ errors: retryParsed.error.issues }, 'Zod retry also failed');
-    } catch {
-      log.error('Zod retry produced invalid JSON');
-    }
-
-    return null;
-  }
-
-  /**
-   * Call Haiku, parse, retry on JSON failure with fresh prompt (L7 safety).
-   */
-  async function callAndParse(
-    systemPrompt: string,
-    userContent: string,
-    callBudget: CallBudget,
-  ): Promise<ChunkSummary | null> {
-    const wrapped = llm.wrapWithNonce(userContent);
-
-    if (budgetExhausted(callBudget, log)) return null;
-    const result = await llm.call({
-      model: config.models.chunk,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: wrapped.wrapped }],
-      maxTokens: 3000,
-      stage: 'summarize',
-    });
-
-    const parsed = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped, callBudget);
-    if (parsed !== null) {
-      return parsed;
-    }
-
-    // JSON parse failure — retry once with fresh prompt (L7: no failed output in retry)
-    log.warn('Parse failed, retrying with fresh prompt');
-    const freshWrapped = llm.wrapWithNonce(userContent);
-    if (budgetExhausted(callBudget, log)) return null;
-    const retryResult = await llm.call({
-      model: config.models.chunk,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: freshWrapped.wrapped }],
-      maxTokens: 3000,
-      stage: 'summarize',
-    });
-
-    return parseWithZodRetry(retryResult.content, systemPrompt, freshWrapped.wrapped, callBudget);
-  }
-
-  /**
-   * Escalate low-confidence non-routine chunk to Sonnet.
-   */
-  async function maybeEscalate(
-    parsed: ChunkSummary,
-    systemPrompt: string,
-    userContent: string,
-    rawText: string,
-    chunk: ClaimedItem[],
-    source: string,
-    sourceId: string,
-    callBudget: CallBudget,
-  ): Promise<ChunkSummary> {
-    if (parsed.confidence >= 5 || parsed.urgency === 'routine') {
-      return parsed;
-    }
-
-    if (escalationBudgetExhausted(callBudget, log)) {
-      return parsed;
-    }
-
-    log.info(
-      {
-        confidence: parsed.confidence,
-        urgency: parsed.urgency,
-        source,
-        sourceId,
-        escalationNumber: callBudget.escalationCount + 1,
-        maxEscalations: callBudget.maxEscalations,
-      },
-      'Low confidence non-routine chunk, escalating to Sonnet',
-    );
-
-    try {
-      const wrapped = llm.wrapWithNonce(userContent);
-      if (budgetExhausted(callBudget, log)) return parsed;
-      callBudget.escalationCount++;
-      const result = await llm.call({
-        model: config.models.thinkalot,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: wrapped.wrapped }],
-        maxTokens: 3000,
-        stage: 'escalate',
-      });
-
-      const escalated = await parseWithZodRetry(result.content, systemPrompt, wrapped.wrapped, callBudget);
-      if (escalated !== null) {
-        return verifyChunkSummary(escalated, rawText, chunk, log, source, sourceId);
-      }
-    } catch (err: unknown) {
-      log.error({ err, source, sourceId }, 'Escalation to Sonnet failed');
-    }
-
-    return parsed;
-  }
-
   interface ProcessedChunk {
     parsed: ChunkSummary;
     itemCount: number;
     itemIds: string[];
   }
 
+  const { persistExtractedEvents, persistExtractedRelationships, persistAuthorClaims, loadChunkAuthors } =
+    createPersistence(pool, log, llm, config);
+  const { callAndParse, maybeEscalate } = createEscalation(log, config, llm, verifyChunkSummary);
   const processedChunkEventTimes = new WeakMap<ChunkSummary, number>();
-
-  async function persistExtractedEvents(
-    events: ChunkEvent[],
-    source: string,
-    sourceId: string,
-    summaryId: string,
-    eventTime: number,
-    createdAt: number,
-    callBudget: CallBudget,
-  ): Promise<void> {
-    if (events.length === 0) return;
-
-    const normalizedEntityNames = [...new Set(events.map((event) => normalizeAlias(event.entityName)).filter(Boolean))];
-    const entityIdByLookup = new Map<string, string>();
-
-    if (normalizedEntityNames.length > 0) {
-      const { rows } = await pool.query<{ id: string; canonical_name: string; alias: string | null }>(
-        `SELECT e.id, LOWER(e.name) AS canonical_name, ea.alias
-           FROM entities e
-           LEFT JOIN entity_aliases ea ON ea.entity_id = e.id
-          WHERE LOWER(e.name) = ANY($1) OR ea.alias = ANY($1)`,
-        [normalizedEntityNames],
-      );
-
-      for (const row of rows) {
-        entityIdByLookup.set(row.canonical_name, row.id);
-        if (row.alias) {
-          entityIdByLookup.set(row.alias, row.id);
-        }
-      }
-    }
-
-    async function shouldLinkAsFollowUp(event: ChunkEvent, priorEvent: EventRow): Promise<boolean> {
-      if (budgetExhausted(callBudget, log)) return false;
-
-      const classifierPrompt = `You decide whether a new entity event is a follow-up in the same ongoing chain as a prior event.
-
-Return ONLY valid JSON:
-{
-  "followUp": true | false
-}
-
-Rules:
-- true only when the new event clearly continues, reacts to, resolves, governs, audits, or follows from the prior event for the same entity.
-- false when the new event is unrelated, a separate initiative, or too ambiguous to link safely.
-- Be conservative.`;
-
-      const classifierInput = JSON.stringify(
-        {
-          priorEvent: {
-            entityName: priorEvent.entity_name,
-            eventType: priorEvent.event_type,
-            description: priorEvent.description,
-            eventTime: priorEvent.event_time,
-          },
-          newEvent: {
-            entityName: event.entityName,
-            eventType: event.eventType,
-            description: event.description,
-            eventTime,
-          },
-        },
-        null,
-        2,
-      );
-
-      try {
-        const wrapped = llm.wrapWithNonce(classifierInput);
-        const result = await llm.call({
-          model: config.models.normalizer,
-          system: classifierPrompt,
-          messages: [{ role: 'user', content: wrapped.wrapped }],
-          maxTokens: 120,
-          stage: 'event-link',
-        });
-
-        const parsed = JSON.parse(stripCodeFences(result.content)) as unknown;
-        const validated = EventFollowUpSchema.safeParse(parsed);
-        if (validated.success) {
-          return validated.data.followUp;
-        }
-      } catch (err: unknown) {
-        log.warn(
-          { err, entityName: event.entityName, eventType: event.eventType, source, sourceId },
-          'Event follow-up classification failed, leaving event unchained',
-        );
-      }
-
-      return false;
-    }
-
-    await insertEvents(
-      pool,
-      await Promise.all(
-        events.map(async (event) => {
-          const normalizedEntityName = normalizeAlias(event.entityName);
-          const entityId = entityIdByLookup.get(normalizedEntityName) ?? null;
-          let chainId: string | null = null;
-
-          if (entityId) {
-            const priorEvent = await getMostRecentEventForEntity(
-              pool,
-              entityId,
-              eventTime,
-              eventTime - EVENT_CHAIN_LOOKBACK_MS,
-            );
-
-            if (priorEvent && (await shouldLinkAsFollowUp(event, priorEvent))) {
-              chainId = priorEvent.chain_id ?? priorEvent.id;
-            }
-          }
-
-          return {
-            id: ulid(),
-            entityId,
-            entityName: event.entityName,
-            eventType: event.eventType,
-            description: event.description,
-            eventTime,
-            source,
-            sourceId,
-            summaryId,
-            chainId,
-            createdAt,
-          };
-        }),
-      ),
-    );
-  }
-
-  async function persistExtractedRelationships(relationships: ChunkRelationship[], summaryId: string): Promise<void> {
-    if (relationships.length === 0) return;
-
-    const exactNames = [
-      ...new Set(
-        relationships
-          .flatMap((relationship) => [relationship.entityNameA, relationship.entityNameB])
-          .map(normalizeAlias),
-      ),
-    ].filter(Boolean);
-    const entityIdByLookup = await resolveEntityIds(pool, exactNames);
-
-    for (const relationship of relationships) {
-      const entityIdA = entityIdByLookup.get(normalizeAlias(relationship.entityNameA));
-      const entityIdB = entityIdByLookup.get(normalizeAlias(relationship.entityNameB));
-
-      if (!entityIdA || !entityIdB || entityIdA === entityIdB) {
-        log.info(
-          {
-            entityNameA: relationship.entityNameA,
-            entityNameB: relationship.entityNameB,
-            relationshipType: relationship.relationshipType,
-            source: 'llm_inferred',
-          },
-          'Skipping inferred relationship without resolved distinct entity IDs',
-        );
-        continue;
-      }
-
-      await upsertEntityRelationship(
-        pool,
-        entityIdA,
-        entityIdB,
-        relationship.relationshipType as EntityRelationshipType,
-        relationship.confidence,
-        'llm_inferred',
-        summaryId,
-      );
-    }
-  }
-
-  async function persistAuthorClaims(
-    authorClaims: AuthorClaim[],
-    chunkAuthors: Map<string, ChunkAuthorReference>,
-  ): Promise<void> {
-    if (authorClaims.length === 0 || chunkAuthors.size === 0) return;
-
-    const exactNames = [...new Set(authorClaims.map((claim) => normalizeAlias(claim.entityName)).filter(Boolean))];
-    const entityIdByLookup = await resolveEntityIds(pool, exactNames);
-
-    for (const claim of authorClaims) {
-      const author = chunkAuthors.get(claim.authorHandle);
-      const entityId = entityIdByLookup.get(normalizeAlias(claim.entityName));
-
-      if (!author || !entityId) {
-        log.info(
-          {
-            authorHandle: claim.authorHandle,
-            entityName: claim.entityName,
-            claimType: claim.claimType,
-          },
-          'Skipping author claim without resolved author/entity IDs',
-        );
-        continue;
-      }
-
-      await insertAuthorCall(pool, {
-        authorId: author.authorId,
-        entityId,
-        claimType: claim.claimType,
-        claimText: claim.claimText,
-        confidence: claim.confidence,
-        sourceItemId: author.sourceItemId,
-        timestamp: author.timestamp,
-      });
-    }
-  }
-
-  async function loadChunkAuthors(
-    chunk: ClaimedItem[],
-    source: string,
-    sourceId: string,
-    batchId: string,
-  ): Promise<Map<string, ChunkAuthorReference>> {
-    const chunkAuthors = new Map<string, ChunkAuthorReference>();
-
-    try {
-      const authorsSeen = new Map<string, { sourceItemId: string; timestamp: number }>();
-      for (const item of chunk) {
-        const handle = item.author?.trim().toLowerCase();
-        if (!handle) continue;
-
-        const previous = authorsSeen.get(handle);
-        if (previous === undefined || item.timestamp > previous.timestamp) {
-          authorsSeen.set(handle, { sourceItemId: item.id, timestamp: item.timestamp });
-        }
-      }
-
-      if (authorsSeen.size === 0) {
-        return chunkAuthors;
-      }
-
-      const upsertedAuthors = await Promise.all(
-        [...authorsSeen.entries()].map(async ([handle, { sourceItemId, timestamp }]) => {
-          const author = await upsertAuthor(pool, source, handle, null, timestamp);
-          return [handle, { authorId: author.id, sourceItemId, timestamp }] as const;
-        }),
-      );
-
-      for (const [handle, author] of upsertedAuthors) {
-        chunkAuthors.set(handle, author);
-      }
-    } catch (authorErr: unknown) {
-      log.warn({ err: authorErr, source, sourceId, batchId }, 'Author upsert failed for chunk, continuing');
-    }
-
-    return chunkAuthors;
-  }
 
   /**
    * Process a single chunk end-to-end. Handles context-length splitting recursively.
