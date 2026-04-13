@@ -288,6 +288,10 @@ export async function getPriceWatchOverview(pool: Pool, limit = 8): Promise<Pric
        WHERE e.status = 'active'
          AND e.type = 'token'
          AND ps.timestamp >= $1
+         AND EXISTS (
+           SELECT 1 FROM entity_mentions em
+           WHERE em.entity_id = ps.entity_id
+         )
        ORDER BY ps.entity_id, ps.timestamp DESC
      )
      SELECT
