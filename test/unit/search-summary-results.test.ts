@@ -4,75 +4,21 @@ import assert from 'node:assert/strict';
 import { createServer } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
 import type { SummaryRow } from '../../src/db/queries.js';
-
-interface QueryCall {
-  text: string;
-  values: readonly unknown[];
-}
-
-interface QueryResult<T> {
-  rows: T[];
-  rowCount: number;
-}
-
-interface StubPool {
-  calls: QueryCall[];
-  query<T>(text: string, values?: readonly unknown[]): Promise<QueryResult<T>>;
-}
+import { fakeConfig, fakeSummary, makeMockLogger, makeMockPool } from '../helpers/factories.js';
 
 function createConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    anthropicApiKey: null,
-    openaiApiKey: 'test-openai-key',
-    googleApiKey: null,
-    geminiApiKey: null,
-    databaseUrl: 'postgresql://podders:test@localhost:5432/podders',
-    discordClientId: null,
-    discordClientSecret: null,
-    adminUserIds: [],
-    discordTokens: [],
-    twitterApiKey: null,
-    coingeckoApiKey: null,
-    fredApiKey: null,
-    apiKey: 'test-api-key',
-    sessionSecret: 'test-session-secret',
-    port: 3000,
-    dataDir: './data',
+  return fakeConfig({
     publicUrl: 'https://podders.test',
-    alertWebhookUrl: null,
-    models: {
-      normalizer: 'openai-codex:gpt-5.4-mini',
-      chunk: 'openai-codex:gpt-5.4-mini',
-      thinkalot: 'openai-codex:gpt-5.4',
-      normalizerFallback: null,
-      chunkFallback: null,
-      thinkalotFallback: null,
-    },
-    disabledFeatures: {
-      embeddings: { disabled: true, missingEnv: 'GEMINI_API_KEY', disables: [], keyRejected: false },
-      prices: { disabled: true, missingEnv: 'COINGECKO_API_KEY', disables: [], keyRejected: false },
-      macro: { disabled: true, missingEnv: 'FRED_API_KEY', disables: [], keyRejected: false },
-    },
-    secrets: [],
     ...overrides,
-  };
+  });
 }
 
 function createSummary(overrides: Partial<SummaryRow> = {}): SummaryRow {
-  const now = Date.now();
-  return {
-    id: 'summary-default',
-    source: 'discord',
+  return fakeSummary({
     source_id: 'guild:default',
-    window_start: now - 60_000,
-    window_end: now - 30_000,
     body: JSON.stringify({ summary: 'Default search summary' }),
-    sentiment: 0,
-    urgency: 'routine',
-    item_count: 1,
-    created_at: now - 1_000,
     ...overrides,
-  };
+  });
 }
 
 function decodeLikeNeedle(value: unknown): string {
@@ -83,45 +29,30 @@ function decodeLikeNeedle(value: unknown): string {
   return value.replaceAll('%', '').replaceAll('_', '').toLowerCase();
 }
 
-function createSearchPool(seedSummaries: readonly SummaryRow[]): StubPool {
-  const calls: QueryCall[] = [];
+function createSearchPool(seedSummaries: readonly SummaryRow[]) {
+  return makeMockPool((text, values = []) => {
+    if (!text.includes('FROM summaries')) {
+      return { rows: [], rowCount: 0 };
+    }
 
-  return {
-    calls,
-    async query<T>(text: string, values: readonly unknown[] = []): Promise<QueryResult<T>> {
-      calls.push({ text, values });
+    const [likeQuery, cutoff, limit] = values as [string, number, number];
+    const needle = decodeLikeNeedle(likeQuery);
+    let rows = seedSummaries.filter((row) => row.created_at > cutoff && row.body.toLowerCase().includes(needle));
 
-      if (!text.includes('FROM summaries')) {
-        return { rows: [], rowCount: 0 };
-      }
+    rows = [...rows].sort((left, right) => right.created_at - left.created_at);
 
-      const [likeQuery, cutoff, limit] = values as [string, number, number];
-      const needle = decodeLikeNeedle(likeQuery);
-      let rows = seedSummaries.filter((row) => row.created_at > cutoff && row.body.toLowerCase().includes(needle));
+    if (typeof limit === 'number') {
+      rows = rows.slice(0, limit);
+    }
 
-      rows = [...rows].sort((left, right) => right.created_at - left.created_at);
-
-      if (typeof limit === 'number') {
-        rows = rows.slice(0, limit);
-      }
-
-      return {
-        rows: rows as T[],
-        rowCount: rows.length,
-      };
-    },
-  };
+    return {
+      rows,
+      rowCount: rows.length,
+    };
+  });
 }
 
-const log = {
-  info() {},
-  warn() {},
-  error() {},
-  debug() {},
-  child() {
-    return log;
-  },
-} as never;
+const log = makeMockLogger();
 
 const healthMonitor = {
   async check() {},
@@ -188,7 +119,7 @@ describe('GET /api/v1/search summary results', () => {
 
       const call = pool.calls.at(-1);
       assert.ok(call, 'summary search should query the summaries table');
-      assert.equal(call.values[2], 60);
+      assert.equal(call.params[2], 60);
     } finally {
       await app.close();
     }

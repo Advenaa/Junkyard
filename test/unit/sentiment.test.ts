@@ -2,58 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSentimentTracker, getLastCompletedDayRollup } from '../../src/knowledge/sentiment.js';
 import type { Trend, MomentumEntry } from '../../src/knowledge/sentiment.js';
-import type { Pool } from '../../src/db/connection.js';
-import type { Logger } from '../../src/logger.js';
-import type { MockLogger, MockQueryResult } from '../helpers/mock-types.js';
+import { makeMockLogger, makeMockPool } from '../helpers/factories.js';
 
-// ── Stubs ───────────────────────────────────────────────────────────────
-
-const noopLog = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  debug: () => {},
-  fatal: () => {},
-  child: () => noopLog,
-} as MockLogger;
-const logger = noopLog as unknown as Logger;
-
-// ── Mock pool helpers ───────────────────────────────────────────────────
-
-interface QueryCall {
-  sql: string;
-  params: unknown[];
-}
-
-/**
- * Build a mock pool with a connect() that returns a client.
- * `queryHandler` maps SQL patterns to result rows.
- * All queries are recorded in `calls`.
- */
-function makeMockPool(queryHandler: (sql: string, params?: unknown[]) => MockQueryResult): {
-  pool: Pool;
-  calls: QueryCall[];
-} {
-  const calls: QueryCall[] = [];
-
-  const client = {
-    query: async (sql: string, params?: unknown[]) => {
-      calls.push({ sql, params: params ?? [] });
-      return queryHandler(sql, params);
-    },
-    release: () => {},
-  };
-
-  const pool = {
-    connect: async () => client,
-    query: async (sql: string, params?: unknown[]) => {
-      calls.push({ sql, params: params ?? [] });
-      return queryHandler(sql, params);
-    },
-  };
-
-  return { pool: pool as unknown as Pool, calls };
-}
+const logger = makeMockLogger();
 
 // ── 1. Momentum calculation ─────────────────────────────────────────────
 
