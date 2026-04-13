@@ -383,7 +383,7 @@ function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
       ];
 
       for (const row of dbResult.rows) {
-        lines.push(`  ${row.created_at}: sentiment ${row.sentiment.toFixed(2)}`);
+        lines.push(`  ${formatDateForTool(row.created_at)}: sentiment ${row.sentiment.toFixed(2)}`);
       }
 
       if (typeof first.id === 'string' && first.id.length > 0) {
