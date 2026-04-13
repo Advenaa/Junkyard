@@ -410,6 +410,27 @@ describe('Twitter adapter', () => {
       } as unknown as Pool;
     }
 
+    function makeInspectableRateLimitPool(): { pool: Pool; retryAt: Map<string, number> } {
+      const retryAt = new Map<string, number>();
+      const pool = {
+        query: async (sql: string, params?: unknown[]) => {
+          if (typeof sql === 'string' && sql.includes('UPDATE source_state SET next_retry_at')) {
+            const [deadline, sourceId] = params as [number, string];
+            retryAt.set(sourceId, deadline);
+            return { rows: [], rowCount: 1 };
+          }
+          if (typeof sql === 'string' && sql.includes('SELECT next_retry_at')) {
+            const sourceId = (params as string[])[1];
+            const val = retryAt.get(sourceId);
+            return { rows: val != null ? [{ next_retry_at: String(val) }] : [] };
+          }
+          return { rows: [] };
+        },
+      } as unknown as Pool;
+
+      return { pool, retryAt };
+    }
+
     it('does not crash on 429 and returns empty', async () => {
       globalThis.fetch = () => mockFetchResponse({}, 429, { 'retry-after': '60' });
 
@@ -444,6 +465,38 @@ describe('Twitter adapter', () => {
         log.calls['debug']?.some((args) => JSON.stringify(args).includes('rate limit')),
         'should log debug about rate limit backoff',
       );
+    });
+
+    it('stores the retry-after deadline from a 429 response in source_state', async (t) => {
+      const now = 1_700_000_000_000;
+      t.mock.method(Date, 'now', () => now);
+      globalThis.fetch = () => mockFetchResponse({}, 429, { 'retry-after': '90' });
+
+      const { pool, retryAt } = makeInspectableRateLimitPool();
+      const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+      await adapter.poll('@testuser', null);
+
+      assert.equal(retryAt.get('@testuser'), now + 90_000);
+    });
+
+    it('falls back to the default 5-minute backoff when retry-after is missing or invalid', async (t) => {
+      const now = 1_700_000_000_000;
+      t.mock.method(Date, 'now', () => now);
+
+      const cases = [
+        { sourceId: '@missing-retry-after', headers: {} },
+        { sourceId: '@invalid-retry-after', headers: { 'retry-after': 'not-a-number' } },
+      ];
+
+      for (const testCase of cases) {
+        globalThis.fetch = () => mockFetchResponse({}, 429, testCase.headers);
+
+        const { pool, retryAt } = makeInspectableRateLimitPool();
+        const adapter = createTwitterAdapter(makeConfig(), pool, makeLogger());
+        await adapter.poll(testCase.sourceId, null);
+
+        assert.equal(retryAt.get(testCase.sourceId), now + 300_000);
+      }
     });
   });
 
@@ -690,6 +743,27 @@ describe('Twitter adapter', () => {
       assert.ok(
         log.calls['warn']?.some((args) => JSON.stringify(args).includes('cost tracking insert failed')),
         'should log warning about cost tracking failure',
+      );
+    });
+
+    it('does not record llm_usage when the response fails zod validation for malformed tweets', async () => {
+      globalThis.fetch = () =>
+        mockFetchResponse({
+          tweets: [makeTweet({ likeCount: 'oops' })],
+          has_next_page: false,
+        });
+
+      const { pool, inserts } = makeUsageCapturingPool();
+      const log = makeLogger();
+      const adapter = createTwitterAdapter(makeConfig(), pool, log);
+      const { items, lastId } = await adapter.poll('@testuser', null);
+
+      assert.equal(items.length, 0);
+      assert.equal(lastId, null);
+      assert.equal(inserts.length, 0, 'failed validation must not write a usage row');
+      assert.ok(
+        log.calls['error']?.some((args) => JSON.stringify(args).includes('zod validation')),
+        'should log the zod validation failure',
       );
     });
   });
