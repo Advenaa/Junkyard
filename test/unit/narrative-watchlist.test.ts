@@ -1,16 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { getNarrativeDrilldownById, getNarrativeWatchlist } from '../../src/db/queries.js';
+import { makeMockPool } from '../helpers/factories.js';
 
 function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }>) {
   let index = 0;
-  return {
-    async query() {
-      const next = responses[index] ?? { rows: [], rowCount: 0 };
-      index += 1;
-      return { rows: next.rows ?? [], rowCount: next.rowCount ?? next.rows?.length ?? 0 };
-    },
-  };
+  return makeMockPool(() => {
+    const next = responses[index] ?? { rows: [], rowCount: 0 };
+    index += 1;
+    return { rows: next.rows ?? [], rowCount: next.rowCount ?? next.rows?.length ?? 0 };
+  });
 }
 
 describe('getNarrativeWatchlist', () => {

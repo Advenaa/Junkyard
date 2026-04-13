@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCorrelator, type CorrelatedEntity } from '../../src/process/correlate.js';
+import { makeMockPool as buildMockPool } from '../helpers/factories.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -9,14 +10,16 @@ import { createCorrelator, type CorrelatedEntity } from '../../src/process/corre
 /** Build a mock Pool whose .query() returns responses in order. */
 function mockPool(responses: Array<{ rows?: unknown[]; rowCount?: number }> = []) {
   let callIndex = 0;
-  const calls: Array<{ text: string; values: unknown[] }> = [];
+  const base = buildMockPool(() => {
+    const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
+    callIndex++;
+    return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
+  });
   return {
-    calls,
-    query: async (text: string, values?: unknown[]) => {
-      calls.push({ text, values: values ?? [] });
-      const resp = responses[callIndex] ?? { rows: [], rowCount: 0 };
-      callIndex++;
-      return { rows: resp.rows ?? [], rowCount: resp.rowCount ?? 0 };
+    query: base.query,
+    connect: base.connect,
+    get calls() {
+      return base.calls.map(({ sql, params }) => ({ text: sql, values: params }));
     },
   };
 }
