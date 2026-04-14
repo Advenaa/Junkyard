@@ -268,6 +268,7 @@ program
     const sentimentTracker = createSentimentTracker(pool, log);
     const divergenceTracker = createDivergenceTracker(pool, log);
     const calendarTracker = createCalendarTracker(pool, log);
+    const healthMonitor = createHealthMonitor(pool, log, config);
     const synthesizer = createSynthesizer(
       pool,
       log,
@@ -277,13 +278,22 @@ program
       sentimentTracker,
       divergenceTracker,
       calendarTracker,
+      healthMonitor.recordEvent,
     );
-    const pulse = createPulse(pool, log, config, llm, sentimentTracker, divergenceTracker, calendarTracker);
+    const pulse = createPulse(
+      pool,
+      log,
+      config,
+      llm,
+      sentimentTracker,
+      divergenceTracker,
+      calendarTracker,
+      healthMonitor.recordEvent,
+    );
     const narrativeDetector = createNarrativeDetector(pool, log, config, llm, embedder);
     const embedPipeline = createEmbedPipeline(pool, log, embedder, vectorCache);
     const decayManager = createDecayManager(pool, log);
     const delivery = createDelivery(pool, log, config);
-    const healthMonitor = createHealthMonitor(pool, log, config);
 
     const seeder = createSeeder(pool, log);
     try {

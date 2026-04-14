@@ -60,6 +60,7 @@ import type {
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import type { HealthEvent } from '../health.js';
 import type { LLMCallResult, Stage } from '../llm.js';
 import type { CalendarEventEntry } from '../knowledge/calendar.js';
 import { buildMacroContext, summarizeCryptoSentiment } from '../macro/context.js';
@@ -117,6 +118,8 @@ export function createSynthesizer(
   sentimentTracker: SentimentTracker,
   divergenceTracker: DivergenceTracker,
   calendarTracker: CalendarTracker = { getUpcomingEvents: async () => [], getRecentEvents: async () => [] },
+  recordHealthEvent: (event: HealthEvent) => Promise<void> = async (event) =>
+    insertHealthEvent(pool, { id: ulid(), ...event, createdAt: Date.now() }),
 ) {
   /**
    * Parse all summaries into scored entries, filtering out unparseable bodies.
@@ -159,20 +162,17 @@ export function createSynthesizer(
   async function recordDailyAbort(err: Error): Promise<void> {
     dailyAbortStreak += 1;
     const severity = dailyAbortStreak >= 2 ? 'critical' : 'error';
-    const timestamp = Date.now();
 
     try {
-      await insertHealthEvent(pool, {
-        id: ulid(),
+      await recordHealthEvent({
         category: 'synth_aborted',
         severity,
         message: `daily synthesis aborted: ${err.message}`,
         metadata: {
           stage: 'daily',
           error: err.message,
-          timestamp,
+          timestamp: Date.now(),
         },
-        createdAt: timestamp,
       });
     } catch (healthErr: unknown) {
       log.error({ err: toLoggedError(healthErr), stage: 'daily', synthErr: err }, 'Failed to record synth abort');
@@ -180,20 +180,16 @@ export function createSynthesizer(
   }
 
   async function recordFlashAbort(err: Error): Promise<void> {
-    const timestamp = Date.now();
-
     try {
-      await insertHealthEvent(pool, {
-        id: ulid(),
+      await recordHealthEvent({
         category: 'synth_aborted',
         severity: 'error',
         message: `flash synthesis aborted: ${err.message}`,
         metadata: {
           stage: 'flash',
           error: err.message,
-          timestamp,
+          timestamp: Date.now(),
         },
-        createdAt: timestamp,
       });
     } catch (healthErr: unknown) {
       log.error({ err: toLoggedError(healthErr), stage: 'flash', synthErr: err }, 'Failed to record synth abort');
