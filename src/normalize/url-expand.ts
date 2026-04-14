@@ -1,6 +1,6 @@
 import dns from 'node:dns';
 import net from 'node:net';
-import { validateUrl } from '../url-validator.js';
+import { isPrivateIp, validateUrl } from '../url-validator.js';
 
 const SHORT_HOSTS = new Set(['t.co', 'bit.ly', 'goo.gl', 'tinyurl.com', 'ow.ly', 'is.gd', 'buff.ly', 'adf.ly', 'j.mp']);
 
@@ -41,30 +41,8 @@ async function validateIntermediateHop(parsed: URL): Promise<{ valid: boolean; r
   const literalHost =
     hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, hostname.length - 1) : hostname;
   if (net.isIP(literalHost)) {
-    if (net.isIPv4(literalHost)) {
-      const parts = literalHost.split('.').map(Number);
-      const [a, b] = parts;
-      if (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 172 && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        (a === 169 && b === 254)
-      ) {
-        return { valid: false };
-      }
-    } else if (net.isIPv6(literalHost)) {
-      const normalized = literalHost.toLowerCase();
-      if (
-        normalized === '::1' ||
-        normalized === '::' ||
-        normalized.startsWith('fc') ||
-        normalized.startsWith('fd') ||
-        normalized.startsWith('fe80')
-      ) {
-        return { valid: false };
-      }
+    if (isPrivateIp(literalHost)) {
+      return { valid: false };
     }
     return { valid: true, resolvedIp: literalHost };
   }
@@ -80,30 +58,8 @@ async function validateIntermediateHop(parsed: URL): Promise<{ valid: boolean; r
   if (ipv6Result.status === 'fulfilled') allIps.push(...ipv6Result.value);
 
   for (const ip of allIps) {
-    if (net.isIPv4(ip)) {
-      const parts = ip.split('.').map(Number);
-      const [a, b] = parts;
-      if (
-        a === 0 ||
-        a === 10 ||
-        a === 127 ||
-        (a === 172 && b >= 16 && b <= 31) ||
-        (a === 192 && b === 168) ||
-        (a === 169 && b === 254)
-      ) {
-        return { valid: false };
-      }
-    } else if (net.isIPv6(ip)) {
-      const normalized = ip.toLowerCase();
-      if (
-        normalized === '::1' ||
-        normalized === '::' ||
-        normalized.startsWith('fc') ||
-        normalized.startsWith('fd') ||
-        normalized.startsWith('fe80')
-      ) {
-        return { valid: false };
-      }
+    if (isPrivateIp(ip)) {
+      return { valid: false };
     }
   }
 

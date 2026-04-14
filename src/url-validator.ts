@@ -55,7 +55,7 @@ function canonicalizeIPv6(ip: string): string {
   return normalized.join(':');
 }
 
-function isPrivateIp(ip: string): boolean {
+export function isPrivateIp(ip: string): boolean {
   if (net.isIPv4(ip)) {
     const parts = ip.split('.').map(Number);
     const [a, b] = parts;
@@ -89,6 +89,18 @@ function isPrivateIp(ip: string): boolean {
     // Normalize expanded IPv6 to compressed form for reliable comparison.
     // Expand all groups to full 8-group representation, then compress.
     const canonical = canonicalizeIPv6(normalized);
+
+    // Hex form: ::ffff:7f00:1 (URL parser normalizes dotted-decimal to hex)
+    if (canonical.startsWith('::ffff:')) {
+      const hexPart = canonical.slice(7);
+      const groups = hexPart.split(':');
+      if (groups.length === 2) {
+        const hi = parseInt(groups[0], 16);
+        const lo = parseInt(groups[1], 16);
+        const reconstructed = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+        return isPrivateIp(reconstructed);
+      }
+    }
 
     // ::1 loopback (covers 0:0:0:0:0:0:0:1, 0000:0000:...:0001, etc.)
     if (canonical === '::1') return true;
