@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { apiFetch } from '../lib/api.js';
-import { Sparkline } from '../components/Sparkline.js';
 import { SentimentIndicator } from '../components/SentimentIndicator.js';
 import { EntityLink } from '../components/EntityLink.js';
 import { CollapsibleSection } from '../components/CollapsibleSection.js';
@@ -390,19 +389,6 @@ export function Dashboard() {
                   >
                     {formatChange(entry.priceChange24h)}
                   </span>
-                </div>
-                <div className="overflow-x-auto">
-                  <Sparkline
-                    variant="line"
-                    data={[]}
-                    width={240}
-                    height={52}
-                    color={
-                      entry.priceChange24h != null && entry.priceChange24h < 0
-                        ? 'var(--color-accent-red)'
-                        : 'var(--color-accent-green)'
-                    }
-                  />
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-mono uppercase tracking-wide text-text-secondary">Sentiment</span>
