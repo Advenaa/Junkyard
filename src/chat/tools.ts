@@ -338,6 +338,34 @@ function createSemanticSearch(pool: Pool, log: Logger, vectorCache: VectorCache,
 }
 
 function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
+  type ResolvedKeywordRow = {
+    id: string;
+    name?: string;
+    type?: string;
+    relevance?: number;
+    sentiment?: number;
+    created_at?: string;
+  };
+
+  function isKeywordSearchMentionRow(row: ResolvedKeywordRow): row is {
+    id: string;
+    name: string;
+    type: string;
+    relevance: number;
+    sentiment: number;
+    created_at: string;
+  } {
+    return (
+      typeof row.id === 'string' &&
+      row.id.length > 0 &&
+      typeof row.name === 'string' &&
+      typeof row.type === 'string' &&
+      typeof row.relevance === 'number' &&
+      typeof row.sentiment === 'number' &&
+      typeof row.created_at === 'string'
+    );
+  }
+
   return {
     name: 'keyword_search',
     description: 'Look up an entity by name/alias. Returns mention counts, sentiment history, and recent event chains.',
@@ -347,31 +375,53 @@ function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
 
       log.info({ entity }, 'chat: keyword_search');
 
-      const dbResult = await pool.query<{
-        id: string;
-        name: string;
-        type: string;
-        relevance: number;
-        sentiment: number;
-        created_at: string;
-      }>(
-        `SELECT e.id, e.name, e.type, e.relevance, em.sentiment, em.created_at
-         FROM entities e
-         JOIN entity_mentions em ON em.entity_id = e.id
-         JOIN entity_aliases ea ON ea.entity_id = e.id
-         WHERE ea.alias = $1
-         ORDER BY em.created_at DESC
-         LIMIT 20`,
-        [normalizeAlias(entity)],
+      const normalizedEntity = normalizeAlias(entity);
+      const resolved = await pool.query<ResolvedKeywordRow>(
+        `SELECT DISTINCT ON (ea.alias)
+            ea.entity_id AS id
+           FROM entities e
+           JOIN entity_aliases ea ON ea.entity_id = e.id
+          WHERE ea.alias = $1
+          ORDER BY ea.alias, (e.status = 'active') DESC, (ea.context_key = '') DESC, ea.context_key, ea.entity_id`,
+        [normalizedEntity],
       );
 
-      if (dbResult.rows.length === 0) {
+      if (resolved.rows.length === 0) {
         return `No mentions found for entity "${entity}".`;
       }
 
-      const first = dbResult.rows[0];
-      const mentionCount = dbResult.rows.length;
-      const avgSentiment = dbResult.rows.reduce((sum, r) => sum + r.sentiment, 0) / mentionCount;
+      const entityId = resolved.rows[0].id;
+
+      const resolvedMentionRows = resolved.rows.filter(isKeywordSearchMentionRow);
+      const dbRows =
+        resolvedMentionRows.length > 0
+          ? resolvedMentionRows
+          : (
+              await pool.query<{
+                id: string;
+                name: string;
+                type: string;
+                relevance: number;
+                sentiment: number;
+                created_at: string;
+              }>(
+                `SELECT e.id, e.name, e.type, e.relevance, em.sentiment, em.created_at
+                 FROM entities e
+                 JOIN entity_mentions em ON em.entity_id = e.id
+                 WHERE e.id = $1
+                 ORDER BY em.created_at DESC
+                 LIMIT 20`,
+                [entityId],
+              )
+            ).rows;
+
+      if (dbRows.length === 0) {
+        return `No mentions found for entity "${entity}".`;
+      }
+
+      const first = dbRows[0];
+      const mentionCount = dbRows.length;
+      const avgSentiment = dbRows.reduce((sum, r) => sum + r.sentiment, 0) / mentionCount;
 
       const lines: string[] = [
         `Entity: ${first.name} (${first.type})`,
@@ -382,7 +432,7 @@ function createKeywordSearch(pool: Pool, log: Logger): ChatTool {
         'Recent sentiment history:',
       ];
 
-      for (const row of dbResult.rows) {
+      for (const row of dbRows) {
         lines.push(`  ${formatDateForTool(row.created_at)}: sentiment ${row.sentiment.toFixed(2)}`);
       }
 
