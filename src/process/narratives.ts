@@ -353,21 +353,25 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
 
       // Signal strength
       let signalStrength: Narrative['signalStrength'] = 'new';
+      let bestPriorMatch: { narrative: NarrativeRow; sim: number } | null = null;
 
       for (const prior of priorCentroids) {
         const sim = cosineSimilarity(centroid, prior.centroid);
-        if (sim > 0.7) {
-          const growthRate = indices.length / prior.narrative.member_count;
-          if (growthRate >= 3.0) {
-            signalStrength = 'strong';
-          } else if (growthRate >= 1.5) {
-            signalStrength = 'emerging';
-          } else if (growthRate <= 0.5) {
-            signalStrength = 'fading';
-          } else {
-            signalStrength = 'stable';
-          }
-          break;
+        if (sim > 0.7 && (!bestPriorMatch || sim > bestPriorMatch.sim)) {
+          bestPriorMatch = { narrative: prior.narrative, sim };
+        }
+      }
+
+      if (bestPriorMatch) {
+        const growthRate = indices.length / bestPriorMatch.narrative.member_count;
+        if (growthRate >= 3.0) {
+          signalStrength = 'strong';
+        } else if (growthRate >= 1.5) {
+          signalStrength = 'emerging';
+        } else if (growthRate <= 0.5) {
+          signalStrength = 'fading';
+        } else {
+          signalStrength = 'stable';
         }
       }
 
