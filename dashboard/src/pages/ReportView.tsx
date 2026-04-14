@@ -447,7 +447,6 @@ export function ReportView() {
                   onToggle={(_reportId, isBookmarked) => setBookmarked(isBookmarked)}
                   size="md"
                 />
-                <span className="font-mono text-xs text-text-secondary">{formatDate(report.date)}</span>
               </div>
             </div>
 
