@@ -38,6 +38,7 @@ import type {
 import type { Pool } from '../db/connection.js';
 import type { Logger } from '../logger.js';
 import type { Config } from '../config.js';
+import type { HealthEvent } from '../health.js';
 import type { MomentumEntry } from '../knowledge/sentiment.js';
 import type { DivergenceEntry } from '../knowledge/divergence.js';
 import type { CalendarEventEntry } from '../knowledge/calendar.js';
@@ -329,6 +330,8 @@ export function createPulse(
   sentimentTracker: SentimentTracker,
   divergenceTracker: DivergenceTracker,
   calendarTracker: CalendarTracker = { getUpcomingEvents: async () => [], getRecentEvents: async () => [] },
+  recordHealthEvent: (event: HealthEvent) => Promise<void> = async (event) =>
+    insertHealthEvent(pool, { id: ulid(), ...event, createdAt: Date.now() }),
 ) {
   /**
    * Get the prior pulse report (most recent pulse).
@@ -373,20 +376,17 @@ export function createPulse(
   async function recordPulseAbort(err: Error): Promise<void> {
     pulseAbortStreak += 1;
     const severity = pulseAbortStreak >= 2 ? 'critical' : 'error';
-    const timestamp = Date.now();
 
     try {
-      await insertHealthEvent(pool, {
-        id: ulid(),
+      await recordHealthEvent({
         category: 'synth_aborted',
         severity,
         message: `pulse synthesis aborted: ${err.message}`,
         metadata: {
           stage: 'pulse',
           error: err.message,
-          timestamp,
+          timestamp: Date.now(),
         },
-        createdAt: timestamp,
       });
     } catch (healthErr: unknown) {
       log.error({ err: toLoggedError(healthErr), stage: 'pulse', synthErr: err }, 'Failed to record synth abort');
