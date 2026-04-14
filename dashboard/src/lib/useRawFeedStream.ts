@@ -228,9 +228,36 @@ export function useRawFeedStream({
 
   useEffect(() => {
     if (!selectedFeedSource) return;
+
+    let cancelled = false;
     setLoading(true);
-    fetchItems(0, 'replace').finally(() => setLoading(false));
-  }, [fetchItems, selectedFeedSource]);
+
+    const load = async () => {
+      try {
+        setError(null);
+        const url = buildFeedUrl(selectedFeedSource, pageSize, 0);
+        const response = await apiFetch<{ items: RawFeedItemRaw[] }>(url);
+        if (cancelled) return;
+
+        const normalized = response.items.map(normalizeFeedItem);
+        setItems(normalized);
+        setHasMore(response.items.length === pageSize);
+      } catch {
+        if (cancelled) return;
+        setError('Failed to load feed. Please try again.');
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pageSize, selectedFeedSource]);
 
   useEffect(() => {
     if (intervalRef.current) {
