@@ -519,6 +519,7 @@ export function createDelivery(pool: Pool, log: Logger, config: Config) {
     if (now >= deliveryCircuitOpenUntil) {
       deliveryCircuitOpenUntil = null;
       deliveryCircuitAlertSent = false;
+      consecutiveDeliveryFailures = 0;
       log.info('webhook delivery circuit breaker cooldown elapsed — resuming delivery attempts');
       return false;
     }
