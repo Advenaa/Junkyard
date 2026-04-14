@@ -201,6 +201,12 @@ export function createNarrativeDetector(pool: Pool, log: Logger, config: Config,
     const yesterdayStr = decrementDate(todayStr);
     const dateStr = yesterdayStr;
 
+    const { rows: existingRows } = await pool.query('SELECT 1 FROM narratives n WHERE n.date = $1 LIMIT 1', [dateStr]);
+    if (existingRows.length > 0) {
+      log.info({ date: dateStr }, 'Narratives already exist for this date, skipping');
+      return [];
+    }
+
     const startOfDay = new Date(midnightEpoch(yesterdayStr, timezone));
     const endOfDay = new Date(midnightEpoch(todayStr, timezone));
 
