@@ -116,6 +116,7 @@ Return ONLY valid JSON matching this schema:
   "eventChains": ["up to 5 concise chain summaries when ongoing stories matter"],
   "firstMovers": ["up to 5 concise tracked first-mover lines when author timing matters"],
   "alphaSignals": ["up to 5 concise higher-tier timing or propagation lines when early signal context matters"],
+  "priceAlerts": ["up to 5 concise price-vs-sentiment divergence lines"],
   "unusualActivity": ["up to 5 concise unusual-activity or crowding watchlist lines"],
   "entitySentiment": [{"name": "Entity", "sentiment": -1 to 1, "reason": "brief reason (include momentum label if available)"}],
   "macroAlerts": ["up to 5 concise macro-tape or crypto-vs-macro divergence alerts"],
