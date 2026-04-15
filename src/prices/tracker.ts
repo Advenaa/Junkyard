@@ -3,6 +3,11 @@ import type { Logger } from '../logger.js';
 import { getActiveTokensWithCoinGeckoIds, insertPriceSnapshots } from '../db/queries.js';
 import { createPriceFetcher } from './coingecko.js';
 
+interface HistoricalPriceRow {
+  entity_id: string;
+  price_usd: string | number;
+}
+
 export interface PriceTracker {
   /** Fetch current prices for all active token entities and store snapshots. */
   fetchAndStore(): Promise<{ fetched: number; stored: number }>;
@@ -51,6 +56,31 @@ export function createPriceTracker(pool: Pool, log: Logger, apiKey?: string, onA
         marketCap: priceData.marketCap,
         source: 'coingecko',
       });
+    }
+
+    const entityIds = snapshots.map((snapshot) => snapshot.entityId);
+    if (entityIds.length > 0) {
+      const sevenDayUpperBound = now - 6.5 * 86_400_000;
+      const sevenDayLowerBound = now - 8 * 86_400_000;
+      const { rows } = await pool.query<HistoricalPriceRow>(
+        `SELECT DISTINCT ON (entity_id) entity_id, price_usd
+           FROM price_snapshots
+          WHERE entity_id = ANY($1)
+            AND timestamp <= $2
+            AND timestamp >= $3
+          ORDER BY entity_id, timestamp DESC`,
+        [entityIds, sevenDayUpperBound, sevenDayLowerBound],
+      );
+
+      const priorPrices = new Map(rows.map((row) => [row.entity_id, Number(row.price_usd)]));
+      for (const snapshot of snapshots) {
+        const priorPrice = priorPrices.get(snapshot.entityId);
+        if (priorPrice == null || !Number.isFinite(priorPrice) || priorPrice === 0) {
+          continue;
+        }
+
+        snapshot.priceChange7d = ((snapshot.priceUsd - priorPrice) / priorPrice) * 100;
+      }
     }
 
     const stored = await insertPriceSnapshots(pool, snapshots);

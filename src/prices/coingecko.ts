@@ -16,7 +16,6 @@ export interface PriceData {
 interface CoinGeckoPrice {
   usd?: number;
   usd_24h_change?: number;
-  usd_7d_change?: number;
   usd_24h_vol?: number;
   usd_market_cap?: number;
 }
@@ -53,7 +52,7 @@ function parseCoin(raw: CoinGeckoPrice): PriceData | null {
   return {
     priceUsd: price,
     priceChange24h: toNumber(raw.usd_24h_change),
-    priceChange7d: toNumber(raw.usd_7d_change),
+    priceChange7d: null,
     volume24h: toNumber(raw.usd_24h_vol),
     marketCap: toNumber(raw.usd_market_cap),
   };
@@ -77,7 +76,6 @@ export function createPriceFetcher(log: Logger, apiKey?: string, onAuthFailure?:
       ids: ids.join(','),
       vs_currencies: 'usd',
       include_24hr_change: 'true',
-      include_7d_change: 'true',
       include_24hr_vol: 'true',
       include_market_cap: 'true',
     });
