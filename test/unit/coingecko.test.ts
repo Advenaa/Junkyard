@@ -70,7 +70,6 @@ describe('createPriceFetcher', () => {
         bitcoin: {
           usd: 103_245.12,
           usd_24h_change: 4.25,
-          usd_7d_change: -1.5,
           usd_24h_vol: 5_500_000,
           usd_market_cap: 2_000_000_000,
         },
@@ -85,7 +84,7 @@ describe('createPriceFetcher', () => {
     assert.deepEqual(result.get('bitcoin'), {
       priceUsd: 103_245.12,
       priceChange24h: 4.25,
-      priceChange7d: -1.5,
+      priceChange7d: null,
       volume24h: 5_500_000,
       marketCap: 2_000_000_000,
     });
