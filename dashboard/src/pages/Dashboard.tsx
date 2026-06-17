@@ -5,6 +5,8 @@ import { SentimentIndicator } from '../components/SentimentIndicator.js';
 import { EntityLink } from '../components/EntityLink.js';
 import { CollapsibleSection } from '../components/CollapsibleSection.js';
 import { LoadingSkeleton } from '../components/LoadingSkeleton.js';
+import { priceContrarianClasses } from './ReportView/formatters.js';
+import type { PriceContrarianSignal } from './ReportView/types.js';
 
 interface StatusData {
   itemsReady: number;
@@ -46,7 +48,7 @@ interface PriceWatchEntry {
   marketCap?: number | null;
   avgSentiment: number | null;
   momentum?: number | null;
-  contrarianSignal?: string | null;
+  contrarianSignal?: PriceContrarianSignal | null;
 }
 
 interface FirstMoverEntry {
@@ -384,11 +386,20 @@ export function Dashboard() {
                     </div>
                     <div className="font-mono text-lg text-text-primary">{formatCurrency(entry.priceUsd)}</div>
                   </div>
-                  <span
-                    className={`rounded-full px-2.5 py-1 text-xs font-mono ${changeBadgeClass(entry.priceChange24h)}`}
-                  >
-                    {formatChange(entry.priceChange24h)}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-mono ${changeBadgeClass(entry.priceChange24h)}`}
+                    >
+                      {formatChange(entry.priceChange24h)}
+                    </span>
+                    {entry.contrarianSignal && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] uppercase tracking-wide ${priceContrarianClasses(entry.contrarianSignal)}`}
+                      >
+                        Contrarian
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-xs font-mono uppercase tracking-wide text-text-secondary">Sentiment</span>
